@@ -73,3 +73,7 @@ Note: iPhone HEIC photos may need conversion to JPG unless the phone/browser con
 ## Room Tracing
 
 Rooms are now created by clicking around the room walls to create a polygon shape, instead of drawing only rectangles.
+
+## Click Fix
+
+The PDF/image blueprint now has pointer events disabled, so the SVG tracing layer receives mouse clicks correctly.
