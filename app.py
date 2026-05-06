@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, session, flash, jsonify
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3, os, uuid
+import sqlite3, os, uuid, zipfile, tempfile
 from datetime import datetime
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +74,7 @@ def init_db():
         w REAL NOT NULL,
         h REAL NOT NULL,
         polygon_points TEXT,
+        category TEXT DEFAULT 'general',
         created_at TEXT NOT NULL,
         FOREIGN KEY(project_id) REFERENCES projects(id)
     )
@@ -95,6 +96,12 @@ def init_db():
 
     try:
         cur.execute("ALTER TABLE rooms ADD COLUMN polygon_points TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE rooms ADD COLUMN category TEXT DEFAULT 'general'")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -239,6 +246,7 @@ def project(project_id):
 @login_required
 def add_room(project_id):
     name = request.form["name"].strip()
+    category = request.form.get("category", "general")
     polygon_points = request.form.get("polygon_points", "").strip()
 
     # Keep these old rectangle fields for compatibility, but polygon is now the main method.
@@ -253,8 +261,8 @@ def add_room(project_id):
 
     conn = db()
     conn.execute(
-        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, name, x, y, w, h, polygon_points, datetime.now().isoformat())
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, name, x, y, w, h, polygon_points, category, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
@@ -312,6 +320,61 @@ def room(room_id):
     conn.close()
 
     return render_template("room.html", room=room, project=project, notes=notes, selected_date=selected_date)
+
+
+
+@app.route("/project/<int:project_id>/timeline")
+@login_required
+def project_timeline(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    selected_date = request.args.get("date", "")
+    query = """
+        SELECT notes.*, rooms.name AS room_name, rooms.category AS room_category, users.name AS user_name
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        LEFT JOIN users ON notes.user_id = users.id
+        WHERE rooms.project_id = ?
+    """
+    params = [project_id]
+
+    if selected_date:
+        query += " AND notes.note_date = ?"
+        params.append(selected_date)
+
+    query += " ORDER BY notes.note_date DESC, notes.created_at DESC"
+
+    notes = conn.execute(query, params).fetchall()
+    conn.close()
+    return render_template("timeline.html", project=project, notes=notes, selected_date=selected_date)
+
+
+@app.route("/backup")
+@login_required
+def backup():
+    if session.get("role") != "admin":
+        flash("Only admin can download backups.")
+        return redirect(url_for("index"))
+
+    backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    backup_path = os.path.join(tempfile.gettempdir(), backup_name)
+
+    with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as z:
+        if os.path.exists(DB):
+            z.write(DB, "project_log.db")
+        if os.path.exists(UPLOAD_DIR):
+            for root, dirs, files in os.walk(UPLOAD_DIR):
+                for filename in files:
+                    full = os.path.join(root, filename)
+                    arc = os.path.join("uploads", os.path.relpath(full, UPLOAD_DIR))
+                    z.write(full, arc)
+
+    return send_from_directory(tempfile.gettempdir(), backup_name, as_attachment=True)
 
 
 @app.route("/uploads/<path:filename>")

@@ -77,3 +77,26 @@ Rooms are now created by clicking around the room walls to create a polygon shap
 ## Click Fix
 
 The PDF/image blueprint now has pointer events disabled, so the SVG tracing layer receives mouse clicks correctly.
+
+## Pro Upgrade Added
+
+This version includes:
+
+- Snap-to-wall/grid tracing for more precise room points
+- Zoom and pan for large blueprints
+- Room color coding:
+  - General
+  - Electrical
+  - AV / Low Voltage
+  - Lighting
+- Project timeline view showing all room comments/photos by date
+- Offline backup download for admin users
+
+## Backup
+
+Admin users can click "Download Backup" in the top menu.
+This creates a ZIP file containing:
+- project_log.db
+- uploaded blueprints and photos
+
+Save this ZIP offline for protection.
