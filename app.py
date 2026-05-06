@@ -4,6 +4,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3, os, uuid, zipfile, tempfile
 from datetime import datetime
 
+try:
+    import fitz  # PyMuPDF, used to convert PDF blueprint first page to PNG for phones
+except Exception:
+    fitz = None
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(APP_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -34,6 +39,29 @@ def is_pdf(filename):
     return file_ext(filename) == "pdf"
 
 
+def create_pdf_preview(pdf_filename):
+    """
+    Convert the first page of a PDF blueprint to a PNG image.
+    This makes blueprints visible on phones where embedded PDFs often fail.
+    """
+    if fitz is None:
+        return None
+
+    pdf_path = os.path.join(app.config["UPLOAD_FOLDER"], pdf_filename)
+    preview_filename = f"{uuid.uuid4().hex}_blueprint_preview.png"
+    preview_path = os.path.join(app.config["UPLOAD_FOLDER"], preview_filename)
+
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc.load_page(0)
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        pix.save(preview_path)
+        doc.close()
+        return preview_filename
+    except Exception:
+        return None
+
+
 def db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
@@ -60,6 +88,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         blueprint_file TEXT,
+        blueprint_preview_file TEXT,
         created_at TEXT NOT NULL
     )
     """)
@@ -75,6 +104,7 @@ def init_db():
         h REAL NOT NULL,
         polygon_points TEXT,
         category TEXT DEFAULT 'general',
+        room_color TEXT DEFAULT 'blue',
         created_at TEXT NOT NULL,
         FOREIGN KEY(project_id) REFERENCES projects(id)
     )
@@ -102,6 +132,18 @@ def init_db():
 
     try:
         cur.execute("ALTER TABLE rooms ADD COLUMN category TEXT DEFAULT 'general'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE rooms ADD COLUMN room_color TEXT DEFAULT 'blue'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE projects ADD COLUMN blueprint_preview_file TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass
@@ -207,17 +249,23 @@ def new_project():
         file = request.files.get("blueprint")
 
         blueprint_file = None
+        blueprint_preview_file = None
         if file and allowed_blueprint(file.filename):
             filename = secure_filename(file.filename)
             unique = f"{uuid.uuid4().hex}_{filename}"
             file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique))
             blueprint_file = unique
 
+            if is_pdf(unique):
+                blueprint_preview_file = create_pdf_preview(unique)
+            else:
+                blueprint_preview_file = unique
+
         conn = db()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO projects (name, blueprint_file, created_at) VALUES (?, ?, ?)",
-            (name, blueprint_file, datetime.now().isoformat())
+            "INSERT INTO projects (name, blueprint_file, blueprint_preview_file, created_at) VALUES (?, ?, ?, ?)",
+            (name, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
         )
         conn.commit()
         project_id = cur.lastrowid
@@ -247,6 +295,7 @@ def project(project_id):
 def add_room(project_id):
     name = request.form["name"].strip()
     category = request.form.get("category", "general")
+    room_color = request.form.get("room_color", "blue")
     polygon_points = request.form.get("polygon_points", "").strip()
 
     # Keep these old rectangle fields for compatibility, but polygon is now the main method.
@@ -261,8 +310,8 @@ def add_room(project_id):
 
     conn = db()
     conn.execute(
-        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, name, x, y, w, h, polygon_points, category, datetime.now().isoformat())
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, name, x, y, w, h, polygon_points, category, room_color, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()

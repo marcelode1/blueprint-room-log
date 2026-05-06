@@ -3,8 +3,8 @@
 <div class="card">
     <h2>{{ project.name }}</h2>
     <p>
-        Trace each room by clicking around the room walls. Turn on <strong>Snap</strong> for more precise points.
-        Use zoom and pan for large blueprints.
+        Turn on <strong>Drawing Mode</strong>, then click around the room walls to trace a room.
+        Scroll over the blueprint to zoom in/out. Hold the mouse button and drag to pan.
     </p>
     <p>
         <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
@@ -19,12 +19,24 @@
                 <input id="roomName" name="name" placeholder="Example: Master Bedroom" required>
             </div>
             <div>
-                <label>Room Type / Color</label>
+                <label>Room Type</label>
                 <select id="category" name="category">
                     <option value="general">General / Other</option>
                     <option value="electrical">Electrical</option>
                     <option value="av">AV / Low Voltage</option>
                     <option value="lighting">Lighting</option>
+                </select>
+            </div>
+            <div>
+                <label>Highlight Color</label>
+                <select id="room_color" name="room_color">
+                    <option value="blue">Blue</option>
+                    <option value="red">Red</option>
+                    <option value="green">Green</option>
+                    <option value="yellow">Yellow</option>
+                    <option value="purple">Purple</option>
+                    <option value="orange">Orange</option>
+                    <option value="gray">Gray</option>
                 </select>
             </div>
         </div>
@@ -44,61 +56,47 @@
 <div class="card">
     <div class="grid">
         <div>
+            <label><input type="checkbox" id="drawingMode"> Drawing Mode</label>
+            <div id="drawStatus" style="font-weight:bold; margin-top:8px;">Drawing mode is off</div>
+        </div>
+        <div>
             <label><input type="checkbox" id="snapToggle" checked> Snap-to-wall / grid</label>
             <label>Snap size</label>
             <input type="range" min="5" max="40" value="15" id="snapSize">
         </div>
         <div>
-            <button type="button" onclick="zoomIn()">Zoom In</button>
-            <button type="button" onclick="zoomOut()" class="btn-secondary">Zoom Out</button>
-            <button type="button" onclick="resetView()" class="btn-secondary">Reset View</button>
-            <button type="button" onclick="testDrawPoint()" class="btn-secondary">Test Dot</button>
-        </div>
-        <div>
-            <p><strong>Pan:</strong> hold Spacebar and drag, or use two-finger trackpad scroll.</p>
-            <p><strong>Undo:</strong> right-click removes the last point.</p>
+            <p><strong>Zoom:</strong> use mouse scroll wheel over the blueprint.</p>
+            <p><strong>Pan:</strong> click and drag the blueprint.</p>
+            <p><strong>Undo point:</strong> right-click while Drawing Mode is on.</p>
         </div>
     </div>
 </div>
 
 <div class="card" style="overflow:auto;">
-    <p><strong>How to trace:</strong> Make sure <strong>Drawing Mode</strong> is ON, then click around the room walls. Each click places a dot. Use many points for irregular rooms. When done, click “Finish Room Trace”.</p>
-    <p>
-        <label><input type="checkbox" id="drawingMode" checked> Drawing Mode ON</label>
-        <span id="drawStatus" style="font-weight:bold; margin-left:12px;">Ready to draw</span>
-    </p>
+    <p><strong>How to trace:</strong> Turn Drawing Mode on, click around the room walls, finish the trace, name the room, then save it.</p>
 
-    <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative;">
+    <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
-            {% if project.blueprint_file %}
-                {% if project.blueprint_file.lower().endswith('.pdf') %}
-                    <iframe id="blueprint"
-                            src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}#toolbar=0&navpanes=0&scrollbar=0"
-                            style="width:1100px; height:800px; border:1px solid #ccc; display:block; pointer-events:none;"></iframe>
-                {% else %}
-                    <img id="blueprint" src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
-                {% endif %}
+            {% if project.blueprint_preview_file or project.blueprint_file %}
+                <img id="blueprint"
+                     src="{{ url_for('uploaded_file', filename=(project.blueprint_preview_file or project.blueprint_file)) }}"
+                     style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
 
-            <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; pointer-events:none; z-index:10;">
+            <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}
                     {% if r.polygon_points %}
-                        <polygon points="{{ r.polygon_points }}"
-                                     class="savedRoom {{ r.category or 'general' }}"></polygon>
+                        <a href="{{ url_for('room', room_id=r.id) }}" class="roomLink">
+                            <polygon points="{{ r.polygon_points }}"
+                                     class="savedRoom {{ r.room_color or 'blue' }}"></polygon>
+                        </a>
+                        <text x="{{ (r.x or 0) + 6 }}" y="{{ (r.y or 0) + 18 }}" class="roomText">{{ r.name }}</text>
                     {% endif %}
                 {% endfor %}
                 <polyline id="currentLine" points="" class="currentLine"></polyline>
                 <polygon id="currentPolygon" points="" class="currentPolygon"></polygon>
                 <g id="pointGroup"></g>
             </svg>
-
-            {% for r in rooms %}
-                {% if r.polygon_points %}
-                    <a href="{{ url_for('room', room_id=r.id) }}"
-                       class="roomNameOverlay {{ r.category or 'general' }}"
-                       data-points="{{ r.polygon_points }}">{{ r.name }}</a>
-                {% endif %}
-            {% endfor %}
         </div>
     </div>
 </div>
@@ -109,53 +107,52 @@
     cursor: pointer;
 }
 .savedRoom:hover {
-    fill: rgba(37,99,235,.28);
-    stroke: #2563eb;
+    fill-opacity: .35;
+    stroke-width: 4;
 }
-.savedRoom.general { fill: rgba(107,114,128,.18); stroke: #6b7280; }
-.savedRoom.electrical { fill: rgba(245,158,11,.22); stroke: #f59e0b; }
-.savedRoom.av { fill: rgba(59,130,246,.20); stroke: #3b82f6; }
-.savedRoom.lighting { fill: rgba(234,179,8,.22); stroke: #eab308; }
+.savedRoom.blue { fill: rgba(59,130,246,.22); stroke: #2563eb; }
+.savedRoom.red { fill: rgba(239,68,68,.22); stroke: #dc2626; }
+.savedRoom.green { fill: rgba(34,197,94,.22); stroke: #16a34a; }
+.savedRoom.yellow { fill: rgba(234,179,8,.28); stroke: #ca8a04; }
+.savedRoom.purple { fill: rgba(168,85,247,.22); stroke: #9333ea; }
+.savedRoom.orange { fill: rgba(249,115,22,.24); stroke: #ea580c; }
+.savedRoom.gray { fill: rgba(107,114,128,.20); stroke: #4b5563; }
 
+.roomText {
+    font-size: 14px;
+    font-weight: bold;
+    fill: #111;
+    paint-order: stroke;
+    stroke: white;
+    stroke-width: 4px;
+    stroke-linejoin: round;
+    pointer-events: none;
+}
 .currentLine {
     fill: none;
     stroke: #2563eb;
     stroke-width: 3;
     stroke-dasharray: 6 4;
+    pointer-events: none;
 }
 .currentPolygon {
     fill: rgba(37,99,235,.15);
     stroke: #2563eb;
     stroke-width: 2;
-}
-#roomSvg {
-    cursor: crosshair;
+    pointer-events: none;
 }
 .tracePoint {
     fill: #2563eb;
     stroke: white;
     stroke-width: 2;
+    pointer-events: none;
 }
-.snapPreview {
-    fill: #dc2626;
-    stroke: white;
-    stroke-width: 2;
+#roomSvg.drawing {
+    cursor: crosshair;
 }
-.roomNameOverlay {
-    position:absolute;
-    color:#111;
-    font-weight:bold;
-    font-size:13px;
-    padding:3px 6px;
-    border-radius:4px;
-    text-decoration:none;
-    border:1px solid #ddd;
-    z-index:30;
+#roomSvg.notDrawing {
+    cursor: pointer;
 }
-.roomNameOverlay.general { background:rgba(255,255,255,.9); }
-.roomNameOverlay.electrical { background:rgba(254,243,199,.95); }
-.roomNameOverlay.av { background:rgba(219,234,254,.95); }
-.roomNameOverlay.lighting { background:rgba(254,249,195,.95); }
 </style>
 
 <script>
@@ -174,13 +171,27 @@ let points = [];
 let scale = 1;
 let panX = 0;
 let panY = 0;
-let isPanning = false;
-let panMode = false;
+let isDragging = false;
+let didDrag = false;
+let dragStart = {x:0, y:0};
 let panStart = {x:0, y:0};
+
+function updateDrawingStatus() {
+    if (drawingMode.checked) {
+        drawStatus.textContent = points.length ? `${points.length} point(s) placed` : "Drawing mode is on";
+        svg.classList.add("drawing");
+        svg.classList.remove("notDrawing");
+    } else {
+        drawStatus.textContent = "Drawing mode is off";
+        svg.classList.remove("drawing");
+        svg.classList.add("notDrawing");
+    }
+}
+drawingMode.addEventListener("change", updateDrawingStatus);
+updateDrawingStatus();
 
 function applyTransform() {
     wrap.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    placeLabels();
 }
 
 function resizeSvg() {
@@ -188,7 +199,10 @@ function resizeSvg() {
     let width = 1100;
     let height = 800;
 
-    if (blueprint) {
+    if (blueprint && blueprint.naturalWidth) {
+        width = blueprint.naturalWidth;
+        height = blueprint.naturalHeight;
+    } else if (blueprint) {
         const rect = blueprint.getBoundingClientRect();
         width = Math.max(1100, rect.width / scale || 1100);
         height = Math.max(800, rect.height / scale || 800);
@@ -197,7 +211,6 @@ function resizeSvg() {
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     svg.style.width = width + "px";
     svg.style.height = height + "px";
-    placeLabels();
 }
 
 window.addEventListener("load", () => {
@@ -205,6 +218,11 @@ window.addEventListener("load", () => {
     applyTransform();
 });
 window.addEventListener("resize", resizeSvg);
+
+const blueprintImg = document.getElementById("blueprint");
+if (blueprintImg) {
+    blueprintImg.addEventListener("load", resizeSvg);
+}
 
 function snapValue(v) {
     if (!snapToggle.checked) return v;
@@ -229,22 +247,45 @@ function updateTrace() {
         const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         c.setAttribute("cx", p.x);
         c.setAttribute("cy", p.y);
-        c.setAttribute("r", 5 / scale);
+        c.setAttribute("r", Math.max(4, 5 / scale));
         c.setAttribute("class", "tracePoint");
         pointGroup.appendChild(c);
     });
+    updateDrawingStatus();
 }
 
+viewport.addEventListener("mousedown", (e) => {
+    isDragging = true;
+    didDrag = false;
+    dragStart = { x: e.clientX, y: e.clientY };
+    panStart = { x: panX, y: panY };
+});
+
+viewport.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        didDrag = true;
+        panX = panStart.x + dx;
+        panY = panStart.y + dy;
+        applyTransform();
+    }
+});
+
+document.addEventListener("mouseup", () => {
+    isDragging = false;
+});
+
 viewport.addEventListener("click", function(evt) {
-    // Do not draw when clicking buttons, links, or room labels.
     if (!drawingMode.checked) return;
-    if (panMode || isPanning) return;
+    if (didDrag) return;
     if (evt.target.closest("a") || evt.target.closest("button") || evt.target.closest("input") || evt.target.closest("select")) return;
 
     const p = getPoint(evt);
     points.push(p);
     updateTrace();
-    drawStatus.textContent = `${points.length} point(s) placed`;
 });
 
 viewport.addEventListener("contextmenu", function(evt) {
@@ -252,8 +293,26 @@ viewport.addEventListener("contextmenu", function(evt) {
     evt.preventDefault();
     points.pop();
     updateTrace();
-    drawStatus.textContent = `${points.length} point(s) placed`;
 });
+
+viewport.addEventListener("wheel", (e) => {
+    e.preventDefault();
+
+    const oldScale = scale;
+    const zoomFactor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    scale = Math.min(Math.max(scale * zoomFactor, 0.25), 6);
+
+    const rect = viewport.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Keep the zoom centered under the mouse pointer
+    panX = mouseX - ((mouseX - panX) / oldScale) * scale;
+    panY = mouseY - ((mouseY - panY) / oldScale) * scale;
+
+    applyTransform();
+    updateTrace();
+}, { passive: false });
 
 function finishTrace() {
     if (points.length < 3) {
@@ -271,7 +330,8 @@ function finishTrace() {
     document.getElementById("w").value = Math.max(...xs) - Math.min(...xs);
     document.getElementById("h").value = Math.max(...ys) - Math.min(...ys);
 
-    drawStatus.textContent = "Trace finished — enter room name and save";
+    drawingMode.checked = false;
+    updateDrawingStatus();
     alert("Room trace finished. Now type the room name and click Save Room.");
 }
 
@@ -279,98 +339,17 @@ function clearTrace() {
     points = [];
     document.getElementById("polygon_points").value = "";
     updateTrace();
-    drawStatus.textContent = "Ready to draw";
-}
-
-function zoomIn() {
-    scale = Math.min(scale * 1.25, 5);
-    applyTransform();
-    updateTrace();
-}
-
-function zoomOut() {
-    scale = Math.max(scale / 1.25, 0.35);
-    applyTransform();
-    updateTrace();
-}
-
-function resetView() {
-    scale = 1;
-    panX = 0;
-    panY = 0;
-    applyTransform();
-    updateTrace();
 }
 
 document.addEventListener("keydown", (e) => {
-    if (e.code === "Space") {
-        panMode = true;
-        viewport.style.cursor = "grab";
-        e.preventDefault();
+    // Do not block spaces inside room-name/comment inputs.
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return;
+
+    if (e.key === "Escape") {
+        drawingMode.checked = false;
+        updateDrawingStatus();
     }
 });
-
-document.addEventListener("keyup", (e) => {
-    if (e.code === "Space") {
-        panMode = false;
-        viewport.style.cursor = "default";
-    }
-});
-
-viewport.addEventListener("mousedown", (e) => {
-    if (!panMode) return;
-    isPanning = true;
-    panStart = { x: e.clientX - panX, y: e.clientY - panY };
-    viewport.style.cursor = "grabbing";
-});
-
-viewport.addEventListener("mousemove", (e) => {
-    if (!isPanning) return;
-    panX = e.clientX - panStart.x;
-    panY = e.clientY - panStart.y;
-    applyTransform();
-});
-
-document.addEventListener("mouseup", () => {
-    if (isPanning) {
-        isPanning = false;
-        viewport.style.cursor = panMode ? "grab" : "default";
-    }
-});
-
-viewport.addEventListener("wheel", (e) => {
-    if (e.ctrlKey) {
-        e.preventDefault();
-        if (e.deltaY < 0) zoomIn();
-        else zoomOut();
-    } else {
-        panX -= e.deltaX;
-        panY -= e.deltaY;
-        applyTransform();
-    }
-}, { passive: false });
-
-function testDrawPoint() {
-    points.push({x:100, y:100});
-    updateTrace();
-    drawStatus.textContent = `${points.length} point(s) placed`;
-}
-
-function placeLabels() {
-    document.querySelectorAll(".roomNameOverlay").forEach(label => {
-        const raw = label.dataset.points.trim().split(" ");
-        let xs = [];
-        let ys = [];
-        raw.forEach(pair => {
-            const [x,y] = pair.split(",").map(Number);
-            xs.push(x);
-            ys.push(y);
-        });
-        if (xs.length) {
-            label.style.left = (Math.min(...xs) + 6) + "px";
-            label.style.top = (Math.min(...ys) + 6) + "px";
-        }
-    });
-}
 </script>
 {% endblock %}

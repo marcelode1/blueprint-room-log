@@ -104,3 +104,15 @@ Save this ZIP offline for protection.
 ## Reliable Drawing Fix
 
 This version captures drawing clicks from the entire blueprint viewport instead of depending on the PDF iframe/SVG to receive clicks. It also includes a Test Dot button to confirm drawing works.
+
+## Fixes Added
+
+- Room name now allows spaces.
+- Removed Test Dot.
+- Drawing Mode starts OFF.
+- Mouse wheel zooms in/out over the blueprint.
+- Click-and-drag pans the blueprint.
+- Added highlight colors.
+- Room names are no longer button overlays.
+- Click/touch anywhere inside a saved room polygon opens that room.
+- PDF blueprints are converted to PNG previews for better mobile support.
