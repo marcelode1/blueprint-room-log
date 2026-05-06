@@ -69,3 +69,7 @@ Room photo uploads:
 - WEBP
 
 Note: iPhone HEIC photos may need conversion to JPG unless the phone/browser converts them automatically.
+
+## Room Tracing
+
+Rooms are now created by clicking around the room walls to create a polygon shape, instead of drawing only rectangles.

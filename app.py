@@ -73,6 +73,7 @@ def init_db():
         y REAL NOT NULL,
         w REAL NOT NULL,
         h REAL NOT NULL,
+        polygon_points TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(project_id) REFERENCES projects(id)
     )
@@ -91,6 +92,12 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
+
+    try:
+        cur.execute("ALTER TABLE rooms ADD COLUMN polygon_points TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
 
@@ -232,15 +239,22 @@ def project(project_id):
 @login_required
 def add_room(project_id):
     name = request.form["name"].strip()
-    x = float(request.form["x"])
-    y = float(request.form["y"])
-    w = float(request.form["w"])
-    h = float(request.form["h"])
+    polygon_points = request.form.get("polygon_points", "").strip()
+
+    # Keep these old rectangle fields for compatibility, but polygon is now the main method.
+    x = float(request.form.get("x") or 0)
+    y = float(request.form.get("y") or 0)
+    w = float(request.form.get("w") or 0)
+    h = float(request.form.get("h") or 0)
+
+    if not polygon_points:
+        flash("Please trace the room before saving.")
+        return redirect(url_for("project", project_id=project_id))
 
     conn = db()
     conn.execute(
-        "INSERT INTO rooms (project_id, name, x, y, w, h, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (project_id, name, x, y, w, h, datetime.now().isoformat())
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, name, x, y, w, h, polygon_points, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
