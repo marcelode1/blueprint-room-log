@@ -100,3 +100,7 @@ This creates a ZIP file containing:
 - uploaded blueprints and photos
 
 Save this ZIP offline for protection.
+
+## Reliable Drawing Fix
+
+This version captures drawing clicks from the entire blueprint viewport instead of depending on the PDF iframe/SVG to receive clicks. It also includes a Test Dot button to confirm drawing works.
