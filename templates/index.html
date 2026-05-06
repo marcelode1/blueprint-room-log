@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Projects</h2>
+    <a class="btn-link" href="{{ url_for('new_project') }}">Create New Project</a>
+</div>
+
+<div class="grid">
+{% for p in projects %}
+    <div class="card">
+        <h3>{{ p.name }}</h3>
+        <p>Created: {{ p.created_at[:10] }}</p>
+        <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
+    </div>
+{% else %}
+    <div class="card">No projects yet.</div>
+{% endfor %}
+</div>
+{% endblock %}

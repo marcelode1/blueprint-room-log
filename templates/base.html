@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+    <title>Blueprint Room Log</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #f6f6f6; color: #222; }
+        header { background: #1f2937; color: white; padding: 14px 20px; display:flex; justify-content:space-between; align-items:center; }
+        header a { color: white; margin-left: 12px; text-decoration:none; }
+        main { padding: 20px; max-width: 1200px; margin: auto; }
+        .card { background:white; padding:18px; border-radius:10px; margin-bottom:16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+        input, textarea, select, button { padding:10px; margin:6px 0; width:100%; box-sizing:border-box; }
+        button { background:#2563eb; color:white; border:0; border-radius:6px; cursor:pointer; font-weight:bold; }
+        .btn-secondary { background:#4b5563; }
+        .btn-link { display:inline-block; padding:10px 12px; background:#2563eb; color:white; text-decoration:none; border-radius:6px; }
+        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:14px; }
+        img.photo { max-width:100%; border-radius:8px; border:1px solid #ddd; }
+        .flash { background:#fff3cd; padding:10px; border-radius:8px; margin-bottom:12px; }
+    </style>
+</head>
+<body>
+<header>
+    <div><strong>Blueprint Room Log</strong></div>
+    <div>
+        {% if session.get("user_id") %}
+            {{ session.get("name") }}
+            <a href="{{ url_for('index') }}">Projects</a>
+            {% if session.get("role") == "admin" %}
+                <a href="{{ url_for('users') }}">Users</a>
+            {% endif %}
+            <a href="{{ url_for('logout') }}">Logout</a>
+        {% endif %}
+    </div>
+</header>
+<main>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for msg in messages %}
+          <div class="flash">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+</main>
+</body>
+</html>

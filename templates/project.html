@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{{ project.name }}</h2>
+    <p>Draw a rectangle over a room, then give that room a name. After that, click the room box to open comments/photos. Blueprints can be PDF or image files.</p>
+</div>
+
+<div class="card">
+    <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
+        <label>Room Name</label>
+        <input id="roomName" name="name" placeholder="Example: Master Bedroom" required>
+        <input type="hidden" id="x" name="x">
+        <input type="hidden" id="y" name="y">
+        <input type="hidden" id="w" name="w">
+        <input type="hidden" id="h" name="h">
+        <button type="submit">Save Selected Room</button>
+    </form>
+</div>
+
+<div class="card" style="overflow:auto;">
+    <div id="blueprintWrap" style="position:relative; display:inline-block;">
+        {% if project.blueprint_file %}
+            {% if project.blueprint_file.lower().endswith('.pdf') %}
+                <iframe id="blueprint"
+                        src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}#toolbar=0&navpanes=0&scrollbar=0"
+                        style="width:1100px; height:800px; border:1px solid #ccc; display:block;"></iframe>
+                <p><strong>PDF note:</strong> For best room selection accuracy, use the first-page plan view and zoom your browser as needed.</p>
+            {% else %}
+                <img id="blueprint" src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}" style="max-width:100%; display:block;">
+            {% endif %}
+        {% endif %}
+
+        {% for r in rooms %}
+            <a href="{{ url_for('room', room_id=r.id) }}"
+               class="roomBox"
+               style="left:{{ r.x }}%; top:{{ r.y }}%; width:{{ r.w }}%; height:{{ r.h }}%;">
+                <span>{{ r.name }}</span>
+            </a>
+        {% endfor %}
+        <div id="selection"></div>
+    </div>
+</div>
+
+<style>
+.roomBox {
+    position:absolute;
+    border:2px solid #ef4444;
+    background:rgba(239,68,68,.13);
+    color:#111;
+    text-decoration:none;
+    font-weight:bold;
+    font-size:13px;
+    overflow:hidden;
+}
+.roomBox span {
+    background:rgba(255,255,255,.85);
+    padding:2px 4px;
+}
+#selection {
+    position:absolute;
+    border:2px dashed #2563eb;
+    background:rgba(37,99,235,.12);
+    display:none;
+    pointer-events:none;
+}
+</style>
+
+<script>
+const wrap = document.getElementById("blueprintWrap");
+const selection = document.getElementById("selection");
+let startX, startY, drawing = false;
+
+function getPercentRect(e) {
+    const rect = wrap.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    return { x, y, width: rect.width, height: rect.height };
+}
+
+wrap.addEventListener("mousedown", function(e) {
+    if (e.target.classList.contains("roomBox") || e.target.closest(".roomBox")) return;
+    drawing = true;
+    const p = getPercentRect(e);
+    startX = p.x;
+    startY = p.y;
+    selection.style.display = "block";
+});
+
+wrap.addEventListener("mousemove", function(e) {
+    if (!drawing) return;
+    const p = getPercentRect(e);
+    let x = Math.min(startX, p.x);
+    let y = Math.min(startY, p.y);
+    let w = Math.abs(p.x - startX);
+    let h = Math.abs(p.y - startY);
+
+    selection.style.left = x + "%";
+    selection.style.top = y + "%";
+    selection.style.width = w + "%";
+    selection.style.height = h + "%";
+
+    document.getElementById("x").value = x.toFixed(3);
+    document.getElementById("y").value = y.toFixed(3);
+    document.getElementById("w").value = w.toFixed(3);
+    document.getElementById("h").value = h.toFixed(3);
+});
+
+wrap.addEventListener("mouseup", function() {
+    drawing = false;
+});
+</script>
+{% endblock %}

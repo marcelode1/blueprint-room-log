@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>New Project</h2>
+    <form method="post" enctype="multipart/form-data">
+        <label>Project Name</label>
+        <input name="name" required>
+        <label>Upload Blueprint Image/PDF Screenshot</label>
+        <input name="blueprint" type="file" accept=".pdf,image/*" required>
+        <button type="submit">Create Project</button>
+    </form>
+    <p>You can upload the blueprint as PDF, JPG, PNG, or WEBP.</p>
+</div>
+{% endblock %}

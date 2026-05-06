@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Add Customer / Worker</h2>
+    <form method="post">
+        <label>Name</label>
+        <input name="name" required>
+        <label>Email</label>
+        <input name="email" type="email" required>
+        <label>Password</label>
+        <input name="password" type="password" required>
+        <label>Role</label>
+        <select name="role">
+            <option value="customer">Customer</option>
+            <option value="worker">Worker</option>
+            <option value="admin">Admin</option>
+        </select>
+        <button type="submit">Add User</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Users</h2>
+    {% for u in users %}
+        <p><strong>{{ u.name }}</strong> — {{ u.email }} — {{ u.role }}</p>
+    {% endfor %}
+</div>
+{% endblock %}
