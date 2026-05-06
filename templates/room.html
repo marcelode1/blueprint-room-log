@@ -3,6 +3,7 @@
 <div class="card">
     <h2>{{ room.name }}</h2>
     <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
+    <p><a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a></p>
 </div>
 
 <div class="grid">

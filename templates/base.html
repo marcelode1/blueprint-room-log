@@ -27,6 +27,7 @@
             <a href="{{ url_for('index') }}">Projects</a>
             {% if session.get("role") == "admin" %}
                 <a href="{{ url_for('users') }}">Users</a>
+                <a href="{{ url_for('backup') }}">Download Backup</a>
             {% endif %}
             <a href="{{ url_for('logout') }}">Logout</a>
         {% endif %}

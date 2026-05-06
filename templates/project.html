@@ -2,111 +2,375 @@
 {% block content %}
 <div class="card">
     <h2>{{ project.name }}</h2>
-    <p>Draw a rectangle over a room, then give that room a name. After that, click the room box to open comments/photos. Blueprints can be PDF or image files.</p>
+    <p>
+        Trace each room by clicking around the room walls. Turn on <strong>Snap</strong> for more precise points.
+        Use zoom and pan for large blueprints.
+    </p>
+    <p>
+        <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    </p>
 </div>
 
 <div class="card">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
-        <label>Room Name</label>
-        <input id="roomName" name="name" placeholder="Example: Master Bedroom" required>
-        <input type="hidden" id="x" name="x">
-        <input type="hidden" id="y" name="y">
-        <input type="hidden" id="w" name="w">
-        <input type="hidden" id="h" name="h">
-        <button type="submit">Save Selected Room</button>
+        <div class="grid">
+            <div>
+                <label>Room Name</label>
+                <input id="roomName" name="name" placeholder="Example: Master Bedroom" required>
+            </div>
+            <div>
+                <label>Room Type / Color</label>
+                <select id="category" name="category">
+                    <option value="general">General / Other</option>
+                    <option value="electrical">Electrical</option>
+                    <option value="av">AV / Low Voltage</option>
+                    <option value="lighting">Lighting</option>
+                </select>
+            </div>
+        </div>
+
+        <input type="hidden" id="polygon_points" name="polygon_points">
+        <input type="hidden" id="x" name="x" value="0">
+        <input type="hidden" id="y" name="y" value="0">
+        <input type="hidden" id="w" name="w" value="0">
+        <input type="hidden" id="h" name="h" value="0">
+
+        <button type="button" onclick="finishTrace()">Finish Room Trace</button>
+        <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
+        <button type="submit">Save Room</button>
     </form>
 </div>
 
-<div class="card" style="overflow:auto;">
-    <div id="blueprintWrap" style="position:relative; display:inline-block;">
-        {% if project.blueprint_file %}
-            {% if project.blueprint_file.lower().endswith('.pdf') %}
-                <iframe id="blueprint"
-                        src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}#toolbar=0&navpanes=0&scrollbar=0"
-                        style="width:1100px; height:800px; border:1px solid #ccc; display:block;"></iframe>
-                <p><strong>PDF note:</strong> For best room selection accuracy, use the first-page plan view and zoom your browser as needed.</p>
-            {% else %}
-                <img id="blueprint" src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}" style="max-width:100%; display:block;">
-            {% endif %}
-        {% endif %}
+<div class="card">
+    <div class="grid">
+        <div>
+            <label><input type="checkbox" id="snapToggle" checked> Snap-to-wall / grid</label>
+            <label>Snap size</label>
+            <input type="range" min="5" max="40" value="15" id="snapSize">
+        </div>
+        <div>
+            <button type="button" onclick="zoomIn()">Zoom In</button>
+            <button type="button" onclick="zoomOut()" class="btn-secondary">Zoom Out</button>
+            <button type="button" onclick="resetView()" class="btn-secondary">Reset View</button>
+            <button type="button" onclick="testDrawPoint()" class="btn-secondary">Test Dot</button>
+        </div>
+        <div>
+            <p><strong>Pan:</strong> hold Spacebar and drag, or use two-finger trackpad scroll.</p>
+            <p><strong>Undo:</strong> right-click removes the last point.</p>
+        </div>
+    </div>
+</div>
 
-        {% for r in rooms %}
-            <a href="{{ url_for('room', room_id=r.id) }}"
-               class="roomBox"
-               style="left:{{ r.x }}%; top:{{ r.y }}%; width:{{ r.w }}%; height:{{ r.h }}%;">
-                <span>{{ r.name }}</span>
-            </a>
-        {% endfor %}
-        <div id="selection"></div>
+<div class="card" style="overflow:auto;">
+    <p><strong>How to trace:</strong> Make sure <strong>Drawing Mode</strong> is ON, then click around the room walls. Each click places a dot. Use many points for irregular rooms. When done, click “Finish Room Trace”.</p>
+    <p>
+        <label><input type="checkbox" id="drawingMode" checked> Drawing Mode ON</label>
+        <span id="drawStatus" style="font-weight:bold; margin-left:12px;">Ready to draw</span>
+    </p>
+
+    <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative;">
+        <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
+            {% if project.blueprint_file %}
+                {% if project.blueprint_file.lower().endswith('.pdf') %}
+                    <iframe id="blueprint"
+                            src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}#toolbar=0&navpanes=0&scrollbar=0"
+                            style="width:1100px; height:800px; border:1px solid #ccc; display:block; pointer-events:none;"></iframe>
+                {% else %}
+                    <img id="blueprint" src="{{ url_for('uploaded_file', filename=project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
+                {% endif %}
+            {% endif %}
+
+            <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; pointer-events:none; z-index:10;">
+                {% for r in rooms %}
+                    {% if r.polygon_points %}
+                        <polygon points="{{ r.polygon_points }}"
+                                     class="savedRoom {{ r.category or 'general' }}"></polygon>
+                    {% endif %}
+                {% endfor %}
+                <polyline id="currentLine" points="" class="currentLine"></polyline>
+                <polygon id="currentPolygon" points="" class="currentPolygon"></polygon>
+                <g id="pointGroup"></g>
+            </svg>
+
+            {% for r in rooms %}
+                {% if r.polygon_points %}
+                    <a href="{{ url_for('room', room_id=r.id) }}"
+                       class="roomNameOverlay {{ r.category or 'general' }}"
+                       data-points="{{ r.polygon_points }}">{{ r.name }}</a>
+                {% endif %}
+            {% endfor %}
+        </div>
     </div>
 </div>
 
 <style>
-.roomBox {
+.savedRoom {
+    stroke-width: 2;
+    cursor: pointer;
+}
+.savedRoom:hover {
+    fill: rgba(37,99,235,.28);
+    stroke: #2563eb;
+}
+.savedRoom.general { fill: rgba(107,114,128,.18); stroke: #6b7280; }
+.savedRoom.electrical { fill: rgba(245,158,11,.22); stroke: #f59e0b; }
+.savedRoom.av { fill: rgba(59,130,246,.20); stroke: #3b82f6; }
+.savedRoom.lighting { fill: rgba(234,179,8,.22); stroke: #eab308; }
+
+.currentLine {
+    fill: none;
+    stroke: #2563eb;
+    stroke-width: 3;
+    stroke-dasharray: 6 4;
+}
+.currentPolygon {
+    fill: rgba(37,99,235,.15);
+    stroke: #2563eb;
+    stroke-width: 2;
+}
+#roomSvg {
+    cursor: crosshair;
+}
+.tracePoint {
+    fill: #2563eb;
+    stroke: white;
+    stroke-width: 2;
+}
+.snapPreview {
+    fill: #dc2626;
+    stroke: white;
+    stroke-width: 2;
+}
+.roomNameOverlay {
     position:absolute;
-    border:2px solid #ef4444;
-    background:rgba(239,68,68,.13);
     color:#111;
-    text-decoration:none;
     font-weight:bold;
     font-size:13px;
-    overflow:hidden;
+    padding:3px 6px;
+    border-radius:4px;
+    text-decoration:none;
+    border:1px solid #ddd;
+    z-index:30;
 }
-.roomBox span {
-    background:rgba(255,255,255,.85);
-    padding:2px 4px;
-}
-#selection {
-    position:absolute;
-    border:2px dashed #2563eb;
-    background:rgba(37,99,235,.12);
-    display:none;
-    pointer-events:none;
-}
+.roomNameOverlay.general { background:rgba(255,255,255,.9); }
+.roomNameOverlay.electrical { background:rgba(254,243,199,.95); }
+.roomNameOverlay.av { background:rgba(219,234,254,.95); }
+.roomNameOverlay.lighting { background:rgba(254,249,195,.95); }
 </style>
 
 <script>
+const viewport = document.getElementById("viewport");
 const wrap = document.getElementById("blueprintWrap");
-const selection = document.getElementById("selection");
-let startX, startY, drawing = false;
+const svg = document.getElementById("roomSvg");
+const currentLine = document.getElementById("currentLine");
+const currentPolygon = document.getElementById("currentPolygon");
+const pointGroup = document.getElementById("pointGroup");
+const snapToggle = document.getElementById("snapToggle");
+const snapSizeInput = document.getElementById("snapSize");
+const drawingMode = document.getElementById("drawingMode");
+const drawStatus = document.getElementById("drawStatus");
 
-function getPercentRect(e) {
-    const rect = wrap.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    return { x, y, width: rect.width, height: rect.height };
+let points = [];
+let scale = 1;
+let panX = 0;
+let panY = 0;
+let isPanning = false;
+let panMode = false;
+let panStart = {x:0, y:0};
+
+function applyTransform() {
+    wrap.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    placeLabels();
 }
 
-wrap.addEventListener("mousedown", function(e) {
-    if (e.target.classList.contains("roomBox") || e.target.closest(".roomBox")) return;
-    drawing = true;
-    const p = getPercentRect(e);
-    startX = p.x;
-    startY = p.y;
-    selection.style.display = "block";
+function resizeSvg() {
+    const blueprint = document.getElementById("blueprint");
+    let width = 1100;
+    let height = 800;
+
+    if (blueprint) {
+        const rect = blueprint.getBoundingClientRect();
+        width = Math.max(1100, rect.width / scale || 1100);
+        height = Math.max(800, rect.height / scale || 800);
+    }
+
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.style.width = width + "px";
+    svg.style.height = height + "px";
+    placeLabels();
+}
+
+window.addEventListener("load", () => {
+    resizeSvg();
+    applyTransform();
+});
+window.addEventListener("resize", resizeSvg);
+
+function snapValue(v) {
+    if (!snapToggle.checked) return v;
+    const grid = parseInt(snapSizeInput.value || "15");
+    return Math.round(v / grid) * grid;
+}
+
+function getPoint(evt) {
+    const viewportRect = viewport.getBoundingClientRect();
+    const x = (evt.clientX - viewportRect.left - panX) / scale;
+    const y = (evt.clientY - viewportRect.top - panY) / scale;
+    return { x: snapValue(x), y: snapValue(y) };
+}
+
+function updateTrace() {
+    const pointString = points.map(p => `${p.x},${p.y}`).join(" ");
+    currentLine.setAttribute("points", pointString);
+    currentPolygon.setAttribute("points", pointString);
+
+    pointGroup.innerHTML = "";
+    points.forEach(p => {
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("cx", p.x);
+        c.setAttribute("cy", p.y);
+        c.setAttribute("r", 5 / scale);
+        c.setAttribute("class", "tracePoint");
+        pointGroup.appendChild(c);
+    });
+}
+
+viewport.addEventListener("click", function(evt) {
+    // Do not draw when clicking buttons, links, or room labels.
+    if (!drawingMode.checked) return;
+    if (panMode || isPanning) return;
+    if (evt.target.closest("a") || evt.target.closest("button") || evt.target.closest("input") || evt.target.closest("select")) return;
+
+    const p = getPoint(evt);
+    points.push(p);
+    updateTrace();
+    drawStatus.textContent = `${points.length} point(s) placed`;
 });
 
-wrap.addEventListener("mousemove", function(e) {
-    if (!drawing) return;
-    const p = getPercentRect(e);
-    let x = Math.min(startX, p.x);
-    let y = Math.min(startY, p.y);
-    let w = Math.abs(p.x - startX);
-    let h = Math.abs(p.y - startY);
-
-    selection.style.left = x + "%";
-    selection.style.top = y + "%";
-    selection.style.width = w + "%";
-    selection.style.height = h + "%";
-
-    document.getElementById("x").value = x.toFixed(3);
-    document.getElementById("y").value = y.toFixed(3);
-    document.getElementById("w").value = w.toFixed(3);
-    document.getElementById("h").value = h.toFixed(3);
+viewport.addEventListener("contextmenu", function(evt) {
+    if (!drawingMode.checked) return;
+    evt.preventDefault();
+    points.pop();
+    updateTrace();
+    drawStatus.textContent = `${points.length} point(s) placed`;
 });
 
-wrap.addEventListener("mouseup", function() {
-    drawing = false;
+function finishTrace() {
+    if (points.length < 3) {
+        alert("Please click at least 3 points to create a room shape.");
+        return;
+    }
+
+    const pointString = points.map(p => `${Math.round(p.x)},${Math.round(p.y)}`).join(" ");
+    document.getElementById("polygon_points").value = pointString;
+
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    document.getElementById("x").value = Math.min(...xs);
+    document.getElementById("y").value = Math.min(...ys);
+    document.getElementById("w").value = Math.max(...xs) - Math.min(...xs);
+    document.getElementById("h").value = Math.max(...ys) - Math.min(...ys);
+
+    drawStatus.textContent = "Trace finished — enter room name and save";
+    alert("Room trace finished. Now type the room name and click Save Room.");
+}
+
+function clearTrace() {
+    points = [];
+    document.getElementById("polygon_points").value = "";
+    updateTrace();
+    drawStatus.textContent = "Ready to draw";
+}
+
+function zoomIn() {
+    scale = Math.min(scale * 1.25, 5);
+    applyTransform();
+    updateTrace();
+}
+
+function zoomOut() {
+    scale = Math.max(scale / 1.25, 0.35);
+    applyTransform();
+    updateTrace();
+}
+
+function resetView() {
+    scale = 1;
+    panX = 0;
+    panY = 0;
+    applyTransform();
+    updateTrace();
+}
+
+document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+        panMode = true;
+        viewport.style.cursor = "grab";
+        e.preventDefault();
+    }
 });
+
+document.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+        panMode = false;
+        viewport.style.cursor = "default";
+    }
+});
+
+viewport.addEventListener("mousedown", (e) => {
+    if (!panMode) return;
+    isPanning = true;
+    panStart = { x: e.clientX - panX, y: e.clientY - panY };
+    viewport.style.cursor = "grabbing";
+});
+
+viewport.addEventListener("mousemove", (e) => {
+    if (!isPanning) return;
+    panX = e.clientX - panStart.x;
+    panY = e.clientY - panStart.y;
+    applyTransform();
+});
+
+document.addEventListener("mouseup", () => {
+    if (isPanning) {
+        isPanning = false;
+        viewport.style.cursor = panMode ? "grab" : "default";
+    }
+});
+
+viewport.addEventListener("wheel", (e) => {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        if (e.deltaY < 0) zoomIn();
+        else zoomOut();
+    } else {
+        panX -= e.deltaX;
+        panY -= e.deltaY;
+        applyTransform();
+    }
+}, { passive: false });
+
+function testDrawPoint() {
+    points.push({x:100, y:100});
+    updateTrace();
+    drawStatus.textContent = `${points.length} point(s) placed`;
+}
+
+function placeLabels() {
+    document.querySelectorAll(".roomNameOverlay").forEach(label => {
+        const raw = label.dataset.points.trim().split(" ");
+        let xs = [];
+        let ys = [];
+        raw.forEach(pair => {
+            const [x,y] = pair.split(",").map(Number);
+            xs.push(x);
+            ys.push(y);
+        });
+        if (xs.length) {
+            label.style.left = (Math.min(...xs) + 6) + "px";
+            label.style.top = (Math.min(...ys) + 6) + "px";
+        }
+    });
+}
 </script>
 {% endblock %}
