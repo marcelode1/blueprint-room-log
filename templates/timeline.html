@@ -2,67 +2,24 @@
 {% block content %}
 <div class="card">
     <h2>Timeline — {{ project.name }}</h2>
-    <p>
-        <a class="btn-link" href="{{ url_for('project', project_id=project.id) }}">Back to Blueprint</a>
-    </p>
+    <a class="btn-link" href="{{ url_for('project', project_id=project.id) }}">Back to Blueprint</a>
 </div>
-
 <div class="card">
-    <h3>Filter by Date</h3>
     <form method="get">
         <input name="date" type="date" value="{{ selected_date }}">
         <button type="submit">Show Selected Date</button>
         <a class="btn-link btn-secondary" href="{{ url_for('project_timeline', project_id=project.id) }}">Show All</a>
     </form>
 </div>
-
 <div class="card">
-    <h3>Project Decisions / Comments</h3>
-
     {% for n in notes %}
-        <div class="timelineItem {{ n.room_category or 'general' }}">
-            <div class="timelineDate">{{ n.note_date }}</div>
-            <div class="timelineBody">
-                <h4>{{ n.room_name }} <span>— {{ n.room_category or 'general' }}</span></h4>
-                <p><strong>By:</strong> {{ n.user_name or "Unknown user" }}</p>
-                <p>{{ n.comment }}</p>
-                {% if n.photo_file %}
-                    <img class="photo" src="{{ url_for('uploaded_file', filename=n.photo_file) }}">
-                {% endif %}
-            </div>
+        <div class="card">
+            <strong>{{ n.note_date }}</strong> — {{ n.room_name }} — {{ n.user_name or "Unknown user" }}
+            <p>{{ n.comment }}</p>
+            {% if n.photo_file %}<img class="photo" src="{{ file_url(n.photo_file) }}">{% endif %}
         </div>
     {% else %}
         <p>No timeline records found.</p>
     {% endfor %}
 </div>
-
-<style>
-.timelineItem {
-    display:grid;
-    grid-template-columns: 150px 1fr;
-    gap:16px;
-    padding:14px;
-    border-left:6px solid #aaa;
-    background:#fff;
-    margin-bottom:14px;
-    border-radius:8px;
-}
-.timelineDate {
-    font-weight:bold;
-}
-.timelineBody h4 {
-    margin:0 0 8px 0;
-}
-.timelineBody h4 span {
-    font-size:13px;
-    color:#555;
-}
-.timelineItem.general { border-left-color:#6b7280; }
-.timelineItem.electrical { border-left-color:#f59e0b; }
-.timelineItem.av { border-left-color:#3b82f6; }
-.timelineItem.lighting { border-left-color:#eab308; }
-@media(max-width:700px) {
-    .timelineItem { grid-template-columns:1fr; }
-}
-</style>
 {% endblock %}

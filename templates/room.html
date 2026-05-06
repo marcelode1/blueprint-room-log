@@ -3,46 +3,37 @@
 <div class="card">
     <h2>{{ room.name }}</h2>
     <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
-    <p><a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a></p>
+    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
 </div>
-
 <div class="grid">
     <div class="card">
         <h3>Add Comment / Picture</h3>
         <form method="post" enctype="multipart/form-data">
-            <label>Date of decision/comment</label>
-            <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
-            <label>Comment</label>
-            <textarea name="comment" rows="5" required placeholder="Example: Customer approved 4 recessed lights and one keypad near entry."></textarea>
-            <label>Photo</label>
-            <input name="photo" type="file" accept="image/*">
+            <label>Date</label><input name="note_date" type="date" value="{{ selected_date or '' }}" required>
+            <label>Comment</label><textarea name="comment" rows="5" required></textarea>
+            <label>Photo</label><input name="photo" type="file" accept="image/*">
             <button type="submit">Save</button>
         </form>
     </div>
-
     <div class="card">
-        <h3>Calendar / Date Filter</h3>
+        <h3>Filter by Date</h3>
         <form method="get">
-            <label>Show notes from date</label>
             <input name="date" type="date" value="{{ selected_date }}">
-            <button type="submit">Show Selected Date</button>
+            <button type="submit">Show Date</button>
             <a class="btn-link btn-secondary" href="{{ url_for('room', room_id=room.id) }}">Show All</a>
         </form>
     </div>
 </div>
-
 <div class="card">
     <h3>Comments and Pictures</h3>
     {% for n in notes %}
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or "Unknown user" }}
             <p>{{ n.comment }}</p>
-            {% if n.photo_file %}
-                <img class="photo" src="{{ url_for('uploaded_file', filename=n.photo_file) }}">
-            {% endif %}
+            {% if n.photo_file %}<img class="photo" src="{{ file_url(n.photo_file) }}">{% endif %}
         </div>
     {% else %}
-        <p>No comments/photos for this room/date.</p>
+        <p>No comments/photos.</p>
     {% endfor %}
 </div>
 {% endblock %}
