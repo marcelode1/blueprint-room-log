@@ -1,24 +1,113 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
     <h2>Add Customer / Worker</h2>
     <form method="post">
-        <label>Name</label><input name="name" required>
-        <label>Email</label><input name="email" type="email" required>
-        <label>Password</label><input name="password" type="password" required>
+        <label>Name</label>
+        <input name="name" required>
+
+        <label>Email</label>
+        <input name="email" type="email" required>
+
+        <label>Password</label>
+        <input name="password" type="password" required>
+
         <label>Role</label>
         <select name="role">
             <option value="customer">Customer</option>
             <option value="worker">Worker</option>
             <option value="admin">Admin</option>
         </select>
+
         <button type="submit">Add User</button>
     </form>
 </div>
+
 <div class="card">
     <h2>Users</h2>
+
+    <style>
+        .userRow {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: white;
+        }
+        .deleteConfirm {
+            display: none;
+            margin-top: 8px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #fff3cd;
+        }
+        .confirmButtons {
+            display: flex;
+            gap: 8px;
+        }
+        .confirmButtons button {
+            width: auto;
+            min-width: 90px;
+        }
+        @media(max-width:700px){
+            .userRow { grid-template-columns: 1fr; }
+            .confirmButtons { flex-direction: column; }
+            .confirmButtons button { width: 100%; }
+        }
+    </style>
+
     {% for u in users %}
-        <p><strong>{{ u.name }}</strong> — {{ u.email }} — {{ u.role }}</p>
+        <div class="userRow">
+            <div>
+                <strong>{{ u.name }}</strong><br>
+                <span>{{ u.email }}</span><br>
+                <small>Role: {{ u.role }}</small>
+            </div>
+
+            <div>
+                {% if u.id != session.get("user_id") %}
+                    <button type="button" class="btn-danger" onclick="showDeleteConfirm('{{ u.id }}')">
+                        Delete
+                    </button>
+
+                    <div class="deleteConfirm" id="deleteConfirm{{ u.id }}">
+                        <strong>Delete this user?</strong>
+                        <p>This cannot be undone.</p>
+
+                        <div class="confirmButtons">
+                            <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}">
+                                <button type="submit" class="btn-danger">Yes</button>
+                            </form>
+
+                            <button type="button" class="btn-secondary" onclick="hideDeleteConfirm('{{ u.id }}')">
+                                No
+                            </button>
+                        </div>
+                    </div>
+                {% else %}
+                    <small>You are logged in with this account</small>
+                {% endif %}
+            </div>
+        </div>
+    {% else %}
+        <p>No users found.</p>
     {% endfor %}
 </div>
+
+<script>
+function showDeleteConfirm(userId) {
+    const box = document.getElementById("deleteConfirm" + userId);
+    if (box) box.style.display = "block";
+}
+
+function hideDeleteConfirm(userId) {
+    const box = document.getElementById("deleteConfirm" + userId);
+    if (box) box.style.display = "none";
+}
+</script>
 {% endblock %}

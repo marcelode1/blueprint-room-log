@@ -555,6 +555,30 @@ def users():
     return render_template("users.html", users=users)
 
 
+
+
+@app.route("/users/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def delete_user(user_id):
+    if user_id == session.get("user_id"):
+        flash("You cannot delete your own admin account while logged in.")
+        return redirect(url_for("users"))
+
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+
+    conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+
+    flash("User deleted.")
+    return redirect(url_for("users"))
+
+
 @app.route("/projects/new", methods=["GET", "POST"])
 @admin_required
 def new_project():
