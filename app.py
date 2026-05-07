@@ -105,7 +105,7 @@ def create_pdf_preview_from_bytes(pdf_bytes):
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page = doc.load_page(0)
-        pix = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
         png_bytes = pix.tobytes("png")
         doc.close()
         preview_path = upload_bytes_to_storage(
