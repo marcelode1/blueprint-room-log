@@ -5,22 +5,14 @@
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
-    <p class="muted">Blueprint editing is available on the PC version only.</p>
+    <p>Blueprint editor is available on the PC version only.</p>
 </div>
-
 <div class="card">
     <h3>Rooms</h3>
-    <div class="roomScroller">
-        {% for r in rooms %}
-            <a class="roomChip" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
-        {% else %}
-            <p>No rooms created yet. Create rooms from the PC version.</p>
-        {% endfor %}
-    </div>
+    {% for r in rooms %}
+        <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
+    {% else %}
+        <p>No rooms created yet. Create rooms from the PC version.</p>
+    {% endfor %}
 </div>
-
-<style>
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}
-.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:16px 20px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:150px;text-align:center}
-</style>
 {% endblock %}

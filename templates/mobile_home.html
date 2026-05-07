@@ -3,9 +3,8 @@
 {% block content %}
 <div class="card">
     <h1>Projectonus Mobile</h1>
-    <p class="muted">Field app for projects, rooms, pictures, comments, and audio.</p>
+    <p>Field version for projects, rooms, pictures, comments, and audio.</p>
 </div>
-
 <div class="card" id="search">
     <h2>Search Projects</h2>
     <form method="get" action="{{ url_for('mobile_home') }}">
@@ -13,7 +12,6 @@
         <button type="submit">Search</button>
     </form>
 </div>
-
 <div class="card">
     <h2>Projects</h2>
     {% for p in projects %}
