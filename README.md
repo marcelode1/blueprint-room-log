@@ -34,3 +34,27 @@ For best phone support, upload a PDF after this version is deployed so the app c
 This version serves Supabase Storage files through the app using /storage_file/.
 It also adds a "Regenerate PDF Preview" button on PDF blueprint projects.
 Use this if an uploaded PDF shows as a broken image or "something went wrong."
+
+
+## High-Resolution PDF Viewer Fix
+
+This version stops converting PDF blueprints on the Render server.
+Instead, it renders the PDF in the user's browser using PDF.js at high resolution.
+This keeps blueprint lines sharper and avoids Bad Gateway crashes from server memory limits.
+
+
+## V3 Mobile/PWA + Permissions
+
+- Browser cloud app for computer.
+- Installable PWA-style app on Android from browser.
+- Main admin only:
+  - Create projects
+  - Delete projects
+  - Delete comments/photos/audio
+  - Manage users
+  - Download backup
+- Workers can add room comments, pictures, and audio.
+- Customers can view projects, rooms, comments, and photos.
+- Project creation asks for customer name, address, phone, and email.
+- Mobile project cards show only project name, customer name, and address.
+- Room page supports phone camera upload and browser audio recording.

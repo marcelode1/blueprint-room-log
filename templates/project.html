@@ -2,15 +2,32 @@
 {% block content %}
 <div class="card">
     <h2>{{ project.name }}</h2>
-    <p>Turn on Drawing Mode, click around room walls, finish the trace, name the room, and save it.</p>
+    <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
+    <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    <div class="desktop-only">
+        <p><strong>Phone:</strong> {{ project.customer_phone or '-' }}</p>
+        <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
+    </div>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
-    {% if project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
-    <form method="post" action="{{ url_for('regenerate_preview', project_id=project.id) }}" style="margin-top:8px;">
-        <button type="submit" class="btn-secondary">Regenerate PDF Preview</button>
+    {% if is_main_admin() %}
+    <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');" style="margin-top:8px;">
+        <button type="submit" class="btn-danger">Delete Project</button>
     </form>
     {% endif %}
 </div>
 
+<div class="card">
+    <h3>Rooms</h3>
+    <div class="grid">
+        {% for r in rooms %}
+            <a class="btn-link" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+        {% else %}
+            <p>No rooms created yet.</p>
+        {% endfor %}
+    </div>
+</div>
+
+{% if is_main_admin() %}
 <div class="card">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
@@ -48,23 +65,24 @@
         <div><p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p></div>
     </div>
 </div>
+{% else %}
+<div class="card">
+    <p><strong>View-only mode:</strong> choose a room above or click/touch any highlighted room on the blueprint.</p>
+</div>
+{% endif %}
 
 <div class="card">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
-            {% if project.blueprint_preview_file %}
-                <img id="blueprint" src="{{ url_for('storage_file', storage_path=project.blueprint_preview_file) }}" style="max-width:none; display:block; pointer-events:none;">
-            {% elif project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
-                <iframe id="blueprintPdf"
-                        src="{{ url_for('storage_file', storage_path=project.blueprint_file) }}"
-                        style="width:1100px; height:800px; border:1px solid #ccc; display:block; pointer-events:none;"></iframe>
-                <div id="blueprint" style="width:1100px; height:800px; display:none;"></div>
-                <p style="background:#fff3cd; padding:8px; border-radius:6px;">
-                    PDF preview image was not created, so this page is showing the PDF fallback.
-                    For best phone support, re-upload this blueprint after this update is deployed.
-                </p>
-            {% elif project.blueprint_file %}
-                <img id="blueprint" src="{{ url_for('storage_file', storage_path=project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
+            {% if project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
+                <canvas id="blueprint"
+                        data-pdf-url="{{ url_for('storage_file', storage_path=project.blueprint_file) }}"
+                        style="display:block; pointer-events:none; background:white;"></canvas>
+                <div id="pdfStatus" style="padding:8px; background:#eef2ff; border-radius:6px; margin-top:8px;">
+                    Loading high-resolution PDF blueprint...
+                </div>
+            {% elif project.blueprint_preview_file or project.blueprint_file %}
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(project.blueprint_preview_file or project.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}
@@ -93,35 +111,91 @@
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
 </style>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+window.pdfjsLib = pdfjsLib;
+</script>
 <script>
 const viewport=document.getElementById("viewport"),wrap=document.getElementById("blueprintWrap"),svg=document.getElementById("roomSvg");
 const currentLine=document.getElementById("currentLine"),currentPolygon=document.getElementById("currentPolygon"),pointGroup=document.getElementById("pointGroup");
 const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
+
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
+
+async function renderPdfBlueprint(){
+    const canvas=document.getElementById("blueprint");
+    const status=document.getElementById("pdfStatus");
+    if(!canvas || !canvas.dataset || !canvas.dataset.pdfUrl) return;
+
+    // Wait briefly for PDF.js module to be available.
+    let tries=0;
+    while(!window.pdfjsLib && tries<50){
+        await new Promise(r=>setTimeout(r,100));
+        tries++;
+    }
+    if(!window.pdfjsLib){
+        if(status) status.textContent="Could not load PDF viewer. Refresh the page.";
+        return;
+    }
+
+    try{
+        const pdf=await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
+        const page=await pdf.getPage(1);
+
+        // Render with high client-side resolution without using Render server memory.
+        // 3.0 is usually sharp enough for blueprint lines; browser handles it.
+        const viewportPdf=page.getViewport({scale:3.0});
+        canvas.width=Math.floor(viewportPdf.width);
+        canvas.height=Math.floor(viewportPdf.height);
+        canvas.style.width=canvas.width+"px";
+        canvas.style.height=canvas.height+"px";
+
+        await page.render({
+            canvasContext:canvas.getContext("2d"),
+            viewport:viewportPdf
+        }).promise;
+
+        if(status) status.textContent="High-resolution PDF blueprint loaded.";
+        resizeSvg();
+    }catch(err){
+        console.error("PDF.js blueprint render failed:", err);
+        if(status) status.textContent="PDF viewer failed to load this blueprint. Try uploading this sheet as a high-resolution PNG.";
+    }
+}
+
 function applyTransform(){wrap.style.transform=`translate(${panX}px, ${panY}px) scale(${scale})`;}
 function resizeSvg(){
     const b=document.getElementById("blueprint");
-    const pdf=document.getElementById("blueprintPdf");
     let w=1100,h=800;
-    if(b&&b.naturalWidth){w=b.naturalWidth;h=b.naturalHeight;}
-    else if(pdf){w=1100;h=800;}
+    if(b){
+        if(b.tagName && b.tagName.toLowerCase()==="canvas" && b.width && b.height){
+            w=b.width; h=b.height;
+        } else if(b.naturalWidth){
+            w=b.naturalWidth; h=b.naturalHeight;
+        } else {
+            const rect=b.getBoundingClientRect();
+            if(rect.width && rect.height){w=rect.width/scale; h=rect.height/scale;}
+        }
+    }
     svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
     svg.style.width=w+"px";
     svg.style.height=h+"px";
 }
-window.addEventListener("load",()=>{resizeSvg();applyTransform();});window.addEventListener("resize",resizeSvg);const bi=document.getElementById("blueprint");if(bi){bi.addEventListener("load",resizeSvg);}
-function snapValue(v){if(!snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
+window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();});window.addEventListener("resize",resizeSvg);const bi=document.getElementById("blueprint");if(bi){bi.addEventListener("load",resizeSvg);}
+function snapValue(v){if(!snapToggle || !snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
 function getPoint(e){const r=viewport.getBoundingClientRect();return{x:snapValue((e.clientX-r.left-panX)/scale),y:snapValue((e.clientY-r.top-panY)/scale)};}
-function updateStatus(){drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
-drawingMode.addEventListener("change",updateStatus);
+function updateStatus(){if(!drawingMode || !drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
+if(drawingMode){drawingMode.addEventListener("change",updateStatus);}
 function updateTrace(){const s=points.map(p=>`${p.x},${p.y}`).join(" ");currentLine.setAttribute("points",s);currentPolygon.setAttribute("points",s);pointGroup.innerHTML="";points.forEach(p=>{let c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r",Math.max(4,5/scale));c.setAttribute("class","tracePoint");pointGroup.appendChild(c);});updateStatus();}
 viewport.addEventListener("mousedown",e=>{isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
 viewport.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>4||Math.abs(dy)>4){didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();}});
 document.addEventListener("mouseup",()=>{isDragging=false;});
-viewport.addEventListener("click",e=>{if(!drawingMode.checked||didDrag)return;if(e.target.closest("a")||e.target.closest("button")||e.target.closest("input")||e.target.closest("select"))return;points.push(getPoint(e));updateTrace();});
-viewport.addEventListener("contextmenu",e=>{if(!drawingMode.checked)return;e.preventDefault();points.pop();updateTrace();});
+viewport.addEventListener("click",e=>{if(!drawingMode || !drawingMode.checked || didDrag)return;if(e.target.closest("a")||e.target.closest("button")||e.target.closest("input")||e.target.closest("select"))return;points.push(getPoint(e));updateTrace();});
+viewport.addEventListener("contextmenu",e=>{if(!drawingMode || !drawingMode.checked)return;e.preventDefault();points.pop();updateTrace();});
 viewport.addEventListener("wheel",e=>{e.preventDefault();const old=scale,z=e.deltaY<0?1.12:1/1.12;scale=Math.min(Math.max(scale*z,.25),6);const r=viewport.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;panX=mx-((mx-panX)/old)*scale;panY=my-((my-panY)/old)*scale;applyTransform();updateTrace();},{passive:false});
-function finishTrace(){if(points.length<3){alert("Please click at least 3 points.");return;}const s=points.map(p=>`${Math.round(p.x)},${Math.round(p.y)}`).join(" ");document.getElementById("polygon_points").value=s;const xs=points.map(p=>p.x),ys=points.map(p=>p.y);document.getElementById("x").value=Math.min(...xs);document.getElementById("y").value=Math.min(...ys);document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);drawingMode.checked=false;updateStatus();alert("Trace finished. Enter room name and click Save Room.");}
+function finishTrace(){if(!drawingMode)return;if(points.length<3){alert("Please click at least 3 points.");return;}const s=points.map(p=>`${Math.round(p.x)},${Math.round(p.y)}`).join(" ");document.getElementById("polygon_points").value=s;const xs=points.map(p=>p.x),ys=points.map(p=>p.y);document.getElementById("x").value=Math.min(...xs);document.getElementById("y").value=Math.min(...ys);document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);drawingMode.checked=false;updateStatus();alert("Trace finished. Enter room name and click Save Room.");}
 function clearTrace(){points=[];document.getElementById("polygon_points").value="";updateTrace();}
 </script>
 {% endblock %}

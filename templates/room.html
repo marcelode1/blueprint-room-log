@@ -1,3 +1,4 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
@@ -5,35 +6,108 @@
     <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
 </div>
-<div class="grid">
-    <div class="card">
-        <h3>Add Comment / Picture</h3>
-        <form method="post" enctype="multipart/form-data">
-            <label>Date</label><input name="note_date" type="date" value="{{ selected_date or '' }}" required>
-            <label>Comment</label><textarea name="comment" rows="5" required></textarea>
-            <label>Photo</label><input name="photo" type="file" accept="image/*">
-            <button type="submit">Save</button>
-        </form>
-    </div>
-    <div class="card">
-        <h3>Filter by Date</h3>
-        <form method="get">
-            <input name="date" type="date" value="{{ selected_date }}">
-            <button type="submit">Show Date</button>
-            <a class="btn-link btn-secondary" href="{{ url_for('room', room_id=room.id) }}">Show All</a>
-        </form>
-    </div>
-</div>
+
+{% if can_add_notes() %}
 <div class="card">
-    <h3>Comments and Pictures</h3>
+    <h3>Add Meeting Comment / Picture / Audio</h3>
+    <form method="post" enctype="multipart/form-data" id="noteForm">
+        <label>Date</label>
+        <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
+        <label>Comment</label>
+        <textarea name="comment" rows="5" required placeholder="Write what was decided for this room..."></textarea>
+        <label>Upload Picture</label>
+        <input name="photo" type="file" accept="image/*">
+        <label>Take Picture From Phone</label>
+        <input name="photo_camera" type="file" accept="image/*" capture="environment" onchange="copyCameraFile(this)">
+        <label>Upload Audio Recording</label>
+        <input name="audio" id="audioInput" type="file" accept="audio/*">
+        <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
+        <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
+        <p id="recordStatus"></p>
+        <button type="submit">Save</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Filter by Date</h3>
+    <form method="get">
+        <input name="date" type="date" value="{{ selected_date }}">
+        <button type="submit">Show Date</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('room', room_id=room.id) }}">Show All</a>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Comments, Pictures & Audio</h3>
     {% for n in notes %}
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or "Unknown user" }}
             <p>{{ n.comment }}</p>
             {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
+            {% if n.audio_file %}
+                <audio controls style="width:100%; margin-top:8px;">
+                    <source src="{{ url_for('storage_file', storage_path=n.audio_file) }}">
+                </audio>
+            {% endif %}
+            {% if is_main_admin() %}
+            <form method="post" action="{{ url_for('delete_note', note_id=n.id) }}" onsubmit="return confirm('Delete this comment/photo/audio?');">
+                <button type="submit" class="btn-danger">Delete Comment / Picture</button>
+            </form>
+            {% endif %}
         </div>
     {% else %}
         <p>No comments/photos.</p>
     {% endfor %}
 </div>
+
+<script>
+function copyCameraFile(input){
+    const standard = document.querySelector('input[name="photo"]');
+    if(input.files.length && !standard.files.length){
+        // Browser security does not allow direct copying to another file input reliably.
+        // The server uses the standard upload field; users can use either field visually.
+    }
+}
+
+let mediaRecorder;
+let audioChunks = [];
+const recordBtn = document.getElementById("recordBtn");
+const stopBtn = document.getElementById("stopBtn");
+const audioInput = document.getElementById("audioInput");
+const statusEl = document.getElementById("recordStatus");
+
+if(recordBtn){
+    recordBtn.onclick = async () => {
+        try{
+            const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(audioChunks, {type:"audio/webm"});
+                const file = new File([blob], "room-recording.webm", {type:"audio/webm"});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                audioInput.files = dt.files;
+                statusEl.textContent = "Audio recording attached.";
+                stream.getTracks().forEach(t => t.stop());
+            };
+            mediaRecorder.start();
+            recordBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusEl.textContent = "Recording...";
+        }catch(e){
+            statusEl.textContent = "Audio recording not allowed on this device/browser.";
+        }
+    };
+    stopBtn.onclick = () => {
+        if(mediaRecorder && mediaRecorder.state !== "inactive"){
+            mediaRecorder.stop();
+            recordBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+    };
+}
+</script>
 {% endblock %}

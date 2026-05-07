@@ -1,18 +1,43 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Projects</h2>
-    <a class="btn-link" href="{{ url_for('new_project') }}">Create New Project</a>
-</div>
-<div class="grid">
-{% for p in projects %}
-    <div class="card">
-        <h3>{{ p.name }}</h3>
-        <p>Created: {{ p.created_at[:10] }}</p>
-        <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
+    <h1>Weglobal Technologies, LLC</h1>
+    <p>Project blueprint, room notes, pictures, and meeting history.</p>
+    <div class="grid">
+        <a class="btn-link" href="#search">Search Projects</a>
+        <a class="btn-link" href="#projects">Projects</a>
+        {% if is_main_admin() %}
+            <a class="btn-link" href="{{ url_for('new_project') }}">New Project</a>
+        {% endif %}
     </div>
-{% else %}
-    <div class="card">No projects yet.</div>
-{% endfor %}
+</div>
+
+<div class="card" id="search">
+    <h2>Search Projects</h2>
+    <form method="get">
+        <input name="q" value="{{ q or '' }}" placeholder="Search by project, customer, or address">
+        <button type="submit">Search</button>
+    </form>
+</div>
+
+<div class="card" id="projects">
+    <h2>Projects</h2>
+    <div class="grid">
+    {% for p in projects %}
+        <div class="card">
+            <h3>{{ p.name }}</h3>
+            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
+            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            <div class="desktop-only">
+                <p><strong>Phone:</strong> {{ p.customer_phone or '-' }}</p>
+                <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
+            </div>
+            <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
+        </div>
+    {% else %}
+        <p>No projects found.</p>
+    {% endfor %}
+    </div>
 </div>
 {% endblock %}

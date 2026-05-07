@@ -1,3 +1,4 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
@@ -17,6 +18,9 @@
             <strong>{{ n.note_date }}</strong> — {{ n.room_name }} — {{ n.user_name or "Unknown user" }}
             <p>{{ n.comment }}</p>
             {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
+            {% if n.audio_file %}
+                <audio controls style="width:100%; margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>
+            {% endif %}
         </div>
     {% else %}
         <p>No timeline records found.</p>

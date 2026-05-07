@@ -21,7 +21,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "blueprint-files")
 
-ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp"}
+ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
+ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
 
 
@@ -35,6 +36,10 @@ def allowed_photo(filename):
 
 def allowed_blueprint(filename):
     return file_ext(filename) in ALLOWED_BLUEPRINTS
+
+
+def allowed_audio(filename):
+    return file_ext(filename) in ALLOWED_AUDIO
 
 
 def is_pdf(filename):
@@ -139,6 +144,10 @@ def init_db():
     CREATE TABLE IF NOT EXISTS projects (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
+        customer_name TEXT,
+        customer_address TEXT,
+        customer_phone TEXT,
+        customer_email TEXT,
         blueprint_file TEXT,
         blueprint_preview_file TEXT,
         created_at TEXT NOT NULL
@@ -169,10 +178,26 @@ def init_db():
         note_date TEXT NOT NULL,
         comment TEXT NOT NULL,
         photo_file TEXT,
+        audio_file TEXT,
         created_at TEXT NOT NULL
     )
     """)
 
+    conn.commit()
+
+    # Safe migrations for older deployments
+    migrations = [
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_name TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
+        "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT"
+    ]
+    for sql in migrations:
+        try:
+            cur.execute(sql)
+        except Exception as e:
+            print("Migration skipped:", sql, e)
     conn.commit()
 
     cur.execute("SELECT COUNT(*) AS c FROM users")
@@ -196,19 +221,48 @@ def login_required(fn):
     return wrapper
 
 
+def is_main_admin():
+    return session.get("role") == "admin"
+
+
+def can_add_notes():
+    return session.get("role") in ["admin", "worker"]
+
+
+def admin_required(fn):
+    from functools import wraps
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        if not is_main_admin():
+            flash("Only the main admin can do that.")
+            return redirect(url_for("index"))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 @app.context_processor
 def utility_processor():
-    return dict(file_url=file_url)
+    return dict(file_url=file_url, is_main_admin=is_main_admin, can_add_notes=can_add_notes)
 
 
 @app.route("/")
 def index():
     if "user_id" not in session:
         return redirect(url_for("login"))
+    q = request.args.get("q", "").strip()
     conn = db()
-    projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    if q:
+        like = f"%{q}%"
+        projects = conn.execute(
+            "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s OR customer_address ILIKE %s ORDER BY created_at DESC",
+            (like, like, like)
+        ).fetchall()
+    else:
+        projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
     conn.close()
-    return render_template("index.html", projects=projects)
+    return render_template("index.html", projects=projects, q=q)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -235,11 +289,8 @@ def logout():
 
 
 @app.route("/users", methods=["GET", "POST"])
-@login_required
+@admin_required
 def users():
-    if session.get("role") != "admin":
-        flash("Only admin can add users.")
-        return redirect(url_for("index"))
 
     conn = db()
     if request.method == "POST":
@@ -266,10 +317,14 @@ def users():
 
 
 @app.route("/projects/new", methods=["GET", "POST"])
-@login_required
+@admin_required
 def new_project():
     if request.method == "POST":
         name = request.form["name"].strip()
+        customer_name = request.form.get("customer_name", "").strip()
+        customer_address = request.form.get("customer_address", "").strip()
+        customer_phone = request.form.get("customer_phone", "").strip()
+        customer_email = request.form.get("customer_email", "").strip()
         file = request.files.get("blueprint")
         blueprint_file = None
         blueprint_preview_file = None
@@ -284,8 +339,8 @@ def new_project():
         conn = db()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO projects (name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s) RETURNING id",
-            (name, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
+            "INSERT INTO projects (name, customer_name, customer_address, customer_phone, customer_email, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (name, customer_name, customer_address, customer_phone, customer_email, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
         )
         project_id = cur.fetchone()["id"]
         conn.commit()
@@ -309,7 +364,7 @@ def project(project_id):
 
 
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])
-@login_required
+@admin_required
 def add_room(project_id):
     polygon_points = request.form.get("polygon_points", "").strip()
     if not polygon_points:
@@ -349,11 +404,17 @@ def room(room_id):
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
 
     if request.method == "POST":
-        file = request.files.get("photo")
+        if not can_add_notes():
+            flash("You can view notes and photos, but you cannot add new ones.")
+            return redirect(url_for("room", room_id=room_id))
+
+        file = request.files.get("photo") or request.files.get("photo_camera")
+        audio = request.files.get("audio")
         photo_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+        audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
         conn.execute(
-            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, datetime.now().isoformat())
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
         )
         conn.commit()
         flash("Comment/photo added.")
@@ -393,12 +454,39 @@ def project_timeline(project_id):
     return render_template("timeline.html", project=project, notes=notes, selected_date=selected_date)
 
 
-@app.route("/backup")
-@login_required
-def backup():
-    if session.get("role") != "admin":
-        flash("Only admin can download backups.")
+
+@app.route("/project/<int:project_id>/delete", methods=["POST"])
+@admin_required
+def delete_project(project_id):
+    conn = db()
+    conn.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+    conn.commit()
+    conn.close()
+    flash("Project deleted.")
+    return redirect(url_for("index"))
+
+
+@app.route("/note/<int:note_id>/delete", methods=["POST"])
+@admin_required
+def delete_note(note_id):
+    conn = db()
+    note = conn.execute("SELECT notes.*, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    if not note:
+        conn.close()
+        flash("Comment/photo not found.")
         return redirect(url_for("index"))
+
+    room_id = note["room_id"]
+    conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+    conn.commit()
+    conn.close()
+    flash("Comment/photo deleted.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/backup")
+@admin_required
+def backup():
 
     conn = db()
     tables = {}
@@ -406,7 +494,7 @@ def backup():
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
-    notes = conn.execute("SELECT photo_file FROM notes WHERE photo_file IS NOT NULL").fetchall()
+    notes = conn.execute("SELECT photo_file, audio_file FROM notes WHERE photo_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
     conn.close()
 
     backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -426,6 +514,10 @@ def backup():
                 data = download_storage_file(n["photo_file"])
                 if data:
                     z.writestr(f"photos/{os.path.basename(n['photo_file'])}", data)
+            if n.get("audio_file"):
+                data = download_storage_file(n["audio_file"])
+                if data:
+                    z.writestr(f"audio/{os.path.basename(n['audio_file'])}", data)
         z.writestr("README_BACKUP.txt", "Portable backup: JSON table exports plus uploaded files.")
 
     return Response(open(backup_path, "rb").read(), mimetype="application/zip", headers={"Content-Disposition": f"attachment; filename={backup_name}"})
