@@ -277,7 +277,9 @@ def new_project():
         if file and allowed_blueprint(file.filename):
             raw = file.read()
             blueprint_file = upload_bytes_to_storage(raw, file.filename, file.content_type or "application/octet-stream")
-            blueprint_preview_file = create_pdf_preview_from_bytes(raw) if is_pdf(file.filename) else blueprint_file
+            # PDF blueprints are rendered in the browser with PDF.js for sharp vector quality.
+            # Do not rasterize large PDFs on Render server because it can crash due to memory limits.
+            blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
 
         conn = db()
         cur = conn.cursor()
