@@ -38,9 +38,9 @@
 
 <div class="card">
     <h3>Rooms</h3>
-    <div class="grid">
+    <div class="roomScroller">
         {% for r in rooms %}
-            <a class="btn-link" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+            <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
         {% else %}
             <p>No rooms created yet.</p>
         {% endfor %}
@@ -143,7 +143,7 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-</style>
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){#viewport{height:70vh!important}}</style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
 <script type="module">

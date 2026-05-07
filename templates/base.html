@@ -2,63 +2,57 @@
 <!doctype html>
 <html>
 <head>
-    <title>Weglobal Project Room Log</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#1f2937">
+    <title>Projectonus</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; background: #f6f6f6; color: #222; }
-        header { background: #1f2937; color: white; padding: 14px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; }
-        header a { color: white; margin-left: 12px; text-decoration:none; }
-        main { padding: 20px; max-width: 1200px; margin: auto; }
-        .card { background:white; padding:18px; border-radius:10px; margin-bottom:16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-        input, textarea, select, button { padding:10px; margin:6px 0; width:100%; box-sizing:border-box; font-size:16px; }
-        button { background:#2563eb; color:white; border:0; border-radius:6px; cursor:pointer; font-weight:bold; }
-        .btn-secondary { background:#4b5563; }
-        .btn-danger { background:#dc2626; }
-        .btn-link { display:inline-block; padding:10px 12px; background:#2563eb; color:white; text-decoration:none; border-radius:6px; margin:4px 0; }
-        .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:14px; }
-        img.photo { max-width:100%; border-radius:8px; border:1px solid #ddd; }
-        .flash { background:#fff3cd; padding:10px; border-radius:8px; margin-bottom:12px; }
-        .desktop-only { display:block; }
-        @media(max-width:700px) {
-            main { padding: 12px; }
-            header { gap:8px; }
-            header a { margin-left: 6px; display:inline-block; padding:4px 0; }
-            .desktop-only { display:none !important; }
-            .card { padding:14px; }
-        }
+        :root{--bg:#f6f8fb;--card:#fff;--text:#172033;--muted:#64748b;--primary:#2563eb;--primary-dark:#1d4ed8;--danger:#dc2626;--border:#d7dee9;--shadow:0 6px 22px rgba(15,23,42,.08)}
+        body.dark{--bg:#0b1120;--card:#111827;--text:#e5e7eb;--muted:#94a3b8;--primary:#60a5fa;--primary-dark:#3b82f6;--danger:#f87171;--border:#263244;--shadow:0 8px 28px rgba(0,0,0,.35)}
+        *{box-sizing:border-box}
+        body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
+        header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}
+        main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
+        input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
+        button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
+        button:hover,.btn-link:hover{background:var(--primary-dark)}.btn-secondary{background:#475569!important}.btn-danger{background:var(--danger)!important}
+        .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.photo,img.photo{max-width:100%;border-radius:14px;border:1px solid var(--border)}
+        .flash{background:#fff3cd;color:#1f2937;padding:12px;border-radius:12px;margin-bottom:14px}.desktop-only{display:block}.muted{color:var(--muted)}
+        .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}
+        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:12px}header a{margin-left:8px}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
     </style>
 </head>
 <body>
 <header>
-    <div><strong>Weglobal Project Room Log</strong></div>
+    <div class="brand">Projectonus</div>
     <div>
         {% if session.get("user_id") %}
-            {{ session.get("name") }}
+            <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
-            {% if is_main_admin() %}
-                <a href="{{ url_for('users') }}">Users</a>
-                <a href="{{ url_for('backup') }}">Backup</a>
-            {% endif %}
+            {% if is_main_admin() %}<a href="{{ url_for('users') }}">Users</a><a href="{{ url_for('backup') }}">Backup</a>{% endif %}
             <a href="{{ url_for('logout') }}">Logout</a>
+            <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
         {% endif %}
     </div>
 </header>
 <main>
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        {% for msg in messages %}
-          <div class="flash">{{ msg }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
+    {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
     {% block content %}{% endblock %}
 </main>
+{% if session.get("user_id") %}
+<nav class="bottom-nav">
+    <a href="{{ url_for('index') }}">Projects</a>
+    {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
+    <a href="{{ url_for('index') }}#search">Search</a>
+    <a href="{{ url_for('logout') }}">Logout</a>
+</nav>
+{% endif %}
 <script>
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/static/sw.js').catch(()=>{});
-}
+function applyDarkMode(){if(localStorage.getItem("projectonus_dark")==="1")document.body.classList.add("dark")}
+function toggleDarkMode(){document.body.classList.toggle("dark");localStorage.setItem("projectonus_dark",document.body.classList.contains("dark")?"1":"0")}
+applyDarkMode();
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 </script>
 </body>
 </html>

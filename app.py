@@ -171,6 +171,15 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        subscription_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notes (
         id SERIAL PRIMARY KEY,
         room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -448,6 +457,7 @@ def room(room_id):
         flash("Room not found.")
         return redirect(url_for("index"))
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
+    project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
 
     if request.method == "POST":
         if not can_add_notes():
@@ -474,7 +484,7 @@ def room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("room.html", room=room, project=project, notes=notes, selected_date=selected_date)
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, selected_date=selected_date)
 
 
 @app.route("/project/<int:project_id>/timeline")
@@ -627,6 +637,19 @@ def regenerate_preview(project_id):
 
     flash("PDF preview regenerated successfully.")
     return redirect(url_for("project", project_id=project_id))
+
+
+@app.route("/push/subscribe", methods=["POST"])
+@login_required
+def push_subscribe():
+    sub = request.get_data(as_text=True)
+    if not sub:
+        return {"ok": False}, 400
+    conn = db()
+    conn.execute("INSERT INTO push_subscriptions (user_id, subscription_json, created_at) VALUES (%s, %s, %s)", (session.get("user_id"), sub, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.route("/health")

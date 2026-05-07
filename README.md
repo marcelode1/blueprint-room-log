@@ -75,3 +75,10 @@ This keeps blueprint lines sharper and avoids Bad Gateway crashes from server me
 - Main admin can remove/delete the blueprint from the project.
 - Added "Open Original Blueprint File" for full PDF quality.
 - Replaced Ultra PDF rendering with safer capped PDF rendering to avoid black screens and browser crashes.
+
+
+## Projectonus V4 Mobile Beta
+
+Added bigger mobile buttons, faster room switching, swipe between rooms, floating camera button, dark mode, offline cache foundation, push subscription foundation, auto image compression, and voice-to-text notes on supported Android Chrome browsers.
+
+Push notifications require VAPID keys and server-side push sending before real notifications can be sent.

@@ -1,10 +1,12 @@
 {
-  "name": "Weglobal Project Room Log",
-  "short_name": "Room Log",
+  "name": "Projectonus",
+  "short_name": "Projectonus",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f6f6f6",
-  "theme_color": "#1f2937",
+  "background_color": "#0b1120",
+  "theme_color": "#0f172a",
+  "description": "Project, field, room, photo, comment, audio, and client collaboration platform.",
   "icons": [
     {
       "src": "/static/icon.svg",

@@ -4,29 +4,42 @@
 <div class="card">
     <h2>{{ room.name }}</h2>
     <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
-    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Timeline</a>
+</div>
+
+<div class="card" id="roomSwipeArea">
+    <h3>Switch Rooms</h3>
+    <div class="roomScroller">
+        {% for r in rooms %}
+            <a class="roomChip {% if r.id == room.id %}activeRoom{% endif %}" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+        {% endfor %}
+    </div>
+    <p class="muted">Swipe left/right here to move between rooms.</p>
 </div>
 
 {% if can_add_notes() %}
 <div class="card">
-    <h3>Add Meeting Comment / Picture / Audio</h3>
+    <h3>Add Comment / Picture / Audio</h3>
     <form method="post" enctype="multipart/form-data" id="noteForm">
         <label>Date</label>
         <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
         <label>Comment</label>
-        <textarea name="comment" rows="5" required placeholder="Write what was decided for this room..."></textarea>
+        <textarea name="comment" id="commentBox" rows="5" required placeholder="Write what was decided for this room..."></textarea>
+        <button type="button" class="btn-secondary" id="voiceBtn">Voice-to-Text Note</button>
+        <p id="voiceStatus" class="muted"></p>
         <label>Upload Picture</label>
-        <input name="photo" type="file" accept="image/*">
+        <input name="photo" id="photoInput" type="file" accept="image/*">
         <label>Take Picture From Phone</label>
-        <input name="photo_camera" type="file" accept="image/*" capture="environment" onchange="copyCameraFile(this)">
+        <input name="photo_camera" id="cameraInput" type="file" accept="image/*" capture="environment">
         <label>Upload Audio Recording</label>
         <input name="audio" id="audioInput" type="file" accept="audio/*">
         <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
         <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
-        <p id="recordStatus"></p>
+        <p id="recordStatus" class="muted"></p>
         <button type="submit">Save</button>
     </form>
 </div>
+<button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
 {% endif %}
 
 <div class="card">
@@ -45,69 +58,27 @@
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or "Unknown user" }}
             <p>{{ n.comment }}</p>
             {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
-            {% if n.audio_file %}
-                <audio controls style="width:100%; margin-top:8px;">
-                    <source src="{{ url_for('storage_file', storage_path=n.audio_file) }}">
-                </audio>
-            {% endif %}
+            {% if n.audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
             {% if is_main_admin() %}
             <form method="post" action="{{ url_for('delete_note', note_id=n.id) }}" onsubmit="return confirm('Delete this comment/photo/audio?');">
                 <button type="submit" class="btn-danger">Delete Comment / Picture</button>
             </form>
             {% endif %}
         </div>
-    {% else %}
-        <p>No comments/photos.</p>
-    {% endfor %}
+    {% else %}<p>No comments/photos.</p>{% endfor %}
 </div>
 
+<style>
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}
+</style>
 <script>
-function copyCameraFile(input){
-    const standard = document.querySelector('input[name="photo"]');
-    if(input.files.length && !standard.files.length){
-        // Browser security does not allow direct copying to another file input reliably.
-        // The server uses the standard upload field; users can use either field visually.
-    }
-}
-
-let mediaRecorder;
-let audioChunks = [];
-const recordBtn = document.getElementById("recordBtn");
-const stopBtn = document.getElementById("stopBtn");
-const audioInput = document.getElementById("audioInput");
-const statusEl = document.getElementById("recordStatus");
-
-if(recordBtn){
-    recordBtn.onclick = async () => {
-        try{
-            const stream = await navigator.mediaDevices.getUserMedia({audio:true});
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(audioChunks, {type:"audio/webm"});
-                const file = new File([blob], "room-recording.webm", {type:"audio/webm"});
-                const dt = new DataTransfer();
-                dt.items.add(file);
-                audioInput.files = dt.files;
-                statusEl.textContent = "Audio recording attached.";
-                stream.getTracks().forEach(t => t.stop());
-            };
-            mediaRecorder.start();
-            recordBtn.disabled = true;
-            stopBtn.disabled = false;
-            statusEl.textContent = "Recording...";
-        }catch(e){
-            statusEl.textContent = "Audio recording not allowed on this device/browser.";
-        }
-    };
-    stopBtn.onclick = () => {
-        if(mediaRecorder && mediaRecorder.state !== "inactive"){
-            mediaRecorder.stop();
-            recordBtn.disabled = false;
-            stopBtn.disabled = true;
-        }
-    };
-}
+let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
+if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
+const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
+async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||!file.type||!file.type.startsWith("image/"))return file;if(file.type.includes("heic")||file.type.includes("heif"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
+async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
+["photoInput","cameraInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>replaceWithCompressed(el))});
+const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}
+const swipeArea=document.getElementById("roomSwipeArea");if(swipeArea){let sx=0,sy=0;swipeArea.addEventListener("touchstart",e=>{sx=e.changedTouches[0].screenX;sy=e.changedTouches[0].screenY},{passive:true});swipeArea.addEventListener("touchend",e=>{const dx=e.changedTouches[0].screenX-sx,dy=e.changedTouches[0].screenY-sy;if(Math.abs(dx)<60||Math.abs(dy)>80)return;const links=Array.from(document.querySelectorAll(".roomChip")),active=links.findIndex(a=>a.classList.contains("activeRoom")),next=dx<0?active+1:active-1;if(links[next])window.location.href=links[next].href},{passive:true})}
 </script>
 {% endblock %}
