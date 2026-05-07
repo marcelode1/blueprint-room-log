@@ -19,11 +19,6 @@
     {% endif %}
 </div>
 
-<div class="card mobileBlueprintNotice">
-    <h3>Mobile View</h3>
-    <p>The blueprint editor is available on the computer version only. On phone, choose a room from the room list to see pictures, comments, and audio.</p>
-</div>
-
 {% if is_main_admin() %}
 <div class="card">
     <h3>Manage Blueprint</h3>
@@ -53,7 +48,7 @@
 </div>
 
 {% if is_main_admin() %}
-<div class="card blueprintDesktopOnly">
+<div class="card">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
             <div><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
@@ -83,7 +78,7 @@
     </form>
 </div>
 
-<div class="card blueprintDesktopOnly">
+<div class="card">
     <div class="grid">
         <div><label><input type="checkbox" id="drawingMode"> Drawing Mode</label><div id="drawStatus"><strong>Drawing mode is off</strong></div></div>
         <div><label><input type="checkbox" id="snapToggle" checked> Snap/Grid</label><input type="range" min="5" max="40" value="15" id="snapSize"></div>
@@ -103,7 +98,7 @@
 </div>
 {% endif %}
 
-<div class="card blueprintDesktopOnly">
+<div class="card">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
             {% if not project.blueprint_file %}
@@ -148,13 +143,7 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){ #viewport{height:70vh!important}}
-.mobileBlueprintNotice { display:none; }
-@media(max-width:760px){
-    .blueprintDesktopOnly { display:none !important; }
-    .mobileBlueprintNotice { display:block !important; }
-}
-</style>
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){ #viewport{height:70vh!important}}</style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
 <script type="module">
