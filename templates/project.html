@@ -57,19 +57,19 @@
         <div class="blueprintTabs">
             {% for bp in blueprints %}
                 <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
-                    <a href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+                    <a class="bpOpen" href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
                     {% if is_main_admin() %}
-                    <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
-                    <div class="deleteBox" id="bpDelete{{ bp.id }}">
-                        <strong>Delete this blueprint?</strong>
-                        <p>Rooms will NOT be deleted. They will stay in the project.</p>
-                        <div class="confirmRow">
-                            <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
-                                <button type="submit" class="btn-danger">Yes</button>
-                            </form>
-                            <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
+                        <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
+                        <div class="deleteBox" id="bpDelete{{ bp.id }}">
+                            <strong>Delete this blueprint?</strong>
+                            <p>Rooms will NOT be deleted. They will stay in the project.</p>
+                            <div class="confirmRow">
+                                <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
+                                    <button type="submit" class="btn-danger">Yes</button>
+                                </form>
+                                <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
+                            </div>
                         </div>
-                    </div>
                     {% endif %}
                 </div>
             {% endfor %}
@@ -148,8 +148,8 @@
             {% if not active_blueprint %}
                 <div id="blueprint" style="width:1100px; height:800px; background:white; display:flex; align-items:center; justify-content:center; border:1px dashed #aaa;">
                     <div style="text-align:center; color:#555;">
-                        <h3>No blueprint uploaded yet</h3>
-                        <p>Main admin can upload a blueprint from the Manage Blueprint section.</p>
+                        <h3>No blueprint selected</h3>
+                        <p>Add or select a blueprint/floor sheet above.</p>
                     </div>
                 </div>
             {% elif active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
@@ -157,7 +157,7 @@
                         data-pdf-url="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}"
                         style="display:block; pointer-events:none; background:white;"></canvas>
                 <div id="pdfStatus" style="padding:8px; background:#eef2ff; border-radius:6px; margin-top:8px;">
-                    Loading high-resolution PDF blueprint...
+                    Loading PDF blueprint...
                 </div>
             {% elif active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
                 <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
@@ -200,7 +200,16 @@
 @media(max-width:760px){.blueprintDesktopOnly{display:none!important}}
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module">
+function showBlueprintDelete(id){
+    const box=document.getElementById("bpDelete"+id);
+    if(box) box.style.display="block";
+}
+function hideBlueprintDelete(id){
+    const box=document.getElementById("bpDelete"+id);
+    if(box) box.style.display="none";
+}
+</script>
 <script type="module">
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";

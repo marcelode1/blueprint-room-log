@@ -828,16 +828,17 @@ def project(project_id):
     active_blueprint_id = request.args.get("blueprint_id", type=int)
     active_blueprint = None
 
-    if blueprints:
-        if active_blueprint_id:
-            active_blueprint = conn.execute(
-                "SELECT * FROM project_blueprints WHERE id = %s AND project_id = %s",
-                (active_blueprint_id, project_id)
-            ).fetchone()
-        if not active_blueprint:
-            active_blueprint = blueprints[0]
+    if active_blueprint_id:
+        active_blueprint = conn.execute(
+            "SELECT * FROM project_blueprints WHERE id = %s AND project_id = %s",
+            (active_blueprint_id, project_id)
+        ).fetchone()
+
+    if not active_blueprint and blueprints:
+        active_blueprint = blueprints[0]
 
     if active_blueprint:
+        # Show rooms created for this blueprint plus older unassigned rooms.
         rooms = conn.execute(
             "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
             (project_id, active_blueprint["id"])
@@ -948,9 +949,16 @@ def delete_project_blueprint(project_id, blueprint_id):
         (blueprint_id, project_id)
     )
     conn.commit()
+
+    next_bp = conn.execute(
+        "SELECT id FROM project_blueprints WHERE project_id = %s ORDER BY id LIMIT 1",
+        (project_id,)
+    ).fetchone()
     conn.close()
 
     flash("Blueprint deleted. Rooms were kept.")
+    if next_bp:
+        return redirect(url_for("project", project_id=project_id, blueprint_id=next_bp["id"]))
     return redirect(url_for("project", project_id=project_id))
 
 
@@ -958,10 +966,26 @@ def delete_project_blueprint(project_id, blueprint_id):
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])
 @admin_required
 def add_room(project_id):
-    polygon_points = request.form.get("polygon_points", "").strip()
-    if not polygon_points:
-        flash("Please trace the room before saving.")
-        return redirect(url_for("project", project_id=project_id))
+    blueprint_id = request.form.get("blueprint_id") or None
+    conn = db()
+    conn.execute(
+        "INSERT INTO rooms (project_id, blueprint_id, name, points, color, category) VALUES (%s, %s, %s, %s, %s, %s)",
+        (
+            project_id,
+            blueprint_id,
+            request.form["name"].strip(),
+            request.form["points"],
+            request.form.get("color", "#ffcc00"),
+            request.form.get("category", "electrical")
+        )
+    )
+    conn.commit()
+    conn.close()
+
+    flash("Room added.")
+    if blueprint_id:
+        return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+    return redirect(url_for("project", project_id=project_id))
 
     conn = db()
     conn.execute(
