@@ -363,6 +363,52 @@ def project(project_id):
     return render_template("project.html", project=project, rooms=rooms)
 
 
+
+@app.route("/project/<int:project_id>/blueprint", methods=["POST"])
+@admin_required
+def update_blueprint(project_id):
+    file = request.files.get("blueprint")
+    if not file or not file.filename:
+        flash("Please choose a PDF or image blueprint file.")
+        return redirect(url_for("project", project_id=project_id))
+
+    if not allowed_blueprint(file.filename):
+        flash("Blueprint must be PDF, JPG, PNG, or WEBP.")
+        return redirect(url_for("project", project_id=project_id))
+
+    raw = file.read()
+    blueprint_file = upload_bytes_to_storage(raw, file.filename, file.content_type or "application/octet-stream")
+
+    # PDF is rendered in browser; do not convert large PDFs on the server.
+    blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
+
+    conn = db()
+    conn.execute(
+        "UPDATE projects SET blueprint_file = %s, blueprint_preview_file = %s WHERE id = %s",
+        (blueprint_file, blueprint_preview_file, project_id)
+    )
+    conn.commit()
+    conn.close()
+
+    flash("Blueprint updated.")
+    return redirect(url_for("project", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/blueprint/delete", methods=["POST"])
+@admin_required
+def delete_blueprint(project_id):
+    conn = db()
+    conn.execute(
+        "UPDATE projects SET blueprint_file = NULL, blueprint_preview_file = NULL WHERE id = %s",
+        (project_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    flash("Blueprint removed from this project.")
+    return redirect(url_for("project", project_id=project_id))
+
+
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])
 @admin_required
 def add_room(project_id):

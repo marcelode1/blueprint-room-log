@@ -9,12 +9,32 @@
         <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
     </div>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    {% if project.blueprint_file %}
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=project.blueprint_file) }}">View Original Blueprint</a>
+    {% endif %}
     {% if is_main_admin() %}
     <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');" style="margin-top:8px;">
         <button type="submit" class="btn-danger">Delete Project</button>
     </form>
     {% endif %}
 </div>
+
+{% if is_main_admin() %}
+<div class="card">
+    <h3>Manage Blueprint</h3>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('update_blueprint', project_id=project.id) }}">
+        <label>Upload New / Replace Blueprint PDF or Image</label>
+        <input name="blueprint" type="file" accept=".pdf,image/*" required>
+        <button type="submit">Upload / Replace Blueprint</button>
+    </form>
+    {% if project.blueprint_file %}
+    <form method="post" action="{{ url_for('delete_blueprint', project_id=project.id) }}" onsubmit="return confirm('Remove blueprint from this project? Rooms and comments will stay, but the blueprint file will no longer show.');">
+        <button type="submit" class="btn-danger">Delete Blueprint From Project</button>
+    </form>
+    <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=project.blueprint_file) }}">Open Original Blueprint File</a>
+    {% endif %}
+</div>
+{% endif %}
 
 <div class="card">
     <h3>Rooms</h3>
@@ -65,11 +85,11 @@
         <div><p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p>
             <label>PDF Quality</label>
             <select id="pdfQuality">
-                <option value="3">Normal</option>
-                <option value="5" selected>High</option>
-                <option value="7">Ultra</option>
+                <option value="2" selected>Safe / Phone</option>
+                <option value="2.5">Sharper</option>
+                <option value="3">Sharpest Safe</option>
             </select>
-            <p style="font-size:13px;">Use Ultra only on computer or newer phones if the plan still looks blurry.</p></div>
+            <p style="font-size:13px;">If the preview is still hard to read, use the “Open Original Blueprint File” button above for the full PDF.</p></div>
     </div>
 </div>
 {% else %}
@@ -81,7 +101,14 @@
 <div class="card">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
-            {% if project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
+            {% if not project.blueprint_file %}
+                <div id="blueprint" style="width:1100px; height:800px; background:white; display:flex; align-items:center; justify-content:center; border:1px dashed #aaa;">
+                    <div style="text-align:center; color:#555;">
+                        <h3>No blueprint uploaded yet</h3>
+                        <p>Main admin can upload a blueprint from the Manage Blueprint section.</p>
+                    </div>
+                </div>
+            {% elif project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
                 <canvas id="blueprint"
                         data-pdf-url="{{ url_for('storage_file', storage_path=project.blueprint_file) }}"
                         style="display:block; pointer-events:none; background:white;"></canvas>
@@ -138,6 +165,7 @@ const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.ge
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 
 
+
 let pdfDocCached = null;
 let pdfPageCached = null;
 let isRenderingPdf = false;
@@ -164,7 +192,7 @@ async function renderPdfBlueprint(){
 
         const ok = await waitForPdfJs();
         if(!ok){
-            if(status) status.textContent="Could not load PDF viewer. Refresh the page.";
+            if(status) status.textContent="Could not load PDF viewer. Use Open Original Blueprint File.";
             isRenderingPdf = false;
             return;
         }
@@ -175,9 +203,19 @@ async function renderPdfBlueprint(){
         }
 
         const q = document.getElementById("pdfQuality");
-        const quality = q ? parseFloat(q.value || "5") : 5;
+        let quality = q ? parseFloat(q.value || "2") : 2;
 
-        if(status) status.textContent = `Rendering PDF at ${quality}x quality...`;
+        // Prevent phone/browser black screen and canvas crash.
+        // Large blueprint sheets can create huge canvases at high scale.
+        const baseViewport = pdfPageCached.getViewport({scale:1});
+        const maxPixels = window.innerWidth < 800 ? 9000000 : 16000000;
+        const requestedPixels = baseViewport.width * quality * baseViewport.height * quality;
+        if(requestedPixels > maxPixels){
+            quality = Math.sqrt(maxPixels / (baseViewport.width * baseViewport.height));
+            if(status) status.textContent = `Large sheet detected. Using safe quality ${quality.toFixed(2)}x...`;
+        } else {
+            if(status) status.textContent = `Rendering PDF at ${quality}x quality...`;
+        }
 
         const viewportPdf = pdfPageCached.getViewport({scale:quality});
         canvas.width = Math.floor(viewportPdf.width);
@@ -186,19 +224,20 @@ async function renderPdfBlueprint(){
         canvas.style.height = canvas.height + "px";
 
         const ctx = canvas.getContext("2d", { alpha:false });
-        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = "white";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
 
         await pdfPageCached.render({
             canvasContext: ctx,
             viewport: viewportPdf
         }).promise;
 
-        if(status) status.textContent = `PDF loaded in ${quality}x quality. Use mouse wheel to zoom.`;
+        if(status) status.textContent = `PDF preview loaded. For full original quality, open the original blueprint file.`;
         resizeSvg();
         applyTransform();
     }catch(err){
         console.error("PDF.js blueprint render failed:", err);
-        if(status) status.textContent="PDF viewer failed. Try Normal quality, or upload this sheet as a high-resolution PNG.";
+        if(status) status.textContent="PDF preview failed. Use Open Original Blueprint File, or upload this sheet as a high-resolution PNG.";
     }finally{
         isRenderingPdf = false;
     }
@@ -206,7 +245,6 @@ async function renderPdfBlueprint(){
 
 document.addEventListener("change", function(e){
     if(e.target && e.target.id === "pdfQuality"){
-        // Reset view when changing quality so room tracing coordinates stay predictable.
         scale = 1;
         panX = 0;
         panY = 0;

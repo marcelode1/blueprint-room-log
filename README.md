@@ -66,3 +66,12 @@ This keeps blueprint lines sharper and avoids Bad Gateway crashes from server me
 - Added PDF Quality selector: Normal, High, Ultra.
 - Ultra gives the sharpest blueprint lines but may be heavier on older phones.
 - This avoids Render server crashes because PDF rendering happens on the user's device.
+
+
+## Blueprint Management + Safe PDF Preview
+
+- Creating a project no longer requires a blueprint upload.
+- Main admin can upload/replace the project blueprint later.
+- Main admin can remove/delete the blueprint from the project.
+- Added "Open Original Blueprint File" for full PDF quality.
+- Replaced Ultra PDF rendering with safer capped PDF rendering to avoid black screens and browser crashes.
