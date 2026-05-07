@@ -62,7 +62,14 @@
     <div class="grid">
         <div><label><input type="checkbox" id="drawingMode"> Drawing Mode</label><div id="drawStatus"><strong>Drawing mode is off</strong></div></div>
         <div><label><input type="checkbox" id="snapToggle" checked> Snap/Grid</label><input type="range" min="5" max="40" value="15" id="snapSize"></div>
-        <div><p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p></div>
+        <div><p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p>
+            <label>PDF Quality</label>
+            <select id="pdfQuality">
+                <option value="3">Normal</option>
+                <option value="5" selected>High</option>
+                <option value="7">Ultra</option>
+            </select>
+            <p style="font-size:13px;">Use Ultra only on computer or newer phones if the plan still looks blurry.</p></div>
     </div>
 </div>
 {% else %}
@@ -117,6 +124,12 @@ import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
 window.pdfjsLib = pdfjsLib;
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+window.pdfjsLib = pdfjsLib;
+</script>
 <script>
 const viewport=document.getElementById("viewport"),wrap=document.getElementById("blueprintWrap"),svg=document.getElementById("roomSvg");
 const currentLine=document.getElementById("currentLine"),currentPolygon=document.getElementById("currentPolygon"),pointGroup=document.getElementById("pointGroup");
@@ -124,46 +137,83 @@ const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.ge
 
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 
+
+let pdfDocCached = null;
+let pdfPageCached = null;
+let isRenderingPdf = false;
+
+async function waitForPdfJs(){
+    let tries=0;
+    while(!window.pdfjsLib && tries<80){
+        await new Promise(r=>setTimeout(r,100));
+        tries++;
+    }
+    return !!window.pdfjsLib;
+}
+
 async function renderPdfBlueprint(){
     const canvas=document.getElementById("blueprint");
     const status=document.getElementById("pdfStatus");
     if(!canvas || !canvas.dataset || !canvas.dataset.pdfUrl) return;
 
-    // Wait briefly for PDF.js module to be available.
-    let tries=0;
-    while(!window.pdfjsLib && tries<50){
-        await new Promise(r=>setTimeout(r,100));
-        tries++;
-    }
-    if(!window.pdfjsLib){
-        if(status) status.textContent="Could not load PDF viewer. Refresh the page.";
-        return;
-    }
+    if(isRenderingPdf) return;
+    isRenderingPdf = true;
 
     try{
-        const pdf=await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
-        const page=await pdf.getPage(1);
+        if(status) status.textContent="Loading PDF viewer...";
 
-        // Render with high client-side resolution without using Render server memory.
-        // 3.0 is usually sharp enough for blueprint lines; browser handles it.
-        const viewportPdf=page.getViewport({scale:3.0});
-        canvas.width=Math.floor(viewportPdf.width);
-        canvas.height=Math.floor(viewportPdf.height);
-        canvas.style.width=canvas.width+"px";
-        canvas.style.height=canvas.height+"px";
+        const ok = await waitForPdfJs();
+        if(!ok){
+            if(status) status.textContent="Could not load PDF viewer. Refresh the page.";
+            isRenderingPdf = false;
+            return;
+        }
 
-        await page.render({
-            canvasContext:canvas.getContext("2d"),
-            viewport:viewportPdf
+        if(!pdfDocCached){
+            pdfDocCached = await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
+            pdfPageCached = await pdfDocCached.getPage(1);
+        }
+
+        const q = document.getElementById("pdfQuality");
+        const quality = q ? parseFloat(q.value || "5") : 5;
+
+        if(status) status.textContent = `Rendering PDF at ${quality}x quality...`;
+
+        const viewportPdf = pdfPageCached.getViewport({scale:quality});
+        canvas.width = Math.floor(viewportPdf.width);
+        canvas.height = Math.floor(viewportPdf.height);
+        canvas.style.width = canvas.width + "px";
+        canvas.style.height = canvas.height + "px";
+
+        const ctx = canvas.getContext("2d", { alpha:false });
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+
+        await pdfPageCached.render({
+            canvasContext: ctx,
+            viewport: viewportPdf
         }).promise;
 
-        if(status) status.textContent="High-resolution PDF blueprint loaded.";
+        if(status) status.textContent = `PDF loaded in ${quality}x quality. Use mouse wheel to zoom.`;
         resizeSvg();
+        applyTransform();
     }catch(err){
         console.error("PDF.js blueprint render failed:", err);
-        if(status) status.textContent="PDF viewer failed to load this blueprint. Try uploading this sheet as a high-resolution PNG.";
+        if(status) status.textContent="PDF viewer failed. Try Normal quality, or upload this sheet as a high-resolution PNG.";
+    }finally{
+        isRenderingPdf = false;
     }
 }
+
+document.addEventListener("change", function(e){
+    if(e.target && e.target.id === "pdfQuality"){
+        // Reset view when changing quality so room tracing coordinates stay predictable.
+        scale = 1;
+        panX = 0;
+        panY = 0;
+        applyTransform();
+        renderPdfBlueprint();
+    }
+});
 
 function applyTransform(){wrap.style.transform=`translate(${panX}px, ${panY}px) scale(${scale})`;}
 function resizeSvg(){

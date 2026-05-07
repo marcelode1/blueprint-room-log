@@ -58,3 +58,11 @@ This keeps blueprint lines sharper and avoids Bad Gateway crashes from server me
 - Project creation asks for customer name, address, phone, and email.
 - Mobile project cards show only project name, customer name, and address.
 - Room page supports phone camera upload and browser audio recording.
+
+
+## V3 High Quality PDF Fix
+
+- PDF blueprints now render in browser at 5x quality by default.
+- Added PDF Quality selector: Normal, High, Ultra.
+- Ultra gives the sharpest blueprint lines but may be heavier on older phones.
+- This avoids Render server crashes because PDF rendering happens on the user's device.
