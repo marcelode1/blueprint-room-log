@@ -47,8 +47,19 @@
 <div class="card">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
-            {% if project.blueprint_preview_file or project.blueprint_file %}
-                <img id="blueprint" src="{{ file_url(project.blueprint_preview_file or project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
+            {% if project.blueprint_preview_file %}
+                <img id="blueprint" src="{{ file_url(project.blueprint_preview_file) }}" style="max-width:none; display:block; pointer-events:none;">
+            {% elif project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
+                <iframe id="blueprintPdf"
+                        src="{{ file_url(project.blueprint_file) }}"
+                        style="width:1100px; height:800px; border:1px solid #ccc; display:block; pointer-events:none;"></iframe>
+                <div id="blueprint" style="width:1100px; height:800px; display:none;"></div>
+                <p style="background:#fff3cd; padding:8px; border-radius:6px;">
+                    PDF preview image was not created, so this page is showing the PDF fallback.
+                    For best phone support, re-upload this blueprint after this update is deployed.
+                </p>
+            {% elif project.blueprint_file %}
+                <img id="blueprint" src="{{ file_url(project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}
@@ -83,7 +94,16 @@ const currentLine=document.getElementById("currentLine"),currentPolygon=document
 const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 function applyTransform(){wrap.style.transform=`translate(${panX}px, ${panY}px) scale(${scale})`;}
-function resizeSvg(){const b=document.getElementById("blueprint");let w=1100,h=800;if(b&&b.naturalWidth){w=b.naturalWidth;h=b.naturalHeight;}svg.setAttribute("viewBox",`0 0 ${w} ${h}`);svg.style.width=w+"px";svg.style.height=h+"px";}
+function resizeSvg(){
+    const b=document.getElementById("blueprint");
+    const pdf=document.getElementById("blueprintPdf");
+    let w=1100,h=800;
+    if(b&&b.naturalWidth){w=b.naturalWidth;h=b.naturalHeight;}
+    else if(pdf){w=1100;h=800;}
+    svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
+    svg.style.width=w+"px";
+    svg.style.height=h+"px";
+}
 window.addEventListener("load",()=>{resizeSvg();applyTransform();});window.addEventListener("resize",resizeSvg);const bi=document.getElementById("blueprint");if(bi){bi.addEventListener("load",resizeSvg);}
 function snapValue(v){if(!snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
 function getPoint(e){const r=viewport.getBoundingClientRect();return{x:snapValue((e.clientX-r.left-panX)/scale),y:snapValue((e.clientY-r.top-panY)/scale)};}

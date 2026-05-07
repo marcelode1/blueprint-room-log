@@ -20,3 +20,10 @@ admin@example.com
 admin123
 
 This version stores project data in Supabase PostgreSQL and files in Supabase Storage. The backup button exports JSON data plus uploaded files for portability.
+
+
+## PDF Display Fix
+
+This version prevents raw PDF files from being loaded as an image.
+If PDF-to-PNG preview conversion fails, the project page falls back to an iframe PDF view instead of showing a broken image.
+For best phone support, upload a PDF after this version is deployed so the app can create a PNG preview.

@@ -95,7 +95,12 @@ def download_storage_file(path):
 
 
 def create_pdf_preview_from_bytes(pdf_bytes):
+    """
+    Convert first PDF page to PNG and upload it to Supabase Storage.
+    If conversion fails, the app will fall back to showing the PDF in an iframe.
+    """
     if fitz is None:
+        print("PDF preview conversion skipped: PyMuPDF/fitz is not available.")
         return None
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -103,8 +108,15 @@ def create_pdf_preview_from_bytes(pdf_bytes):
         pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
         png_bytes = pix.tobytes("png")
         doc.close()
-        return upload_bytes_to_storage(png_bytes, f"blueprint_preview_{uuid.uuid4().hex}.png", "image/png")
-    except Exception:
+        preview_path = upload_bytes_to_storage(
+            png_bytes,
+            f"blueprint_preview_{uuid.uuid4().hex}.png",
+            "image/png"
+        )
+        print("PDF preview created:", preview_path)
+        return preview_path
+    except Exception as e:
+        print("PDF preview conversion failed:", str(e))
         return None
 
 
