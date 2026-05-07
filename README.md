@@ -82,3 +82,7 @@ This keeps blueprint lines sharper and avoids Bad Gateway crashes from server me
 Added bigger mobile buttons, faster room switching, swipe between rooms, floating camera button, dark mode, offline cache foundation, push subscription foundation, auto image compression, and voice-to-text notes on supported Android Chrome browsers.
 
 Push notifications require VAPID keys and server-side push sending before real notifications can be sent.
+
+
+## Template Fix
+Fixed project.html Jinja TemplateSyntaxError caused by accidental `{#` sequence inside page code.
