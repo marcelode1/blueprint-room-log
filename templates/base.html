@@ -4,128 +4,47 @@
 <head>
     <title>Projectonus</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#07142b">
+    <meta name="theme-color" content="#0f172a">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <style>
-        :root{
-            --navy:#07142b;
-            --navy2:#0b1b36;
-            --sidebar:#061225;
-            --card:#ffffff;
-            --bg:#f5f7fb;
-            --text:#0f172a;
-            --muted:#64748b;
-            --blue:#2563eb;
-            --blue2:#1d4ed8;
-            --green:#22c55e;
-            --teal:#14b8a6;
-            --orange:#f59e0b;
-            --red:#ef4444;
-            --purple:#8b5cf6;
-            --border:#e2e8f0;
-            --shadow:0 18px 45px rgba(15,23,42,.10);
-        }
-        body.dark{
-            --card:#0f1f3a;
-            --bg:#07111f;
-            --text:#e5e7eb;
-            --muted:#94a3b8;
-            --border:#1f3557;
-            --shadow:0 18px 45px rgba(0,0,0,.35);
-        }
+        :root{--bg:#f6f8fb;--card:#fff;--text:#172033;--muted:#64748b;--primary:#2563eb;--primary-dark:#1d4ed8;--danger:#dc2626;--border:#d7dee9;--shadow:0 6px 22px rgba(15,23,42,.08)}
+        body.dark{--bg:#0b1120;--card:#111827;--text:#e5e7eb;--muted:#94a3b8;--primary:#60a5fa;--primary-dark:#3b82f6;--danger:#f87171;--border:#263244;--shadow:0 8px 28px rgba(0,0,0,.35)}
         *{box-sizing:border-box}
-        body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text)}
-        .appShell{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
-        .sidebar{background:linear-gradient(180deg,#061225,#0b1b36);color:#fff;padding:20px 16px;position:sticky;top:0;height:100vh;overflow:auto}
-        .logoWrap{display:flex;align-items:center;gap:12px;margin-bottom:28px}
-        .logoIcon{width:42px;height:42px;border-radius:12px;background:#0f172a}
-        .logoText{font-weight:900;font-size:22px}.logoText span{color:var(--green)}
-        .poweredSmall{font-size:11px;color:#93c5fd;margin-top:2px}
-        .navLink{display:flex;align-items:center;gap:10px;color:#cbd5e1;text-decoration:none;padding:13px 14px;border-radius:14px;margin:6px 0;font-weight:700}
-        .navLink:hover,.navLink.active{background:#102a52;color:white}
-        .navIcon{width:22px;text-align:center}
-        .sidebarFooter{margin-top:30px;padding:14px;border-radius:16px;background:rgba(255,255,255,.06);font-size:13px;color:#cbd5e1}
-        .mainPanel{min-width:0}
-        .topbar{height:76px;background:rgba(255,255,255,.8);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:50}
-        body.dark .topbar{background:rgba(15,31,58,.85)}
-        .pageTitle{font-size:22px;font-weight:900}.topActions{display:flex;align-items:center;gap:10px}
-        .bell{position:relative;border:0;background:#eef2ff;color:#1d4ed8;width:44px;height:44px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-size:20px}
-        .badge{position:absolute;top:-5px;right:-5px;background:#ef4444;color:white;border-radius:999px;min-width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900}
-        .content{padding:28px;max-width:1440px}
-        .hero{background:linear-gradient(135deg,#0b1b36,#123e7a 55%,#14b8a6);color:white;border-radius:26px;padding:28px;box-shadow:var(--shadow);margin-bottom:22px;position:relative;overflow:hidden}
-        .hero:after{content:"";position:absolute;right:-70px;bottom:-90px;width:260px;height:260px;background:rgba(34,197,94,.22);border-radius:50%}
-        .hero h1{margin:0 0 8px;font-size:34px}.hero p{margin:0;color:#dbeafe}
-        .card{background:var(--card);border:1px solid var(--border);box-shadow:var(--shadow);border-radius:22px;padding:22px;margin-bottom:20px}
-        .card h2,.card h3{margin-top:0}
-        .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
-        .statCard{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:var(--shadow)}
-        .statNum{font-size:32px;font-weight:900;color:var(--blue)}.muted{color:var(--muted)}
-        input,textarea,select{width:100%;border:1px solid var(--border);border-radius:14px;background:var(--card);color:var(--text);padding:14px;font-size:16px;margin:7px 0}
-        button,.btn-link{min-height:50px;border:0;border-radius:14px;background:var(--blue);color:white;text-decoration:none;font-weight:900;display:inline-flex;align-items:center;justify-content:center;padding:13px 18px;margin:6px 0;cursor:pointer}
-        button:hover,.btn-link:hover{background:var(--blue2)}.btn-secondary{background:#475569!important}.btn-danger{background:var(--red)!important}
-        .btn-green{background:var(--green)!important}.btn-orange{background:var(--orange)!important}
-        img.photo{max-width:100%;border-radius:16px;border:1px solid var(--border)}
-        .flash{background:#fff7ed;color:#7c2d12;padding:12px 14px;border-radius:14px;border:1px solid #fed7aa;margin-bottom:16px}
-        .projectCard{overflow:hidden}.projectThumb{height:116px;background:linear-gradient(135deg,#dbeafe,#ccfbf1);border-radius:16px;margin-bottom:14px;display:flex;align-items:center;justify-content:center;color:#1d4ed8;font-weight:900}
-        .progressBar{height:8px;background:#e2e8f0;border-radius:999px;overflow:hidden}.progressFill{height:100%;width:72%;background:linear-gradient(90deg,var(--blue),var(--green))}
-        .roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--blue);color:white;border-radius:999px;text-decoration:none;font-weight:900;min-width:140px;text-align:center}.activeRoom{outline:3px solid var(--green)}
-        .mobileTop,.bottomNav{display:none}.desktop-only{display:block}.mobile-only{display:none}
-        .cleanHomeHero .brandBlock{display:none}
-        @media(max-width:860px){
-            .appShell{display:block}.sidebar{display:none}.topbar{display:none}.content{padding:14px 14px 92px}.mobileTop{display:flex;align-items:center;justify-content:space-between;padding:14px;background:#07142b;color:white;position:sticky;top:0;z-index:100}.mobileLogo{display:flex;align-items:center;gap:10px;font-weight:900}.mobileLogo img{width:34px;height:34px}.bottomNav{display:flex;position:fixed;left:0;right:0;bottom:0;background:#07142b;padding:8px 8px calc(8px + env(safe-area-inset-bottom));gap:8px;z-index:200;box-shadow:0 -10px 30px rgba(0,0,0,.25)}.bottomNav a{flex:1;text-align:center;text-decoration:none;color:white;background:#102a52;border-radius:14px;padding:10px 5px;font-weight:800;font-size:12px}.hero{border-radius:20px;padding:22px}.hero h1{font-size:28px}.grid{grid-template-columns:1fr}.desktop-only{display:none!important}.mobile-only{display:block}.card{border-radius:18px;padding:16px}button,.btn-link{width:100%;min-height:56px}.statNum{font-size:28px}
-        }
+        body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
+        header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}
+        main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
+        input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
+        button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
+        button:hover,.btn-link:hover{background:var(--primary-dark)}.btn-secondary{background:#475569!important}.btn-danger{background:var(--danger)!important}
+        .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.photo,img.photo{max-width:100%;border-radius:14px;border:1px solid var(--border)}
+        .flash{background:#fff3cd;color:#1f2937;padding:12px;border-radius:12px;margin-bottom:14px}.desktop-only{display:block}.muted{color:var(--muted)}
+        .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}
+        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:12px}header a{margin-left:8px}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
     </style>
 </head>
 <body>
-{% if session.get("user_id") %}
-<div class="mobileTop">
-    <div class="mobileLogo"><img src="{{ url_for('static', filename='icon.svg') }}">Project<span style="color:#22c55e">onus</span></div>
-    <button type="button" style="width:auto;min-height:40px;padding:8px 12px;background:#102a52" onclick="toggleDarkMode()">Dark</button>
-</div>
-{% endif %}
-<div class="appShell">
-    {% if session.get("user_id") %}
-    <aside class="sidebar">
-        <div class="logoWrap">
-            <img class="logoIcon" src="{{ url_for('static', filename='icon.svg') }}">
-            <div><div class="logoText">Project<span>onus</span></div><div class="poweredSmall">Projects. Teams. Clients. Connected.</div></div>
-        </div>
-        <a class="navLink" href="{{ url_for('index') }}"><span class="navIcon">🏠</span>Dashboard</a>
-        <a class="navLink" href="{{ url_for('desktop_home') }}"><span class="navIcon">📁</span>Desktop</a>
-        <a class="navLink" href="{{ url_for('mobile_home') }}"><span class="navIcon">📱</span>Mobile</a>
-        {% if is_main_admin() %}
-        <a class="navLink" href="{{ url_for('new_project') }}"><span class="navIcon">➕</span>New Project</a>
-        <a class="navLink" href="{{ url_for('users') }}"><span class="navIcon">👥</span>Users</a>
-        <a class="navLink" href="{{ url_for('settings') }}"><span class="navIcon">⚙️</span>Settings</a>
-        <a class="navLink" href="{{ url_for('backup') }}"><span class="navIcon">💾</span>Backup</a>
-        {% endif %}
-        <a class="navLink" href="{{ url_for('logout') }}"><span class="navIcon">↩</span>Logout</a>
-        <div class="sidebarFooter">One Platform. Complete Control.</div>
-    </aside>
-    {% endif %}
-    <section class="mainPanel">
+<header>
+    <div class="brand">Projectonus</div>
+    <div>
         {% if session.get("user_id") %}
-        <div class="topbar">
-            <div class="pageTitle">Dashboard</div>
-            <div class="topActions">
-                {% if is_main_admin() %}
-                    <a class="bell" href="{{ url_for('notifications') }}">🔔{% if unread_notifications and unread_notifications > 0 %}<span class="badge">{{ unread_notifications }}</span>{% endif %}</a>
-                {% endif %}
-                <button type="button" style="width:auto" onclick="toggleDarkMode()">Dark</button>
-            </div>
-        </div>
+            <span class="desktop-only">{{ session.get("name") }}</span>
+            <a href="{{ url_for('index') }}">Home</a>
+            {% if is_main_admin() %}<a href="{{ url_for('users') }}">Users</a><a href="{{ url_for('settings') }}" title="Settings">⚙️</a><a href="{{ url_for('notifications') }}" title="Notifications">🔔{% if admin_unread_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ admin_unread_count() }}</span>{% endif %}</a><a href="{{ url_for('backup') }}">Backup</a>{% endif %}
+            <a href="{{ url_for('logout') }}">Logout</a>
+            <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
         {% endif %}
-        <div class="content">
-            {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
-            {% block content %}{% endblock %}
-        </div>
-    </section>
-</div>
+    </div>
+</header>
+<main>
+    {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
+    {% block content %}{% endblock %}
+</main>
 {% if session.get("user_id") %}
-<nav class="bottomNav">
-    <a href="{{ url_for('mobile_home') }}">Projects</a>
+<nav class="bottom-nav">
+    <a href="{{ url_for('index') }}">Projects</a>
     {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
-    <a href="{{ url_for('mobile_home') }}#search">Search</a>
+    <a href="{{ url_for('index') }}#search">Search</a>
     <a href="{{ url_for('logout') }}">Logout</a>
 </nav>
 {% endif %}

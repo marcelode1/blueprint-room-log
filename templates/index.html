@@ -1,16 +1,18 @@
 
 {% extends "base.html" %}
 {% block content %}
-<div class="hero cleanHomeHero">
-    <h1>Good morning, {{ session.get("name") }} 👋</h1>
-    <p>Manage projects, rooms, photos, comments, audio, clients, material requests, and invoices from one place.</p>
-</div>
-
-<div class="grid">
-    <div class="statCard"><div class="statNum">{{ projects|length }}</div><div class="muted">Projects</div></div>
-    <div class="statCard"><div class="statNum">—</div><div class="muted">Rooms</div></div>
-    <div class="statCard"><div class="statNum">—</div><div class="muted">Photos</div></div>
-    <div class="statCard"><div class="statNum">—</div><div class="muted">Meetings</div></div>
+<div class="card">
+    {% set logo = get_app_setting("company_logo") %}
+    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo" style="max-height:90px;max-width:260px;display:block;margin-bottom:10px;">{% endif %}
+    <h1>{{ get_app_setting("company_name", "Projectonus") }}</h1>
+    <p class="muted">Powered by Projectonus</p>
+    <div class="grid">
+        <a class="btn-link" href="#search">Search Projects</a>
+        <a class="btn-link" href="#projects">Projects</a>
+        {% if is_main_admin() %}
+            <a class="btn-link" href="{{ url_for('new_project') }}">New Project</a>
+        {% endif %}
+    </div>
 </div>
 
 <div class="card" id="search">
@@ -21,22 +23,19 @@
     </form>
 </div>
 
-<div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-        <h2>Projects Overview</h2>
-        {% if is_main_admin() %}<a class="btn-link" href="{{ url_for('new_project') }}">+ New Project</a>{% endif %}
-    </div>
+<div class="card" id="projects">
+    <h2>Projects</h2>
     <div class="grid">
     {% for p in projects %}
-        <div class="projectCard card">
-            <div class="projectThumb">PROJECTONUS</div>
+        <div class="card">
             <h3>{{ p.name }}</h3>
-            <p class="muted">{{ p.customer_name or 'No customer name' }}</p>
-            <p>{{ p.customer_address or '-' }}</p>
-            <div class="progressBar"><div class="progressFill"></div></div>
-            <p class="muted">Project active</p>
-            <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Desktop View</a>
-            <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Mobile View</a>
+            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
+            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            <div class="desktop-only">
+                <p><strong>Phone:</strong> {{ p.customer_phone or '-' }}</p>
+                <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
+            </div>
+            <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
         </div>
     {% else %}
         <p>No projects found.</p>
