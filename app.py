@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
-import os, uuid, zipfile, tempfile, json
+import os, uuid, zipfile, tempfile, json, mimetypes
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -427,6 +427,66 @@ def backup():
         z.writestr("README_BACKUP.txt", "Portable backup: JSON table exports plus uploaded files.")
 
     return Response(open(backup_path, "rb").read(), mimetype="application/zip", headers={"Content-Disposition": f"attachment; filename={backup_name}"})
+
+
+
+@app.route("/storage_file/<path:storage_path>")
+@login_required
+def storage_file(storage_path):
+    """
+    Serve files from Supabase Storage through Flask.
+    This avoids browser/public-url problems and makes PDF/image display more reliable.
+    """
+    data = download_storage_file(storage_path)
+    if not data:
+        return "File not found or storage permission denied.", 404
+
+    mime_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+    return Response(data, mimetype=mime_type)
+
+
+@app.route("/project/<int:project_id>/regenerate-preview", methods=["POST"])
+@login_required
+def regenerate_preview(project_id):
+    """
+    Rebuild the PNG preview from the stored PDF blueprint.
+    Useful if a PDF was uploaded before preview conversion was fixed.
+    """
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    blueprint_file = project.get("blueprint_file")
+    if not blueprint_file or not blueprint_file.lower().endswith(".pdf"):
+        conn.close()
+        flash("This project does not have a PDF blueprint.")
+        return redirect(url_for("project", project_id=project_id))
+
+    pdf_data = download_storage_file(blueprint_file)
+    if not pdf_data:
+        conn.close()
+        flash("Could not download the PDF from storage. Check Supabase Storage permissions.")
+        return redirect(url_for("project", project_id=project_id))
+
+    preview_path = create_pdf_preview_from_bytes(pdf_data)
+    if not preview_path:
+        conn.close()
+        flash("Could not create PDF preview. Check Render logs for 'PDF preview conversion failed'.")
+        return redirect(url_for("project", project_id=project_id))
+
+    conn.execute(
+        "UPDATE projects SET blueprint_preview_file = %s WHERE id = %s",
+        (preview_path, project_id)
+    )
+    conn.commit()
+    conn.close()
+
+    flash("PDF preview regenerated successfully.")
+    return redirect(url_for("project", project_id=project_id))
 
 
 @app.route("/health")

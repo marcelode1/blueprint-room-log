@@ -4,6 +4,11 @@
     <h2>{{ project.name }}</h2>
     <p>Turn on Drawing Mode, click around room walls, finish the trace, name the room, and save it.</p>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    {% if project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
+    <form method="post" action="{{ url_for('regenerate_preview', project_id=project.id) }}" style="margin-top:8px;">
+        <button type="submit" class="btn-secondary">Regenerate PDF Preview</button>
+    </form>
+    {% endif %}
 </div>
 
 <div class="card">
@@ -48,10 +53,10 @@
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
             {% if project.blueprint_preview_file %}
-                <img id="blueprint" src="{{ file_url(project.blueprint_preview_file) }}" style="max-width:none; display:block; pointer-events:none;">
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=project.blueprint_preview_file) }}" style="max-width:none; display:block; pointer-events:none;">
             {% elif project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
                 <iframe id="blueprintPdf"
-                        src="{{ file_url(project.blueprint_file) }}"
+                        src="{{ url_for('storage_file', storage_path=project.blueprint_file) }}"
                         style="width:1100px; height:800px; border:1px solid #ccc; display:block; pointer-events:none;"></iframe>
                 <div id="blueprint" style="width:1100px; height:800px; display:none;"></div>
                 <p style="background:#fff3cd; padding:8px; border-radius:6px;">
@@ -59,7 +64,7 @@
                     For best phone support, re-upload this blueprint after this update is deployed.
                 </p>
             {% elif project.blueprint_file %}
-                <img id="blueprint" src="{{ file_url(project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=project.blueprint_file) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}

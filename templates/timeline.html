@@ -16,7 +16,7 @@
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.room_name }} — {{ n.user_name or "Unknown user" }}
             <p>{{ n.comment }}</p>
-            {% if n.photo_file %}<img class="photo" src="{{ file_url(n.photo_file) }}">{% endif %}
+            {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
         </div>
     {% else %}
         <p>No timeline records found.</p>

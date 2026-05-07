@@ -27,3 +27,10 @@ This version stores project data in Supabase PostgreSQL and files in Supabase St
 This version prevents raw PDF files from being loaded as an image.
 If PDF-to-PNG preview conversion fails, the project page falls back to an iframe PDF view instead of showing a broken image.
 For best phone support, upload a PDF after this version is deployed so the app can create a PNG preview.
+
+
+## Storage Proxy Fix
+
+This version serves Supabase Storage files through the app using /storage_file/.
+It also adds a "Regenerate PDF Preview" button on PDF blueprint projects.
+Use this if an uploaded PDF shows as a broken image or "something went wrong."
