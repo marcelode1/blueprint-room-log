@@ -35,6 +35,38 @@ def allowed_photo(filename):
     return file_ext(filename) in ALLOWED_PHOTOS
 
 
+
+def ensure_project_blueprint_records(conn, project):
+    """
+    Backwards compatibility:
+    Older projects stored one blueprint directly in projects.blueprint_file.
+    This creates a blueprint record for that existing file so the new multi-blueprint UI can use it.
+    """
+    if not project:
+        return
+
+    try:
+        existing_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM project_blueprints WHERE project_id = %s",
+            (project["id"],)
+        ).fetchone()["c"]
+
+        if existing_count == 0 and project.get("blueprint_file"):
+            conn.execute(
+                "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (
+                    project["id"],
+                    "Main Blueprint",
+                    project.get("blueprint_file"),
+                    project.get("blueprint_preview_file"),
+                    datetime.now().isoformat()
+                )
+            )
+            conn.commit()
+    except Exception as e:
+        print("Could not ensure project blueprint records:", e)
+
+
 def allowed_blueprint(filename):
     return file_ext(filename) in ALLOWED_BLUEPRINTS
 
@@ -175,6 +207,17 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_blueprints (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        blueprint_file TEXT NOT NULL,
+        blueprint_preview_file TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS rooms (
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -252,6 +295,7 @@ def init_db():
 
     # Safe migrations for older deployments
     migrations = [
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_name TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
@@ -769,12 +813,43 @@ def delete_material(project_id, material_id):
 def project(project_id):
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
-    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
-    conn.close()
     if not project:
+        conn.close()
         flash("Project not found.")
         return redirect(url_for("index"))
-    return render_template("project.html", project=project, rooms=rooms)
+
+    ensure_project_blueprint_records(conn, project)
+
+    blueprints = conn.execute(
+        "SELECT * FROM project_blueprints WHERE project_id = %s ORDER BY id",
+        (project_id,)
+    ).fetchall()
+
+    active_blueprint_id = request.args.get("blueprint_id", type=int)
+    active_blueprint = None
+
+    if blueprints:
+        if active_blueprint_id:
+            active_blueprint = conn.execute(
+                "SELECT * FROM project_blueprints WHERE id = %s AND project_id = %s",
+                (active_blueprint_id, project_id)
+            ).fetchone()
+        if not active_blueprint:
+            active_blueprint = blueprints[0]
+
+    if active_blueprint:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+            (project_id, active_blueprint["id"])
+        ).fetchall()
+    else:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s ORDER BY id",
+            (project_id,)
+        ).fetchall()
+
+    conn.close()
+    return render_template("project.html", project=project, rooms=rooms, blueprints=blueprints, active_blueprint=active_blueprint)
 
 
 
@@ -821,6 +896,63 @@ def delete_blueprint(project_id):
 
     flash("Blueprint removed from this project.")
     return redirect(url_for("project", project_id=project_id))
+
+
+
+@app.route("/project/<int:project_id>/blueprints", methods=["POST"])
+@admin_required
+def add_project_blueprint(project_id):
+    name = request.form.get("name", "").strip() or "Blueprint"
+    file = request.files.get("blueprint")
+
+    if not file or not file.filename:
+        flash("Please choose a blueprint PDF or image.")
+        return redirect(url_for("project", project_id=project_id))
+
+    if not allowed_blueprint(file.filename):
+        flash("Blueprint must be PDF, JPG, PNG, or WEBP.")
+        return redirect(url_for("project", project_id=project_id))
+
+    raw = file.read()
+    blueprint_file = upload_bytes_to_storage(raw, file.filename, file.content_type or "application/octet-stream")
+
+    # PDF blueprints render in browser with PDF.js; no server-side rasterizing.
+    blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
+
+    conn = db()
+    conn.execute(
+        "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (project_id, name, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+    flash("Blueprint added.")
+    return redirect(url_for("project", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/blueprints/<int:blueprint_id>/delete", methods=["POST"])
+@admin_required
+def delete_project_blueprint(project_id, blueprint_id):
+    """
+    Deletes only the blueprint record/file reference.
+    Rooms are NOT deleted. Any rooms linked to this blueprint are kept and blueprint_id becomes NULL.
+    """
+    conn = db()
+    conn.execute(
+        "UPDATE rooms SET blueprint_id = NULL WHERE project_id = %s AND blueprint_id = %s",
+        (project_id, blueprint_id)
+    )
+    conn.execute(
+        "DELETE FROM project_blueprints WHERE id = %s AND project_id = %s",
+        (blueprint_id, project_id)
+    )
+    conn.commit()
+    conn.close()
+
+    flash("Blueprint deleted. Rooms were kept.")
+    return redirect(url_for("project", project_id=project_id))
+
 
 
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])

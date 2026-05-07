@@ -10,8 +10,8 @@
     </div>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Material Inventory</a>
-    {% if project.blueprint_file %}
-        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=project.blueprint_file) }}">View Original Blueprint</a>
+    {% if active_blueprint.blueprint_file %}
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">View Original Blueprint</a>
     {% endif %}
     {% if is_main_admin() %}
     <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');" style="margin-top:8px;">
@@ -22,20 +22,62 @@
 
 {% if is_main_admin() %}
 <div class="card">
-    <h3>Manage Blueprint</h3>
+    <h3 class="legacyBlueprintHide">Legacy Single Blueprint</h3>
     <form method="post" enctype="multipart/form-data" action="{{ url_for('update_blueprint', project_id=project.id) }}">
         <label>Upload New / Replace Blueprint PDF or Image</label>
         <input name="blueprint" type="file" accept=".pdf,image/*" required>
         <button type="submit">Upload / Replace Blueprint</button>
     </form>
-    {% if project.blueprint_file %}
+    {% if active_blueprint.blueprint_file %}
     <form method="post" action="{{ url_for('delete_blueprint', project_id=project.id) }}" onsubmit="return confirm('Remove blueprint from this project? Rooms and comments will stay, but the blueprint file will no longer show.');">
         <button type="submit" class="btn-danger">Delete Blueprint From Project</button>
     </form>
-    <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=project.blueprint_file) }}">Open Original Blueprint File</a>
+    <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">Open Original Blueprint File</a>
     {% endif %}
 </div>
 {% endif %}
+
+
+{% if is_main_admin() %}
+<div class="card blueprintDesktopOnly">
+    <h3>Add Blueprint / Floor Sheet</h3>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('add_project_blueprint', project_id=project.id) }}">
+        <label>Blueprint Name / Floor</label>
+        <input name="name" placeholder="Example: First Floor, Second Floor, Pool House, Lighting Plan" required>
+        <label>Upload Blueprint PDF or Image</label>
+        <input name="blueprint" type="file" accept=".pdf,image/*" required>
+        <button type="submit">Add Blueprint</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card blueprintDesktopOnly">
+    <h3>Blueprint Sheets / Floors</h3>
+    {% if blueprints %}
+        <div class="blueprintTabs">
+            {% for bp in blueprints %}
+                <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
+                    <a href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+                    {% if is_main_admin() %}
+                    <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
+                    <div class="deleteBox" id="bpDelete{{ bp.id }}">
+                        <strong>Delete this blueprint?</strong>
+                        <p>Rooms will NOT be deleted. They will stay in the project.</p>
+                        <div class="confirmRow">
+                            <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
+                                <button type="submit" class="btn-danger">Yes</button>
+                            </form>
+                            <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>No blueprint uploaded yet. Add a blueprint/floor sheet above.</p>
+    {% endif %}
+</div>
 
 <div class="card">
     <h3>Rooms</h3>
@@ -75,6 +117,7 @@
         <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
         <button type="button" onclick="finishTrace()">Finish Room Trace</button>
         <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
+        <input name="blueprint_id" type="hidden" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <button type="submit">Save Room</button>
     </form>
 </div>
@@ -102,22 +145,22 @@
 <div class="card">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
-            {% if not project.blueprint_file %}
+            {% if not active_blueprint %}
                 <div id="blueprint" style="width:1100px; height:800px; background:white; display:flex; align-items:center; justify-content:center; border:1px dashed #aaa;">
                     <div style="text-align:center; color:#555;">
                         <h3>No blueprint uploaded yet</h3>
                         <p>Main admin can upload a blueprint from the Manage Blueprint section.</p>
                     </div>
                 </div>
-            {% elif project.blueprint_file and project.blueprint_file.lower().endswith('.pdf') %}
+            {% elif active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
                 <canvas id="blueprint"
-                        data-pdf-url="{{ url_for('storage_file', storage_path=project.blueprint_file) }}"
+                        data-pdf-url="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}"
                         style="display:block; pointer-events:none; background:white;"></canvas>
                 <div id="pdfStatus" style="padding:8px; background:#eef2ff; border-radius:6px; margin-top:8px;">
                     Loading high-resolution PDF blueprint...
                 </div>
-            {% elif project.blueprint_preview_file or project.blueprint_file %}
-                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(project.blueprint_preview_file or project.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
+            {% elif active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}
@@ -144,7 +187,18 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){ #viewport{height:70vh!important}}</style>
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){ #viewport{height:70vh!important}}
+.blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
+.blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:180px}
+.blueprintTab a{font-weight:bold;text-decoration:none;display:block;margin-bottom:6px}
+.activeBlueprint{outline:3px solid #2563eb;background:#dbeafe}
+.miniDelete{background:#dc2626;color:white;border:0;border-radius:6px;padding:7px 10px;width:auto;min-height:auto}
+.deleteBox{display:none;background:#fff3cd;padding:10px;border-radius:8px;margin-top:8px}
+.confirmRow{display:flex;gap:8px;align-items:center}
+.confirmRow form{margin:0}
+.legacyBlueprintHide{display:none}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}}
+</style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
 <script type="module">
