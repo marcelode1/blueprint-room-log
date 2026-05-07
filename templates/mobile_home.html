@@ -1,0 +1,30 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>Projectonus Mobile</h1>
+    <p class="muted">Field app for projects, rooms, pictures, comments, and audio.</p>
+</div>
+
+<div class="card" id="search">
+    <h2>Search Projects</h2>
+    <form method="get" action="{{ url_for('mobile_home') }}">
+        <input name="q" value="{{ q or '' }}" placeholder="Search project, customer, or address">
+        <button type="submit">Search</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Projects</h2>
+    {% for p in projects %}
+        <div class="card">
+            <h3>{{ p.name }}</h3>
+            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
+            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            <a class="btn-link" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Project</a>
+        </div>
+    {% else %}
+        <p>No projects found.</p>
+    {% endfor %}
+</div>
+{% endblock %}

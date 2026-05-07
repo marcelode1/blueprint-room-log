@@ -1,7 +1,7 @@
 {
   "name": "Projectonus",
   "short_name": "Projectonus",
-  "start_url": "/",
+  "start_url": "/mobile",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0b1120",

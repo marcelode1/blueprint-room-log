@@ -407,6 +407,31 @@ def index():
     return render_template("index.html", projects=projects, q=q)
 
 
+
+
+@app.route("/desktop")
+@login_required
+def desktop_home():
+    return redirect(url_for("index"))
+
+
+@app.route("/mobile")
+@login_required
+def mobile_home():
+    q = request.args.get("q", "").strip()
+    conn = db()
+    if q:
+        like = f"%{q}%"
+        projects = conn.execute(
+            "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s OR customer_address ILIKE %s ORDER BY created_at DESC",
+            (like, like, like)
+        ).fetchall()
+    else:
+        projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return render_template("mobile_home.html", projects=projects, q=q)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -503,6 +528,20 @@ def new_project():
     return render_template("new_project.html")
 
 
+
+@app.route("/mobile/project/<int:project_id>")
+@login_required
+def mobile_project(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
+    conn.close()
+    if not project:
+        flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+    return render_template("mobile_project.html", project=project, rooms=rooms)
+
+
 @app.route("/project/<int:project_id>")
 @login_required
 def project(project_id):
@@ -589,6 +628,49 @@ def add_room(project_id):
     conn.commit()
     conn.close()
     return redirect(url_for("project", project_id=project_id))
+
+
+
+@app.route("/mobile/room/<int:room_id>", methods=["GET", "POST"])
+@login_required
+def mobile_room(room_id):
+    conn = db()
+    room = conn.execute("SELECT * FROM rooms WHERE id = %s", (room_id,)).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found.")
+        return redirect(url_for("mobile_home"))
+
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
+    project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+
+    if request.method == "POST":
+        if not can_add_notes():
+            flash("You can view notes and photos, but you cannot add new ones.")
+            return redirect(url_for("mobile_room", room_id=room_id))
+
+        file = request.files.get("photo") or request.files.get("photo_camera")
+        audio = request.files.get("audio")
+        photo_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+        audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
+
+        conn.execute(
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
+        )
+        conn.commit()
+        flash("Comment/photo/audio added.")
+
+    selected_date = request.args.get("date", "")
+    query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
+    params = [room_id]
+    if selected_date:
+        query += " AND note_date = %s"
+        params.append(selected_date)
+    query += " ORDER BY note_date DESC, created_at DESC"
+    notes = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    return render_template("mobile_room.html", room=room, project=project, rooms=project_rooms, notes=notes, selected_date=selected_date)
 
 
 @app.route("/room/<int:room_id>", methods=["GET", "POST"])

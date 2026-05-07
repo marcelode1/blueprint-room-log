@@ -1,0 +1,7 @@
+Projectonus Latest Version
+Includes:
+- Admin settings and permissions
+- Company logo support
+- Notification bell
+- Comment/photo/audio permissions
+- Mobile beta improvements
