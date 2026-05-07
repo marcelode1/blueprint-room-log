@@ -1,0 +1,124 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Material Inventory</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+</div>
+
+<div class="card">
+    <h3>Add Material</h3>
+    <form method="post" enctype="multipart/form-data">
+        <label>Date</label>
+        <input type="date" name="item_date" required>
+
+        <label>Quantity</label>
+        <input type="number" name="quantity" step="0.01" min="0" required>
+
+        <label>Part Number</label>
+        <input name="part_number" placeholder="Example: DM-NAX-4ZSP">
+
+        <label>Description</label>
+        <textarea name="description" rows="3" required placeholder="Material description"></textarea>
+
+        <label>Status</label>
+        <select name="material_status" required>
+            <option value="not_in_stock">Not in stock yet</option>
+            <option value="in_stock">In stock</option>
+            <option value="used">Used on project</option>
+        </select>
+
+        <label>Material Picture</label>
+        <input type="file" name="picture" accept="image/*">
+
+        <label>Take Picture</label>
+        <input type="file" name="picture_camera" accept="image/*" capture="environment">
+
+        <button type="submit">Add Material</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Inventory Spreadsheet</h3>
+    <style>
+        .inventoryTable { width:100%; border-collapse:collapse; overflow:auto; }
+        .inventoryTable th, .inventoryTable td { border:1px solid #ddd; padding:10px; text-align:left; vertical-align:top; }
+        .inventoryTable th { background:#f3f4f6; }
+        .status-in_stock { background:#dcfce7; }
+        .status-not_in_stock { background:#ffedd5; }
+        .status-used { background:#fee2e2; }
+        .statusBadge { padding:6px 10px; border-radius:999px; font-weight:bold; display:inline-block; }
+        .status-in_stock .statusBadge { background:#22c55e; color:white; }
+        .status-not_in_stock .statusBadge { background:#f59e0b; color:white; }
+        .status-used .statusBadge { background:#ef4444; color:white; }
+        .materialPic { max-width:110px; border-radius:8px; }
+        @media(max-width:800px){
+            .inventoryWrap { overflow-x:auto; }
+            .inventoryTable { min-width:900px; }
+        }
+    </style>
+
+    <div class="inventoryWrap">
+        <table class="inventoryTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Qty</th>
+                    <th>Part Number</th>
+                    <th>Description</th>
+                    <th>Picture</th>
+                    <th>Status</th>
+                    <th>Update Status</th>
+                    {% if is_main_admin() %}<th>Delete</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for m in materials %}
+                <tr class="status-{{ m.material_status }}">
+                    <td>{{ m.item_date }}</td>
+                    <td>{{ m.quantity }}</td>
+                    <td>{{ m.part_number or '-' }}</td>
+                    <td>{{ m.description }}</td>
+                    <td>
+                        {% if m.picture_file %}
+                            <img class="materialPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if m.material_status == 'in_stock' %}
+                            <span class="statusBadge">In stock</span>
+                        {% elif m.material_status == 'used' %}
+                            <span class="statusBadge">Used</span>
+                        {% else %}
+                            <span class="statusBadge">Not in stock yet</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="{{ url_for('update_material_status', project_id=project.id, material_id=m.id) }}">
+                            <select name="material_status">
+                                <option value="not_in_stock" {% if m.material_status == 'not_in_stock' %}selected{% endif %}>Not in stock yet</option>
+                                <option value="in_stock" {% if m.material_status == 'in_stock' %}selected{% endif %}>In stock</option>
+                                <option value="used" {% if m.material_status == 'used' %}selected{% endif %}>Used on project</option>
+                            </select>
+                            <button type="submit">Update</button>
+                        </form>
+                    </td>
+                    {% if is_main_admin() %}
+                    <td>
+                        <form method="post" action="{{ url_for('delete_material', project_id=project.id, material_id=m.id) }}" onsubmit="return confirm('Delete this material item?');">
+                            <button type="submit" class="btn-danger">Delete</button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+            {% else %}
+                <tr><td colspan="8">No material inventory yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

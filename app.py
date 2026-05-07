@@ -160,6 +160,21 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS material_inventory (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        item_date TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        part_number TEXT,
+        description TEXT NOT NULL,
+        material_status TEXT NOT NULL DEFAULT 'not_in_stock',
+        picture_file TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS rooms (
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -433,6 +448,57 @@ def mobile_home():
     return render_template("mobile_home.html", projects=projects, q=q)
 
 
+
+@app.route("/mobile/project/<int:project_id>/materials", methods=["GET", "POST"])
+@login_required
+def mobile_project_materials(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+
+    if request.method == "POST":
+        if not can_add_notes():
+            flash("You do not have permission to add material inventory.")
+            return redirect(url_for("mobile_project_materials", project_id=project_id))
+
+        file = request.files.get("picture") or request.files.get("picture_camera")
+        picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+
+        conn.execute(
+            "INSERT INTO material_inventory (project_id, user_id, item_date, quantity, part_number, description, material_status, picture_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                project_id,
+                session.get("user_id"),
+                request.form.get("item_date"),
+                float(request.form.get("quantity") or 0),
+                request.form.get("part_number", "").strip(),
+                request.form.get("description", "").strip(),
+                request.form.get("material_status", "not_in_stock"),
+                picture_file,
+                datetime.now().isoformat()
+            )
+        )
+        conn.commit()
+        flash("Material inventory item added.")
+
+    materials = conn.execute(
+        """
+        SELECT material_inventory.*, users.name AS user_name
+        FROM material_inventory
+        LEFT JOIN users ON material_inventory.user_id = users.id
+        WHERE project_id = %s
+        ORDER BY item_date DESC, created_at DESC
+        """,
+        (project_id,)
+    ).fetchall()
+    conn.close()
+    return render_template("mobile_materials.html", project=project, materials=materials)
+
+
+
 @app.route("/mobile/project/<int:project_id>")
 @login_required
 def mobile_project(project_id):
@@ -611,6 +677,90 @@ def new_project():
         return redirect(url_for("project", project_id=project_id))
 
     return render_template("new_project.html")
+
+
+
+
+@app.route("/project/<int:project_id>/materials", methods=["GET", "POST"])
+@login_required
+def project_materials(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        if not is_main_admin() and session.get("role") not in ["worker", "admin"]:
+            flash("You do not have permission to add material inventory.")
+            return redirect(url_for("project_materials", project_id=project_id))
+
+        file = request.files.get("picture") or request.files.get("picture_camera")
+        picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+
+        conn.execute(
+            "INSERT INTO material_inventory (project_id, user_id, item_date, quantity, part_number, description, material_status, picture_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                project_id,
+                session.get("user_id"),
+                request.form.get("item_date"),
+                float(request.form.get("quantity") or 0),
+                request.form.get("part_number", "").strip(),
+                request.form.get("description", "").strip(),
+                request.form.get("material_status", "not_in_stock"),
+                picture_file,
+                datetime.now().isoformat()
+            )
+        )
+        conn.commit()
+        flash("Material inventory item added.")
+
+    materials = conn.execute(
+        """
+        SELECT material_inventory.*, users.name AS user_name
+        FROM material_inventory
+        LEFT JOIN users ON material_inventory.user_id = users.id
+        WHERE project_id = %s
+        ORDER BY item_date DESC, created_at DESC
+        """,
+        (project_id,)
+    ).fetchall()
+    conn.close()
+    return render_template("materials.html", project=project, materials=materials)
+
+
+@app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
+@login_required
+def update_material_status(project_id, material_id):
+    if not is_main_admin() and session.get("role") not in ["worker", "admin"]:
+        flash("You do not have permission to update material status.")
+        return redirect(url_for("project_materials", project_id=project_id))
+
+    new_status = request.form.get("material_status", "not_in_stock")
+    if new_status not in ["in_stock", "not_in_stock", "used"]:
+        new_status = "not_in_stock"
+
+    conn = db()
+    conn.execute(
+        "UPDATE material_inventory SET material_status = %s WHERE id = %s AND project_id = %s",
+        (new_status, material_id, project_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Material status updated.")
+    return redirect(url_for("project_materials", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/materials/<int:material_id>/delete", methods=["POST"])
+@admin_required
+def delete_material(project_id, material_id):
+    conn = db()
+    conn.execute("DELETE FROM material_inventory WHERE id = %s AND project_id = %s", (material_id, project_id))
+    conn.commit()
+    conn.close()
+    flash("Material inventory item deleted.")
+    return redirect(url_for("project_materials", project_id=project_id))
 
 
 
@@ -900,11 +1050,12 @@ def backup():
 
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes"]:
+    for table in ["users", "projects", "rooms", "notes", "material_inventory"]:
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
     notes = conn.execute("SELECT photo_file, audio_file FROM notes WHERE photo_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
+    material_pictures = conn.execute("SELECT picture_file FROM material_inventory WHERE picture_file IS NOT NULL").fetchall()
     conn.close()
 
     backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -924,6 +1075,11 @@ def backup():
                 data = download_storage_file(n["photo_file"])
                 if data:
                     z.writestr(f"photos/{os.path.basename(n['photo_file'])}", data)
+        for m in material_pictures:
+            if m.get("picture_file"):
+                data = download_storage_file(m["picture_file"])
+                if data:
+                    z.writestr(f"material_pictures/{os.path.basename(m['picture_file'])}", data)
             if n.get("audio_file"):
                 data = download_storage_file(n["audio_file"])
                 if data:

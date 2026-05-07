@@ -1,0 +1,77 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Material Inventory</h2>
+    <p>{{ project.name }}</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Project</a>
+</div>
+
+{% if can_add_notes() %}
+<div class="card">
+    <h3>Add Material</h3>
+    <form method="post" enctype="multipart/form-data">
+        <label>Date</label>
+        <input type="date" name="item_date" required>
+
+        <label>Quantity</label>
+        <input type="number" name="quantity" step="0.01" min="0" required>
+
+        <label>Part Number</label>
+        <input name="part_number">
+
+        <label>Description</label>
+        <textarea name="description" rows="3" required></textarea>
+
+        <label>Status</label>
+        <select name="material_status" required>
+            <option value="not_in_stock">Not in stock yet</option>
+            <option value="in_stock">In stock</option>
+            <option value="used">Used on project</option>
+        </select>
+
+        <label>Take Picture</label>
+        <input type="file" name="picture_camera" accept="image/*" capture="environment">
+
+        <label>Upload Picture</label>
+        <input type="file" name="picture" accept="image/*">
+
+        <button type="submit">Add Material</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Materials</h3>
+    <style>
+        .materialCard { border-left:8px solid #f59e0b; }
+        .materialCard.in_stock { border-left-color:#22c55e; background:#f0fdf4; }
+        .materialCard.used { border-left-color:#ef4444; background:#fef2f2; }
+        .materialPic { max-width:100%; border-radius:10px; margin-top:8px; }
+        .statusBadge { padding:6px 10px; border-radius:999px; color:white; font-weight:bold; display:inline-block; }
+        .badge-in_stock { background:#22c55e; }
+        .badge-not_in_stock { background:#f59e0b; }
+        .badge-used { background:#ef4444; }
+    </style>
+    {% for m in materials %}
+        <div class="card materialCard {{ m.material_status }}">
+            <strong>{{ m.item_date }}</strong>
+            <p><strong>Qty:</strong> {{ m.quantity }}</p>
+            <p><strong>Part #:</strong> {{ m.part_number or '-' }}</p>
+            <p>{{ m.description }}</p>
+            {% if m.material_status == 'in_stock' %}
+                <span class="statusBadge badge-in_stock">In stock</span>
+            {% elif m.material_status == 'used' %}
+                <span class="statusBadge badge-used">Used</span>
+            {% else %}
+                <span class="statusBadge badge-not_in_stock">Not in stock yet</span>
+            {% endif %}
+            {% if m.picture_file %}
+                <img class="materialPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No material inventory yet.</p>
+    {% endfor %}
+</div>
+{% endblock %}

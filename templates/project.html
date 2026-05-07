@@ -9,6 +9,7 @@
         <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
     </div>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Material Inventory</a>
     {% if project.blueprint_file %}
         <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=project.blueprint_file) }}">View Original Blueprint</a>
     {% endif %}
