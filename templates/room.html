@@ -67,9 +67,27 @@
             {% if n.audio_file and has_perm("see_audio") %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
             {% if is_main_admin() or has_perm("delete_comments") or has_perm("delete_pictures") or has_perm("delete_audio") %}
             {% if is_main_admin() or has_perm("edit_comments") %}<a class="btn-link btn-secondary" href="{{ url_for('edit_note', note_id=n.id) }}">Edit Comment</a>{% endif %}
-            <form method="post" action="{{ url_for('delete_note', note_id=n.id) }}" onsubmit="return confirm('Delete this comment/photo/audio?');">
-                <button type="submit" class="btn-danger">Delete Comment / Picture</button>
-            </form>
+            
+<div class="grid">
+    {% if n.comment %}
+    <form method="post" action="{{ url_for('delete_note_comment', note_id=n.id) }}" onsubmit="return confirm('Delete only the comment text? Picture and audio will stay.');">
+        <button type="submit" class="btn-danger">Delete Comment Only</button>
+    </form>
+    {% endif %}
+    {% if n.photo_file %}
+    <form method="post" action="{{ url_for('delete_note_photo', note_id=n.id) }}" onsubmit="return confirm('Delete only this picture? Comment and audio will stay.');">
+        <button type="submit" class="btn-danger">Delete Picture Only</button>
+    </form>
+    {% endif %}
+    {% if n.audio_file %}
+    <form method="post" action="{{ url_for('delete_note_audio', note_id=n.id) }}" onsubmit="return confirm('Delete only this audio? Comment and picture will stay.');">
+        <button type="submit" class="btn-danger">Delete Audio Only</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('delete_note', note_id=n.id) }}" onsubmit="return confirm('Delete the entire entry including comment, picture, and audio?');">
+        <button type="submit" class="btn-danger">Delete Entire Entry</button>
+    </form>
+</div>
             {% endif %}
         </div>
     {% else %}<p>No comments/photos.</p>{% endfor %}

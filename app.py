@@ -782,6 +782,62 @@ def edit_note(note_id):
     return render_template("edit_note.html", note=note)
 
 
+
+@app.route("/note/<int:note_id>/delete-comment", methods=["POST"])
+@admin_required
+def delete_note_comment(note_id):
+    conn = db()
+    note = conn.execute("SELECT notes.*, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    if not note:
+        conn.close()
+        flash("Comment not found.")
+        return redirect(url_for("index"))
+
+    conn.execute("UPDATE notes SET comment = %s WHERE id = %s", ("", note_id))
+    conn.commit()
+    room_id = note["room_id"]
+    conn.close()
+    flash("Comment text deleted. Picture/audio kept.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/note/<int:note_id>/delete-photo", methods=["POST"])
+@admin_required
+def delete_note_photo(note_id):
+    conn = db()
+    note = conn.execute("SELECT notes.*, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    if not note:
+        conn.close()
+        flash("Picture not found.")
+        return redirect(url_for("index"))
+
+    conn.execute("UPDATE notes SET photo_file = NULL WHERE id = %s", (note_id,))
+    conn.commit()
+    room_id = note["room_id"]
+    conn.close()
+    flash("Picture removed. Comment/audio kept.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/note/<int:note_id>/delete-audio", methods=["POST"])
+@admin_required
+def delete_note_audio(note_id):
+    conn = db()
+    note = conn.execute("SELECT notes.*, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    if not note:
+        conn.close()
+        flash("Audio not found.")
+        return redirect(url_for("index"))
+
+    conn.execute("UPDATE notes SET audio_file = NULL WHERE id = %s", (note_id,))
+    conn.commit()
+    room_id = note["room_id"]
+    conn.close()
+    flash("Audio removed. Comment/picture kept.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+
 @app.route("/backup")
 @admin_required
 def backup():

@@ -90,3 +90,9 @@ Fixed project.html Jinja TemplateSyntaxError caused by accidental `{#` sequence 
 
 ## V5 Admin Settings and Permissions
 Adds admin gear settings, company logo, powered by Projectonus branding, login notification bell, and granular user permissions for comments, pictures, and audio.
+
+
+## Phone Blueprint + Separate Delete Controls
+- Phone/mobile view hides the blueprint editor/viewer and shows room list only.
+- PC/desktop keeps blueprint viewer/editor.
+- Admin can delete comment text, picture, or audio separately from a note entry.
