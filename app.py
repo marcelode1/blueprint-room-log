@@ -854,28 +854,6 @@ def project(project_id):
 
 
 
-if not allowed_blueprint(file.filename):
-        flash("Blueprint must be PDF, JPG, PNG, or WEBP.")
-        return redirect(url_for("project", project_id=project_id))
-
-    raw = file.read()
-    blueprint_file = upload_bytes_to_storage(raw, file.filename, file.content_type or "application/octet-stream")
-
-    # PDF is rendered in browser; do not convert large PDFs on the server.
-    blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
-
-    conn = db()
-    conn.execute(
-        "UPDATE projects SET blueprint_file = %s, blueprint_preview_file = %s WHERE id = %s",
-        (blueprint_file, blueprint_preview_file, project_id)
-    )
-    conn.commit()
-    conn.close()
-
-    flash("Blueprint updated.")
-    return redirect(url_for("project", project_id=project_id))
-
-
 
 @app.route("/project/<int:project_id>/blueprints/add", methods=["POST"])
 @admin_required
@@ -892,13 +870,24 @@ def add_project_blueprint(project_id):
         return redirect(url_for("project", project_id=project_id))
 
     raw = file.read()
-    blueprint_file = upload_bytes_to_storage(raw, file.filename, file.content_type or "application/octet-stream")
+    blueprint_file = upload_bytes_to_storage(
+        raw,
+        file.filename,
+        file.content_type or "application/octet-stream"
+    )
+
     blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
 
     conn = db()
     new_bp = conn.execute(
         "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (project_id, name, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
+        (
+            project_id,
+            name,
+            blueprint_file,
+            blueprint_preview_file,
+            datetime.now().isoformat()
+        )
     ).fetchone()
     conn.commit()
     conn.close()

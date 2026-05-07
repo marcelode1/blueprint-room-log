@@ -1,3 +1,4 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
@@ -8,11 +9,14 @@
         <p><strong>Phone:</strong> {{ project.customer_phone or '-' }}</p>
         <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
     </div>
+
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Material Inventory</a>
-    {% if active_blueprint.blueprint_file %}
-        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">View Original Blueprint</a>
+
+    {% if active_blueprint %}
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">Open Current Blueprint File</a>
     {% endif %}
+
     {% if is_main_admin() %}
     <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');" style="margin-top:8px;">
         <button type="submit" class="btn-danger">Delete Project</button>
@@ -20,30 +24,17 @@
     {% endif %}
 </div>
 
-{% if is_main_admin() %}
-<div class="card">
-    <h3 class="legacyBlueprintHide">Legacy Single Blueprint</h3>
-    <form method="post" enctype="multipart/form-data" action="{{ url_for('update_blueprint', project_id=project.id) }}">
-        <label>Upload New / Replace Blueprint PDF or Image</label>
-        <input name="blueprint" type="file" accept=".pdf,image/*" required>
-        <button type="submit">Upload / Replace Blueprint</button>
-    </form>
-    {% if active_blueprint.blueprint_file %}
-    <form method="post" action="{{ url_for('delete_blueprint', project_id=project.id) }}" onsubmit="return confirm('Remove blueprint from this project? Rooms and comments will stay, but the blueprint file will no longer show.');">
-        <button type="submit" class="btn-danger">Delete Blueprint From Project</button>
-    </form>
-    <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">Open Original Blueprint File</a>
-    {% endif %}
+<div class="card mobileBlueprintNotice">
+    <h3>Mobile View</h3>
+    <p>The blueprint editor is available on the computer version only. On phone, choose a room from the room list.</p>
 </div>
-{% endif %}
-
 
 {% if is_main_admin() %}
 <div class="card blueprintDesktopOnly">
     <h3>Add Blueprint / Floor Sheet</h3>
     <form method="post" enctype="multipart/form-data" action="{{ url_for('add_project_blueprint', project_id=project.id) }}">
         <label>Blueprint Name / Floor</label>
-        <input name="name" placeholder="Example: First Floor, Second Floor, Pool House, Lighting Plan" required>
+        <input name="name" placeholder="Example: First Floor, Second Floor, Pavilion, Lighting Plan" required>
         <label>Upload Blueprint PDF or Image</label>
         <input name="blueprint" type="file" accept=".pdf,image/*" required>
         <button type="submit">Add Blueprint</button>
@@ -56,31 +47,31 @@
     {% if blueprints %}
         <div class="blueprintTabs">
             {% for bp in blueprints %}
-                <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
-                    <a class="bpOpen" href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
-                    {% if is_main_admin() %}
-                        <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
-                        <div class="deleteBox" id="bpDelete{{ bp.id }}">
-                            <strong>Delete this blueprint?</strong>
-                            <p>Rooms will NOT be deleted. They will stay in the project.</p>
-                            <div class="confirmRow">
-                                <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
-                                    <button type="submit" class="btn-danger">Yes</button>
-                                </form>
-                                <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
-                            </div>
-                        </div>
-                    {% endif %}
+            <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
+                <a class="bpOpen" href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+                {% if is_main_admin() %}
+                <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
+                <div class="deleteBox" id="bpDelete{{ bp.id }}">
+                    <strong>Delete this blueprint?</strong>
+                    <p>Rooms will NOT be deleted. They will stay in the project.</p>
+                    <div class="confirmRow">
+                        <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
+                            <button type="submit" class="btn-danger">Yes</button>
+                        </form>
+                        <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
+                    </div>
                 </div>
+                {% endif %}
+            </div>
             {% endfor %}
         </div>
     {% else %}
-        <p>No blueprint uploaded yet. Add a blueprint/floor sheet above.</p>
+        <p>No blueprint sheets yet. Add one above.</p>
     {% endif %}
 </div>
 
 <div class="card">
-    <h3>Rooms</h3>
+    <h3>Rooms {% if active_blueprint %}for {{ active_blueprint.name }}{% endif %}</h3>
     <div class="roomScroller">
         {% for r in rooms %}
             <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
@@ -91,7 +82,7 @@
 </div>
 
 {% if is_main_admin() %}
-<div class="card">
+<div class="card blueprintDesktopOnly">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
             <div><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
@@ -113,36 +104,34 @@
             </div>
         </div>
         <input type="hidden" id="polygon_points" name="polygon_points">
+        <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
         <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
         <button type="button" onclick="finishTrace()">Finish Room Trace</button>
         <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
-        <input name="blueprint_id" type="hidden" value="{{ active_blueprint.id if active_blueprint else '' }}">
-        <button type="submit">Save Room</button>
+        <button type="submit" {% if not active_blueprint %}disabled{% endif %}>Save Room</button>
+        {% if not active_blueprint %}<p style="color:#b91c1c;">Add/select a blueprint before tracing rooms.</p>{% endif %}
     </form>
 </div>
 
-<div class="card">
+<div class="card blueprintDesktopOnly">
     <div class="grid">
         <div><label><input type="checkbox" id="drawingMode"> Drawing Mode</label><div id="drawStatus"><strong>Drawing mode is off</strong></div></div>
         <div><label><input type="checkbox" id="snapToggle" checked> Snap/Grid</label><input type="range" min="5" max="40" value="15" id="snapSize"></div>
-        <div><p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p>
+        <div>
+            <p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p>
             <label>PDF Quality</label>
             <select id="pdfQuality">
-                <option value="2" selected>Safe / Phone</option>
+                <option value="2" selected>Safe</option>
                 <option value="2.5">Sharper</option>
                 <option value="3">Sharpest Safe</option>
             </select>
-            <p style="font-size:13px;">If the preview is still hard to read, use the “Open Original Blueprint File” button above for the full PDF.</p></div>
+        </div>
     </div>
-</div>
-{% else %}
-<div class="card">
-    <p><strong>View-only mode:</strong> choose a room above or click/touch any highlighted room on the blueprint.</p>
 </div>
 {% endif %}
 
-<div class="card">
+<div class="card blueprintDesktopOnly">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
             {% if not active_blueprint %}
@@ -162,6 +151,7 @@
             {% elif active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
                 <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
+
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
                 {% for r in rooms %}
                     {% if r.polygon_points %}
@@ -187,34 +177,18 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}@media(max-width:760px){ #viewport{height:70vh!important}}
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}
 .blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
-.blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:180px}
+.blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:190px}
 .blueprintTab a{font-weight:bold;text-decoration:none;display:block;margin-bottom:6px}
 .activeBlueprint{outline:3px solid #2563eb;background:#dbeafe}
 .miniDelete{background:#dc2626;color:white;border:0;border-radius:6px;padding:7px 10px;width:auto;min-height:auto}
 .deleteBox{display:none;background:#fff3cd;padding:10px;border-radius:8px;margin-top:8px}
-.confirmRow{display:flex;gap:8px;align-items:center}
-.confirmRow form{margin:0}
-.legacyBlueprintHide{display:none}
-@media(max-width:760px){.blueprintDesktopOnly{display:none!important}}
+.confirmRow{display:flex;gap:8px;align-items:center}.confirmRow form{margin:0}
+.mobileBlueprintNotice{display:none}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}}
 </style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module">
-function showBlueprintDelete(id){
-    const box=document.getElementById("bpDelete"+id);
-    if(box) box.style.display="block";
-}
-function hideBlueprintDelete(id){
-    const box=document.getElementById("bpDelete"+id);
-    if(box) box.style.display="none";
-}
-</script>
-<script type="module">
-import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
-window.pdfjsLib = pdfjsLib;
-</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
 <script type="module">
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
@@ -225,10 +199,7 @@ window.pdfjsLib = pdfjsLib;
 const viewport=document.getElementById("viewport"),wrap=document.getElementById("blueprintWrap"),svg=document.getElementById("roomSvg");
 const currentLine=document.getElementById("currentLine"),currentPolygon=document.getElementById("currentPolygon"),pointGroup=document.getElementById("pointGroup");
 const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
-
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
-
-
 
 let pdfDocCached = null;
 let pdfPageCached = null;
@@ -247,38 +218,29 @@ async function renderPdfBlueprint(){
     const canvas=document.getElementById("blueprint");
     const status=document.getElementById("pdfStatus");
     if(!canvas || !canvas.dataset || !canvas.dataset.pdfUrl) return;
-
     if(isRenderingPdf) return;
     isRenderingPdf = true;
 
     try{
         if(status) status.textContent="Loading PDF viewer...";
-
         const ok = await waitForPdfJs();
         if(!ok){
-            if(status) status.textContent="Could not load PDF viewer. Use Open Original Blueprint File.";
+            if(status) status.textContent="Could not load PDF viewer. Use Open Current Blueprint File.";
             isRenderingPdf = false;
             return;
         }
 
-        if(!pdfDocCached){
-            pdfDocCached = await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
-            pdfPageCached = await pdfDocCached.getPage(1);
-        }
+        pdfDocCached = await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
+        pdfPageCached = await pdfDocCached.getPage(1);
 
         const q = document.getElementById("pdfQuality");
         let quality = q ? parseFloat(q.value || "2") : 2;
 
-        // Prevent phone/browser black screen and canvas crash.
-        // Large blueprint sheets can create huge canvases at high scale.
         const baseViewport = pdfPageCached.getViewport({scale:1});
         const maxPixels = window.innerWidth < 800 ? 9000000 : 16000000;
         const requestedPixels = baseViewport.width * quality * baseViewport.height * quality;
         if(requestedPixels > maxPixels){
             quality = Math.sqrt(maxPixels / (baseViewport.width * baseViewport.height));
-            if(status) status.textContent = `Large sheet detected. Using safe quality ${quality.toFixed(2)}x...`;
-        } else {
-            if(status) status.textContent = `Rendering PDF at ${quality}x quality...`;
         }
 
         const viewportPdf = pdfPageCached.getViewport({scale:quality});
@@ -291,63 +253,67 @@ async function renderPdfBlueprint(){
         ctx.fillStyle = "white";
         ctx.fillRect(0,0,canvas.width,canvas.height);
 
-        await pdfPageCached.render({
-            canvasContext: ctx,
-            viewport: viewportPdf
-        }).promise;
-
-        if(status) status.textContent = `PDF preview loaded. For full original quality, open the original blueprint file.`;
+        await pdfPageCached.render({canvasContext:ctx, viewport:viewportPdf}).promise;
+        if(status) status.textContent = "PDF preview loaded.";
         resizeSvg();
         applyTransform();
     }catch(err){
-        console.error("PDF.js blueprint render failed:", err);
-        if(status) status.textContent="PDF preview failed. Use Open Original Blueprint File, or upload this sheet as a high-resolution PNG.";
+        console.error(err);
+        if(status) status.textContent="PDF preview failed. Open the original blueprint file.";
     }finally{
         isRenderingPdf = false;
     }
 }
 
-document.addEventListener("change", function(e){
-    if(e.target && e.target.id === "pdfQuality"){
-        scale = 1;
-        panX = 0;
-        panY = 0;
-        applyTransform();
-        renderPdfBlueprint();
-    }
-});
-
-function applyTransform(){wrap.style.transform=`translate(${panX}px, ${panY}px) scale(${scale})`;}
+function applyTransform(){if(wrap)wrap.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;}
 function resizeSvg(){
+    if(!svg)return;
     const b=document.getElementById("blueprint");
     let w=1100,h=800;
     if(b){
-        if(b.tagName && b.tagName.toLowerCase()==="canvas" && b.width && b.height){
-            w=b.width; h=b.height;
-        } else if(b.naturalWidth){
-            w=b.naturalWidth; h=b.naturalHeight;
-        } else {
-            const rect=b.getBoundingClientRect();
-            if(rect.width && rect.height){w=rect.width/scale; h=rect.height/scale;}
-        }
+        if(b.tagName && b.tagName.toLowerCase()==="canvas" && b.width && b.height){w=b.width;h=b.height;}
+        else if(b.naturalWidth){w=b.naturalWidth;h=b.naturalHeight;}
     }
     svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
     svg.style.width=w+"px";
     svg.style.height=h+"px";
 }
-window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();});window.addEventListener("resize",resizeSvg);const bi=document.getElementById("blueprint");if(bi){bi.addEventListener("load",resizeSvg);}
-function snapValue(v){if(!snapToggle || !snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
-function getPoint(e){const r=viewport.getBoundingClientRect();return{x:snapValue((e.clientX-r.left-panX)/scale),y:snapValue((e.clientY-r.top-panY)/scale)};}
-function updateStatus(){if(!drawingMode || !drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
+function screenToSvg(e){const rect=viewport.getBoundingClientRect();return{x:(e.clientX-rect.left-panX)/scale,y:(e.clientY-rect.top-panY)/scale};}
+function snapValue(v){if(!snapToggle||!snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
+function redrawTrace(){
+    const pts=points.map(p=>`${p.x},${p.y}`).join(" ");
+    if(currentLine)currentLine.setAttribute("points",pts);
+    if(currentPolygon)currentPolygon.setAttribute("points",pts);
+    if(pointGroup){
+        pointGroup.innerHTML="";
+        points.forEach(p=>{const c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r","5");c.setAttribute("class","tracePoint");pointGroup.appendChild(c);});
+    }
+}
+function updateStatus(){if(!drawingMode||!drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
 if(drawingMode){drawingMode.addEventListener("change",updateStatus);}
-function updateTrace(){const s=points.map(p=>`${p.x},${p.y}`).join(" ");currentLine.setAttribute("points",s);currentPolygon.setAttribute("points",s);pointGroup.innerHTML="";points.forEach(p=>{let c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r",Math.max(4,5/scale));c.setAttribute("class","tracePoint");pointGroup.appendChild(c);});updateStatus();}
-viewport.addEventListener("mousedown",e=>{isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
-viewport.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>4||Math.abs(dy)>4){didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();}});
-document.addEventListener("mouseup",()=>{isDragging=false;});
-viewport.addEventListener("click",e=>{if(!drawingMode || !drawingMode.checked || didDrag)return;if(e.target.closest("a")||e.target.closest("button")||e.target.closest("input")||e.target.closest("select"))return;points.push(getPoint(e));updateTrace();});
-viewport.addEventListener("contextmenu",e=>{if(!drawingMode || !drawingMode.checked)return;e.preventDefault();points.pop();updateTrace();});
-viewport.addEventListener("wheel",e=>{e.preventDefault();const old=scale,z=e.deltaY<0?1.12:1/1.12;scale=Math.min(Math.max(scale*z,.25),6);const r=viewport.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;panX=mx-((mx-panX)/old)*scale;panY=my-((my-panY)/old)*scale;applyTransform();updateTrace();},{passive:false});
-function finishTrace(){if(!drawingMode)return;if(points.length<3){alert("Please click at least 3 points.");return;}const s=points.map(p=>`${Math.round(p.x)},${Math.round(p.y)}`).join(" ");document.getElementById("polygon_points").value=s;const xs=points.map(p=>p.x),ys=points.map(p=>p.y);document.getElementById("x").value=Math.min(...xs);document.getElementById("y").value=Math.min(...ys);document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);drawingMode.checked=false;updateStatus();alert("Trace finished. Enter room name and click Save Room.");}
-function clearTrace(){points=[];document.getElementById("polygon_points").value="";updateTrace();}
+if(viewport){
+    viewport.addEventListener("wheel",e=>{e.preventDefault();const delta=e.deltaY<0?1.1:.9;scale=Math.max(.15,Math.min(6,scale*delta));applyTransform();});
+    viewport.addEventListener("mousedown",e=>{if(e.button===2){e.preventDefault();points.pop();redrawTrace();updateStatus();return;}isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
+    window.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>3||Math.abs(dy)>3)didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();});
+    window.addEventListener("mouseup",()=>{isDragging=false;});
+    viewport.addEventListener("click",e=>{if(!drawingMode||!drawingMode.checked||didDrag)return;const p=screenToSvg(e);points.push({x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))});redrawTrace();updateStatus();});
+    viewport.addEventListener("contextmenu",e=>e.preventDefault());
+}
+function finishTrace(){
+    if(!drawingMode)return;
+    if(points.length<3){alert("Trace at least 3 points around the room.");return;}
+    const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+    document.getElementById("polygon_points").value=points.map(p=>`${p.x},${p.y}`).join(" ");
+    document.getElementById("x").value=Math.min(...xs);
+    document.getElementById("y").value=Math.min(...ys);
+    document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);
+    document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);
+    alert("Room trace finished. Now enter the room name and click Save Room.");
+}
+function clearTrace(){points=[];redrawTrace();updateStatus();}
+function showBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="block";}
+function hideBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="none";}
+document.addEventListener("change",function(e){if(e.target&&e.target.id==="pdfQuality"){renderPdfBlueprint();}});
+window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
 </script>
 {% endblock %}
