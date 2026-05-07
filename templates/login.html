@@ -1,14 +1,19 @@
+
 {% extends "base.html" %}
 {% block content %}
-<div class="card" style="max-width:420px;margin:auto;">
-    <h2>Login</h2>
-    <p><strong>Default login:</strong><br>admin@example.com / admin123</p>
-    <form method="post">
-        <label>Email</label>
-        <input name="email" type="email" required>
-        <label>Password</label>
-        <input name="password" type="password" required>
-        <button type="submit">Login</button>
-    </form>
+<div style="min-height:75vh;display:grid;place-items:center">
+    <div class="card" style="max-width:430px;width:100%;text-align:center">
+        <img src="{{ url_for('static', filename='icon.svg') }}" style="width:78px;height:78px">
+        <h1>Project<span style="color:#22c55e">onus</span></h1>
+        <p class="muted">Welcome back. Sign in to continue.</p>
+        <form method="post">
+            <label>Email address</label>
+            <input name="email" type="email" required>
+            <label>Password</label>
+            <input name="password" type="password" required>
+            <button type="submit">Sign In</button>
+        </form>
+        <p class="muted">Projects. Teams. Clients. Connected.</p>
+    </div>
 </div>
 {% endblock %}

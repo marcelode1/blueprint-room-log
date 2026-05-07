@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 160">
+<defs>
+<linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+<stop offset="0" stop-color="#2563eb"/><stop offset=".55" stop-color="#14b8a6"/><stop offset="1" stop-color="#22c55e"/>
+</linearGradient>
+</defs>
+<path d="M58 126V38c0-16 13-29 29-29h84c38 0 65 24 65 58s-27 59-65 59h-54V93h50c18 0 30-10 30-26s-12-25-30-25h-70v84H58z" fill="url(#g)"/>
+<path d="M83 136l105-105h54L137 136H83z" fill="url(#g)" opacity=".85"/>
+<text x="270" y="76" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="800" fill="#0f172a">Project<tspan fill="#22c55e">onus</tspan></text>
+<text x="272" y="112" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#64748b">Projects. Teams. Clients. Connected.</text>
+</svg>
