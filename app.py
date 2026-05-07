@@ -982,6 +982,12 @@ def push_subscribe():
     return {"ok": True}
 
 
+
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html")
+
+
 @app.route("/health")
 def health():
     return "ok"
