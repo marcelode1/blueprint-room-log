@@ -23,6 +23,7 @@ SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "blueprint-files")
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
+ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
 
 
@@ -40,6 +41,10 @@ def allowed_blueprint(filename):
 
 def allowed_audio(filename):
     return file_ext(filename) in ALLOWED_AUDIO
+
+
+def allowed_logo(filename):
+    return file_ext(filename) in ALLOWED_LOGOS
 
 
 def is_pdf(filename):
@@ -180,6 +185,42 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS login_events (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        user_email TEXT,
+        role TEXT,
+        event_type TEXT NOT NULL DEFAULT 'login',
+        is_read BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS user_permissions (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        see_comments BOOLEAN NOT NULL DEFAULT TRUE,
+        write_comments BOOLEAN NOT NULL DEFAULT FALSE,
+        edit_comments BOOLEAN NOT NULL DEFAULT FALSE,
+        delete_comments BOOLEAN NOT NULL DEFAULT FALSE,
+        see_pictures BOOLEAN NOT NULL DEFAULT TRUE,
+        add_pictures BOOLEAN NOT NULL DEFAULT FALSE,
+        delete_pictures BOOLEAN NOT NULL DEFAULT FALSE,
+        see_audio BOOLEAN NOT NULL DEFAULT TRUE,
+        add_audio BOOLEAN NOT NULL DEFAULT FALSE,
+        delete_audio BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notes (
         id SERIAL PRIMARY KEY,
         room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -200,7 +241,10 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
-        "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT"
+        "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
+        "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE)"
     ]
     for sql in migrations:
         try:
@@ -234,10 +278,6 @@ def is_main_admin():
     return session.get("role") == "admin"
 
 
-def can_add_notes():
-    return session.get("role") in ["admin", "worker"]
-
-
 def admin_required(fn):
     from functools import wraps
     @wraps(fn)
@@ -251,9 +291,102 @@ def admin_required(fn):
     return wrapper
 
 
+
+def default_permissions_for_role(role):
+    if role == "admin":
+        return {k: True for k in PERMISSION_KEYS}
+    if role == "worker":
+        return {
+            "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
+            "see_pictures": True, "add_pictures": True, "delete_pictures": False,
+            "see_audio": True, "add_audio": True, "delete_audio": False,
+        }
+    return {
+        "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
+        "see_pictures": True, "add_pictures": False, "delete_pictures": False,
+        "see_audio": True, "add_audio": False, "delete_audio": False,
+    }
+
+
+PERMISSION_KEYS = [
+    "see_comments", "write_comments", "edit_comments", "delete_comments",
+    "see_pictures", "add_pictures", "delete_pictures",
+    "see_audio", "add_audio", "delete_audio"
+]
+
+
+def get_user_permissions(user_id=None):
+    if session.get("role") == "admin":
+        return {k: True for k in PERMISSION_KEYS}
+    uid = user_id or session.get("user_id")
+    role = session.get("role", "customer")
+    perms = default_permissions_for_role(role)
+    if not uid:
+        return perms
+    try:
+        conn = db()
+        row = conn.execute("SELECT * FROM user_permissions WHERE user_id = %s", (uid,)).fetchone()
+        conn.close()
+        if row:
+            for k in PERMISSION_KEYS:
+                perms[k] = bool(row.get(k))
+    except Exception as e:
+        print("Permission lookup failed:", e)
+    return perms
+
+
+def has_perm(permission):
+    if session.get("role") == "admin":
+        return True
+    return bool(get_user_permissions().get(permission))
+
+
+def get_app_setting(key, default=""):
+    try:
+        conn = db()
+        row = conn.execute("SELECT value FROM app_settings WHERE key = %s", (key,)).fetchone()
+        conn.close()
+        return row["value"] if row and row.get("value") else default
+    except Exception:
+        return default
+
+
+def set_app_setting(key, value):
+    conn = db()
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        (key, value)
+    )
+    conn.commit()
+    conn.close()
+
+
+def admin_unread_count():
+    if session.get("role") != "admin":
+        return 0
+    try:
+        conn = db()
+        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE").fetchone()
+        conn.close()
+        return row["c"] if row else 0
+    except Exception:
+        return 0
+
+
+def can_add_notes():
+    return has_perm("write_comments") or has_perm("add_pictures") or has_perm("add_audio")
+
+
 @app.context_processor
 def utility_processor():
-    return dict(file_url=file_url, is_main_admin=is_main_admin, can_add_notes=can_add_notes)
+    return dict(
+        file_url=file_url,
+        is_main_admin=is_main_admin,
+        can_add_notes=can_add_notes,
+        has_perm=has_perm,
+        get_app_setting=get_app_setting,
+        admin_unread_count=admin_unread_count
+    )
 
 
 @app.route("/")
@@ -286,6 +419,17 @@ def login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            try:
+                conn = db()
+                if user["role"] != "admin":
+                    conn.execute(
+                        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (user["id"], user["name"], user["email"], user["role"], "login", datetime.now().isoformat())
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception as e:
+                print("Login event insert failed:", e)
             return redirect(url_for("index"))
         flash("Invalid login.")
     return render_template("login.html")
@@ -460,14 +604,23 @@ def room(room_id):
     project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
 
     if request.method == "POST":
-        if not can_add_notes():
-            flash("You can view notes and photos, but you cannot add new ones.")
-            return redirect(url_for("room", room_id=room_id))
-
         file = request.files.get("photo") or request.files.get("photo_camera")
         audio = request.files.get("audio")
-        photo_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
-        audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
+        wants_comment = bool(request.form.get("comment", "").strip())
+        wants_photo = bool(file and file.filename)
+        wants_audio = bool(audio and audio.filename)
+        if wants_comment and not has_perm("write_comments"):
+            flash("You do not have permission to write comments.")
+            return redirect(url_for("room", room_id=room_id))
+        if wants_photo and not has_perm("add_pictures"):
+            flash("You do not have permission to add pictures.")
+            return redirect(url_for("room", room_id=room_id))
+        if wants_audio and not has_perm("add_audio"):
+            flash("You do not have permission to add audio.")
+            return redirect(url_for("room", room_id=room_id))
+
+        photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else None
+        audio_file = upload_file_to_storage(audio) if wants_audio and allowed_audio(audio.filename) else None
         conn.execute(
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
@@ -523,7 +676,7 @@ def delete_project(project_id):
 
 
 @app.route("/note/<int:note_id>/delete", methods=["POST"])
-@admin_required
+@login_required
 def delete_note(note_id):
     conn = db()
     note = conn.execute("SELECT notes.*, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
@@ -532,12 +685,101 @@ def delete_note(note_id):
         flash("Comment/photo not found.")
         return redirect(url_for("index"))
 
+    if not (is_main_admin() or has_perm("delete_comments") or has_perm("delete_pictures") or has_perm("delete_audio")):
+        conn.close()
+        flash("You do not have permission to delete this item.")
+        return redirect(url_for("room", room_id=note["room_id"]))
+
     room_id = note["room_id"]
     conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
     conn.commit()
     conn.close()
     flash("Comment/photo deleted.")
     return redirect(url_for("room", room_id=room_id))
+
+
+
+@app.route("/settings", methods=["GET", "POST"])
+@admin_required
+def settings():
+    conn = db()
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "logo":
+            logo = request.files.get("company_logo")
+            if logo and logo.filename and allowed_logo(logo.filename):
+                logo_path = upload_file_to_storage(logo)
+                set_app_setting("company_logo", logo_path)
+                flash("Company logo updated.")
+            else:
+                flash("Please upload a valid logo file: PNG, JPG, WEBP, GIF, or SVG.")
+        elif action == "permissions":
+            user_id = int(request.form.get("user_id"))
+            values = {k: (k in request.form) for k in PERMISSION_KEYS}
+            conn.execute(
+                """
+                INSERT INTO user_permissions
+                (user_id, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    see_comments = EXCLUDED.see_comments,
+                    write_comments = EXCLUDED.write_comments,
+                    edit_comments = EXCLUDED.edit_comments,
+                    delete_comments = EXCLUDED.delete_comments,
+                    see_pictures = EXCLUDED.see_pictures,
+                    add_pictures = EXCLUDED.add_pictures,
+                    delete_pictures = EXCLUDED.delete_pictures,
+                    see_audio = EXCLUDED.see_audio,
+                    add_audio = EXCLUDED.add_audio,
+                    delete_audio = EXCLUDED.delete_audio
+                """,
+                (user_id, *[values[k] for k in PERMISSION_KEYS])
+            )
+            conn.commit()
+            flash("User permissions updated.")
+        return redirect(url_for("settings"))
+
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    permissions = conn.execute("SELECT * FROM user_permissions").fetchall()
+    conn.close()
+    perm_map = {p["user_id"]: p for p in permissions}
+    return render_template("settings.html", users=users, perm_map=perm_map, permission_keys=PERMISSION_KEYS)
+
+
+@app.route("/notifications", methods=["GET", "POST"])
+@admin_required
+def notifications():
+    conn = db()
+    if request.method == "POST":
+        conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE")
+        conn.commit()
+        flash("Notifications marked as read.")
+    events = conn.execute("SELECT * FROM login_events ORDER BY created_at DESC LIMIT 100").fetchall()
+    conn.close()
+    return render_template("notifications.html", events=events)
+
+
+@app.route("/note/<int:note_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_note(note_id):
+    if not (is_main_admin() or has_perm("edit_comments")):
+        flash("You do not have permission to edit comments.")
+        return redirect(url_for("index"))
+    conn = db()
+    note = conn.execute("SELECT notes.*, rooms.name AS room_name FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    if not note:
+        conn.close()
+        flash("Comment not found.")
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (request.form["comment"].strip(), request.form["note_date"], note_id))
+        conn.commit()
+        room_id = note["room_id"]
+        conn.close()
+        flash("Comment updated.")
+        return redirect(url_for("room", room_id=room_id))
+    conn.close()
+    return render_template("edit_note.html", note=note)
 
 
 @app.route("/backup")

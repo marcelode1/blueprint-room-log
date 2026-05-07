@@ -86,3 +86,7 @@ Push notifications require VAPID keys and server-side push sending before real n
 
 ## Template Fix
 Fixed project.html Jinja TemplateSyntaxError caused by accidental `{#` sequence inside page code.
+
+
+## V5 Admin Settings and Permissions
+Adds admin gear settings, company logo, powered by Projectonus branding, login notification bell, and granular user permissions for comments, pictures, and audio.

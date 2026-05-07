@@ -30,7 +30,7 @@
         {% if session.get("user_id") %}
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
-            {% if is_main_admin() %}<a href="{{ url_for('users') }}">Users</a><a href="{{ url_for('backup') }}">Backup</a>{% endif %}
+            {% if is_main_admin() %}<a href="{{ url_for('users') }}">Users</a><a href="{{ url_for('settings') }}" title="Settings">⚙️</a><a href="{{ url_for('notifications') }}" title="Notifications">🔔{% if admin_unread_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ admin_unread_count() }}</span>{% endif %}</a><a href="{{ url_for('backup') }}">Backup</a>{% endif %}
             <a href="{{ url_for('logout') }}">Logout</a>
             <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
         {% endif %}

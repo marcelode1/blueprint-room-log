@@ -1,0 +1,14 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Edit Comment — {{ note.room_name }}</h2>
+    <form method="post">
+        <label>Date</label>
+        <input type="date" name="note_date" value="{{ note.note_date }}" required>
+        <label>Comment</label>
+        <textarea name="comment" rows="6" required>{{ note.comment }}</textarea>
+        <button type="submit">Save Changes</button>
+    </form>
+</div>
+{% endblock %}

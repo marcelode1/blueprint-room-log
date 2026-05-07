@@ -1,0 +1,49 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>⚙️ Admin Settings</h2>
+    <p class="muted">Only the main admin can access this page.</p>
+</div>
+
+<div class="card">
+    <h3>Company Logo</h3>
+    {% set logo = get_app_setting("company_logo") %}
+    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" style="max-height:120px;max-width:320px;background:white;padding:10px;border-radius:12px;">{% endif %}
+    <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="logo">
+        <label>Upload Company Logo</label>
+        <input type="file" name="company_logo" accept="image/*,.svg" required>
+        <button type="submit">Save Logo</button>
+    </form>
+    <p class="muted">This logo will show on the first page with “Powered by Projectonus.”</p>
+</div>
+
+<div class="card">
+    <h3>User Permissions</h3>
+    <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
+    {% for u in users %}
+        {% set p = perm_map.get(u.id) %}
+        <div class="card">
+            <h4>{{ u.name }} — {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+            <form method="post">
+                <input type="hidden" name="action" value="permissions">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <div class="grid">
+                    <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
+                    <label><input type="checkbox" name="write_comments" {% if p and p.write_comments %}checked{% endif %}> Write comments</label>
+                    <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>
+                    <label><input type="checkbox" name="delete_comments" {% if p and p.delete_comments %}checked{% endif %}> Delete comments</label>
+                    <label><input type="checkbox" name="see_pictures" {% if not p or p.see_pictures %}checked{% endif %}> See pictures</label>
+                    <label><input type="checkbox" name="add_pictures" {% if p and p.add_pictures %}checked{% endif %}> Add pictures</label>
+                    <label><input type="checkbox" name="delete_pictures" {% if p and p.delete_pictures %}checked{% endif %}> Delete pictures</label>
+                    <label><input type="checkbox" name="see_audio" {% if not p or p.see_audio %}checked{% endif %}> See audio</label>
+                    <label><input type="checkbox" name="add_audio" {% if p and p.add_audio %}checked{% endif %}> Add audio</label>
+                    <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
+                </div>
+                <button type="submit">Save Permissions for {{ u.name }}</button>
+            </form>
+        </div>
+    {% endfor %}
+</div>
+{% endblock %}
