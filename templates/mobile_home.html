@@ -4,6 +4,8 @@
 <div class="card">
     <h1>Projectonus Mobile</h1>
     <p>Field version for projects, rooms, pictures, comments, and audio.</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}">Notifications{% if unread_notification_count() %} ({{ unread_notification_count() }}){% endif %}</a>
+    <a class="btn-link" href="{{ url_for('my_tasks') }}">My Tasks</a>
 </div>
 <div class="card" id="search">
     <h2>Search Projects</h2>

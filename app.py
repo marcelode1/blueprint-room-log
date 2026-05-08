@@ -260,6 +260,29 @@ def init_db():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+        assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        task_date TEXT NOT NULL,
+        title TEXT NOT NULL,
+        instructions TEXT,
+        require_picture BOOLEAN NOT NULL DEFAULT FALSE,
+        allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE,
+        allow_comment BOOLEAN NOT NULL DEFAULT TRUE,
+        allow_audio BOOLEAN NOT NULL DEFAULT TRUE,
+        status TEXT NOT NULL DEFAULT 'open',
+        completion_comment TEXT,
+        completion_photo_file TEXT,
+        completion_audio_file TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+
     conn.commit()
 
     # Safe migrations for older deployments
@@ -270,10 +293,15 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
+        "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
+        "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE)"
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)"
     ]
     for sql in migrations:
         try:
@@ -353,19 +381,19 @@ def default_permissions_for_role(role):
         return {
             "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
             "see_pictures": True, "add_pictures": True, "delete_pictures": False,
-            "see_audio": True, "add_audio": True, "delete_audio": False,
+            "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
         }
     return {
         "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
         "see_pictures": True, "add_pictures": False, "delete_pictures": False,
-        "see_audio": True, "add_audio": False, "delete_audio": False,
+        "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
     }
 
 
 PERMISSION_KEYS = [
     "see_comments", "write_comments", "edit_comments", "delete_comments",
     "see_pictures", "add_pictures", "delete_pictures",
-    "see_audio", "add_audio", "delete_audio"
+    "see_audio", "add_audio", "delete_audio", "create_rooms"
 ]
 
 
@@ -427,6 +455,31 @@ def admin_unread_count():
         return 0
 
 
+def unread_notification_count():
+    if "user_id" not in session:
+        return 0
+    try:
+        conn = db()
+        if session.get("role") == "admin":
+            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE").fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
+                (session.get("user_id"),)
+            ).fetchone()
+        conn.close()
+        return row["c"] if row else 0
+    except Exception:
+        return 0
+
+
+def add_notification(conn, user_id, user_name, user_email, role, event_type):
+    conn.execute(
+        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, user_name, user_email, role, event_type, datetime.now().isoformat())
+    )
+
+
 def can_add_notes():
     return has_perm("write_comments") or has_perm("add_pictures") or has_perm("add_audio")
 
@@ -439,7 +492,8 @@ def utility_processor():
         can_add_notes=can_add_notes,
         has_perm=has_perm,
         get_app_setting=get_app_setting,
-        admin_unread_count=admin_unread_count
+        admin_unread_count=admin_unread_count,
+        unread_notification_count=unread_notification_count
     )
 
 
@@ -551,6 +605,41 @@ def mobile_project(project_id):
     return render_template("mobile_project.html", project=project, rooms=rooms)
 
 
+@app.route("/mobile/project/<int:project_id>/rooms", methods=["POST"])
+@login_required
+def mobile_add_room(project_id):
+    if not (is_main_admin() or has_perm("create_rooms")):
+        flash("You do not have permission to create rooms.")
+        return redirect(url_for("mobile_project", project_id=project_id))
+
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Room name is required.")
+        return redirect(url_for("mobile_project", project_id=project_id))
+
+    conn = db()
+    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+
+    conn.execute(
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)",
+        (
+            project_id,
+            name,
+            request.form.get("category", "general"),
+            request.form.get("room_color", "blue"),
+            datetime.now().isoformat()
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash("Room created.")
+    return redirect(url_for("mobile_project", project_id=project_id))
+
+
 @app.route("/mobile/room/<int:room_id>", methods=["GET", "POST"])
 @login_required
 def mobile_room(room_id):
@@ -563,6 +652,16 @@ def mobile_room(room_id):
 
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    tasks = conn.execute(
+        """
+        SELECT tasks.*, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+        """,
+        (room_id, session.get("user_id"), session.get("role"))
+    ).fetchall()
 
     if request.method == "POST":
         if not can_add_notes():
@@ -590,7 +689,7 @@ def mobile_room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, selected_date=selected_date)
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, selected_date=selected_date)
 
 
 @app.route("/routes-check")
@@ -997,6 +1096,17 @@ def room(room_id):
         return redirect(url_for("index"))
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall() if is_main_admin() else []
+    tasks = conn.execute(
+        """
+        SELECT tasks.*, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+        """,
+        (room_id, session.get("user_id"), session.get("role"))
+    ).fetchall()
 
     if request.method == "POST":
         file = request.files.get("photo") or request.files.get("photo_camera")
@@ -1032,7 +1142,7 @@ def room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, selected_date=selected_date)
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, users=users, selected_date=selected_date)
 
 
 @app.route("/project/<int:project_id>/timeline")
@@ -1093,6 +1203,148 @@ def delete_note(note_id):
     return redirect(url_for("room", room_id=room_id))
 
 
+@app.route("/room/<int:room_id>/tasks", methods=["POST"])
+@admin_required
+def create_task(room_id):
+    conn = db()
+    room = conn.execute("SELECT * FROM rooms WHERE id = %s", (room_id,)).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found.")
+        return redirect(url_for("index"))
+
+    assigned_user_id = request.form.get("assigned_user_id", type=int)
+    assigned = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
+    title = request.form.get("title", "").strip()
+    if not assigned or not title:
+        conn.close()
+        flash("Choose a user and enter a task title.")
+        return redirect(url_for("room", room_id=room_id))
+
+    conn.execute(
+        """
+        INSERT INTO tasks
+        (project_id, room_id, assigned_user_id, created_by, task_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            room["project_id"],
+            room_id,
+            assigned_user_id,
+            session.get("user_id"),
+            request.form.get("task_date") or datetime.now().date().isoformat(),
+            title,
+            request.form.get("instructions", "").strip(),
+            "require_picture" in request.form,
+            "allow_picture_upload" in request.form,
+            "allow_comment" in request.form,
+            "allow_audio" in request.form,
+            datetime.now().isoformat()
+        )
+    )
+    add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
+    conn.commit()
+    conn.close()
+    flash("Task assigned and user notified.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/tasks/<int:task_id>/complete", methods=["POST"])
+@login_required
+def complete_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+        FROM tasks
+        JOIN rooms ON tasks.room_id = rooms.id
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("room", room_id=task["room_id"]))
+
+    file = request.files.get("completion_photo") or request.files.get("completion_camera")
+    audio = request.files.get("completion_audio")
+    wants_photo = bool(file and file.filename)
+    if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
+        conn.close()
+        flash("This task requires a picture before it can be completed.")
+        return redirect(url_for("room", room_id=task["room_id"]))
+
+    photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else task.get("completion_photo_file")
+    audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else task.get("completion_audio_file")
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'done', completion_comment = %s, completion_photo_file = %s, completion_audio_file = %s, completed_at = %s
+        WHERE id = %s
+        """,
+        (
+            request.form.get("completion_comment", "").strip(),
+            photo_file,
+            audio_file,
+            datetime.now().isoformat(),
+            task_id
+        )
+    )
+    add_notification(
+        conn,
+        session.get("user_id"),
+        session.get("name"),
+        "",
+        session.get("role"),
+        "task_completed"
+    )
+    conn.commit()
+    conn.close()
+    flash("Task marked done. Admin was notified.")
+    if "/mobile/" in (request.referrer or ""):
+        return redirect(url_for("mobile_room", room_id=task["room_id"]))
+    return redirect(url_for("room", room_id=task["room_id"]))
+
+
+@app.route("/tasks")
+@login_required
+def my_tasks():
+    conn = db()
+    if is_main_admin():
+        tasks = conn.execute(
+            """
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+            FROM tasks
+            LEFT JOIN rooms ON tasks.room_id = rooms.id
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+            """
+        ).fetchall()
+    else:
+        tasks = conn.execute(
+            """
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+            FROM tasks
+            LEFT JOIN rooms ON tasks.room_id = rooms.id
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            WHERE tasks.assigned_user_id = %s
+            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+    conn.close()
+    return render_template("tasks.html", tasks=tasks)
+
+
 
 @app.route("/settings", methods=["GET", "POST"])
 @admin_required
@@ -1114,8 +1366,8 @@ def settings():
             conn.execute(
                 """
                 INSERT INTO user_permissions
-                (user_id, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (user_id, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
                     see_comments = EXCLUDED.see_comments,
                     write_comments = EXCLUDED.write_comments,
@@ -1126,7 +1378,8 @@ def settings():
                     delete_pictures = EXCLUDED.delete_pictures,
                     see_audio = EXCLUDED.see_audio,
                     add_audio = EXCLUDED.add_audio,
-                    delete_audio = EXCLUDED.delete_audio
+                    delete_audio = EXCLUDED.delete_audio,
+                    create_rooms = EXCLUDED.create_rooms
                 """,
                 (user_id, *[values[k] for k in PERMISSION_KEYS])
             )
@@ -1142,14 +1395,26 @@ def settings():
 
 
 @app.route("/notifications", methods=["GET", "POST"])
-@admin_required
+@login_required
 def notifications():
     conn = db()
     if request.method == "POST":
-        conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE")
+        if is_main_admin():
+            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE")
+        else:
+            conn.execute(
+                "UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
+                (session.get("user_id"),)
+            )
         conn.commit()
         flash("Notifications marked as read.")
-    events = conn.execute("SELECT * FROM login_events ORDER BY created_at DESC LIMIT 100").fetchall()
+    if is_main_admin():
+        events = conn.execute("SELECT * FROM login_events ORDER BY created_at DESC LIMIT 100").fetchall()
+    else:
+        events = conn.execute(
+            "SELECT * FROM login_events WHERE user_id = %s AND event_type = 'task_assigned' ORDER BY created_at DESC LIMIT 100",
+            (session.get("user_id"),)
+        ).fetchall()
     conn.close()
     return render_template("notifications.html", events=events)
 

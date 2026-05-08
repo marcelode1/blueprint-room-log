@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Tasks</h2>
+</div>
+<div class="card">
+    {% for t in tasks %}
+        <div class="card {% if t.status == 'done' %}taskDone{% endif %}">
+            <strong>{{ t.title }}</strong>
+            <p class="muted">{{ t.project_name }} - {{ t.room_name }} - {{ t.task_date }} - {{ t.status }}</p>
+            {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>{% endif %}
+            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
+            {% if t.room_id %}<a class="btn-link" href="{{ url_for('room', room_id=t.room_id) }}">Open Room</a>{% endif %}
+        </div>
+    {% else %}
+        <p>No tasks yet.</p>
+    {% endfor %}
+</div>
+<style>.taskDone{opacity:.82}</style>
+{% endblock %}

@@ -5,14 +5,40 @@
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
-    <p>Blueprint editor is available on the PC version only.</p>
 </div>
+{% if is_main_admin() or has_perm("create_rooms") %}
+<div class="card">
+    <h3>Create Room</h3>
+    <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}">
+        <label>Room Name</label>
+        <input name="name" placeholder="Kitchen, Master Bedroom, Patio" required>
+        <label>Room Type</label>
+        <select name="category">
+            <option value="general">General</option>
+            <option value="electrical">Electrical</option>
+            <option value="av">AV / Low Voltage</option>
+            <option value="lighting">Lighting</option>
+        </select>
+        <label>Highlight Color</label>
+        <select name="room_color">
+            <option value="blue">Blue</option>
+            <option value="red">Red</option>
+            <option value="green">Green</option>
+            <option value="yellow">Yellow</option>
+            <option value="purple">Purple</option>
+            <option value="orange">Orange</option>
+            <option value="gray">Gray</option>
+        </select>
+        <button type="submit">Create Room</button>
+    </form>
+</div>
+{% endif %}
 <div class="card">
     <h3>Rooms</h3>
     {% for r in rooms %}
         <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% else %}
-        <p>No rooms created yet. Create rooms from the PC version.</p>
+        <p>No rooms created yet.</p>
     {% endfor %}
 </div>
 {% endblock %}
