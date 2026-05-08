@@ -8,8 +8,8 @@
 </div>
 {% if is_main_admin() or has_perm("create_rooms") %}
 <div class="card">
-    <h3>Create Room</h3>
-    <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}">
+    <button type="button" id="showCreateRoomBtn">Create Room</button>
+    <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}" id="mobileRoomForm" style="display:none;margin-top:12px;">
         <label>Room Name</label>
         <input name="name" placeholder="Kitchen, Master Bedroom, Patio" required>
         <label>Room Type</label>
@@ -30,6 +30,7 @@
             <option value="gray">Gray</option>
         </select>
         <button type="submit">Create Room</button>
+        <button type="button" class="btn-secondary" id="cancelCreateRoomBtn">Cancel</button>
     </form>
 </div>
 {% endif %}
@@ -41,4 +42,24 @@
         <p>No rooms created yet.</p>
     {% endfor %}
 </div>
+<script>
+const showCreateRoomBtn=document.getElementById("showCreateRoomBtn");
+const mobileRoomForm=document.getElementById("mobileRoomForm");
+const cancelCreateRoomBtn=document.getElementById("cancelCreateRoomBtn");
+if(showCreateRoomBtn&&mobileRoomForm){
+    showCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.style.display="block";
+        showCreateRoomBtn.style.display="none";
+        const firstInput=mobileRoomForm.querySelector("input");
+        if(firstInput)firstInput.focus();
+    });
+}
+if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
+    cancelCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.reset();
+        mobileRoomForm.style.display="none";
+        showCreateRoomBtn.style.display="inline-flex";
+    });
+}
+</script>
 {% endblock %}
