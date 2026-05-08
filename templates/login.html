@@ -1,14 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card" style="max-width:420px;margin:auto;">
-    <h2>Admin Login</h2>
-    <form method="post">
-        <label>Email or Username</label>
-        <input name="email" required>
-        <label>Password</label>
-        <input name="password" type="password" required>
-        <button type="submit">Login</button>
-    </form>
+    <h2>Projectonus</h2>
+    {% if not admin_exists %}
+        <p class="muted">Create the first admin account to start using the app.</p>
+        <a class="btn-link" href="{{ url_for('admin_setup_request') }}">Create Account</a>
+    {% else %}
+        <h3>Admin Login</h3>
+        <form method="post">
+            <label>Email or Username</label>
+            <input name="email" required>
+            <label>Password</label>
+            <input name="password" type="password" required>
+            <button type="submit">Login</button>
+        </form>
+    {% endif %}
     <a class="btn-link btn-secondary" href="{{ url_for('forgot_password') }}">Forgot Password</a>
     <a class="btn-link btn-secondary" href="{{ url_for('mobile_login') }}">Mobile User Login</a>
 </div>
