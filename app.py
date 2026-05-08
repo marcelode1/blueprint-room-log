@@ -163,7 +163,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS project_blueprints (
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL,
         name TEXT NOT NULL,
         blueprint_file TEXT NOT NULL,
         blueprint_preview_file TEXT,
@@ -293,6 +292,8 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
+        "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
+        "ALTER TABLE project_blueprints DROP COLUMN IF EXISTS blueprint_id",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
@@ -969,6 +970,10 @@ def add_project_blueprint(project_id):
         return redirect(url_for("project", project_id=project_id))
 
     raw = file.read()
+    if not raw:
+        flash("The selected blueprint file was empty. Please choose the file again.")
+        return redirect(url_for("project", project_id=project_id))
+
     blueprint_file = upload_bytes_to_storage(
         raw,
         file.filename,
@@ -978,6 +983,12 @@ def add_project_blueprint(project_id):
     blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
 
     conn = db()
+    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
     new_bp = conn.execute(
         "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
         (
@@ -992,7 +1003,7 @@ def add_project_blueprint(project_id):
     conn.close()
 
     flash("Blueprint sheet added.")
-    return redirect(url_for("project", project_id=project_id, blueprint_id=new_bp["id"]))
+    return redirect(url_for("project", project_id=project_id, blueprint_id=new_bp["id"], v=uuid.uuid4().hex))
 
 
 @app.route("/project/<int:project_id>/blueprints/<int:blueprint_id>/delete", methods=["POST"])
