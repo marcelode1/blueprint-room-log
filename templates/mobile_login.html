@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:auto;">
+    <h2>Mobile User Login</h2>
+    <form method="post">
+        <label>Email</label>
+        <input name="email" type="email" value="{{ email or '' }}" required>
+        <label>PIN</label>
+        <input name="pin" inputmode="numeric" autocomplete="one-time-code" required>
+        <button type="submit">Open Mobile Version</button>
+    </form>
+    <a class="btn-link btn-secondary" href="{{ url_for('login') }}">Admin Login</a>
+</div>
+{% endblock %}

@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card" style="max-width:420px;margin:auto;">
-    <h2>Login</h2>
-    <p><strong>Default login:</strong><br>admin@example.com / admin123</p>
+    <h2>Admin Login</h2>
     <form method="post">
-        <label>Email</label>
-        <input name="email" type="email" required>
+        <label>Email or Username</label>
+        <input name="email" required>
         <label>Password</label>
         <input name="password" type="password" required>
         <button type="submit">Login</button>
     </form>
+    <a class="btn-link btn-secondary" href="{{ url_for('forgot_password') }}">Forgot Password</a>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_login') }}">Mobile User Login</a>
 </div>
 {% endblock %}

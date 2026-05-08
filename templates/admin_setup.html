@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:auto;">
+    <h2>Create Admin Account</h2>
+    <p class="muted">Enter the admin email. The desktop setup link will be sent by email.</p>
+    <form method="post">
+        <label>Admin Email</label>
+        <input name="email" type="email" required>
+        <button type="submit">Send Admin Setup Email</button>
+    </form>
+    {% if setup_link %}
+        <div class="card">
+            <p>Email is not configured, so use this setup link:</p>
+            <a class="btn-link" href="{{ setup_link }}">Create Admin Login</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

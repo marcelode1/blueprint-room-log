@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
+from email.message import EmailMessage
 from datetime import datetime
-import os, uuid, zipfile, tempfile, json, mimetypes
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -20,6 +21,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "blueprint-files")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME or "no-reply@projectonus.app")
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
@@ -104,6 +112,53 @@ def download_storage_file(path):
         return b""
 
 
+def external_url(endpoint, **values):
+    if APP_BASE_URL:
+        return APP_BASE_URL.rstrip("/") + url_for(endpoint, **values)
+    return url_for(endpoint, _external=True, **values)
+
+
+def send_email(to_email, subject, body):
+    if not SMTP_HOST:
+        print("Email not sent: SMTP_HOST is not configured.")
+        return False
+    try:
+        msg = EmailMessage()
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.set_content(body)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls(context=ssl.create_default_context())
+            if SMTP_USERNAME:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:
+        print("Email send failed:", e)
+        return False
+
+
+def new_token():
+    return uuid.uuid4().hex + uuid.uuid4().hex
+
+
+def unusable_password_hash():
+    return generate_password_hash(new_token())
+
+
+def has_admin_account(conn=None):
+    close_conn = False
+    if conn is None:
+        conn = db()
+        close_conn = True
+    row = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").fetchone()
+    if close_conn:
+        conn.close()
+    return bool(row and row["c"])
+
+
 def create_pdf_preview_from_bytes(pdf_bytes):
     """
     Convert first PDF page to PNG and upload it to Supabase Storage.
@@ -138,8 +193,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
+        username TEXT,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
+        pin_hash TEXT,
+        invite_token TEXT,
+        invite_sent_at TEXT,
+        reset_token TEXT,
+        reset_created_at TEXT,
+        setup_token TEXT,
+        setup_created_at TEXT,
         role TEXT NOT NULL DEFAULT 'worker',
         created_at TEXT NOT NULL
     )
@@ -290,6 +353,14 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_sent_at TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_created_at TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_created_at TEXT",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
         "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
@@ -310,14 +381,6 @@ def init_db():
         except Exception as e:
             print("Migration skipped:", sql, e)
     conn.commit()
-
-    cur.execute("SELECT COUNT(*) AS c FROM users")
-    if cur.fetchone()["c"] == 0:
-        cur.execute(
-            "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (%s, %s, %s, %s, %s)",
-            ("Admin", "admin@example.com", generate_password_hash("admin123"), "admin", datetime.now().isoformat())
-        )
-        conn.commit()
 
     conn.close()
 
@@ -366,6 +429,8 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
+            if request.path.startswith("/mobile"):
+                return redirect(url_for("mobile_login"))
             return redirect(url_for("login"))
         return fn(*args, **kwargs)
     return wrapper
@@ -463,7 +528,7 @@ def admin_unread_count():
         return 0
     try:
         conn = db()
-        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE").fetchone()
+        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
         conn.close()
         return row["c"] if row else 0
     except Exception:
@@ -476,7 +541,7 @@ def unread_notification_count():
     try:
         conn = db()
         if session.get("role") == "admin":
-            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE").fetchone()
+            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
         else:
             row = conn.execute(
                 "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
@@ -714,30 +779,181 @@ def routes_check():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    conn = db()
+    admin_exists = has_admin_account(conn)
+    conn.close()
+    if not admin_exists:
+        return redirect(url_for("admin_setup_request"))
+
     if request.method == "POST":
-        email = request.form["email"].strip().lower()
+        login_name = request.form["email"].strip().lower()
         password = request.form["password"]
         conn = db()
-        user = conn.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
+        user = conn.execute(
+            "SELECT * FROM users WHERE role = 'admin' AND (email = %s OR lower(coalesce(username, '')) = %s)",
+            (login_name, login_name)
+        ).fetchone()
         conn.close()
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            try:
-                conn = db()
-                if user["role"] != "admin":
-                    conn.execute(
-                        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (user["id"], user["name"], user["email"], user["role"], "login", datetime.now().isoformat())
-                    )
-                    conn.commit()
-                conn.close()
-            except Exception as e:
-                print("Login event insert failed:", e)
             return redirect(url_for("index"))
-        flash("Invalid login.")
-    return render_template("login.html")
+        flash("Invalid admin login.")
+    return render_template("login.html", admin_exists=admin_exists)
+
+
+@app.route("/mobile/login", methods=["GET", "POST"])
+def mobile_login():
+    if request.method == "POST":
+        email = request.form["email"].strip().lower()
+        pin = request.form["pin"].strip()
+        conn = db()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = %s AND role <> 'admin'",
+            (email,)
+        ).fetchone()
+        conn.close()
+        if user and user.get("pin_hash") and check_password_hash(user["pin_hash"], pin):
+            session["user_id"] = user["id"]
+            session["name"] = user["name"]
+            session["role"] = user["role"]
+            return redirect(url_for("mobile_home"))
+        flash("Invalid email or PIN.")
+    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower())
+
+
+@app.route("/admin/setup", methods=["GET", "POST"])
+def admin_setup_request():
+    conn = db()
+    if has_admin_account(conn):
+        conn.close()
+        flash("An admin account already exists. Use forgot password if you need access.")
+        return redirect(url_for("login"))
+
+    setup_link = ""
+    if request.method == "POST":
+        email = request.form["email"].strip().lower()
+        token = new_token()
+        existing = conn.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE users SET role = 'admin', setup_token = %s, setup_created_at = %s WHERE id = %s",
+                (token, datetime.now().isoformat(), existing["id"])
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (name, email, password_hash, role, setup_token, setup_created_at, created_at) VALUES (%s, %s, %s, 'admin', %s, %s, %s)",
+                ("Admin", email, unusable_password_hash(), token, datetime.now().isoformat(), datetime.now().isoformat())
+            )
+        conn.commit()
+        setup_link = external_url("admin_create_login", token=token)
+        sent = send_email(
+            email,
+            "Create your Projectonus admin login",
+            "Use this link on the desktop version to create your admin username and password:\n\n" + setup_link
+        )
+        if sent:
+            flash("Admin setup email sent.")
+            conn.close()
+            return redirect(url_for("login"))
+        flash("Email could not be sent because SMTP is not configured or failed.")
+    conn.close()
+    return render_template("admin_setup.html", setup_link=setup_link)
+
+
+@app.route("/admin/create-login/<token>", methods=["GET", "POST"])
+def admin_create_login(token):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE role = 'admin' AND setup_token = %s", (token,)).fetchone()
+    if not user:
+        conn.close()
+        flash("This admin setup link is invalid or has already been used.")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = request.form["username"].strip().lower()
+        name = request.form.get("name", "").strip() or "Admin"
+        password = request.form["password"]
+        confirm = request.form["confirm_password"]
+        if password != confirm:
+            flash("Passwords do not match.")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        elif conn.execute("SELECT id FROM users WHERE lower(coalesce(username, '')) = %s AND id <> %s", (username, user["id"])).fetchone():
+            flash("That username is already taken.")
+        else:
+            conn.execute(
+                "UPDATE users SET name = %s, username = %s, password_hash = %s, setup_token = NULL, setup_created_at = NULL WHERE id = %s",
+                (name, username, generate_password_hash(password), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            flash("Admin login created. You can sign in now.")
+            return redirect(url_for("login"))
+    conn.close()
+    return render_template("admin_create_login.html", user=user)
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    reset_link = ""
+    if request.method == "POST":
+        login_name = request.form["email"].strip().lower()
+        token = new_token()
+        conn = db()
+        user = conn.execute(
+            "SELECT * FROM users WHERE role = 'admin' AND (email = %s OR lower(coalesce(username, '')) = %s)",
+            (login_name, login_name)
+        ).fetchone()
+        if user:
+            conn.execute(
+                "UPDATE users SET reset_token = %s, reset_created_at = %s WHERE id = %s",
+                (token, datetime.now().isoformat(), user["id"])
+            )
+            conn.commit()
+            reset_link = external_url("reset_password", token=token)
+            sent = send_email(
+                user["email"],
+                "Reset your Projectonus admin password",
+                "Use this link to create a new admin password:\n\n" + reset_link
+            )
+            if sent:
+                flash("Password reset email sent.")
+            else:
+                flash("Email could not be sent because SMTP is not configured or failed.")
+        else:
+            flash("If that admin account exists, a reset email will be sent.")
+        conn.close()
+    return render_template("forgot_password.html", reset_link=reset_link)
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE role = 'admin' AND reset_token = %s", (token,)).fetchone()
+    if not user:
+        conn.close()
+        flash("This password reset link is invalid or has already been used.")
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        password = request.form["password"]
+        confirm = request.form["confirm_password"]
+        if password != confirm:
+            flash("Passwords do not match.")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        else:
+            conn.execute(
+                "UPDATE users SET password_hash = %s, reset_token = NULL, reset_created_at = NULL WHERE id = %s",
+                (generate_password_hash(password), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            flash("Password updated. You can sign in now.")
+            return redirect(url_for("login"))
+    conn.close()
+    return render_template("reset_password.html", user=user)
 
 
 @app.route("/logout")
@@ -753,25 +969,81 @@ def users():
     conn = db()
     if request.method == "POST":
         try:
+            email = request.form["email"].strip().lower()
+            role = request.form.get("role", "worker")
+            if role not in ["customer", "worker"]:
+                role = "worker"
+            pin = request.form["pin"].strip()
+            if len(pin) < 4:
+                conn.close()
+                flash("PIN must be at least 4 digits.")
+                return redirect(url_for("users"))
+
+            invite_token = new_token()
             conn.execute(
-                "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO users (name, email, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     request.form["name"].strip(),
-                    request.form["email"].strip().lower(),
-                    generate_password_hash(request.form["password"]),
-                    request.form["role"],
+                    email,
+                    unusable_password_hash(),
+                    generate_password_hash(pin),
+                    invite_token,
+                    datetime.now().isoformat(),
+                    role,
                     datetime.now().isoformat()
                 )
-            )
+            ).fetchone()
             conn.commit()
-            flash("User added.")
+            invite_link = external_url("mobile_login", email=email, invite=invite_token)
+            sent = send_email(
+                email,
+                "You are invited to Projectonus",
+                "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+            )
+            if sent:
+                flash("User added and mobile invitation email sent. Share the PIN with the user.")
+            else:
+                flash("User added. Email could not be sent, so share the mobile link and PIN with the user: " + invite_link)
         except Exception:
             conn.rollback()
             flash("That email may already exist.")
 
-    users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, role, created_at, invite_token FROM users ORDER BY name").fetchall()
     conn.close()
     return render_template("users.html", users=users)
+
+
+@app.route("/users/<int:user_id>/pin", methods=["POST"])
+@admin_required
+def update_user_pin(user_id):
+    pin = request.form.get("pin", "").strip()
+    if len(pin) < 4:
+        flash("PIN must be at least 4 digits.")
+        return redirect(url_for("users"))
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s AND role <> 'admin'", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    invite_token = user.get("invite_token") or new_token()
+    conn.execute(
+        "UPDATE users SET pin_hash = %s, invite_token = %s, invite_sent_at = %s WHERE id = %s",
+        (generate_password_hash(pin), invite_token, datetime.now().isoformat(), user_id)
+    )
+    conn.commit()
+    invite_link = external_url("mobile_login", email=user["email"], invite=invite_token)
+    sent = send_email(
+        user["email"],
+        "Your Projectonus mobile invitation",
+        "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+    )
+    conn.close()
+    if sent:
+        flash("PIN updated and invitation email sent. Share the PIN with the user.")
+    else:
+        flash("PIN updated. Email could not be sent, so share this mobile link with the user: " + invite_link)
+    return redirect(url_for("users"))
 
 
 
@@ -1425,7 +1697,7 @@ def notifications():
     conn = db()
     if request.method == "POST":
         if is_main_admin():
-            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE")
+            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type <> 'login'")
         else:
             conn.execute(
                 "UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
@@ -1434,7 +1706,7 @@ def notifications():
         conn.commit()
         flash("Notifications marked as read.")
     if is_main_admin():
-        events = conn.execute("SELECT * FROM login_events ORDER BY created_at DESC LIMIT 100").fetchall()
+        events = conn.execute("SELECT * FROM login_events WHERE event_type <> 'login' ORDER BY created_at DESC LIMIT 100").fetchall()
     else:
         events = conn.execute(
             "SELECT * FROM login_events WHERE user_id = %s AND event_type = 'task_assigned' ORDER BY created_at DESC LIMIT 100",
