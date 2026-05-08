@@ -331,9 +331,10 @@ def ensure_project_blueprints(conn, project):
             "SELECT COUNT(*) AS c FROM project_blueprints WHERE project_id = %s",
             (project["id"],)
         ).fetchone()["c"]
+        main_blueprint_id = None
         if count == 0 and project.get("blueprint_file"):
-            conn.execute(
-                "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s)",
+            new_bp = conn.execute(
+                "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
                 (
                     project["id"],
                     "Main Blueprint",
@@ -341,8 +342,21 @@ def ensure_project_blueprints(conn, project):
                     project.get("blueprint_preview_file"),
                     datetime.now().isoformat()
                 )
+            ).fetchone()
+            main_blueprint_id = new_bp["id"] if new_bp else None
+        else:
+            main_bp = conn.execute(
+                "SELECT id FROM project_blueprints WHERE project_id = %s ORDER BY id LIMIT 1",
+                (project["id"],)
+            ).fetchone()
+            main_blueprint_id = main_bp["id"] if main_bp else None
+
+        if main_blueprint_id:
+            conn.execute(
+                "UPDATE rooms SET blueprint_id = %s WHERE project_id = %s AND blueprint_id IS NULL",
+                (main_blueprint_id, project["id"])
             )
-            conn.commit()
+        conn.commit()
     except Exception as e:
         print("ensure_project_blueprints skipped:", e)
 
@@ -934,7 +948,7 @@ def project(project_id):
 
     if active_blueprint:
         rooms = conn.execute(
-            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+            "SELECT * FROM rooms WHERE project_id = %s AND blueprint_id = %s ORDER BY id",
             (project_id, active_blueprint["id"])
         ).fetchall()
     else:
@@ -1511,7 +1525,11 @@ def storage_file(storage_path):
         return "File not found or storage permission denied.", 404
 
     mime_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
-    return Response(data, mimetype=mime_type)
+    response = Response(data, mimetype=mime_type)
+    response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/project/<int:project_id>/regenerate-preview", methods=["POST"])
