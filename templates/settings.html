@@ -1,9 +1,22 @@
-
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>⚙️ Admin Settings</h2>
+    <h2>Admin Settings</h2>
     <p class="muted">Only the main admin can access this page.</p>
+    <style>
+        .settingsTabs{display:flex;gap:10px;flex-wrap:wrap}
+        .settingsTabs button{width:auto;min-width:180px}
+        .settingsPanel{display:none}
+        .settingsPanel.active{display:block}
+        .settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
+        .projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+        .projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+        @media(max-width:760px){.settingsTabs{display:none}}
+    </style>
+    <div class="settingsTabs desktop-only">
+        <button type="button" class="{% if active_tab != 'permissions' %}btn-secondary{% endif %}" data-settings-tab="permissions">User Permissions</button>
+        <button type="button" class="{% if active_tab != 'project_access' %}btn-secondary{% endif %}" data-settings-tab="projectAccess">Project Access</button>
+    </div>
 </div>
 
 <div class="card">
@@ -16,7 +29,7 @@
         <input type="file" name="company_logo" accept="image/*,.svg" required>
         <button type="submit">Save Logo</button>
     </form>
-    <p class="muted">This logo will show on the first page with “Powered by Projectonus.”</p>
+    <p class="muted">This logo will show on the first page with "Powered by Projectonus."</p>
 </div>
 
 <div class="card">
@@ -33,13 +46,13 @@
     </form>
 </div>
 
-<div class="card">
+<div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">
     <h3>User Permissions</h3>
     <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
     {% for u in users %}
         {% set p = perm_map.get(u.id) %}
         <div class="card">
-            <h4>{{ u.name }} — {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
             <form method="post">
                 <input type="hidden" name="action" value="permissions">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
@@ -63,4 +76,50 @@
         </div>
     {% endfor %}
 </div>
+
+<div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" id="projectAccessPanel">
+    <h3>Project Access</h3>
+    <p class="muted">Choose which projects each user can see. Admin accounts can see every project automatically.</p>
+    {% for u in users %}
+        {% set selected_projects = project_access_map.get(u.id, []) %}
+        <div class="card">
+            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+            {% if u.role == "admin" %}
+                <p class="muted">Admin accounts have access to all projects.</p>
+            {% else %}
+                <form method="post">
+                    <input type="hidden" name="action" value="project_access">
+                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                    <div class="projectAccessList">
+                        {% for p in projects %}
+                            <label>
+                                <input type="checkbox" name="project_ids" value="{{ p.id }}" {% if p.id in selected_projects %}checked{% endif %}>
+                                <strong>{{ p.name }}</strong><br>
+                                <span class="muted">{{ p.customer_name or "No customer" }}{% if p.customer_address %} - {{ p.customer_address }}{% endif %}</span>
+                            </label>
+                        {% else %}
+                            <p>No projects created yet.</p>
+                        {% endfor %}
+                    </div>
+                    <button type="submit">Save Project Access for {{ u.name }}</button>
+                </form>
+            {% endif %}
+        </div>
+    {% endfor %}
+</div>
+
+<script>
+const tabButtons=document.querySelectorAll("[data-settings-tab]");
+const permissionsPanel=document.getElementById("permissionsPanel");
+const projectAccessPanel=document.getElementById("projectAccessPanel");
+tabButtons.forEach(button=>{
+    button.addEventListener("click",()=>{
+        const showProjects=button.dataset.settingsTab==="projectAccess";
+        permissionsPanel.classList.toggle("active",!showProjects);
+        projectAccessPanel.classList.toggle("active",showProjects);
+        tabButtons.forEach(tab=>tab.classList.add("btn-secondary"));
+        button.classList.remove("btn-secondary");
+    });
+});
+</script>
 {% endblock %}

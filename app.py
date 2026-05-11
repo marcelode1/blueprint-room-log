@@ -316,6 +316,15 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_permissions (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, project_id)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notes (
         id SERIAL PRIMARY KEY,
         room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -397,6 +406,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
+        "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
     ]
     for sql in migrations:
@@ -719,6 +729,38 @@ def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
 
 
+def user_can_access_project(conn, project_id, user_id=None):
+    if is_main_admin():
+        return True
+    uid = user_id or session.get("user_id")
+    if not uid or not project_id:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM project_permissions WHERE user_id = %s AND project_id = %s",
+        (uid, project_id)
+    ).fetchone()
+    return bool(row)
+
+
+def fetch_visible_projects(conn, q=""):
+    params = []
+    join_sql = ""
+    if not is_main_admin():
+        join_sql = "JOIN project_permissions ON project_permissions.project_id = projects.id AND project_permissions.user_id = %s"
+        params.append(session.get("user_id"))
+
+    where_sql = ""
+    if q:
+        like = f"%{q}%"
+        where_sql = "WHERE projects.name ILIKE %s OR projects.customer_name ILIKE %s OR projects.customer_address ILIKE %s"
+        params.extend([like, like, like])
+
+    return conn.execute(
+        f"SELECT projects.* FROM projects {join_sql} {where_sql} ORDER BY projects.created_at DESC",
+        tuple(params)
+    ).fetchall()
+
+
 def parse_iso_datetime(value):
     try:
         return datetime.fromisoformat(value)
@@ -837,14 +879,7 @@ def index():
         return redirect(url_for("login"))
     q = request.args.get("q", "").strip()
     conn = db()
-    if q:
-        like = f"%{q}%"
-        projects = conn.execute(
-            "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s OR customer_address ILIKE %s ORDER BY created_at DESC",
-            (like, like, like)
-        ).fetchall()
-    else:
-        projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    projects = fetch_visible_projects(conn, q)
     conn.close()
     return render_template("index.html", projects=projects, q=q)
 
@@ -863,14 +898,7 @@ def desktop_home():
 def mobile_home():
     q = request.args.get("q", "").strip()
     conn = db()
-    if q:
-        like = f"%{q}%"
-        projects = conn.execute(
-            "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s OR customer_address ILIKE %s ORDER BY created_at DESC",
-            (like, like, like)
-        ).fetchall()
-    else:
-        projects = conn.execute("SELECT * FROM projects ORDER BY created_at DESC").fetchall()
+    projects = fetch_visible_projects(conn, q)
     conn.close()
     return render_template("mobile_home.html", projects=projects, q=q)
 
@@ -890,6 +918,10 @@ def mobile_time_clock(project_id):
     if not project:
         conn.close()
         flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
 
     if request.method == "POST":
@@ -935,16 +967,20 @@ def mobile_time_clock(project_id):
 @app.route("/mobile/project/<int:project_id>/materials", methods=["GET", "POST"])
 @login_required
 def mobile_project_materials(project_id):
-    if not can_view_inventory():
-        flash("You do not have permission to view material inventory.")
-        return redirect(url_for("mobile_project", project_id=project_id))
-
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
         conn.close()
         flash("Project not found.")
         return redirect(url_for("mobile_home"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("mobile_home"))
+    if not can_view_inventory():
+        conn.close()
+        flash("You do not have permission to view material inventory.")
+        return redirect(url_for("mobile_project", project_id=project_id))
 
     if request.method == "POST":
         if not can_edit_inventory():
@@ -991,11 +1027,16 @@ def mobile_project_materials(project_id):
 def mobile_project(project_id):
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
-    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
-    conn.close()
     if not project:
+        conn.close()
         flash("Project not found.")
         return redirect(url_for("mobile_home"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("mobile_home"))
+    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
+    conn.close()
     return render_template("mobile_project.html", project=project, rooms=rooms)
 
 
@@ -1016,6 +1057,10 @@ def mobile_add_room(project_id):
     if not project:
         conn.close()
         flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
 
     conn.execute(
@@ -1045,6 +1090,10 @@ def mobile_room(room_id):
         return redirect(url_for("mobile_home"))
 
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
+    if not user_can_access_project(conn, room["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("mobile_home"))
     rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
     tasks = conn.execute(
         """
@@ -1425,15 +1474,19 @@ def new_project():
 @app.route("/project/<int:project_id>/materials", methods=["GET", "POST"])
 @login_required
 def project_materials(project_id):
-    if not can_view_inventory():
-        flash("You do not have permission to view material inventory.")
-        return redirect(url_for("index"))
-
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
         conn.close()
         flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not can_view_inventory():
+        conn.close()
+        flash("You do not have permission to view material inventory.")
         return redirect(url_for("index"))
 
     if request.method == "POST":
@@ -1487,6 +1540,10 @@ def update_material_status(project_id, material_id):
         new_status = "not_in_stock"
 
     conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
     conn.execute(
         "UPDATE material_inventory SET material_status = %s WHERE id = %s AND project_id = %s",
         (new_status, material_id, project_id)
@@ -1507,6 +1564,10 @@ def delete_material(project_id, material_id):
         return redirect(url_for("project_materials", project_id=project_id))
 
     conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
     conn.execute("DELETE FROM material_inventory WHERE id = %s AND project_id = %s", (material_id, project_id))
     conn.commit()
     conn.close()
@@ -1523,6 +1584,10 @@ def project(project_id):
     if not project:
         conn.close()
         flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("index"))
 
     ensure_project_blueprints(conn, project)
@@ -1668,6 +1733,15 @@ def add_room(project_id):
     room_blueprint_id = blueprint_id if polygon_points else None
 
     conn = db()
+    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
     conn.execute(
         "INSERT INTO rooms (project_id, blueprint_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
@@ -1704,8 +1778,21 @@ def room(room_id):
         flash("Room not found.")
         return redirect(url_for("index"))
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
+    if not user_can_access_project(conn, room["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
     project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
-    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall() if is_main_admin() else []
+    users = conn.execute(
+        """
+        SELECT DISTINCT users.id, users.name, users.email, users.role
+        FROM users
+        LEFT JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
+        WHERE users.role = 'admin' OR project_permissions.project_id IS NOT NULL
+        ORDER BY users.name
+        """,
+        (room["project_id"],)
+    ).fetchall() if is_main_admin() else []
     tasks = conn.execute(
         """
         SELECT tasks.*, users.name AS assigned_user_name
@@ -1760,6 +1847,14 @@ def room(room_id):
 def project_timeline(project_id):
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
     selected_date = request.args.get("date", "")
     query = """
         SELECT notes.*, rooms.name AS room_name, rooms.category AS room_category, users.name AS user_name
@@ -1799,6 +1894,10 @@ def delete_note(note_id):
         conn.close()
         flash("Comment/photo not found.")
         return redirect(url_for("index"))
+    if not user_can_access_project(conn, note["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
 
     if not (is_main_admin() or has_perm("delete_comments") or has_perm("delete_pictures") or has_perm("delete_audio")):
         conn.close()
@@ -1829,6 +1928,13 @@ def create_task(room_id):
     if not assigned or not title:
         conn.close()
         flash("Choose a user and enter a task title.")
+        return redirect(url_for("room", room_id=room_id))
+    if assigned.get("role") != "admin" and not conn.execute(
+        "SELECT 1 FROM project_permissions WHERE user_id = %s AND project_id = %s",
+        (assigned_user_id, room["project_id"])
+    ).fetchone():
+        conn.close()
+        flash("That user does not have access to this project. Authorize the project in Settings first.")
         return redirect(url_for("room", room_id=room_id))
 
     conn.execute(
@@ -1877,6 +1983,10 @@ def complete_task(task_id):
     if not task:
         conn.close()
         flash("Task not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("index"))
     if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
         conn.close()
@@ -1946,10 +2056,11 @@ def my_tasks():
             LEFT JOIN rooms ON tasks.room_id = rooms.id
             LEFT JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN users ON tasks.assigned_user_id = users.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
             WHERE tasks.assigned_user_id = %s
             ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
             """,
-            (session.get("user_id"),)
+            (session.get("user_id"), session.get("user_id"))
         ).fetchall()
     conn.close()
     return render_template("tasks.html", tasks=tasks)
@@ -2018,6 +2129,7 @@ def settings():
     conn = db()
     if request.method == "POST":
         action = request.form.get("action")
+        redirect_tab = None
         if action == "logo":
             logo = request.files.get("company_logo")
             if logo and logo.filename and allowed_logo(logo.filename):
@@ -2058,13 +2170,64 @@ def settings():
             )
             conn.commit()
             flash("User permissions updated.")
+        elif action == "project_access":
+            redirect_tab = "project_access"
+            user_id = int(request.form.get("user_id"))
+            user = conn.execute("SELECT id, role FROM users WHERE id = %s", (user_id,)).fetchone()
+            if not user:
+                flash("User not found.")
+            elif user.get("role") == "admin":
+                flash("Admin accounts can already see every project.")
+            else:
+                allowed_project_ids = {
+                    row["id"] for row in conn.execute("SELECT id FROM projects").fetchall()
+                }
+                selected_project_ids = []
+                for value in request.form.getlist("project_ids"):
+                    try:
+                        project_id = int(value)
+                    except Exception:
+                        continue
+                    if project_id in allowed_project_ids:
+                        selected_project_ids.append(project_id)
+
+                conn.execute("DELETE FROM project_permissions WHERE user_id = %s", (user_id,))
+                for project_id in selected_project_ids:
+                    conn.execute(
+                        """
+                        INSERT INTO project_permissions (user_id, project_id, created_at)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (user_id, project_id) DO NOTHING
+                        """,
+                        (user_id, project_id, datetime.now().isoformat())
+                    )
+                conn.commit()
+                flash("Project access updated.")
+        if redirect_tab:
+            return redirect(url_for("settings", tab=redirect_tab))
         return redirect(url_for("settings"))
 
+    active_tab = request.args.get("tab", "permissions")
+    if active_tab not in ["permissions", "project_access"]:
+        active_tab = "permissions"
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    projects = conn.execute("SELECT id, name, customer_name, customer_address FROM projects ORDER BY name").fetchall()
     permissions = conn.execute("SELECT * FROM user_permissions").fetchall()
+    project_permissions = conn.execute("SELECT user_id, project_id FROM project_permissions").fetchall()
     conn.close()
     perm_map = {p["user_id"]: p for p in permissions}
-    return render_template("settings.html", users=users, perm_map=perm_map, permission_keys=PERMISSION_KEYS)
+    project_access_map = {}
+    for row in project_permissions:
+        project_access_map.setdefault(row["user_id"], set()).add(row["project_id"])
+    return render_template(
+        "settings.html",
+        users=users,
+        projects=projects,
+        perm_map=perm_map,
+        project_access_map=project_access_map,
+        active_tab=active_tab,
+        permission_keys=PERMISSION_KEYS
+    )
 
 
 @app.route("/notifications", methods=["GET", "POST"])
@@ -2099,10 +2262,14 @@ def edit_note(note_id):
         flash("You do not have permission to edit comments.")
         return redirect(url_for("index"))
     conn = db()
-    note = conn.execute("SELECT notes.*, rooms.name AS room_name FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
+    note = conn.execute("SELECT notes.*, rooms.name AS room_name, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
     if not note:
         conn.close()
         flash("Comment not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, note["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("index"))
     if request.method == "POST":
         conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (request.form["comment"].strip(), request.form["note_date"], note_id))
@@ -2121,7 +2288,7 @@ def backup():
 
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events"]:
+    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events", "user_permissions", "project_permissions"]:
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
@@ -2168,6 +2335,37 @@ def storage_file(storage_path):
     Serve files from Supabase Storage through Flask.
     This avoids browser/public-url problems and makes PDF/image display more reliable.
     """
+    conn = db()
+    owner = conn.execute(
+        """
+        SELECT id AS project_id FROM projects WHERE blueprint_file = %s OR blueprint_preview_file = %s
+        UNION
+        SELECT project_id FROM project_blueprints WHERE blueprint_file = %s OR blueprint_preview_file = %s
+        UNION
+        SELECT rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.photo_file = %s OR notes.audio_file = %s
+        UNION
+        SELECT project_id FROM material_inventory WHERE picture_file = %s
+        UNION
+        SELECT project_id FROM tasks WHERE completion_photo_file = %s OR completion_audio_file = %s
+        LIMIT 1
+        """,
+        (
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path,
+            storage_path
+        )
+    ).fetchone()
+    if owner and not user_can_access_project(conn, owner["project_id"]):
+        conn.close()
+        return "You do not have access to this project file.", 403
+    conn.close()
+
     data = download_storage_file(storage_path)
     if not data:
         return "File not found or storage permission denied.", 404
@@ -2193,6 +2391,10 @@ def regenerate_preview(project_id):
     if not project:
         conn.close()
         flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("index"))
 
     blueprint_file = project.get("blueprint_file")
