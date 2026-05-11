@@ -118,7 +118,7 @@ def external_url(endpoint, **values):
     return url_for(endpoint, _external=True, **values)
 
 
-def send_email(to_email, subject, body):
+def send_email(to_email, subject, body, attachments=None):
     if not SMTP_HOST:
         print("Email not sent: SMTP_HOST is not configured.")
         return False
@@ -128,6 +128,12 @@ def send_email(to_email, subject, body):
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.set_content(body)
+        for attachment in attachments or []:
+            filename, data, mime_type = attachment
+            if not data:
+                continue
+            maintype, subtype = (mime_type or "application/octet-stream").split("/", 1)
+            msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
             if SMTP_USE_TLS:
                 smtp.starttls(context=ssl.create_default_context())
@@ -546,6 +552,11 @@ def set_app_setting(key, value):
     conn.close()
 
 
+def setting_enabled(key, default=True):
+    default_value = "1" if default else "0"
+    return get_app_setting(key, default_value) == "1"
+
+
 def admin_unread_count():
     if session.get("role") != "admin":
         return 0
@@ -581,6 +592,75 @@ def add_notification(conn, user_id, user_name, user_email, role, event_type):
         "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
         (user_id, user_name, user_email, role, event_type, datetime.now().isoformat())
     )
+
+
+def storage_attachment(path):
+    if not path:
+        return None
+    data = download_storage_file(path)
+    if not data:
+        return None
+    filename = os.path.basename(path)
+    mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return (filename, data, mime_type)
+
+
+def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
+    actor = conn.execute(
+        "SELECT name, email, role FROM users WHERE id = %s",
+        (session.get("user_id"),)
+    ).fetchone() or {}
+    add_notification(
+        conn,
+        session.get("user_id"),
+        actor.get("name") or session.get("name"),
+        actor.get("email") or "",
+        actor.get("role") or session.get("role"),
+        "field_note_added"
+    )
+
+    send_comments = setting_enabled("email_note_comments", True)
+    send_pictures = setting_enabled("email_note_pictures", True)
+    send_audio = setting_enabled("email_note_audio", True)
+    wants_email = (comment and send_comments) or (photo_file and send_pictures) or (audio_file and send_audio)
+    if not wants_email:
+        return
+
+    admins = conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
+    if not admins:
+        return
+
+    attachments = []
+    if photo_file and send_pictures:
+        attachment = storage_attachment(photo_file)
+        if attachment:
+            attachments.append(attachment)
+    if audio_file and send_audio:
+        attachment = storage_attachment(audio_file)
+        if attachment:
+            attachments.append(attachment)
+
+    lines = [
+        "A field update was added in Projectonus.",
+        "",
+        f"Project: {project.get('name') if project else '-'}",
+        f"Room: {room.get('name') if room else '-'}",
+        f"User: {actor.get('name') or session.get('name') or 'Unknown user'}",
+        f"Email: {actor.get('email') or '-'}",
+        f"Date: {note_date}",
+        ""
+    ]
+    if comment and send_comments:
+        lines.extend(["Comment:", comment, ""])
+    if photo_file and send_pictures:
+        lines.append("Picture attached.")
+    if audio_file and send_audio:
+        lines.append("Audio attached.")
+    body = "\n".join(lines)
+    subject = f"Projectonus field update - {room.get('name') if room else 'Room'}"
+    for admin in admins:
+        if admin.get("email"):
+            send_email(admin["email"], subject, body, attachments=attachments)
 
 
 def can_add_notes():
@@ -896,6 +976,7 @@ def mobile_room(room_id):
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
         )
+        notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         conn.commit()
         flash("Comment/photo/audio added.")
 
@@ -1563,6 +1644,7 @@ def room(room_id):
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
         )
+        notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         conn.commit()
         flash("Comment/photo added.")
 
@@ -1846,6 +1928,11 @@ def settings():
                 flash("Company logo updated.")
             else:
                 flash("Please upload a valid logo file: PNG, JPG, WEBP, GIF, or SVG.")
+        elif action == "email_notifications":
+            set_app_setting("email_note_comments", "1" if "email_note_comments" in request.form else "0")
+            set_app_setting("email_note_pictures", "1" if "email_note_pictures" in request.form else "0")
+            set_app_setting("email_note_audio", "1" if "email_note_audio" in request.form else "0")
+            flash("Email notification preferences updated.")
         elif action == "permissions":
             user_id = int(request.form.get("user_id"))
             values = {k: (k in request.form) for k in PERMISSION_KEYS}

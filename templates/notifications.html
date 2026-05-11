@@ -11,6 +11,8 @@
                 <strong>Task assigned</strong> to {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'task_completed' %}
                 <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'field_note_added' %}
+                <strong>Field update added</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% endif %}
             <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ e.created_at }}</span>
         </div>

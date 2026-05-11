@@ -20,6 +20,20 @@
 </div>
 
 <div class="card">
+    <h3>Admin Email Notifications</h3>
+    <p class="muted">Choose which field updates are sent to admin email. In-app admin notifications are always created.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="email_notifications">
+        <div class="grid">
+            <label><input type="checkbox" name="email_note_comments" {% if get_app_setting("email_note_comments", "1") == "1" %}checked{% endif %}> Email comments</label>
+            <label><input type="checkbox" name="email_note_pictures" {% if get_app_setting("email_note_pictures", "1") == "1" %}checked{% endif %}> Email pictures</label>
+            <label><input type="checkbox" name="email_note_audio" {% if get_app_setting("email_note_audio", "1") == "1" %}checked{% endif %}> Email audio</label>
+        </div>
+        <button type="submit">Save Email Notification Settings</button>
+    </form>
+</div>
+
+<div class="card">
     <h3>User Permissions</h3>
     <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
     {% for u in users %}
