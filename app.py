@@ -693,7 +693,8 @@ def notify_admins_of_attendance(conn, event_type, latitude, longitude, address, 
         "",
         f"User: {actor_name or 'Unknown user'}",
         f"Email: {actor_email or '-'}",
-        f"Time: {created_at}",
+        f"Time: {format_time(created_at)}",
+        f"Date: {format_date(created_at)}",
         f"Location: {address or '-'}",
         f"GPS: {latitude}, {longitude}",
         f"Map: {maps_url}",
@@ -720,6 +721,30 @@ def parse_iso_datetime(value):
         return datetime.fromisoformat(value)
     except Exception:
         return None
+
+
+def format_time(value):
+    dt = parse_iso_datetime(value)
+    if not dt:
+        return value or "-"
+    return dt.strftime("%I:%M%p").lstrip("0")
+
+
+def format_date(value):
+    dt = parse_iso_datetime(value)
+    if dt:
+        return dt.strftime("%m/%d/%Y")
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except Exception:
+        return value or "-"
+
+
+def format_datetime(value):
+    dt = parse_iso_datetime(value)
+    if not dt:
+        return value or "-"
+    return f"{dt.strftime('%m/%d/%Y')} {dt.strftime('%I:%M%p').lstrip('0')}"
 
 
 def duration_text(start_value, end_value):
@@ -791,6 +816,9 @@ def utility_processor():
         can_add_notes=can_add_notes,
         has_perm=has_perm,
         get_app_setting=get_app_setting,
+        format_time=format_time,
+        format_date=format_date,
+        format_datetime=format_datetime,
         admin_unread_count=admin_unread_count,
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
@@ -1951,7 +1979,9 @@ def attendance_report():
         start=start,
         end=end,
         duration_text=duration_text,
-        minutes_text=minutes_text
+        minutes_text=minutes_text,
+        format_time=format_time,
+        format_date=format_date
     )
 
 

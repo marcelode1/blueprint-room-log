@@ -24,7 +24,7 @@
             {% elif e.event_type == 'attendance_check_out' %}
                 <strong>Check out</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% endif %}
-            <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ e.created_at }}</span>
+            <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</span>
         </div>
     {% else %}
         <p>No notifications yet.</p>

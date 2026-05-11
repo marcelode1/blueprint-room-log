@@ -28,7 +28,7 @@
     {% for e in events %}
         <div class="card">
             <strong>{% if e.event_type == 'check_in' %}Check In{% else %}Check Out{% endif %}</strong>
-            <p>{{ e.created_at }}</p>
+            <p>{{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</p>
             <p>{{ e.address or '-' }}</p>
             {% if e.latitude and e.longitude %}
                 <a class="btn-link btn-secondary" target="_blank" href="https://www.google.com/maps?q={{ e.latitude }},{{ e.longitude }}">Open Map</a>

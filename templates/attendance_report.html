@@ -70,15 +70,15 @@
                 {% set u = p.user %}
                 <tr>
                     <td>{{ u.user_name or "Unknown user" }}<br><span class="muted">{{ u.user_email or "" }}</span></td>
-                    <td>{{ (ci.created_at if ci else co.created_at)[:10] }}</td>
-                    <td>{{ ci.created_at if ci else "-" }}</td>
+                    <td>{{ format_date(ci.created_at if ci else co.created_at) }}</td>
+                    <td>{{ format_time(ci.created_at) if ci else "-" }}</td>
                     <td>
                         {% if ci %}
                             {{ ci.address or "-" }}
                             {% if ci.latitude and ci.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ ci.latitude }},{{ ci.longitude }}">Map</a>{% endif %}
                         {% else %}-{% endif %}
                     </td>
-                    <td>{{ co.created_at if co else "-" }}</td>
+                    <td>{{ format_time(co.created_at) if co else "-" }}</td>
                     <td>
                         {% if co %}
                             {{ co.address or "-" }}
