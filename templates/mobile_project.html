@@ -1,69 +1,68 @@
+
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('index') }}">Back to Projects</a>
     {% if can_view_inventory() %}
-        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Material Inventory</a>
-    {% endif %}
-    {% if is_main_admin() %}
-        <a class="btn-link" href="{{ url_for('project_tasks', project_id=project.id) }}">Create / Manage Tasks</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
     {% endif %}
 </div>
-
+{% if is_main_admin() or has_perm("create_rooms") %}
 <div class="card">
-    <h3>My Tasks</h3>
-    {% for t in tasks %}
-        <a class="taskCard" href="{{ url_for('task_detail', task_id=t.id) }}">
-            <strong>{{ t.title }}</strong>
-            <span>{{ t.task_date }} — {{ t.status|upper }}</span>
-            <small>{{ t.room_name or 'No room selected' }}{% if is_main_admin() %} — Assigned to {{ t.assigned_user_name or 'Unassigned' }}{% endif %}</small>
-        </a>
-    {% else %}
-        <p>No tasks assigned.</p>
-    {% endfor %}
+    <button type="button" id="showCreateRoomBtn">Create Room</button>
+    <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}" id="mobileRoomForm" style="display:none;margin-top:12px;">
+        <label>Room Name</label>
+        <input name="name" placeholder="Kitchen, Master Bedroom, Patio" required>
+        <label>Room Type</label>
+        <select name="category">
+            <option value="general">General</option>
+            <option value="electrical">Electrical</option>
+            <option value="av">AV / Low Voltage</option>
+            <option value="lighting">Lighting</option>
+        </select>
+        <label>Highlight Color</label>
+        <select name="room_color">
+            <option value="blue">Blue</option>
+            <option value="red">Red</option>
+            <option value="green">Green</option>
+            <option value="yellow">Yellow</option>
+            <option value="purple">Purple</option>
+            <option value="orange">Orange</option>
+            <option value="gray">Gray</option>
+        </select>
+        <button type="submit">Create Room</button>
+        <button type="button" class="btn-secondary" id="cancelCreateRoomBtn">Cancel</button>
+    </form>
 </div>
-
-<div class="card" id="roomsTab">
+{% endif %}
+<div class="card">
     <h3>Rooms</h3>
-    {% if has_perm('create_rooms') %}
-        <button type="button" onclick="toggleCreateRoomBox()">Create Room</button>
-        <div id="createRoomBox" style="display:none;margin-top:12px;">
-            <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}">
-                <label>Room Name</label>
-                <input name="name" placeholder="Example: Master Bedroom" required>
-                <label>Blueprint / Floor</label>
-                <select name="blueprint_id">
-                    <option value="">No blueprint / field-created room</option>
-                    {% for bp in blueprints %}<option value="{{ bp.id }}">{{ bp.name }}</option>{% endfor %}
-                </select>
-                <label>Category</label>
-                <select name="category">
-                    <option value="general">General</option>
-                    <option value="electrical">Electrical</option>
-                    <option value="av">AV / Low Voltage</option>
-                    <option value="lighting">Lighting</option>
-                </select>
-                <label>Color</label>
-                <select name="room_color">
-                    <option value="blue">Blue</option><option value="red">Red</option><option value="green">Green</option>
-                    <option value="yellow">Yellow</option><option value="purple">Purple</option><option value="orange">Orange</option><option value="gray">Gray</option>
-                </select>
-                <button type="submit">Save Room</button>
-            </form>
-        </div>
-    {% endif %}
     {% for r in rooms %}
         <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% else %}
         <p>No rooms created yet.</p>
     {% endfor %}
 </div>
-<style>
-.taskCard{display:block;padding:14px;border:1px solid var(--border);border-radius:14px;text-decoration:none;color:var(--text);margin:10px 0;background:var(--card)}
-.taskCard strong,.taskCard span,.taskCard small{display:block}.taskCard span{color:var(--primary);font-weight:800;margin-top:4px}.taskCard small{color:var(--muted);margin-top:4px}
-</style>
-<script>function toggleCreateRoomBox(){var el=document.getElementById("createRoomBox"); if(el){el.style.display = el.style.display === "none" ? "block" : "none";}}</script>
+<script>
+const showCreateRoomBtn=document.getElementById("showCreateRoomBtn");
+const mobileRoomForm=document.getElementById("mobileRoomForm");
+const cancelCreateRoomBtn=document.getElementById("cancelCreateRoomBtn");
+if(showCreateRoomBtn&&mobileRoomForm){
+    showCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.style.display="block";
+        showCreateRoomBtn.style.display="none";
+        const firstInput=mobileRoomForm.querySelector("input");
+        if(firstInput)firstInput.focus();
+    });
+}
+if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
+    cancelCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.reset();
+        mobileRoomForm.style.display="none";
+        showCreateRoomBtn.style.display="inline-flex";
+    });
+}
+</script>
 {% endblock %}

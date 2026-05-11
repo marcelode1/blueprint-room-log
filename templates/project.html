@@ -11,11 +11,12 @@
     </div>
 
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
-    {% if can_view_inventory() %}<a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Material Inventory</a>{% endif %}
-    <a class="btn-link btn-secondary" href="{{ url_for('project_tasks', project_id=project.id) }}">Tasks</a>
+    {% if can_view_inventory() %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Inventory</a>
+    {% endif %}
 
     {% if active_blueprint %}
-        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}">Open Current Blueprint File</a>
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}">Open Current Blueprint File</a>
     {% endif %}
 
     {% if is_main_admin() %}
@@ -50,6 +51,7 @@
             {% for bp in blueprints %}
             <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
                 <a class="bpOpen" href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+                <span class="muted">Sheet {{ bp.id }}</span>
                 {% if is_main_admin() %}
                 <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
                 <div class="deleteBox" id="bpDelete{{ bp.id }}">
@@ -71,44 +73,10 @@
     {% endif %}
 </div>
 
-<div class="card" id="roomsTab">
+<div class="card">
     <h3>Rooms {% if active_blueprint %}for {{ active_blueprint.name }}{% endif %}</h3>
-    {% if has_perm('create_rooms') %}
-        <button type="button" onclick="toggleCreateRoomBox()">Create Room</button>
-        <div id="createRoomBox" style="display:none;margin-top:12px;">
-            <form method="post" action="{{ url_for('add_room', project_id=project.id) }}">
-                <div class="grid">
-                    <div><label>Room Name</label><input name="name" placeholder="Example: Master Bedroom" required></div>
-                    <div>
-                        <label>Blueprint / Floor</label>
-                        <select name="blueprint_id">
-                            <option value="">No blueprint / field-created room</option>
-                            {% for bp in blueprints %}<option value="{{ bp.id }}" {% if active_blueprint and bp.id == active_blueprint.id %}selected{% endif %}>{{ bp.name }}</option>{% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label>Room Type</label>
-                        <select name="category">
-                            <option value="general">General</option>
-                            <option value="electrical">Electrical</option>
-                            <option value="av">AV / Low Voltage</option>
-                            <option value="lighting">Lighting</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label>Highlight Color</label>
-                        <select name="room_color">
-                            <option value="blue">Blue</option><option value="red">Red</option><option value="green">Green</option>
-                            <option value="yellow">Yellow</option><option value="purple">Purple</option><option value="orange">Orange</option><option value="gray">Gray</option>
-                        </select>
-                    </div>
-                </div>
-                <input type="hidden" name="polygon_points" value="">
-                <input type="hidden" name="x" value="0"><input type="hidden" name="y" value="0">
-                <input type="hidden" name="w" value="0"><input type="hidden" name="h" value="0">
-                <button type="submit">Save Room</button>
-            </form>
-        </div>
+    {% if is_main_admin() or has_perm("create_rooms") %}
+        <button type="button" id="showDesktopCreateRoomBtn">Create Room</button>
     {% endif %}
     <div class="roomScroller">
         {% for r in rooms %}
@@ -119,8 +87,8 @@
     </div>
 </div>
 
-{% if has_perm('create_rooms') %}
-<div class="card blueprintDesktopOnly">
+{% if is_main_admin() or has_perm("create_rooms") %}
+<div class="card blueprintDesktopOnly" id="desktopCreateRoomPanel" style="display:none;">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
             <div><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
@@ -141,7 +109,6 @@
                 </select>
             </div>
         </div>
-        <input type="hidden" name="form_mode" value="trace">
         <input type="hidden" id="polygon_points" name="polygon_points">
         <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
@@ -153,7 +120,7 @@
     </form>
 </div>
 
-<div class="card blueprintDesktopOnly">
+<div class="card blueprintDesktopOnly" id="desktopDrawTools" style="display:none;">
     <div class="grid">
         <div><label><input type="checkbox" id="drawingMode"> Drawing Mode</label><div id="drawStatus"><strong>Drawing mode is off</strong></div></div>
         <div><label><input type="checkbox" id="snapToggle" checked> Snap/Grid</label><input type="range" min="5" max="40" value="15" id="snapSize"></div>
@@ -182,13 +149,13 @@
                 </div>
             {% elif active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
                 <canvas id="blueprint"
-                        data-pdf-url="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file) }}"
+                        data-pdf-url="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}"
                         style="display:block; pointer-events:none; background:white;"></canvas>
                 <div id="pdfStatus" style="padding:8px; background:#eef2ff; border-radius:6px; margin-top:8px;">
                     Loading PDF blueprint...
                 </div>
             {% elif active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
-                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file)) }}" style="max-width:none; display:block; pointer-events:none;">
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file), bp=active_blueprint.id) }}" style="max-width:none; display:block; pointer-events:none;">
             {% endif %}
 
             <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
@@ -350,10 +317,19 @@ function finishTrace(){
     alert("Room trace finished. Now enter the room name and click Save Room.");
 }
 function clearTrace(){points=[];redrawTrace();updateStatus();}
-function toggleCreateRoomBox(){var el=document.getElementById("createRoomBox"); if(el){el.style.display = el.style.display === "none" ? "block" : "none";}}
 function showBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="block";}
 function hideBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="none";}
 document.addEventListener("change",function(e){if(e.target&&e.target.id==="pdfQuality"){renderPdfBlueprint();}});
+const showDesktopCreateRoomBtn=document.getElementById("showDesktopCreateRoomBtn");
+const desktopCreateRoomPanel=document.getElementById("desktopCreateRoomPanel");
+const desktopDrawTools=document.getElementById("desktopDrawTools");
+if(showDesktopCreateRoomBtn){
+    showDesktopCreateRoomBtn.addEventListener("click",()=>{
+        if(desktopCreateRoomPanel)desktopCreateRoomPanel.style.display="block";
+        if(desktopDrawTools)desktopDrawTools.style.display="block";
+        showDesktopCreateRoomBtn.style.display="none";
+    });
+}
 window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
 </script>
 {% endblock %}

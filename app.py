@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
-import os, uuid, zipfile, tempfile, json, mimetypes
+from email.message import EmailMessage
+from datetime import datetime, timedelta
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -20,6 +21,13 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "blueprint-files")
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME or "no-reply@projectonus.app")
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
@@ -104,6 +112,53 @@ def download_storage_file(path):
         return b""
 
 
+def external_url(endpoint, **values):
+    if APP_BASE_URL:
+        return APP_BASE_URL.rstrip("/") + url_for(endpoint, **values)
+    return url_for(endpoint, _external=True, **values)
+
+
+def send_email(to_email, subject, body):
+    if not SMTP_HOST:
+        print("Email not sent: SMTP_HOST is not configured.")
+        return False
+    try:
+        msg = EmailMessage()
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.set_content(body)
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
+            if SMTP_USE_TLS:
+                smtp.starttls(context=ssl.create_default_context())
+            if SMTP_USERNAME:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:
+        print("Email send failed:", e)
+        return False
+
+
+def new_token():
+    return uuid.uuid4().hex + uuid.uuid4().hex
+
+
+def unusable_password_hash():
+    return generate_password_hash(new_token())
+
+
+def has_admin_account(conn=None):
+    close_conn = False
+    if conn is None:
+        conn = db()
+        close_conn = True
+    row = conn.execute("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'").fetchone()
+    if close_conn:
+        conn.close()
+    return bool(row and row["c"])
+
+
 def create_pdf_preview_from_bytes(pdf_bytes):
     """
     Convert first PDF page to PNG and upload it to Supabase Storage.
@@ -138,8 +193,16 @@ def init_db():
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
+        username TEXT,
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
+        pin_hash TEXT,
+        invite_token TEXT,
+        invite_sent_at TEXT,
+        reset_token TEXT,
+        reset_created_at TEXT,
+        setup_token TEXT,
+        setup_created_at TEXT,
         role TEXT NOT NULL DEFAULT 'worker',
         created_at TEXT NOT NULL
     )
@@ -163,7 +226,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS project_blueprints (
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL,
         name TEXT NOT NULL,
         blueprint_file TEXT NOT NULL,
         blueprint_preview_file TEXT,
@@ -243,10 +305,7 @@ def init_db():
         delete_pictures BOOLEAN NOT NULL DEFAULT FALSE,
         see_audio BOOLEAN NOT NULL DEFAULT TRUE,
         add_audio BOOLEAN NOT NULL DEFAULT FALSE,
-        delete_audio BOOLEAN NOT NULL DEFAULT FALSE,
-        create_rooms BOOLEAN NOT NULL DEFAULT FALSE,
-        view_inventory BOOLEAN NOT NULL DEFAULT FALSE,
-        edit_inventory BOOLEAN NOT NULL DEFAULT FALSE
+        delete_audio BOOLEAN NOT NULL DEFAULT FALSE
     )
     """)
 
@@ -270,27 +329,30 @@ def init_db():
         room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
         assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        title TEXT NOT NULL,
-        description TEXT,
         task_date TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'open',
+        title TEXT NOT NULL,
+        instructions TEXT,
         require_picture BOOLEAN NOT NULL DEFAULT FALSE,
-        allow_picture BOOLEAN NOT NULL DEFAULT TRUE,
+        allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE,
         allow_comment BOOLEAN NOT NULL DEFAULT TRUE,
         allow_audio BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at TEXT NOT NULL,
-        completed_at TEXT
+        status TEXT NOT NULL DEFAULT 'open',
+        completion_comment TEXT,
+        completion_photo_file TEXT,
+        completion_audio_file TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL
     )
     """)
 
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS task_updates (
+    CREATE TABLE IF NOT EXISTS attendance_events (
         id SERIAL PRIMARY KEY,
-        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        comment TEXT,
-        photo_file TEXT,
-        audio_file TEXT,
+        event_type TEXT NOT NULL,
+        latitude REAL,
+        longitude REAL,
+        address TEXT,
         created_at TEXT NOT NULL
     )
     """)
@@ -303,17 +365,31 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_sent_at TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_created_at TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_token TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_created_at TEXT",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
-        "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
-        "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE, view_inventory BOOLEAN NOT NULL DEFAULT FALSE, edit_inventory BOOLEAN NOT NULL DEFAULT FALSE)",
+        "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
+        "ALTER TABLE project_blueprints DROP COLUMN IF EXISTS blueprint_id",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
-        "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, title TEXT NOT NULL, description TEXT, task_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, completed_at TEXT)",
-        "CREATE TABLE IF NOT EXISTS task_updates (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, comment TEXT, photo_file TEXT, audio_file TEXT, created_at TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
+        "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
+        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
+        "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
+        "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
     ]
     for sql in migrations:
         try:
@@ -321,14 +397,6 @@ def init_db():
         except Exception as e:
             print("Migration skipped:", sql, e)
     conn.commit()
-
-    cur.execute("SELECT COUNT(*) AS c FROM users")
-    if cur.fetchone()["c"] == 0:
-        cur.execute(
-            "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (%s, %s, %s, %s, %s)",
-            ("Admin", "admin@example.com", generate_password_hash("admin123"), "admin", datetime.now().isoformat())
-        )
-        conn.commit()
 
     conn.close()
 
@@ -342,9 +410,10 @@ def ensure_project_blueprints(conn, project):
             "SELECT COUNT(*) AS c FROM project_blueprints WHERE project_id = %s",
             (project["id"],)
         ).fetchone()["c"]
+        main_blueprint_id = None
         if count == 0 and project.get("blueprint_file"):
-            conn.execute(
-                "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s)",
+            new_bp = conn.execute(
+                "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
                 (
                     project["id"],
                     "Main Blueprint",
@@ -352,8 +421,21 @@ def ensure_project_blueprints(conn, project):
                     project.get("blueprint_preview_file"),
                     datetime.now().isoformat()
                 )
+            ).fetchone()
+            main_blueprint_id = new_bp["id"] if new_bp else None
+        else:
+            main_bp = conn.execute(
+                "SELECT id FROM project_blueprints WHERE project_id = %s ORDER BY id LIMIT 1",
+                (project["id"],)
+            ).fetchone()
+            main_blueprint_id = main_bp["id"] if main_bp else None
+
+        if main_blueprint_id:
+            conn.execute(
+                "UPDATE rooms SET blueprint_id = %s WHERE project_id = %s AND blueprint_id IS NULL",
+                (main_blueprint_id, project["id"])
             )
-            conn.commit()
+        conn.commit()
     except Exception as e:
         print("ensure_project_blueprints skipped:", e)
 
@@ -363,6 +445,8 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
+            if request.path.startswith("/mobile"):
+                return redirect(url_for("mobile_login"))
             return redirect(url_for("login"))
         return fn(*args, **kwargs)
     return wrapper
@@ -393,15 +477,13 @@ def default_permissions_for_role(role):
         return {
             "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
             "see_pictures": True, "add_pictures": True, "delete_pictures": False,
-            "see_audio": True, "add_audio": True, "delete_audio": False,
-            "create_rooms": False,
-            "view_inventory": True, "edit_inventory": True,
+            "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
+            "view_inventory": False, "edit_inventory": False,
         }
     return {
         "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
         "see_pictures": True, "add_pictures": False, "delete_pictures": False,
-        "see_audio": True, "add_audio": False, "delete_audio": False,
-        "create_rooms": False,
+        "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
         "view_inventory": False, "edit_inventory": False,
     }
 
@@ -409,8 +491,8 @@ def default_permissions_for_role(role):
 PERMISSION_KEYS = [
     "see_comments", "write_comments", "edit_comments", "delete_comments",
     "see_pictures", "add_pictures", "delete_pictures",
-    "see_audio", "add_audio", "delete_audio",
-    "create_rooms", "view_inventory", "edit_inventory"
+    "see_audio", "add_audio", "delete_audio", "create_rooms",
+    "view_inventory", "edit_inventory"
 ]
 
 
@@ -465,11 +547,36 @@ def admin_unread_count():
         return 0
     try:
         conn = db()
-        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE").fetchone()
+        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
         conn.close()
         return row["c"] if row else 0
     except Exception:
         return 0
+
+
+def unread_notification_count():
+    if "user_id" not in session:
+        return 0
+    try:
+        conn = db()
+        if session.get("role") == "admin":
+            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
+                (session.get("user_id"),)
+            ).fetchone()
+        conn.close()
+        return row["c"] if row else 0
+    except Exception:
+        return 0
+
+
+def add_notification(conn, user_id, user_name, user_email, role, event_type):
+    conn.execute(
+        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, user_name, user_email, role, event_type, datetime.now().isoformat())
+    )
 
 
 def can_add_notes():
@@ -477,19 +584,79 @@ def can_add_notes():
 
 
 def can_view_inventory():
-    return has_perm("view_inventory")
+    return is_main_admin() or has_perm("view_inventory") or has_perm("edit_inventory")
 
 
 def can_edit_inventory():
-    return has_perm("edit_inventory")
+    return is_main_admin() or has_perm("edit_inventory")
 
 
+def parse_iso_datetime(value):
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
 
-def create_app_notification(conn, user_id, user_name, user_email, role, event_type):
-    conn.execute(
-        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, is_read, created_at) VALUES (%s, %s, %s, %s, %s, FALSE, %s)",
-        (user_id, user_name, user_email, role, event_type, datetime.now().isoformat())
-    )
+
+def duration_text(start_value, end_value):
+    start = parse_iso_datetime(start_value)
+    end = parse_iso_datetime(end_value)
+    if not start or not end or end < start:
+        return "-"
+    total_minutes = int((end - start).total_seconds() // 60)
+    return minutes_text(total_minutes)
+
+
+def minutes_text(total_minutes):
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours}h {minutes}m"
+
+
+def duration_minutes(start_value, end_value):
+    start = parse_iso_datetime(start_value)
+    end = parse_iso_datetime(end_value)
+    if not start or not end or end < start:
+        return 0
+    return int((end - start).total_seconds() // 60)
+
+
+def attendance_range(period, selected_date):
+    try:
+        base = datetime.strptime(selected_date, "%Y-%m-%d")
+    except Exception:
+        base = datetime.now()
+    if period == "week":
+        start = base - timedelta(days=base.weekday())
+        end = start + timedelta(days=7)
+    elif period == "month":
+        start = base.replace(day=1)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+    else:
+        start = base.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        period = "day"
+    return period, start, end
+
+
+def build_attendance_pairs(events):
+    pairs = []
+    open_checkins = {}
+    for e in events:
+        uid = e.get("user_id") or f"missing-{e.get('id')}"
+        if e.get("event_type") == "check_in":
+            if uid in open_checkins:
+                pairs.append({"user": open_checkins[uid], "check_in": open_checkins[uid], "check_out": None})
+            open_checkins[uid] = e
+        elif e.get("event_type") == "check_out":
+            check_in = open_checkins.pop(uid, None)
+            pairs.append({"user": e, "check_in": check_in, "check_out": e})
+    for check_in in open_checkins.values():
+        pairs.append({"user": check_in, "check_in": check_in, "check_out": None})
+    return pairs
 
 
 @app.context_processor
@@ -498,11 +665,12 @@ def utility_processor():
         file_url=file_url,
         is_main_admin=is_main_admin,
         can_add_notes=can_add_notes,
-        can_view_inventory=can_view_inventory,
-        can_edit_inventory=can_edit_inventory,
         has_perm=has_perm,
         get_app_setting=get_app_setting,
-        admin_unread_count=admin_unread_count
+        admin_unread_count=admin_unread_count,
+        unread_notification_count=unread_notification_count,
+        can_view_inventory=can_view_inventory,
+        can_edit_inventory=can_edit_inventory
     )
 
 
@@ -550,6 +718,40 @@ def mobile_home():
     return render_template("mobile_home.html", projects=projects, q=q)
 
 
+@app.route("/mobile/time-clock", methods=["GET", "POST"])
+@login_required
+def mobile_time_clock():
+    conn = db()
+    if request.method == "POST":
+        event_type = request.form.get("event_type")
+        if event_type not in ["check_in", "check_out"]:
+            conn.close()
+            flash("Choose check in or check out.")
+            return redirect(url_for("mobile_time_clock"))
+        try:
+            latitude = float(request.form.get("latitude", ""))
+            longitude = float(request.form.get("longitude", ""))
+        except Exception:
+            conn.close()
+            flash("GPS location is required. Turn on Location Services/GPS and try again.")
+            return redirect(url_for("mobile_time_clock"))
+        address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
+        conn.execute(
+            "INSERT INTO attendance_events (user_id, event_type, latitude, longitude, address, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (session.get("user_id"), event_type, latitude, longitude, address, datetime.now().isoformat())
+        )
+        conn.commit()
+        flash(("Check in" if event_type == "check_in" else "Check out") + " recorded.")
+        return redirect(url_for("mobile_time_clock"))
+
+    events = conn.execute(
+        "SELECT * FROM attendance_events WHERE user_id = %s ORDER BY created_at DESC LIMIT 10",
+        (session.get("user_id"),)
+    ).fetchall()
+    conn.close()
+    return render_template("mobile_time_clock.html", events=events)
+
+
 
 @app.route("/mobile/project/<int:project_id>/materials", methods=["GET", "POST"])
 @login_required
@@ -557,6 +759,7 @@ def mobile_project_materials(project_id):
     if not can_view_inventory():
         flash("You do not have permission to view material inventory.")
         return redirect(url_for("mobile_project", project_id=project_id))
+
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
@@ -566,7 +769,7 @@ def mobile_project_materials(project_id):
 
     if request.method == "POST":
         if not can_edit_inventory():
-            flash("You do not have permission to edit material inventory.")
+            flash("You do not have permission to add material inventory.")
             return redirect(url_for("mobile_project_materials", project_id=project_id))
 
         file = request.files.get("picture") or request.files.get("picture_camera")
@@ -609,32 +812,19 @@ def mobile_project_materials(project_id):
 def mobile_project(project_id):
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
+    conn.close()
     if not project:
-        conn.close()
         flash("Project not found.")
         return redirect(url_for("mobile_home"))
-    rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
-    blueprints = conn.execute("SELECT * FROM project_blueprints WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
-    tasks = conn.execute(
-        """
-        SELECT tasks.*, rooms.name AS room_name, users.name AS assigned_user_name
-        FROM tasks
-        LEFT JOIN rooms ON tasks.room_id = rooms.id
-        LEFT JOIN users ON tasks.assigned_user_id = users.id
-        WHERE tasks.project_id = %s AND (%s = TRUE OR tasks.assigned_user_id = %s)
-        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
-        """,
-        (project_id, is_main_admin(), session.get("user_id"))
-    ).fetchall()
-    conn.close()
-    return render_template("mobile_project.html", project=project, rooms=rooms, blueprints=blueprints, tasks=tasks)
+    return render_template("mobile_project.html", project=project, rooms=rooms)
 
 
 @app.route("/mobile/project/<int:project_id>/rooms", methods=["POST"])
 @login_required
 def mobile_add_room(project_id):
-    if not has_perm("create_rooms"):
-        flash("You do not have permission to create rooms from mobile.")
+    if not (is_main_admin() or has_perm("create_rooms")):
+        flash("You do not have permission to create rooms.")
         return redirect(url_for("mobile_project", project_id=project_id))
 
     name = request.form.get("name", "").strip()
@@ -649,14 +839,19 @@ def mobile_add_room(project_id):
         flash("Project not found.")
         return redirect(url_for("mobile_home"))
 
-    blueprint_id = request.form.get("blueprint_id") or None
     conn.execute(
-        "INSERT INTO rooms (project_id, blueprint_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, 0, 0, 0, 0, %s, %s, %s, %s)",
-        (project_id, blueprint_id, name, "", request.form.get("category", "general"), request.form.get("room_color", "blue"), datetime.now().isoformat())
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)",
+        (
+            project_id,
+            name,
+            request.form.get("category", "general"),
+            request.form.get("room_color", "blue"),
+            datetime.now().isoformat()
+        )
     )
     conn.commit()
     conn.close()
-    flash("Room created from mobile.")
+    flash("Room created.")
     return redirect(url_for("mobile_project", project_id=project_id))
 
 
@@ -672,6 +867,16 @@ def mobile_room(room_id):
 
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    tasks = conn.execute(
+        """
+        SELECT tasks.*, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+        """,
+        (room_id, session.get("user_id"), session.get("role"))
+    ).fetchall()
 
     if request.method == "POST":
         if not can_add_notes():
@@ -699,7 +904,7 @@ def mobile_room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, selected_date=selected_date)
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, selected_date=selected_date)
 
 
 @app.route("/routes-check")
@@ -709,30 +914,182 @@ def routes_check():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    conn = db()
+    admin_exists = has_admin_account(conn)
+    conn.close()
+
     if request.method == "POST":
-        email = request.form["email"].strip().lower()
+        if not admin_exists:
+            flash("Create the first admin account before logging in.")
+            return redirect(url_for("admin_setup_request"))
+        login_name = request.form["email"].strip().lower()
         password = request.form["password"]
         conn = db()
-        user = conn.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
+        user = conn.execute(
+            "SELECT * FROM users WHERE role = 'admin' AND (email = %s OR lower(coalesce(username, '')) = %s)",
+            (login_name, login_name)
+        ).fetchone()
         conn.close()
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            try:
-                conn = db()
-                if user["role"] != "admin":
-                    conn.execute(
-                        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (user["id"], user["name"], user["email"], user["role"], "login", datetime.now().isoformat())
-                    )
-                    conn.commit()
-                conn.close()
-            except Exception as e:
-                print("Login event insert failed:", e)
             return redirect(url_for("index"))
-        flash("Invalid login.")
-    return render_template("login.html")
+        flash("Invalid admin login.")
+    return render_template("login.html", admin_exists=admin_exists)
+
+
+@app.route("/mobile/login", methods=["GET", "POST"])
+def mobile_login():
+    if request.method == "POST":
+        email = request.form["email"].strip().lower()
+        pin = request.form["pin"].strip()
+        conn = db()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = %s AND role <> 'admin'",
+            (email,)
+        ).fetchone()
+        conn.close()
+        if user and user.get("pin_hash") and check_password_hash(user["pin_hash"], pin):
+            session["user_id"] = user["id"]
+            session["name"] = user["name"]
+            session["role"] = user["role"]
+            return redirect(url_for("mobile_home"))
+        flash("Invalid email or PIN.")
+    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower())
+
+
+@app.route("/admin/setup", methods=["GET", "POST"])
+def admin_setup_request():
+    conn = db()
+    if has_admin_account(conn):
+        conn.close()
+        flash("An admin account already exists. Use forgot password if you need access.")
+        return redirect(url_for("login"))
+
+    setup_link = ""
+    if request.method == "POST":
+        email = request.form["email"].strip().lower()
+        token = new_token()
+        existing = conn.execute("SELECT * FROM users WHERE email = %s", (email,)).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE users SET role = 'admin', setup_token = %s, setup_created_at = %s WHERE id = %s",
+                (token, datetime.now().isoformat(), existing["id"])
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (name, email, password_hash, role, setup_token, setup_created_at, created_at) VALUES (%s, %s, %s, 'admin', %s, %s, %s)",
+                ("Admin", email, unusable_password_hash(), token, datetime.now().isoformat(), datetime.now().isoformat())
+            )
+        conn.commit()
+        setup_link = external_url("admin_create_login", token=token)
+        sent = send_email(
+            email,
+            "Create your Projectonus admin login",
+            "Use this link on the desktop version to create your admin username and password:\n\n" + setup_link
+        )
+        if sent:
+            flash("Admin setup email sent.")
+            conn.close()
+            return redirect(url_for("login"))
+        flash("Email could not be sent because SMTP is not configured or failed.")
+    conn.close()
+    return render_template("admin_setup.html", setup_link=setup_link)
+
+
+@app.route("/admin/create-login/<token>", methods=["GET", "POST"])
+def admin_create_login(token):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE role = 'admin' AND setup_token = %s", (token,)).fetchone()
+    if not user:
+        conn.close()
+        flash("This admin setup link is invalid or has already been used.")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = request.form["username"].strip().lower()
+        name = request.form.get("name", "").strip() or "Admin"
+        password = request.form["password"]
+        confirm = request.form["confirm_password"]
+        if password != confirm:
+            flash("Passwords do not match.")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        elif conn.execute("SELECT id FROM users WHERE lower(coalesce(username, '')) = %s AND id <> %s", (username, user["id"])).fetchone():
+            flash("That username is already taken.")
+        else:
+            conn.execute(
+                "UPDATE users SET name = %s, username = %s, password_hash = %s, setup_token = NULL, setup_created_at = NULL WHERE id = %s",
+                (name, username, generate_password_hash(password), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            flash("Admin login created. You can sign in now.")
+            return redirect(url_for("login"))
+    conn.close()
+    return render_template("admin_create_login.html", user=user)
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    reset_link = ""
+    if request.method == "POST":
+        login_name = request.form["email"].strip().lower()
+        token = new_token()
+        conn = db()
+        user = conn.execute(
+            "SELECT * FROM users WHERE role = 'admin' AND (email = %s OR lower(coalesce(username, '')) = %s)",
+            (login_name, login_name)
+        ).fetchone()
+        if user:
+            conn.execute(
+                "UPDATE users SET reset_token = %s, reset_created_at = %s WHERE id = %s",
+                (token, datetime.now().isoformat(), user["id"])
+            )
+            conn.commit()
+            reset_link = external_url("reset_password", token=token)
+            sent = send_email(
+                user["email"],
+                "Reset your Projectonus admin password",
+                "Use this link to create a new admin password:\n\n" + reset_link
+            )
+            if sent:
+                flash("Password reset email sent.")
+            else:
+                flash("Email could not be sent because SMTP is not configured or failed.")
+        else:
+            flash("If that admin account exists, a reset email will be sent.")
+        conn.close()
+    return render_template("forgot_password.html", reset_link=reset_link)
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE role = 'admin' AND reset_token = %s", (token,)).fetchone()
+    if not user:
+        conn.close()
+        flash("This password reset link is invalid or has already been used.")
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        password = request.form["password"]
+        confirm = request.form["confirm_password"]
+        if password != confirm:
+            flash("Passwords do not match.")
+        elif len(password) < 8:
+            flash("Password must be at least 8 characters.")
+        else:
+            conn.execute(
+                "UPDATE users SET password_hash = %s, reset_token = NULL, reset_created_at = NULL WHERE id = %s",
+                (generate_password_hash(password), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            flash("Password updated. You can sign in now.")
+            return redirect(url_for("login"))
+    conn.close()
+    return render_template("reset_password.html", user=user)
 
 
 @app.route("/logout")
@@ -748,25 +1105,81 @@ def users():
     conn = db()
     if request.method == "POST":
         try:
+            email = request.form["email"].strip().lower()
+            role = request.form.get("role", "worker")
+            if role not in ["customer", "worker"]:
+                role = "worker"
+            pin = request.form["pin"].strip()
+            if len(pin) < 4:
+                conn.close()
+                flash("PIN must be at least 4 digits.")
+                return redirect(url_for("users"))
+
+            invite_token = new_token()
             conn.execute(
-                "INSERT INTO users (name, email, password_hash, role, created_at) VALUES (%s, %s, %s, %s, %s)",
+                "INSERT INTO users (name, email, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     request.form["name"].strip(),
-                    request.form["email"].strip().lower(),
-                    generate_password_hash(request.form["password"]),
-                    request.form["role"],
+                    email,
+                    unusable_password_hash(),
+                    generate_password_hash(pin),
+                    invite_token,
+                    datetime.now().isoformat(),
+                    role,
                     datetime.now().isoformat()
                 )
-            )
+            ).fetchone()
             conn.commit()
-            flash("User added.")
+            invite_link = external_url("mobile_login", email=email, invite=invite_token)
+            sent = send_email(
+                email,
+                "You are invited to Projectonus",
+                "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+            )
+            if sent:
+                flash("User added and mobile invitation email sent. Share the PIN with the user.")
+            else:
+                flash("User added. Email could not be sent, so share the mobile link and PIN with the user: " + invite_link)
         except Exception:
             conn.rollback()
             flash("That email may already exist.")
 
-    users = conn.execute("SELECT id, name, email, role, created_at FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, role, created_at, invite_token FROM users ORDER BY name").fetchall()
     conn.close()
     return render_template("users.html", users=users)
+
+
+@app.route("/users/<int:user_id>/pin", methods=["POST"])
+@admin_required
+def update_user_pin(user_id):
+    pin = request.form.get("pin", "").strip()
+    if len(pin) < 4:
+        flash("PIN must be at least 4 digits.")
+        return redirect(url_for("users"))
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s AND role <> 'admin'", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    invite_token = user.get("invite_token") or new_token()
+    conn.execute(
+        "UPDATE users SET pin_hash = %s, invite_token = %s, invite_sent_at = %s WHERE id = %s",
+        (generate_password_hash(pin), invite_token, datetime.now().isoformat(), user_id)
+    )
+    conn.commit()
+    invite_link = external_url("mobile_login", email=user["email"], invite=invite_token)
+    sent = send_email(
+        user["email"],
+        "Your Projectonus mobile invitation",
+        "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+    )
+    conn.close()
+    if sent:
+        flash("PIN updated and invitation email sent. Share the PIN with the user.")
+    else:
+        flash("PIN updated. Email could not be sent, so share this mobile link with the user: " + invite_link)
+    return redirect(url_for("users"))
 
 
 
@@ -834,7 +1247,8 @@ def new_project():
 def project_materials(project_id):
     if not can_view_inventory():
         flash("You do not have permission to view material inventory.")
-        return redirect(url_for("project", project_id=project_id))
+        return redirect(url_for("index"))
+
     conn = db()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
@@ -844,7 +1258,7 @@ def project_materials(project_id):
 
     if request.method == "POST":
         if not can_edit_inventory():
-            flash("You do not have permission to edit material inventory.")
+            flash("You do not have permission to add material inventory.")
             return redirect(url_for("project_materials", project_id=project_id))
 
         file = request.files.get("picture") or request.files.get("picture_camera")
@@ -900,12 +1314,18 @@ def update_material_status(project_id, material_id):
     conn.commit()
     conn.close()
     flash("Material status updated.")
+    if "/mobile/" in (request.referrer or ""):
+        return redirect(url_for("mobile_project_materials", project_id=project_id))
     return redirect(url_for("project_materials", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/delete", methods=["POST"])
-@admin_required
+@login_required
 def delete_material(project_id, material_id):
+    if not can_edit_inventory():
+        flash("You do not have permission to delete material inventory.")
+        return redirect(url_for("project_materials", project_id=project_id))
+
     conn = db()
     conn.execute("DELETE FROM material_inventory WHERE id = %s AND project_id = %s", (material_id, project_id))
     conn.commit()
@@ -946,7 +1366,7 @@ def project(project_id):
 
     if active_blueprint:
         rooms = conn.execute(
-            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+            "SELECT * FROM rooms WHERE project_id = %s AND blueprint_id = %s ORDER BY id",
             (project_id, active_blueprint["id"])
         ).fetchall()
     else:
@@ -982,6 +1402,10 @@ def add_project_blueprint(project_id):
         return redirect(url_for("project", project_id=project_id))
 
     raw = file.read()
+    if not raw:
+        flash("The selected blueprint file was empty. Please choose the file again.")
+        return redirect(url_for("project", project_id=project_id))
+
     blueprint_file = upload_bytes_to_storage(
         raw,
         file.filename,
@@ -991,6 +1415,12 @@ def add_project_blueprint(project_id):
     blueprint_preview_file = None if is_pdf(file.filename) else blueprint_file
 
     conn = db()
+    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
     new_bp = conn.execute(
         "INSERT INTO project_blueprints (project_id, name, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
         (
@@ -1005,7 +1435,7 @@ def add_project_blueprint(project_id):
     conn.close()
 
     flash("Blueprint sheet added.")
-    return redirect(url_for("project", project_id=project_id, blueprint_id=new_bp["id"]))
+    return redirect(url_for("project", project_id=project_id, blueprint_id=new_bp["id"], v=uuid.uuid4().hex))
 
 
 @app.route("/project/<int:project_id>/blueprints/<int:blueprint_id>/delete", methods=["POST"])
@@ -1042,13 +1472,15 @@ def delete_project_blueprint(project_id, blueprint_id):
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])
 @login_required
 def add_room(project_id):
-    if not has_perm("create_rooms"):
+    if not (is_main_admin() or has_perm("create_rooms")):
         flash("You do not have permission to create rooms.")
         return redirect(url_for("project", project_id=project_id))
+
     polygon_points = request.form.get("polygon_points", "").strip()
     blueprint_id = request.form.get("blueprint_id") or None
-    if request.form.get("form_mode") == "trace" and not polygon_points:
-        flash("Please trace the room before saving, or use the Create Room button for a field-created room.")
+
+    if not polygon_points:
+        flash("Please trace the room before saving.")
         if blueprint_id:
             return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
         return redirect(url_for("project", project_id=project_id))
@@ -1078,6 +1510,26 @@ def add_room(project_id):
         return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
     return redirect(url_for("project", project_id=project_id))
 
+    conn = db()
+    conn.execute(
+        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            project_id,
+            request.form["name"].strip(),
+            float(request.form.get("x") or 0),
+            float(request.form.get("y") or 0),
+            float(request.form.get("w") or 0),
+            float(request.form.get("h") or 0),
+            polygon_points,
+            request.form.get("category", "general"),
+            request.form.get("room_color", "blue"),
+            datetime.now().isoformat()
+        )
+    )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("project", project_id=project_id))
+
 
 
 @app.route("/room/<int:room_id>", methods=["GET", "POST"])
@@ -1091,6 +1543,17 @@ def room(room_id):
         return redirect(url_for("index"))
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall() if is_main_admin() else []
+    tasks = conn.execute(
+        """
+        SELECT tasks.*, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+        """,
+        (room_id, session.get("user_id"), session.get("role"))
+    ).fetchall()
 
     if request.method == "POST":
         file = request.files.get("photo") or request.files.get("photo_camera")
@@ -1126,137 +1589,7 @@ def room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, selected_date=selected_date)
-
-
-@app.route("/project/<int:project_id>/tasks", methods=["GET", "POST"])
-@login_required
-def project_tasks(project_id):
-    conn = db()
-    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
-    if not project:
-        conn.close()
-        flash("Project not found.")
-        return redirect(url_for("index"))
-
-    if request.method == "POST":
-        if not is_main_admin():
-            conn.close()
-            flash("Only admin can create tasks.")
-            return redirect(url_for("project_tasks", project_id=project_id))
-        title = request.form.get("title", "").strip()
-        assigned_user_id = request.form.get("assigned_user_id") or None
-        if not title or not assigned_user_id:
-            conn.close()
-            flash("Task title and assigned user are required.")
-            return redirect(url_for("project_tasks", project_id=project_id))
-        task = conn.execute(
-            """
-            INSERT INTO tasks (project_id, room_id, assigned_user_id, created_by, title, description, task_date, require_picture, allow_picture, allow_comment, allow_audio, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-            """,
-            (project_id, request.form.get("room_id") or None, assigned_user_id, session.get("user_id"), title, request.form.get("description", "").strip(), request.form.get("task_date") or datetime.now().date().isoformat(), bool(request.form.get("require_picture")), bool(request.form.get("allow_picture")), bool(request.form.get("allow_comment")), bool(request.form.get("allow_audio")), datetime.now().isoformat())
-        ).fetchone()
-        assigned = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
-        if assigned:
-            create_app_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], f"task_assigned:{task['id']}:{title}")
-        conn.commit()
-        flash("Task created and assigned.")
-        return redirect(url_for("project_tasks", project_id=project_id))
-
-    rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name", (project_id,)).fetchall()
-    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
-    tasks = conn.execute(
-        """
-        SELECT tasks.*, rooms.name AS room_name, users.name AS assigned_user_name
-        FROM tasks
-        LEFT JOIN rooms ON tasks.room_id = rooms.id
-        LEFT JOIN users ON tasks.assigned_user_id = users.id
-        WHERE tasks.project_id = %s
-        ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
-        """,
-        (project_id,)
-    ).fetchall()
-    conn.close()
-    return render_template("tasks.html", project=project, rooms=rooms, users=users, tasks=tasks)
-
-
-@app.route("/task/<int:task_id>", methods=["GET", "POST"])
-@login_required
-def task_detail(task_id):
-    conn = db()
-    task = conn.execute(
-        """
-        SELECT tasks.*, projects.name AS project_name, rooms.name AS room_name, users.name AS assigned_user_name
-        FROM tasks
-        JOIN projects ON tasks.project_id = projects.id
-        LEFT JOIN rooms ON tasks.room_id = rooms.id
-        LEFT JOIN users ON tasks.assigned_user_id = users.id
-        WHERE tasks.id = %s
-        """,
-        (task_id,)
-    ).fetchone()
-    if not task:
-        conn.close()
-        flash("Task not found.")
-        return redirect(url_for("index"))
-    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
-        conn.close()
-        flash("This task is assigned to another user.")
-        return redirect(url_for("index"))
-
-    if request.method == "POST":
-        action = request.form.get("action", "update")
-        if action == "done":
-            if task.get("require_picture"):
-                has_photo = conn.execute("SELECT COUNT(*) AS c FROM task_updates WHERE task_id = %s AND photo_file IS NOT NULL", (task_id,)).fetchone()["c"] > 0
-                if not has_photo:
-                    flash("This task requires at least one picture before marking done.")
-                    return redirect(url_for("task_detail", task_id=task_id))
-            conn.execute("UPDATE tasks SET status = 'done', completed_at = %s WHERE id = %s", (datetime.now().isoformat(), task_id))
-            create_app_notification(conn, session.get("user_id"), session.get("name"), session.get("email", ""), session.get("role", ""), f"task_done:{task_id}:{task['title']}")
-            conn.commit()
-            conn.close()
-            flash("Task marked done. Admin was notified.")
-            if is_main_admin():
-                return redirect(url_for("project_tasks", project_id=task["project_id"]))
-            return redirect(url_for("mobile_project", project_id=task["project_id"]))
-
-        comment = request.form.get("comment", "").strip()
-        file = request.files.get("photo") or request.files.get("photo_camera")
-        audio = request.files.get("audio")
-        drawn_photo = request.form.get("drawn_photo", "").strip()
-        photo_file = None
-        if drawn_photo.startswith("data:image/"):
-            import base64
-            header, data = drawn_photo.split(",", 1)
-            photo_file = upload_bytes_to_storage(base64.b64decode(data), f"task_marked_{uuid.uuid4().hex}.png", "image/png")
-        elif file and file.filename and allowed_photo(file.filename):
-            photo_file = upload_file_to_storage(file)
-        audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
-        if not comment and not photo_file and not audio_file:
-            flash("Add a comment, picture, or audio before saving an update.")
-            return redirect(url_for("task_detail", task_id=task_id))
-        conn.execute(
-            "INSERT INTO task_updates (task_id, user_id, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (task_id, session.get("user_id"), comment, photo_file, audio_file, datetime.now().isoformat())
-        )
-        conn.commit()
-        flash("Task update saved.")
-        return redirect(url_for("task_detail", task_id=task_id))
-
-    updates = conn.execute(
-        """
-        SELECT task_updates.*, users.name AS user_name
-        FROM task_updates
-        LEFT JOIN users ON task_updates.user_id = users.id
-        WHERE task_id = %s
-        ORDER BY created_at DESC
-        """,
-        (task_id,)
-    ).fetchall()
-    conn.close()
-    return render_template("task_detail.html", task=task, updates=updates)
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, users=users, selected_date=selected_date)
 
 
 @app.route("/project/<int:project_id>/timeline")
@@ -1317,6 +1650,201 @@ def delete_note(note_id):
     return redirect(url_for("room", room_id=room_id))
 
 
+@app.route("/room/<int:room_id>/tasks", methods=["POST"])
+@admin_required
+def create_task(room_id):
+    conn = db()
+    room = conn.execute("SELECT * FROM rooms WHERE id = %s", (room_id,)).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found.")
+        return redirect(url_for("index"))
+
+    assigned_user_id = request.form.get("assigned_user_id", type=int)
+    assigned = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
+    title = request.form.get("title", "").strip()
+    if not assigned or not title:
+        conn.close()
+        flash("Choose a user and enter a task title.")
+        return redirect(url_for("room", room_id=room_id))
+
+    conn.execute(
+        """
+        INSERT INTO tasks
+        (project_id, room_id, assigned_user_id, created_by, task_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            room["project_id"],
+            room_id,
+            assigned_user_id,
+            session.get("user_id"),
+            request.form.get("task_date") or datetime.now().date().isoformat(),
+            title,
+            request.form.get("instructions", "").strip(),
+            "require_picture" in request.form,
+            "allow_picture_upload" in request.form,
+            "allow_comment" in request.form,
+            "allow_audio" in request.form,
+            datetime.now().isoformat()
+        )
+    )
+    add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
+    conn.commit()
+    conn.close()
+    flash("Task assigned and user notified.")
+    return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/tasks/<int:task_id>/complete", methods=["POST"])
+@login_required
+def complete_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+        FROM tasks
+        JOIN rooms ON tasks.room_id = rooms.id
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("room", room_id=task["room_id"]))
+
+    file = request.files.get("completion_photo") or request.files.get("completion_camera")
+    audio = request.files.get("completion_audio")
+    wants_photo = bool(file and file.filename)
+    if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
+        conn.close()
+        flash("This task requires a picture before it can be completed.")
+        return redirect(url_for("room", room_id=task["room_id"]))
+
+    photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else task.get("completion_photo_file")
+    audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else task.get("completion_audio_file")
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'done', completion_comment = %s, completion_photo_file = %s, completion_audio_file = %s, completed_at = %s
+        WHERE id = %s
+        """,
+        (
+            request.form.get("completion_comment", "").strip(),
+            photo_file,
+            audio_file,
+            datetime.now().isoformat(),
+            task_id
+        )
+    )
+    add_notification(
+        conn,
+        session.get("user_id"),
+        session.get("name"),
+        "",
+        session.get("role"),
+        "task_completed"
+    )
+    conn.commit()
+    conn.close()
+    flash("Task marked done. Admin was notified.")
+    if "/mobile/" in (request.referrer or ""):
+        return redirect(url_for("mobile_room", room_id=task["room_id"]))
+    return redirect(url_for("room", room_id=task["room_id"]))
+
+
+@app.route("/tasks")
+@login_required
+def my_tasks():
+    conn = db()
+    if is_main_admin():
+        tasks = conn.execute(
+            """
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+            FROM tasks
+            LEFT JOIN rooms ON tasks.room_id = rooms.id
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+            """
+        ).fetchall()
+    else:
+        tasks = conn.execute(
+            """
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+            FROM tasks
+            LEFT JOIN rooms ON tasks.room_id = rooms.id
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            WHERE tasks.assigned_user_id = %s
+            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+    conn.close()
+    return render_template("tasks.html", tasks=tasks)
+
+
+@app.route("/attendance/report")
+@admin_required
+def attendance_report():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or datetime.now().date().isoformat()
+    selected_user_id = request.args.get("user_id", type=int)
+    period, start, end = attendance_range(period, selected_date)
+
+    conn = db()
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    query = """
+        SELECT attendance_events.*, users.name AS user_name, users.email AS user_email
+        FROM attendance_events
+        LEFT JOIN users ON attendance_events.user_id = users.id
+        WHERE attendance_events.created_at >= %s AND attendance_events.created_at < %s
+    """
+    params = [start.isoformat(), end.isoformat()]
+    if selected_user_id:
+        query += " AND attendance_events.user_id = %s"
+        params.append(selected_user_id)
+    query += " ORDER BY attendance_events.user_id, attendance_events.created_at"
+    events = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    pairs = build_attendance_pairs(events)
+    summary = {}
+    for p in pairs:
+        ci = p.get("check_in")
+        co = p.get("check_out")
+        if not ci or not co:
+            continue
+        uid = (p.get("user") or {}).get("user_id") or "unknown"
+        if uid not in summary:
+            summary[uid] = {
+                "name": (p.get("user") or {}).get("user_name") or "Unknown user",
+                "email": (p.get("user") or {}).get("user_email") or "",
+                "minutes": 0
+            }
+        summary[uid]["minutes"] += duration_minutes(ci.get("created_at"), co.get("created_at"))
+    return render_template(
+        "attendance_report.html",
+        users=users,
+        pairs=pairs,
+        summary=summary.values(),
+        period=period,
+        selected_date=selected_date,
+        selected_user_id=selected_user_id,
+        start=start,
+        end=end,
+        duration_text=duration_text,
+        minutes_text=minutes_text
+    )
+
+
 
 @app.route("/settings", methods=["GET", "POST"])
 @admin_required
@@ -1369,14 +1897,26 @@ def settings():
 
 
 @app.route("/notifications", methods=["GET", "POST"])
-@admin_required
+@login_required
 def notifications():
     conn = db()
     if request.method == "POST":
-        conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE")
+        if is_main_admin():
+            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type <> 'login'")
+        else:
+            conn.execute(
+                "UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
+                (session.get("user_id"),)
+            )
         conn.commit()
         flash("Notifications marked as read.")
-    events = conn.execute("SELECT * FROM login_events ORDER BY created_at DESC LIMIT 100").fetchall()
+    if is_main_admin():
+        events = conn.execute("SELECT * FROM login_events WHERE event_type <> 'login' ORDER BY created_at DESC LIMIT 100").fetchall()
+    else:
+        events = conn.execute(
+            "SELECT * FROM login_events WHERE user_id = %s AND event_type = 'task_assigned' ORDER BY created_at DESC LIMIT 100",
+            (session.get("user_id"),)
+        ).fetchall()
     conn.close()
     return render_template("notifications.html", events=events)
 
@@ -1410,7 +1950,7 @@ def backup():
 
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes", "material_inventory"]:
+    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events"]:
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
@@ -1462,7 +2002,11 @@ def storage_file(storage_path):
         return "File not found or storage permission denied.", 404
 
     mime_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
-    return Response(data, mimetype=mime_type)
+    response = Response(data, mimetype=mime_type)
+    response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/project/<int:project_id>/regenerate-preview", methods=["POST"])

@@ -71,8 +71,7 @@
                     <th>Description</th>
                     <th>Picture</th>
                     <th>Status</th>
-                    {% if can_edit_inventory() %}<th>Update Status</th>{% endif %}
-                    {% if is_main_admin() %}<th>Delete</th>{% endif %}
+                    {% if can_edit_inventory() %}<th>Update Status</th><th>Delete</th>{% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -109,8 +108,6 @@
                             <button type="submit">Update</button>
                         </form>
                     </td>
-                    {% endif %}
-                    {% if is_main_admin() %}
                     <td>
                         <form method="post" action="{{ url_for('delete_material', project_id=project.id, material_id=m.id) }}" onsubmit="return confirm('Delete this material item?');">
                             <button type="submit" class="btn-danger">Delete</button>

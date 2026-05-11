@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Check In / Check Out</h2>
+    <p class="muted">Get your GPS location, confirm it on the map, then record the time.</p>
+    <div class="grid">
+        <button type="button" id="checkInBtn">Check In</button>
+        <button type="button" class="btn-secondary" id="checkOutBtn">Check Out</button>
+    </div>
+</div>
+
+<div class="card" id="locationCard" style="display:none;">
+    <h3 id="locationTitle">Confirm Location</h3>
+    <p id="gpsStatus" class="muted">Waiting for GPS...</p>
+    <button type="button" class="btn-secondary" id="retryGpsBtn" style="display:none;">Try GPS Again</button>
+    <iframe id="mapFrame" title="GPS map" style="width:100%;height:320px;border:1px solid var(--border);border-radius:12px;background:white;"></iframe>
+    <form method="post" id="confirmForm">
+        <input type="hidden" name="event_type" id="eventType">
+        <input type="hidden" name="latitude" id="latitude">
+        <input type="hidden" name="longitude" id="longitude">
+        <input type="hidden" name="address" id="address">
+        <button type="submit" id="confirmBtn" disabled>Confirm Location</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Recent Activity</h3>
+    {% for e in events %}
+        <div class="card">
+            <strong>{% if e.event_type == 'check_in' %}Check In{% else %}Check Out{% endif %}</strong>
+            <p>{{ e.created_at }}</p>
+            <p>{{ e.address or '-' }}</p>
+            {% if e.latitude and e.longitude %}
+                <a class="btn-link btn-secondary" target="_blank" href="https://www.google.com/maps?q={{ e.latitude }},{{ e.longitude }}">Open Map</a>
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No check-in activity yet.</p>
+    {% endfor %}
+</div>
+
+<script>
+const checkInBtn=document.getElementById("checkInBtn");
+const checkOutBtn=document.getElementById("checkOutBtn");
+const locationCard=document.getElementById("locationCard");
+const locationTitle=document.getElementById("locationTitle");
+const gpsStatus=document.getElementById("gpsStatus");
+const mapFrame=document.getElementById("mapFrame");
+const confirmBtn=document.getElementById("confirmBtn");
+const retryGpsBtn=document.getElementById("retryGpsBtn");
+const eventType=document.getElementById("eventType");
+const latitude=document.getElementById("latitude");
+const longitude=document.getElementById("longitude");
+const address=document.getElementById("address");
+
+function startLocation(type){
+    eventType.value=type;
+    confirmBtn.disabled=true;
+    retryGpsBtn.style.display="none";
+    latitude.value="";
+    longitude.value="";
+    address.value="";
+    mapFrame.removeAttribute("src");
+    locationCard.style.display="block";
+    locationTitle.textContent=type==="check_in"?"Confirm Check In Location":"Confirm Check Out Location";
+    gpsStatus.textContent="Getting GPS location...";
+    if(!navigator.geolocation){
+        gpsStatus.textContent="GPS/location is not available in this browser. Use a phone browser with location services enabled.";
+        retryGpsBtn.style.display="inline-flex";
+        return;
+    }
+    navigator.geolocation.getCurrentPosition(async pos=>{
+        const lat=pos.coords.latitude;
+        const lon=pos.coords.longitude;
+        latitude.value=lat;
+        longitude.value=lon;
+        const pad=.003;
+        mapFrame.src=`https://www.openstreetmap.org/export/embed.html?bbox=${lon-pad},${lat-pad},${lon+pad},${lat+pad}&layer=mapnik&marker=${lat},${lon}`;
+        let label=`${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        try{
+            const res=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`);
+            const data=await res.json();
+            if(data&&data.display_name)label=data.display_name;
+        }catch(e){}
+        address.value=label;
+        gpsStatus.textContent=label;
+        confirmBtn.disabled=false;
+        confirmBtn.textContent=type==="check_in"?"Confirm Check In":"Confirm Check Out";
+    },err=>{
+        let message="GPS location is required before you can check in or check out. Turn on Location Services/GPS for this device and allow location permission for this browser, then try again.";
+        if(err.code===1)message="Location permission was denied. Allow location permission for this browser, then try again.";
+        if(err.code===2)message="GPS is off or unavailable. Turn on Location Services/GPS, then try again.";
+        if(err.code===3)message="GPS took too long to respond. Make sure Location Services/GPS is on, then try again.";
+        gpsStatus.textContent=message;
+        retryGpsBtn.style.display="inline-flex";
+        confirmBtn.disabled=true;
+    },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
+}
+checkInBtn.addEventListener("click",()=>startLocation("check_in"));
+checkOutBtn.addEventListener("click",()=>startLocation("check_out"));
+retryGpsBtn.addEventListener("click",()=>startLocation(eventType.value||"check_in"));
+</script>
+{% endblock %}

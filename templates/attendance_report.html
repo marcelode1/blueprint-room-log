@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Time Clock Report</h2>
+    <form method="get">
+        <div class="grid">
+            <div>
+                <label>User</label>
+                <select name="user_id">
+                    <option value="">All Users</option>
+                    {% for u in users %}
+                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Period</label>
+                <select name="period">
+                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input type="date" name="date" value="{{ selected_date }}" required>
+            </div>
+        </div>
+        <button type="submit">Show Report</button>
+        <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
+    </form>
+    <p class="muted">Showing {{ start.date() }} through {{ end.date() }}.</p>
+</div>
+
+<div class="card">
+    <h3>Total Hours</h3>
+    {% for row in summary %}
+        <p><strong>{{ row.name }}</strong> <span class="muted">{{ row.email }}</span>: {{ minutes_text(row.minutes) }}</p>
+    {% else %}
+        <p>No completed check-in/check-out pairs for this period.</p>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h3>Hours</h3>
+    <style>
+        .timeTable{width:100%;border-collapse:collapse}
+        .timeTable th,.timeTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
+        .timeTable th{background:#f3f4f6}
+        @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1100px}}
+        @media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.timeTable th,.timeTable td{font-size:11px;padding:5px}}
+    </style>
+    <div class="timeWrap">
+        <table class="timeTable">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Date</th>
+                    <th>Check In</th>
+                    <th>Check In Location</th>
+                    <th>Check Out</th>
+                    <th>Check Out Location</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in pairs %}
+                {% set ci = p.check_in %}
+                {% set co = p.check_out %}
+                {% set u = p.user %}
+                <tr>
+                    <td>{{ u.user_name or "Unknown user" }}<br><span class="muted">{{ u.user_email or "" }}</span></td>
+                    <td>{{ (ci.created_at if ci else co.created_at)[:10] }}</td>
+                    <td>{{ ci.created_at if ci else "-" }}</td>
+                    <td>
+                        {% if ci %}
+                            {{ ci.address or "-" }}
+                            {% if ci.latitude and ci.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ ci.latitude }},{{ ci.longitude }}">Map</a>{% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>{{ co.created_at if co else "-" }}</td>
+                    <td>
+                        {% if co %}
+                            {{ co.address or "-" }}
+                            {% if co.latitude and co.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ co.latitude }},{{ co.longitude }}">Map</a>{% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>{{ duration_text(ci.created_at, co.created_at) if ci and co else "-" }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7">No time clock records for this period.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

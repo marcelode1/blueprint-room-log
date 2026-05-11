@@ -12,6 +12,43 @@
         <a class="btn-link {% if r.id == room.id %}btn-secondary{% endif %}" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% endfor %}
 </div>
+<div class="card">
+    <h3>Tasks</h3>
+    {% for t in tasks %}
+        <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
+            <strong>{{ t.title }}</strong>
+            <p class="muted">{{ t.task_date }} - {{ t.status }}</p>
+            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
+            {% if t.status != 'done' and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
+                {% if t.allow_comment %}
+                    <label>Completion Comment</label>
+                    <textarea name="completion_comment" id="taskComment{{ t.id }}" rows="3"></textarea>
+                    <button type="button" class="btn-secondary voiceTaskBtn" data-target="taskComment{{ t.id }}">Voice Comment</button>
+                {% endif %}
+                {% if t.require_picture or t.allow_picture_upload %}
+                    <label>Take Picture</label>
+                    <input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
+                    {% if t.allow_picture_upload %}
+                    <label>Upload Picture</label>
+                    <input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*">
+                    {% endif %}
+                {% endif %}
+                {% if t.allow_audio %}
+                    <label>Voice / Audio</label>
+                    <input name="completion_audio" type="file" accept="audio/*">
+                {% endif %}
+                <button type="submit">Mark Task Done</button>
+            </form>
+            {% endif %}
+            {% if t.completion_comment %}<p>{{ t.completion_comment }}</p>{% endif %}
+            {% if t.completion_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">{% endif %}
+            {% if t.completion_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>{% endif %}
+        </div>
+    {% else %}
+        <p>No tasks for this room.</p>
+    {% endfor %}
+</div>
 {% if can_add_notes() %}
 <div class="card">
     <h3>Add Field Note</h3>
@@ -21,9 +58,9 @@
         <label>Comment</label>
         <textarea name="comment" rows="5" required></textarea>
         <label>Take Picture</label>
-        <input name="photo_camera" type="file" accept="image/*" capture="environment">
+        <input name="photo_camera" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
         <label>Upload Picture</label>
-        <input name="photo" type="file" accept="image/*">
+        <input name="photo" class="annotatablePhoto" type="file" accept="image/*">
         <label>Audio Recording</label>
         <input name="audio" type="file" accept="audio/*">
         <button type="submit">Save Note</button>
@@ -43,4 +80,31 @@
         <p>No history for this room.</p>
     {% endfor %}
 </div>
+<style>
+.taskDone{opacity:.82}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+</style>
+<div id="drawModal">
+    <canvas id="drawCanvas"></canvas>
+    <div class="drawActions">
+        <button type="button" id="saveDrawingBtn">Use Marked Picture</button>
+        <button type="button" class="btn-secondary" id="clearDrawingBtn">Clear Drawing</button>
+        <button type="button" class="btn-danger" id="cancelDrawingBtn">Skip Drawing</button>
+    </div>
+</div>
+<script>
+async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||!file.type||!file.type.startsWith("image/"))return file;if(file.type.includes("heic")||file.type.includes("heif"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
+async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
+document.querySelectorAll(".annotatablePhoto").forEach(el=>el.addEventListener("change",async()=>{await replaceWithCompressed(el);openDrawModal(el)}));
+let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
+function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}
+function drawMove(e){if(!isDrawing)return;e.preventDefault();const p=canvasPoint(e);drawCtx.strokeStyle="#ef4444";drawCtx.lineWidth=Math.max(6,drawCanvas.width/180);drawCtx.lineCap="round";drawCtx.beginPath();drawCtx.moveTo(lastPoint.x,lastPoint.y);drawCtx.lineTo(p.x,p.y);drawCtx.stroke();lastPoint=p}
+async function openDrawModal(input){if(!input.files||!input.files[0]||!input.files[0].type.startsWith("image/"))return;activePhotoInput=input;const img=new Image();img.onload=()=>{drawCanvas.width=img.width;drawCanvas.height=img.height;drawCtx.drawImage(img,0,0);drawModal.style.display="block"};img.src=URL.createObjectURL(input.files[0])}
+["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
+["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
+["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
+document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const file=new File([blob],"marked_picture.jpg",{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
+document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
+document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
+document.querySelectorAll(".voiceTaskBtn").forEach(btn=>btn.addEventListener("click",()=>{const box=document.getElementById(btn.dataset.target);const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!box||!SR)return;const recog=new SR();recog.lang="en-US";recog.onresult=e=>box.value+=(box.value?" ":"")+e.results[0][0].transcript;recog.start()}));
+</script>
 {% endblock %}
