@@ -88,7 +88,7 @@
 </div>
 
 {% if is_main_admin() or has_perm("create_rooms") %}
-<div class="card blueprintDesktopOnly" id="desktopCreateRoomPanel" style="display:none;">
+<div class="card" id="desktopCreateRoomPanel" style="display:none;">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
             <div><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
@@ -113,11 +113,18 @@
         <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
         <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
-        <p class="muted">Click Create Room to add a room without a blueprint trace. Use Finish Room Trace first only when you want to place the room on the blueprint.</p>
-        <button type="button" onclick="finishTrace()">Finish Room Trace</button>
-        <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
+        <p class="muted">Create Room adds a usable room without requiring a blueprint trace.</p>
+        {% if active_blueprint %}
+        <div class="blueprintDesktopOnly">
+            <button type="button" class="btn-secondary" id="showBlueprintTraceBtn">Use Blueprint Trace</button>
+            <div id="blueprintTraceActions" style="display:none;">
+                <button type="button" onclick="finishTrace()">Finish Room Trace</button>
+                <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
+            </div>
+        </div>
+        {% endif %}
         <button type="submit">Create Room</button>
-        {% if not active_blueprint %}<p style="color:#b91c1c;">No blueprint selected. The room will still be created and usable.</p>{% endif %}
+        {% if not active_blueprint %}<p class="muted">No blueprint selected. The room will still be created and usable.</p>{% endif %}
     </form>
 </div>
 
@@ -324,11 +331,19 @@ document.addEventListener("change",function(e){if(e.target&&e.target.id==="pdfQu
 const showDesktopCreateRoomBtn=document.getElementById("showDesktopCreateRoomBtn");
 const desktopCreateRoomPanel=document.getElementById("desktopCreateRoomPanel");
 const desktopDrawTools=document.getElementById("desktopDrawTools");
+const showBlueprintTraceBtn=document.getElementById("showBlueprintTraceBtn");
+const blueprintTraceActions=document.getElementById("blueprintTraceActions");
 if(showDesktopCreateRoomBtn){
     showDesktopCreateRoomBtn.addEventListener("click",()=>{
         if(desktopCreateRoomPanel)desktopCreateRoomPanel.style.display="block";
-        if(desktopDrawTools)desktopDrawTools.style.display="block";
         showDesktopCreateRoomBtn.style.display="none";
+    });
+}
+if(showBlueprintTraceBtn){
+    showBlueprintTraceBtn.addEventListener("click",()=>{
+        if(desktopDrawTools)desktopDrawTools.style.display="block";
+        if(blueprintTraceActions)blueprintTraceActions.style.display="block";
+        showBlueprintTraceBtn.style.display="none";
     });
 }
 window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
