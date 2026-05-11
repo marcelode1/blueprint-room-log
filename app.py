@@ -605,19 +605,30 @@ def storage_attachment(path):
     return (filename, data, mime_type)
 
 
+def admin_email_rows(conn):
+    return conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
+
+
 def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
     actor = conn.execute(
         "SELECT name, email, role FROM users WHERE id = %s",
         (session.get("user_id"),)
     ).fetchone() or {}
-    add_notification(
-        conn,
-        session.get("user_id"),
-        actor.get("name") or session.get("name"),
-        actor.get("email") or "",
-        actor.get("role") or session.get("role"),
-        "field_note_added"
-    )
+    actor_name = actor.get("name") or session.get("name")
+    actor_email = actor.get("email") or ""
+    actor_role = actor.get("role") or session.get("role")
+    notification_types = []
+    if comment:
+        notification_types.append("field_comment_added")
+    if photo_file:
+        notification_types.append("field_picture_added")
+    if audio_file:
+        notification_types.append("field_audio_added")
+    if not notification_types:
+        notification_types.append("field_note_added")
+    for event_type in notification_types:
+        add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, event_type)
+    conn.commit()
 
     send_comments = setting_enabled("email_note_comments", True)
     send_pictures = setting_enabled("email_note_pictures", True)
@@ -626,7 +637,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
     if not wants_email:
         return
 
-    admins = conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
+    admins = admin_email_rows(conn)
     if not admins:
         return
 
@@ -645,8 +656,8 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
         "",
         f"Project: {project.get('name') if project else '-'}",
         f"Room: {room.get('name') if room else '-'}",
-        f"User: {actor.get('name') or session.get('name') or 'Unknown user'}",
-        f"Email: {actor.get('email') or '-'}",
+        f"User: {actor_name or 'Unknown user'}",
+        f"Email: {actor_email or '-'}",
         f"Date: {note_date}",
         ""
     ]
@@ -661,6 +672,35 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
     for admin in admins:
         if admin.get("email"):
             send_email(admin["email"], subject, body, attachments=attachments)
+
+
+def notify_admins_of_attendance(conn, event_type, latitude, longitude, address, created_at):
+    actor = conn.execute(
+        "SELECT name, email, role FROM users WHERE id = %s",
+        (session.get("user_id"),)
+    ).fetchone() or {}
+    actor_name = actor.get("name") or session.get("name")
+    actor_email = actor.get("email") or ""
+    actor_role = actor.get("role") or session.get("role")
+    notification_type = "attendance_check_in" if event_type == "check_in" else "attendance_check_out"
+    add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, notification_type)
+    conn.commit()
+
+    label = "Check In" if event_type == "check_in" else "Check Out"
+    maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
+    body = "\n".join([
+        f"{label} recorded in Projectonus.",
+        "",
+        f"User: {actor_name or 'Unknown user'}",
+        f"Email: {actor_email or '-'}",
+        f"Time: {created_at}",
+        f"Location: {address or '-'}",
+        f"GPS: {latitude}, {longitude}",
+        f"Map: {maps_url}",
+    ])
+    for admin in admin_email_rows(conn):
+        if admin.get("email"):
+            send_email(admin["email"], f"Projectonus {label} - {actor_name or 'User'}", body)
 
 
 def can_add_notes():
@@ -820,11 +860,13 @@ def mobile_time_clock():
             flash("GPS location is required. Turn on Location Services/GPS and try again.")
             return redirect(url_for("mobile_time_clock"))
         address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
+        created_at = datetime.now().isoformat()
         conn.execute(
             "INSERT INTO attendance_events (user_id, event_type, latitude, longitude, address, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (session.get("user_id"), event_type, latitude, longitude, address, datetime.now().isoformat())
+            (session.get("user_id"), event_type, latitude, longitude, address, created_at)
         )
-        conn.commit()
+        notify_admins_of_attendance(conn, event_type, latitude, longitude, address, created_at)
+        conn.close()
         flash(("Check in" if event_type == "check_in" else "Check out") + " recorded.")
         return redirect(url_for("mobile_time_clock"))
 
