@@ -1,20 +1,61 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Tasks</h2>
+    <h2>Tasks — {{ project.name }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
 </div>
+{% if is_main_admin() %}
 <div class="card">
+    <h3>Create Task</h3>
+    <form method="post">
+        <label>Task Title</label>
+        <input name="title" required placeholder="Example: Take pictures of rough-in before drywall">
+        <label>Description / Instructions</label>
+        <textarea name="description" rows="4"></textarea>
+        <div class="grid">
+            <div>
+                <label>Task Date</label>
+                <input name="task_date" type="date" required>
+            </div>
+            <div>
+                <label>Assign To</label>
+                <select name="assigned_user_id" required>
+                    <option value="">Select user</option>
+                    {% for u in users %}<option value="{{ u.id }}">{{ u.name }} — {{ u.email }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Room</label>
+                <select name="room_id">
+                    <option value="">No specific room</option>
+                    {% for r in rooms %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="grid">
+            <label><input type="checkbox" name="allow_picture" checked> Allow take/upload pictures</label>
+            <label><input type="checkbox" name="require_picture"> Require picture before done</label>
+            <label><input type="checkbox" name="allow_comment" checked> Allow comments</label>
+            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
+        </div>
+        <button type="submit">Create Task and Notify User</button>
+    </form>
+</div>
+{% endif %}
+<div class="card">
+    <h3>Task List</h3>
     {% for t in tasks %}
-        <div class="card {% if t.status == 'done' %}taskDone{% endif %}">
-            <strong>{{ t.title }}</strong>
-            <p class="muted">{{ t.project_name }} - {{ t.room_name }} - {{ t.task_date }} - {{ t.status }}</p>
-            {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>{% endif %}
-            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
-            {% if t.room_id %}<a class="btn-link" href="{{ url_for('room', room_id=t.room_id) }}">Open Room</a>{% endif %}
+        <div class="card" style="border-left:6px solid {% if t.status == 'done' %}#22c55e{% else %}#2563eb{% endif %};">
+            <h4>{{ t.title }}</h4>
+            <p>{{ t.description or '' }}</p>
+            <p><strong>Status:</strong> {{ t.status|upper }} | <strong>Date:</strong> {{ t.task_date }} | <strong>Assigned:</strong> {{ t.assigned_user_name or '-' }} | <strong>Room:</strong> {{ t.room_name or '-' }}</p>
+            <a class="btn-link" href="{{ url_for('task_detail', task_id=t.id) }}">Open Task</a>
         </div>
     {% else %}
         <p>No tasks yet.</p>
     {% endfor %}
 </div>
-<style>.taskDone{opacity:.82}</style>
+<script>
+const d=document.querySelector('input[name="task_date"]'); if(d&&!d.value)d.value=new Date().toISOString().slice(0,10);
+</script>
 {% endblock %}

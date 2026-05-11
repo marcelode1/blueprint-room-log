@@ -17,69 +17,6 @@
     <p class="muted">Swipe left/right here to move between rooms.</p>
 </div>
 
-{% if is_main_admin() %}
-<div class="card">
-    <h3>Create Task</h3>
-    <form method="post" action="{{ url_for('create_task', room_id=room.id) }}">
-        <div class="grid">
-            <div>
-                <label>Task Title</label>
-                <input name="title" placeholder="Take finish photo, verify wiring, install keypad" required>
-            </div>
-            <div>
-                <label>Assign To</label>
-                <select name="assigned_user_id" required>
-                    <option value="">Choose user</option>
-                    {% for u in users %}
-                        <option value="{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Due Date</label>
-                <input name="task_date" type="date" value="{{ selected_date or '' }}">
-            </div>
-        </div>
-        <label>Instructions</label>
-        <textarea name="instructions" rows="4"></textarea>
-        <div class="grid taskOptions">
-            <label><input type="checkbox" name="require_picture"> Must take picture</label>
-            <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
-            <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
-            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
-        </div>
-        <button type="submit">Assign Task</button>
-    </form>
-</div>
-{% endif %}
-
-<div class="card">
-    <h3>Tasks</h3>
-    {% for t in tasks %}
-        <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
-            <strong>{{ t.title }}</strong>
-            <p class="muted">{{ t.task_date }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
-            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
-            {% if t.status != 'done' and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
-            <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
-                {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                {% if t.require_picture or t.allow_picture_upload %}
-                    <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
-                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*">{% endif %}
-                {% endif %}
-                {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
-                <button type="submit">Mark Task Done</button>
-            </form>
-            {% endif %}
-            {% if t.completion_comment %}<p>{{ t.completion_comment }}</p>{% endif %}
-            {% if t.completion_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">{% endif %}
-            {% if t.completion_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>{% endif %}
-        </div>
-    {% else %}
-        <p>No tasks for this room.</p>
-    {% endfor %}
-</div>
-
 {% if can_add_notes() %}
 <div class="card">
     <h3>Add Comment / Picture / Audio</h3>
@@ -94,9 +31,9 @@
         <p id="voiceStatus" class="muted"></p>
         {% if has_perm("add_pictures") %}
         <label>Upload Picture</label>
-        <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*">
+        <input name="photo" id="photoInput" type="file" accept="image/*">
         <label>Take Picture From Phone</label>
-        <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
+        <input name="photo_camera" id="cameraInput" type="file" accept="image/*" capture="environment">
         {% endif %}
         {% if has_perm("add_audio") %}
         <label>Upload Audio Recording</label>
@@ -139,16 +76,8 @@
 </div>
 
 <style>
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}
 </style>
-<div id="drawModal">
-    <canvas id="drawCanvas"></canvas>
-    <div class="drawActions">
-        <button type="button" id="saveDrawingBtn">Use Marked Picture</button>
-        <button type="button" class="btn-secondary" id="clearDrawingBtn">Clear Drawing</button>
-        <button type="button" class="btn-danger" id="cancelDrawingBtn">Skip Drawing</button>
-    </div>
-</div>
 <script>
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
@@ -156,17 +85,6 @@ const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floating
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||!file.type||!file.type.startsWith("image/"))return file;if(file.type.includes("heic")||file.type.includes("heif"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
 ["photoInput","cameraInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>replaceWithCompressed(el))});
-document.querySelectorAll(".annotatablePhoto").forEach(el=>el.addEventListener("change",async()=>{await replaceWithCompressed(el);openDrawModal(el)}));
-let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
-function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}
-function drawMove(e){if(!isDrawing)return;e.preventDefault();const p=canvasPoint(e);drawCtx.strokeStyle="#ef4444";drawCtx.lineWidth=Math.max(6,drawCanvas.width/180);drawCtx.lineCap="round";drawCtx.beginPath();drawCtx.moveTo(lastPoint.x,lastPoint.y);drawCtx.lineTo(p.x,p.y);drawCtx.stroke();lastPoint=p}
-async function openDrawModal(input){if(!input.files||!input.files[0]||!input.files[0].type.startsWith("image/"))return;activePhotoInput=input;const img=new Image();img.onload=()=>{drawCanvas.width=img.width;drawCanvas.height=img.height;drawCtx.drawImage(img,0,0);drawModal.style.display="block"};img.src=URL.createObjectURL(input.files[0])}
-["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
-["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
-["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
-document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const file=new File([blob],"marked_picture.jpg",{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
-document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
-document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}
 const swipeArea=document.getElementById("roomSwipeArea");if(swipeArea){let sx=0,sy=0;swipeArea.addEventListener("touchstart",e=>{sx=e.changedTouches[0].screenX;sy=e.changedTouches[0].screenY},{passive:true});swipeArea.addEventListener("touchend",e=>{const dx=e.changedTouches[0].screenX-sx,dy=e.changedTouches[0].screenY-sy;if(Math.abs(dx)<60||Math.abs(dy)>80)return;const links=Array.from(document.querySelectorAll(".roomChip")),active=links.findIndex(a=>a.classList.contains("activeRoom")),next=dx<0?active+1:active-1;if(links[next])window.location.href=links[next].href},{passive:true})}
 </script>

@@ -1,18 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Notifications</h2>
+    <h2>🔔 Notifications</h2>
     <form method="post"><button type="submit">Mark All as Read</button></form>
 </div>
 <div class="card">
     {% for e in events %}
+        {% set parts = (e.event_type or '').split(':') %}
         <div class="card" style="border-left:6px solid {% if e.is_read %}#64748b{% else %}#dc2626{% endif %};">
-            {% if e.event_type == 'task_assigned' %}
-                <strong>Task assigned</strong> to {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'task_completed' %}
-                <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% if parts[0] == 'login' %}
+                <strong>{{ e.user_name or 'Unknown user' }}</strong> logged in<br>
+            {% elif parts[0] == 'task_assigned' %}
+                <strong>Task assigned</strong><br>
+                <span>{{ parts[2] if parts|length > 2 else 'New task' }}</span><br>
+            {% elif parts[0] == 'task_done' %}
+                <strong>Task completed</strong><br>
+                <span>{{ parts[2] if parts|length > 2 else 'Task marked done' }}</span><br>
+                <span>Completed by {{ e.user_name or 'Unknown user' }}</span><br>
+            {% else %}
+                <strong>{{ e.event_type or 'Notification' }}</strong><br>
             {% endif %}
-            <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ e.created_at }}</span>
+            <span class="muted">{{ e.user_email }} — {{ e.role }} — {{ e.created_at }}</span>
         </div>
     {% else %}
         <p>No notifications yet.</p>

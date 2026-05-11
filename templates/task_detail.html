@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{{ task.title }}</h2>
+    <p><strong>Project:</strong> {{ task.project_name }}</p>
+    <p><strong>Room:</strong> {{ task.room_name or '-' }}</p>
+    <p><strong>Assigned:</strong> {{ task.assigned_user_name or '-' }}</p>
+    <p><strong>Status:</strong> {{ task.status|upper }}</p>
+    {% if task.description %}<p>{{ task.description }}</p>{% endif %}
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=task.project_id) }}">Back to Rooms</a>
+    {% if is_main_admin() %}<a class="btn-link btn-secondary" href="{{ url_for('project_tasks', project_id=task.project_id) }}">Back to Tasks</a>{% endif %}
+</div>
+{% if task.status != 'done' %}
+<div class="card">
+    <h3>Add Task Update</h3>
+    <form method="post" enctype="multipart/form-data" id="taskForm">
+        <input type="hidden" name="action" value="update">
+        <input type="hidden" name="drawn_photo" id="drawnPhoto">
+        {% if task.allow_comment %}
+            <label>Comment</label>
+            <textarea name="comment" rows="4" id="commentBox"></textarea>
+            <button type="button" class="btn-secondary" id="voiceBtn">Voice to Text</button>
+            <p id="voiceStatus" class="muted"></p>
+        {% endif %}
+        {% if task.allow_picture %}
+            <label>Take Picture</label>
+            <input name="photo_camera" id="cameraInput" type="file" accept="image/*" capture="environment">
+            <label>Upload Picture</label>
+            <input name="photo" id="photoInput" type="file" accept="image/*">
+            <div id="drawArea" style="display:none;margin-top:12px;">
+                <p class="muted">Draw on the picture with your finger, then save the update.</p>
+                <canvas id="drawCanvas" style="width:100%;max-width:900px;border:1px solid var(--border);border-radius:12px;touch-action:none;background:white;"></canvas>
+                <button type="button" class="btn-secondary" id="clearDrawing">Clear Drawing</button>
+            </div>
+        {% endif %}
+        {% if task.allow_audio %}
+            <label>Audio</label>
+            <input name="audio" id="audioInput" type="file" accept="audio/*">
+            <button type="button" class="btn-secondary" id="recordBtn">Record Audio</button>
+            <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
+            <p id="recordStatus" class="muted"></p>
+        {% endif %}
+        <button type="submit">Save Update</button>
+    </form>
+    <form method="post" style="margin-top:12px;" onsubmit="return confirm('Mark this task as done?');">
+        <input type="hidden" name="action" value="done">
+        <button type="submit" class="btn-danger">Check Done / Notify Admin</button>
+    </form>
+</div>
+{% endif %}
+<div class="card">
+    <h3>Updates</h3>
+    {% for u in updates %}
+        <div class="card">
+            <strong>{{ u.user_name or 'Unknown user' }}</strong> — {{ u.created_at }}
+            {% if u.comment %}<p>{{ u.comment }}</p>{% endif %}
+            {% if u.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=u.photo_file) }}">{% endif %}
+            {% if u.audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=u.audio_file) }}"></audio>{% endif %}
+        </div>
+    {% else %}
+        <p>No updates yet.</p>
+    {% endfor %}
+</div>
+<script>
+let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById('recordBtn'),stopBtn=document.getElementById('stopBtn'),audioInput=document.getElementById('audioInput'),statusEl=document.getElementById('recordStatus');
+if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:'audio/webm'});const file=new File([blob],'task-recording.webm',{type:'audio/webm'});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent='Audio recording attached.';stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent='Recording...'}catch(e){statusEl.textContent='Audio recording not allowed.'}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=='inactive'){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
+const voiceBtn=document.getElementById('voiceBtn'),commentBox=document.getElementById('commentBox'),voiceStatus=document.getElementById('voiceStatus');if(voiceBtn&&('webkitSpeechRecognition'in window||'SpeechRecognition'in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang='en-US';voiceBtn.onclick=()=>{voiceStatus.textContent='Listening...';recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?' ':'')+e.results[0][0].transcript;voiceStatus.textContent='Text added.'};recog.onerror=()=>voiceStatus.textContent='Voice-to-text failed or permission denied.'}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent='Voice-to-text is not supported on this browser.'}
+const canvas=document.getElementById('drawCanvas'),drawArea=document.getElementById('drawArea'),drawnPhoto=document.getElementById('drawnPhoto');let ctx,imgLoaded=false,drawing=false,last=null;
+async function loadImageToCanvas(file){if(!canvas||!file||!file.type.startsWith('image/'))return;const img=new Image();img.onload=()=>{const max=1200;let w=img.width,h=img.height,ratio=Math.min(1,max/Math.max(w,h));w=Math.round(w*ratio);h=Math.round(h*ratio);canvas.width=w;canvas.height=h;ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,w,h);drawArea.style.display='block';imgLoaded=true};img.src=URL.createObjectURL(file)}
+['cameraInput','photoInput'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('change',()=>{if(el.files&&el.files[0])loadImageToCanvas(el.files[0])})});
+function pos(e){const r=canvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(canvas.width/r.width),y:(t.clientY-r.top)*(canvas.height/r.height)}}
+if(canvas){canvas.addEventListener('pointerdown',e=>{if(!imgLoaded)return;drawing=true;last=pos(e);e.preventDefault()});canvas.addEventListener('pointermove',e=>{if(!drawing||!ctx)return;const p=pos(e);ctx.strokeStyle='red';ctx.lineWidth=6;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p;e.preventDefault()});['pointerup','pointerleave','pointercancel'].forEach(ev=>canvas.addEventListener(ev,()=>drawing=false));}
+const clearBtn=document.getElementById('clearDrawing');if(clearBtn)clearBtn.onclick=()=>{const active=document.getElementById('cameraInput').files[0]||document.getElementById('photoInput').files[0];if(active)loadImageToCanvas(active)};
+const form=document.getElementById('taskForm');if(form)form.addEventListener('submit',()=>{if(imgLoaded&&drawnPhoto)drawnPhoto.value=canvas.toDataURL('image/png')});
+</script>
+{% endblock %}

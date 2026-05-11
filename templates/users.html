@@ -2,7 +2,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Invite Mobile User</h2>
+    <h2>Add Customer / Worker</h2>
     <form method="post">
         <label>Name</label>
         <input name="name" required>
@@ -10,18 +10,18 @@
         <label>Email</label>
         <input name="email" type="email" required>
 
-        <label>PIN Number</label>
-        <input name="pin" inputmode="numeric" minlength="4" required>
+        <label>Password</label>
+        <input name="password" type="password" required>
 
         <label>Role</label>
         <select name="role">
             <option value="customer">Customer</option>
             <option value="worker">Worker</option>
+            <option value="admin">Admin</option>
         </select>
 
-        <button type="submit">Send Mobile Invitation</button>
+        <button type="submit">Add User</button>
     </form>
-    <p class="muted">The invitation email sends the mobile link. Share the PIN with the user separately.</p>
 </div>
 
 <div class="card">
@@ -67,13 +67,6 @@
                 <strong>{{ u.name }}</strong><br>
                 <span>{{ u.email }}</span><br>
                 <small>Role: {{ u.role }}</small>
-                {% if u.role != "admin" %}
-                <form method="post" action="{{ url_for('update_user_pin', user_id=u.id) }}" style="margin-top:10px;">
-                    <label>New PIN / Resend Invite</label>
-                    <input name="pin" inputmode="numeric" minlength="4" required>
-                    <button type="submit" class="btn-secondary">Update PIN & Send Invite</button>
-                </form>
-                {% endif %}
             </div>
 
             <div>

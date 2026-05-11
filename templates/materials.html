@@ -7,6 +7,7 @@
     <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
 </div>
 
+{% if can_edit_inventory() %}
 <div class="card">
     <h3>Add Material</h3>
     <form method="post" enctype="multipart/form-data">
@@ -38,6 +39,7 @@
         <button type="submit">Add Material</button>
     </form>
 </div>
+{% endif %}
 
 <div class="card">
     <h3>Inventory Spreadsheet</h3>
@@ -69,7 +71,7 @@
                     <th>Description</th>
                     <th>Picture</th>
                     <th>Status</th>
-                    <th>Update Status</th>
+                    {% if can_edit_inventory() %}<th>Update Status</th>{% endif %}
                     {% if is_main_admin() %}<th>Delete</th>{% endif %}
                 </tr>
             </thead>
@@ -96,6 +98,7 @@
                             <span class="statusBadge">Not in stock yet</span>
                         {% endif %}
                     </td>
+                    {% if can_edit_inventory() %}
                     <td>
                         <form method="post" action="{{ url_for('update_material_status', project_id=project.id, material_id=m.id) }}">
                             <select name="material_status">
@@ -106,6 +109,7 @@
                             <button type="submit">Update</button>
                         </form>
                     </td>
+                    {% endif %}
                     {% if is_main_admin() %}
                     <td>
                         <form method="post" action="{{ url_for('delete_material', project_id=project.id, material_id=m.id) }}" onsubmit="return confirm('Delete this material item?');">
