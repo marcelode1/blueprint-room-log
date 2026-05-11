@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card noPrint">
-    <h2>Time Clock Report</h2>
+    <h2>Time Report</h2>
     <form method="get">
         <div class="grid">
             <div>
@@ -37,7 +37,7 @@
     {% for row in summary %}
         <p><strong>{{ row.name }}</strong> <span class="muted">{{ row.email }}</span>: {{ minutes_text(row.minutes) }}</p>
     {% else %}
-        <p>No completed check-in/check-out pairs for this period.</p>
+        <p>No completed clock-in/clock-out pairs for this period.</p>
     {% endfor %}
 </div>
 
@@ -47,7 +47,7 @@
         .timeTable{width:100%;border-collapse:collapse}
         .timeTable th,.timeTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
         .timeTable th{background:#f3f4f6}
-        @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1100px}}
+        @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1200px}}
         @media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.timeTable th,.timeTable td{font-size:11px;padding:5px}}
     </style>
     <div class="timeWrap">
@@ -55,11 +55,12 @@
             <thead>
                 <tr>
                     <th>User</th>
+                    <th>Project</th>
                     <th>Date</th>
-                    <th>Check In</th>
-                    <th>Check In Location</th>
-                    <th>Check Out</th>
-                    <th>Check Out Location</th>
+                    <th>Clock In</th>
+                    <th>Clock In Location</th>
+                    <th>Clock Out</th>
+                    <th>Clock Out Location</th>
                     <th>Total</th>
                 </tr>
             </thead>
@@ -68,9 +69,11 @@
                 {% set ci = p.check_in %}
                 {% set co = p.check_out %}
                 {% set u = p.user %}
+                {% set event = ci if ci else co %}
                 <tr>
                     <td>{{ u.user_name or "Unknown user" }}<br><span class="muted">{{ u.user_email or "" }}</span></td>
-                    <td>{{ format_date(ci.created_at if ci else co.created_at) }}</td>
+                    <td>{{ event.project_name or "No project" }}</td>
+                    <td>{{ format_date(event.created_at) }}</td>
                     <td>{{ format_time(ci.created_at) if ci else "-" }}</td>
                     <td>
                         {% if ci %}
@@ -88,7 +91,7 @@
                     <td>{{ duration_text(ci.created_at, co.created_at) if ci and co else "-" }}</td>
                 </tr>
             {% else %}
-                <tr><td colspan="7">No time clock records for this period.</td></tr>
+                <tr><td colspan="8">No time clock records for this period.</td></tr>
             {% endfor %}
             </tbody>
         </table>

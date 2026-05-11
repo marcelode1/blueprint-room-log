@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Check In / Check Out</h2>
+    <h2>Clock In / Clock Out</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
     <p class="muted">Get your GPS location, confirm it on the map, then record the time.</p>
     <div class="grid">
-        <button type="button" id="checkInBtn">Check In</button>
-        <button type="button" class="btn-secondary" id="checkOutBtn">Check Out</button>
+        <button type="button" id="checkInBtn">Clock In</button>
+        <button type="button" class="btn-secondary" id="checkOutBtn">Clock Out</button>
     </div>
 </div>
 
@@ -27,7 +28,8 @@
     <h3>Recent Activity</h3>
     {% for e in events %}
         <div class="card">
-            <strong>{% if e.event_type == 'check_in' %}Check In{% else %}Check Out{% endif %}</strong>
+            <strong>{% if e.event_type == 'check_in' %}Clock In{% else %}Clock Out{% endif %}</strong>
+            <p class="muted">{{ e.project_name or project.name }}</p>
             <p>{{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</p>
             <p>{{ e.address or '-' }}</p>
             {% if e.latitude and e.longitude %}
@@ -35,7 +37,7 @@
             {% endif %}
         </div>
     {% else %}
-        <p>No check-in activity yet.</p>
+        <p>No clock activity yet.</p>
     {% endfor %}
 </div>
 
@@ -62,7 +64,7 @@ function startLocation(type){
     address.value="";
     mapFrame.removeAttribute("src");
     locationCard.style.display="block";
-    locationTitle.textContent=type==="check_in"?"Confirm Check In Location":"Confirm Check Out Location";
+    locationTitle.textContent=type==="check_in"?"Confirm Clock In Location":"Confirm Clock Out Location";
     gpsStatus.textContent="Getting GPS location...";
     if(!navigator.geolocation){
         gpsStatus.textContent="GPS/location is not available in this browser. Use a phone browser with location services enabled.";
@@ -85,9 +87,9 @@ function startLocation(type){
         address.value=label;
         gpsStatus.textContent=label;
         confirmBtn.disabled=false;
-        confirmBtn.textContent=type==="check_in"?"Confirm Check In":"Confirm Check Out";
+        confirmBtn.textContent=type==="check_in"?"Confirm Clock In":"Confirm Clock Out";
     },err=>{
-        let message="GPS location is required before you can check in or check out. Turn on Location Services/GPS for this device and allow location permission for this browser, then try again.";
+        let message="GPS location is required before you can clock in or clock out. Turn on Location Services/GPS for this device and allow location permission for this browser, then try again.";
         if(err.code===1)message="Location permission was denied. Allow location permission for this browser, then try again.";
         if(err.code===2)message="GPS is off or unavailable. Turn on Location Services/GPS, then try again.";
         if(err.code===3)message="GPS took too long to respond. Make sure Location Services/GPS is on, then try again.";

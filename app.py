@@ -355,6 +355,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS attendance_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         event_type TEXT NOT NULL,
         latitude REAL,
         longitude REAL,
@@ -390,7 +391,8 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
-        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, created_at TEXT NOT NULL)",
+        "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
@@ -674,7 +676,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
             send_email(admin["email"], subject, body, attachments=attachments)
 
 
-def notify_admins_of_attendance(conn, event_type, latitude, longitude, address, created_at):
+def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at):
     actor = conn.execute(
         "SELECT name, email, role FROM users WHERE id = %s",
         (session.get("user_id"),)
@@ -686,11 +688,12 @@ def notify_admins_of_attendance(conn, event_type, latitude, longitude, address, 
     add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, notification_type)
     conn.commit()
 
-    label = "Check In" if event_type == "check_in" else "Check Out"
+    label = "Clock In" if event_type == "check_in" else "Clock Out"
     maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
     body = "\n".join([
         f"{label} recorded in Projectonus.",
         "",
+        f"Project: {project.get('name') if project else '-'}",
         f"User: {actor_name or 'Unknown user'}",
         f"Email: {actor_email or '-'}",
         f"Time: {format_time(created_at)}",
@@ -796,12 +799,14 @@ def build_attendance_pairs(events):
     open_checkins = {}
     for e in events:
         uid = e.get("user_id") or f"missing-{e.get('id')}"
+        project_key = e.get("project_id") or "no-project"
+        pair_key = f"{uid}:{project_key}"
         if e.get("event_type") == "check_in":
-            if uid in open_checkins:
-                pairs.append({"user": open_checkins[uid], "check_in": open_checkins[uid], "check_out": None})
-            open_checkins[uid] = e
+            if pair_key in open_checkins:
+                pairs.append({"user": open_checkins[pair_key], "check_in": open_checkins[pair_key], "check_out": None})
+            open_checkins[pair_key] = e
         elif e.get("event_type") == "check_out":
-            check_in = open_checkins.pop(uid, None)
+            check_in = open_checkins.pop(pair_key, None)
             pairs.append({"user": e, "check_in": check_in, "check_out": e})
     for check_in in open_checkins.values():
         pairs.append({"user": check_in, "check_in": check_in, "check_out": None})
@@ -872,38 +877,58 @@ def mobile_home():
 
 @app.route("/mobile/time-clock", methods=["GET", "POST"])
 @login_required
-def mobile_time_clock():
+def mobile_time_clock_legacy():
+    flash("Open a project before you clock in or clock out.")
+    return redirect(url_for("mobile_home"))
+
+
+@app.route("/mobile/project/<int:project_id>/time-clock", methods=["GET", "POST"])
+@login_required
+def mobile_time_clock(project_id):
     conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("mobile_home"))
+
     if request.method == "POST":
         event_type = request.form.get("event_type")
         if event_type not in ["check_in", "check_out"]:
             conn.close()
-            flash("Choose check in or check out.")
-            return redirect(url_for("mobile_time_clock"))
+            flash("Choose clock in or clock out.")
+            return redirect(url_for("mobile_time_clock", project_id=project_id))
         try:
             latitude = float(request.form.get("latitude", ""))
             longitude = float(request.form.get("longitude", ""))
         except Exception:
             conn.close()
             flash("GPS location is required. Turn on Location Services/GPS and try again.")
-            return redirect(url_for("mobile_time_clock"))
+            return redirect(url_for("mobile_time_clock", project_id=project_id))
         address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
         created_at = datetime.now().isoformat()
         conn.execute(
-            "INSERT INTO attendance_events (user_id, event_type, latitude, longitude, address, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (session.get("user_id"), event_type, latitude, longitude, address, created_at)
+            "INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (session.get("user_id"), project_id, event_type, latitude, longitude, address, created_at)
         )
-        notify_admins_of_attendance(conn, event_type, latitude, longitude, address, created_at)
+        notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at)
         conn.close()
-        flash(("Check in" if event_type == "check_in" else "Check out") + " recorded.")
-        return redirect(url_for("mobile_time_clock"))
+        flash(("Clock in" if event_type == "check_in" else "Clock out") + " recorded.")
+        return redirect(url_for("mobile_time_clock", project_id=project_id))
 
     events = conn.execute(
-        "SELECT * FROM attendance_events WHERE user_id = %s ORDER BY created_at DESC LIMIT 10",
-        (session.get("user_id"),)
+        """
+        SELECT attendance_events.*, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.user_id = %s AND attendance_events.project_id = %s
+        ORDER BY attendance_events.created_at DESC
+        LIMIT 10
+        """,
+        (session.get("user_id"), project_id)
     ).fetchall()
     conn.close()
-    return render_template("mobile_time_clock.html", events=events)
+    return render_template("mobile_time_clock.html", project=project, events=events)
 
 
 
@@ -1941,16 +1966,17 @@ def attendance_report():
     conn = db()
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     query = """
-        SELECT attendance_events.*, users.name AS user_name, users.email AS user_email
+        SELECT attendance_events.*, users.name AS user_name, users.email AS user_email, projects.name AS project_name
         FROM attendance_events
         LEFT JOIN users ON attendance_events.user_id = users.id
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
         WHERE attendance_events.created_at >= %s AND attendance_events.created_at < %s
     """
     params = [start.isoformat(), end.isoformat()]
     if selected_user_id:
         query += " AND attendance_events.user_id = %s"
         params.append(selected_user_id)
-    query += " ORDER BY attendance_events.user_id, attendance_events.created_at"
+    query += " ORDER BY attendance_events.user_id, attendance_events.project_id, attendance_events.created_at"
     events = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     pairs = build_attendance_pairs(events)

@@ -50,7 +50,6 @@
 <nav class="bottom-nav">
     <a href="{{ url_for('index') }}">Projects</a>
     {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
-    <a href="{{ url_for('mobile_time_clock') }}">Time</a>
     <a href="{{ url_for('privacy') }}">Privacy</a>
     <a href="{{ url_for('logout') }}">Logout</a>
 </nav>
