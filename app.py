@@ -430,9 +430,13 @@ def ensure_project_blueprints(conn, project):
             ).fetchone()
             main_blueprint_id = main_bp["id"] if main_bp else None
 
+        conn.execute(
+            "UPDATE rooms SET blueprint_id = NULL WHERE project_id = %s AND COALESCE(polygon_points, '') = ''",
+            (project["id"],)
+        )
         if main_blueprint_id:
             conn.execute(
-                "UPDATE rooms SET blueprint_id = %s WHERE project_id = %s AND blueprint_id IS NULL",
+                "UPDATE rooms SET blueprint_id = %s WHERE project_id = %s AND blueprint_id IS NULL AND COALESCE(polygon_points, '') <> ''",
                 (main_blueprint_id, project["id"])
             )
         conn.commit()
@@ -1366,7 +1370,7 @@ def project(project_id):
 
     if active_blueprint:
         rooms = conn.execute(
-            "SELECT * FROM rooms WHERE project_id = %s AND blueprint_id = %s ORDER BY id",
+            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
             (project_id, active_blueprint["id"])
         ).fetchall()
     else:
@@ -1478,20 +1482,22 @@ def add_room(project_id):
 
     polygon_points = request.form.get("polygon_points", "").strip()
     blueprint_id = request.form.get("blueprint_id") or None
-
-    if not polygon_points:
-        flash("Please trace the room before saving.")
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Room name is required.")
         if blueprint_id:
             return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
         return redirect(url_for("project", project_id=project_id))
+
+    room_blueprint_id = blueprint_id if polygon_points else None
 
     conn = db()
     conn.execute(
         "INSERT INTO rooms (project_id, blueprint_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             project_id,
-            blueprint_id,
-            request.form["name"].strip(),
+            room_blueprint_id,
+            name,
             float(request.form.get("x") or 0),
             float(request.form.get("y") or 0),
             float(request.form.get("w") or 0),
@@ -1508,26 +1514,6 @@ def add_room(project_id):
     flash("Room added.")
     if blueprint_id:
         return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
-    return redirect(url_for("project", project_id=project_id))
-
-    conn = db()
-    conn.execute(
-        "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (
-            project_id,
-            request.form["name"].strip(),
-            float(request.form.get("x") or 0),
-            float(request.form.get("y") or 0),
-            float(request.form.get("w") or 0),
-            float(request.form.get("h") or 0),
-            polygon_points,
-            request.form.get("category", "general"),
-            request.form.get("room_color", "blue"),
-            datetime.now().isoformat()
-        )
-    )
-    conn.commit()
-    conn.close()
     return redirect(url_for("project", project_id=project_id))
 
 

@@ -113,10 +113,11 @@
         <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
         <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
+        <p class="muted">Click Create Room to add a room without a blueprint trace. Use Finish Room Trace first only when you want to place the room on the blueprint.</p>
         <button type="button" onclick="finishTrace()">Finish Room Trace</button>
         <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
-        <button type="submit" {% if not active_blueprint %}disabled{% endif %}>Save Room</button>
-        {% if not active_blueprint %}<p style="color:#b91c1c;">Add/select a blueprint before tracing rooms.</p>{% endif %}
+        <button type="submit">Create Room</button>
+        {% if not active_blueprint %}<p style="color:#b91c1c;">No blueprint selected. The room will still be created and usable.</p>{% endif %}
     </form>
 </div>
 
