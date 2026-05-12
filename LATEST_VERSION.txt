@@ -1,4 +1,4 @@
-Projectonus Latest Version
+ProjectONus Latest Version
 Includes:
 - Admin settings and permissions
 - Company logo support

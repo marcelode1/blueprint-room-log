@@ -1,2 +1,2 @@
-This version restores the previous Projectonus Desktop/Mobile Split build.
+This version restores the previous ProjectONus Desktop/Mobile Split build.
 Recent UI redesign changes were removed.

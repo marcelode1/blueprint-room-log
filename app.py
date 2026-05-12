@@ -686,7 +686,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
             attachments.append(attachment)
 
     lines = [
-        "A field update was added in Projectonus.",
+        "A field update was added in ProjectONus.",
         "",
         f"Project: {project.get('name') if project else '-'}",
         f"Room: {room.get('name') if room else '-'}",
@@ -702,7 +702,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
     if audio_file and send_audio:
         lines.append("Audio attached.")
     body = "\n".join(lines)
-    subject = f"Projectonus field update - {room.get('name') if room else 'Room'}"
+    subject = f"ProjectONus field update - {room.get('name') if room else 'Room'}"
     for admin in admins:
         if admin.get("email"):
             send_email(admin["email"], subject, body, attachments=attachments)
@@ -723,7 +723,7 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
     label = "Clock In" if event_type == "check_in" else "Clock Out"
     maps_url = f"https://www.google.com/maps?q={latitude},{longitude}"
     body = "\n".join([
-        f"{label} recorded in Projectonus.",
+        f"{label} recorded in ProjectONus.",
         "",
         f"Project: {project.get('name') if project else '-'}",
         f"User: {actor_name or 'Unknown user'}",
@@ -737,7 +737,7 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
     ])
     for admin in admin_email_rows(conn):
         if admin.get("email"):
-            send_email(admin["email"], f"Projectonus {label} - {actor_name or 'User'}", body)
+            send_email(admin["email"], f"ProjectONus {label} - {actor_name or 'User'}", body)
 
 
 def can_add_notes():
@@ -1278,7 +1278,7 @@ def mobile_room(room_id):
 
 @app.route("/routes-check")
 def routes_check():
-    return "<h1>Projectonus Routes Active</h1><br>" + "<br>".join(sorted(str(r) for r in app.url_map.iter_rules()))
+    return "<h1>ProjectONus Routes Active</h1><br>" + "<br>".join(sorted(str(r) for r in app.url_map.iter_rules()))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1355,7 +1355,7 @@ def admin_setup_request():
         setup_link = external_url("admin_create_login", token=token)
         sent = send_email(
             email,
-            "Create your Projectonus admin login",
+            "Create your ProjectONus admin login",
             "Use this link on the desktop version to create your admin username and password:\n\n" + setup_link
         )
         if sent:
@@ -1420,7 +1420,7 @@ def forgot_password():
             reset_link = external_url("reset_password", token=token)
             sent = send_email(
                 user["email"],
-                "Reset your Projectonus admin password",
+                "Reset your ProjectONus admin password",
                 "Use this link to create a new admin password:\n\n" + reset_link
             )
             if sent:
@@ -1502,7 +1502,7 @@ def users():
             invite_link = external_url("mobile_login", email=email, invite=invite_token)
             sent = send_email(
                 email,
-                "You are invited to Projectonus",
+                "You are invited to ProjectONus",
                 "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
             )
             if sent:
@@ -1540,7 +1540,7 @@ def update_user_pin(user_id):
     invite_link = external_url("mobile_login", email=user["email"], invite=invite_token)
     sent = send_email(
         user["email"],
-        "Your Projectonus mobile invitation",
+        "Your ProjectONus mobile invitation",
         "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
     )
     conn.close()

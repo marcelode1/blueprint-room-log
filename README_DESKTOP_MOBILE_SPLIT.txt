@@ -1,4 +1,4 @@
-Projectonus Desktop/Mobile Split
+ProjectONus Desktop/Mobile Split
 
 Desktop:
   /desktop or /

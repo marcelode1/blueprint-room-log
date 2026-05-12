@@ -4,8 +4,8 @@
 <div class="card">
     {% set logo = get_app_setting("company_logo") %}
     {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo" style="max-height:90px;max-width:260px;display:block;margin-bottom:10px;">{% endif %}
-    <h1>{{ get_app_setting("company_name", "Projectonus") }}</h1>
-    <p class="muted">Powered by Projectonus</p>
+    <h1>{{ get_app_setting("company_name", "ProjectONus") }}</h1>
+    <p class="muted">Powered by ProjectONus</p>
     <div class="grid">
         <a class="btn-link" href="#search">Search Projects</a>
         <a class="btn-link" href="#projects">Projects</a>

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card" style="max-width:420px;margin:auto;">
-    <h2>Projectonus</h2>
+    <h2>ProjectONus</h2>
     {% if not admin_exists %}
         <p class="muted">Create the first admin account to start using the app.</p>
         <a class="btn-link" href="{{ url_for('admin_setup_request') }}">Create Account</a>

@@ -77,7 +77,7 @@ This keeps blueprint lines sharper and avoids Bad Gateway crashes from server me
 - Replaced Ultra PDF rendering with safer capped PDF rendering to avoid black screens and browser crashes.
 
 
-## Projectonus V4 Mobile Beta
+## ProjectONus V4 Mobile Beta
 
 Added bigger mobile buttons, faster room switching, swipe between rooms, floating camera button, dark mode, offline cache foundation, push subscription foundation, auto image compression, and voice-to-text notes on supported Android Chrome browsers.
 
@@ -89,4 +89,4 @@ Fixed project.html Jinja TemplateSyntaxError caused by accidental `{#` sequence 
 
 
 ## V5 Admin Settings and Permissions
-Adds admin gear settings, company logo, powered by Projectonus branding, login notification bell, and granular user permissions for comments, pictures, and audio.
+Adds admin gear settings, company logo, powered by ProjectONus branding, login notification bell, and granular user permissions for comments, pictures, and audio.
