@@ -79,7 +79,7 @@
 
 <div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" id="projectAccessPanel">
     <h3>Project Access</h3>
-    <p class="muted">Choose which projects each user can see. Admin accounts can see every project automatically.</p>
+    <p class="muted">Choose which projects each user can see. Workers assigned to a task keep project access until it is revoked here. Admin accounts can see every project automatically.</p>
     {% for u in users %}
         {% set selected_projects = project_access_map.get(u.id, []) %}
         <div class="card">

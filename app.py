@@ -656,8 +656,16 @@ def unread_notification_count():
             row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')").fetchone()
         else:
             row = conn.execute(
-                "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
-                (session.get("user_id"),)
+                """
+                SELECT COUNT(*) AS c
+                FROM login_events
+                JOIN tasks ON login_events.task_id = tasks.id
+                JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                WHERE login_events.is_read = FALSE
+                  AND login_events.user_id = %s
+                  AND login_events.event_type = 'task_assigned'
+                """,
+                (session.get("user_id"), session.get("user_id"))
             ).fetchone()
         conn.close()
         return row["c"] if row else 0
@@ -807,6 +815,7 @@ def task_email_body(task, assigned=None, project=None):
         f"Allows comment: {'Yes' if task.get('allow_comment') else 'No'}",
         f"Allows voice/audio: {'Yes' if task.get('allow_audio') else 'No'}",
         "",
+        "You now have access to this project until the admin revokes it on the Project Access page.",
         "Open your ProjectONus app and press Received after you review the task.",
         external_url("my_tasks")
     ])
@@ -880,6 +889,19 @@ def user_can_access_project(conn, project_id, user_id=None):
         (uid, project_id)
     ).fetchone()
     return bool(row)
+
+
+def grant_project_access(conn, user_id, project_id, role=None):
+    if not user_id or not project_id or role == "admin":
+        return
+    conn.execute(
+        """
+        INSERT INTO project_permissions (user_id, project_id, created_at)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id, project_id) DO NOTHING
+        """,
+        (user_id, project_id, utc_now_iso())
+    )
 
 
 def fetch_visible_projects(conn, q=""):
@@ -2250,14 +2272,7 @@ def room(room_id):
         return redirect(url_for("index"))
     project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
     users = conn.execute(
-        """
-        SELECT DISTINCT users.id, users.name, users.email, users.role
-        FROM users
-        LEFT JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
-        WHERE users.role = 'admin' OR project_permissions.project_id IS NOT NULL
-        ORDER BY users.name
-        """,
-        (room["project_id"],)
+        "SELECT id, name, email, role FROM users ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, name"
     ).fetchall() if is_main_admin() else []
     tasks = conn.execute(
         """
@@ -2474,13 +2489,7 @@ def create_task(room_id):
         conn.close()
         flash("Choose a user and enter a task title.")
         return redirect(url_for("room", room_id=room_id))
-    if assigned.get("role") != "admin" and not conn.execute(
-        "SELECT 1 FROM project_permissions WHERE user_id = %s AND project_id = %s",
-        (assigned_user_id, room["project_id"])
-    ).fetchone():
-        conn.close()
-        flash("That user does not have access to this project. Authorize the project in Settings first.")
-        return redirect(url_for("room", room_id=room_id))
+    grant_project_access(conn, assigned_user_id, room["project_id"], assigned.get("role"))
 
     task = conn.execute(
         """
@@ -2515,13 +2524,13 @@ def create_task(room_id):
         "task_assigned",
         task.get("project_id"),
         task.get("id"),
-        f"New task assigned: {task.get('title')}"
+        f"New task assigned: {task.get('title')}. Project access granted."
     )
     conn.commit()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     send_task_assignment_email(task, assigned, project)
     conn.close()
-    flash("Task assigned and user notified.")
+    flash("Task assigned, project access granted, and user notified.")
     return redirect(url_for("room", room_id=room_id))
 
 
@@ -2563,14 +2572,7 @@ def create_global_task():
         created_tasks = []
 
         for assigned in selected_users:
-            conn.execute(
-                """
-                INSERT INTO project_permissions (user_id, project_id, created_at)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, project_id) DO NOTHING
-                """,
-                (assigned["id"], project_id, utc_now_iso())
-            )
+            grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
             task = conn.execute(
                 """
                 INSERT INTO tasks
@@ -2605,7 +2607,7 @@ def create_global_task():
                 "task_assigned",
                 task.get("project_id"),
                 task.get("id"),
-                f"New task assigned: {task.get('title')}"
+                f"New task assigned: {task.get('title')}. Project access granted."
             )
             created_tasks.append((task, assigned))
 
@@ -2613,7 +2615,7 @@ def create_global_task():
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
         conn.close()
-        flash(f"Task sent to {len(created_tasks)} worker(s).")
+        flash(f"Task sent to {len(created_tasks)} worker(s). Project access was granted.")
         return redirect(url_for("my_tasks"))
 
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -2720,6 +2722,10 @@ def receive_task(task_id):
     if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
         conn.close()
         flash("This task is assigned to another user.")
+        return redirect(url_for("my_tasks"))
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
         return redirect(url_for("my_tasks"))
     if task.get("accepted_at"):
         conn.close()
@@ -3138,11 +3144,12 @@ def notifications():
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
             WHERE login_events.user_id = %s AND login_events.event_type = 'task_assigned'
             ORDER BY login_events.created_at DESC
             LIMIT 100
             """,
-            (session.get("user_id"),)
+            (session.get("user_id"), session.get("user_id"))
         ).fetchall()
     conn.close()
     return render_template("notifications.html", events=events)
