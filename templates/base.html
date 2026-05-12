@@ -33,6 +33,7 @@
                 <a href="{{ url_for('users') }}">Users</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
+                <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('notifications') }}" title="Notifications">Notifications{% if admin_unread_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ admin_unread_count() }}</span>{% endif %}</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
             {% endif %}
@@ -50,6 +51,7 @@
 <nav class="bottom-nav">
     <a href="{{ url_for('index') }}">Projects</a>
     {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
+    {% if is_main_admin() %}<a href="{{ url_for('team_map') }}">Team</a>{% endif %}
     <a href="{{ url_for('privacy') }}">Privacy</a>
     <a href="{{ url_for('logout') }}">Logout</a>
 </nav>
@@ -60,6 +62,68 @@ function toggleDarkMode(){document.body.classList.toggle("dark");localStorage.se
 applyDarkMode();
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 </script>
+{% if session.get("user_id") and not is_main_admin() %}
+<script>
+(function(){
+    if(!navigator.geolocation)return;
+    let watchId=null;
+    let lastSent=0;
+    let intervalMs=60000;
+
+    function timezoneName(){
+        try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch(e){return "";}
+    }
+
+    function stopTracking(){
+        if(watchId!==null){
+            navigator.geolocation.clearWatch(watchId);
+            watchId=null;
+        }
+    }
+
+    function sendPosition(pos){
+        const now=Date.now();
+        if(now-lastSent<intervalMs)return;
+        lastSent=now;
+        fetch("{{ url_for('mobile_location_ping') }}",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+                latitude:pos.coords.latitude,
+                longitude:pos.coords.longitude,
+                accuracy:pos.coords.accuracy,
+                event_timezone:timezoneName()
+            })
+        }).then(r=>r.json()).then(data=>{
+            if(data && data.active===false)stopTracking();
+        }).catch(()=>{});
+    }
+
+    function startTracking(){
+        if(watchId!==null)return;
+        watchId=navigator.geolocation.watchPosition(
+            sendPosition,
+            ()=>{},
+            {enableHighAccuracy:true,timeout:20000,maximumAge:30000}
+        );
+    }
+
+    async function refreshClockStatus(){
+        try{
+            const res=await fetch("{{ url_for('mobile_location_status') }}",{cache:"no-store"});
+            const data=await res.json();
+            intervalMs=data.interval_ms||60000;
+            if(data.active)startTracking();
+            else stopTracking();
+        }catch(e){}
+    }
+
+    refreshClockStatus();
+    setInterval(refreshClockStatus,60000);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshClockStatus();});
+})();
+</script>
+{% endif %}
 <div style="text-align:center;padding:20px;color:#64748b;font-size:13px">
     <a href="{{ url_for('privacy') }}" style="color:inherit;text-decoration:none">Privacy Policy</a>
 </div>

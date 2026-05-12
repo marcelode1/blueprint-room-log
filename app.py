@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -394,6 +394,32 @@ def init_db():
     )
     """)
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_delete_codes (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS worker_location_pings (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        accuracy REAL,
+        address TEXT,
+        event_timezone TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+
     conn.commit()
 
     # Safe migrations for older deployments
@@ -424,6 +450,8 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
+        "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
@@ -827,6 +855,10 @@ def utc_now_iso():
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
+def utc_future_iso(minutes=10):
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).replace(tzinfo=None).isoformat()
+
+
 def local_now():
     return datetime.now(timezone.utc).astimezone(app_timezone())
 
@@ -967,6 +999,78 @@ def attendance_event_in_range(event, period, selected_date):
     return bool(event_dt and start <= event_dt < end)
 
 
+def current_clock_in_event(conn, user_id=None):
+    uid = user_id or session.get("user_id")
+    if not uid:
+        return None
+    event = conn.execute(
+        """
+        SELECT attendance_events.*, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.user_id = %s
+        ORDER BY attendance_events.created_at DESC
+        LIMIT 1
+        """,
+        (uid,)
+    ).fetchone()
+    if event and event.get("event_type") == "check_in":
+        return event
+    return None
+
+
+def active_worker_locations(conn):
+    latest_events = conn.execute(
+        """
+        SELECT DISTINCT ON (attendance_events.user_id)
+            attendance_events.*,
+            users.name AS user_name,
+            users.email AS user_email,
+            users.role AS user_role,
+            projects.name AS project_name
+        FROM attendance_events
+        JOIN users ON attendance_events.user_id = users.id
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE users.role <> 'admin'
+        ORDER BY attendance_events.user_id, attendance_events.created_at DESC
+        """
+    ).fetchall()
+
+    workers = []
+    for event in latest_events:
+        if event.get("event_type") != "check_in":
+            continue
+        ping = conn.execute(
+            """
+            SELECT * FROM worker_location_pings
+            WHERE user_id = %s AND created_at >= %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (event["user_id"], event["created_at"])
+        ).fetchone()
+        location = ping or event
+        if location.get("latitude") is None or location.get("longitude") is None:
+            continue
+        workers.append({
+            "user_id": event.get("user_id"),
+            "name": event.get("user_name") or "Unknown user",
+            "email": event.get("user_email") or "",
+            "role": event.get("user_role") or "",
+            "project_id": event.get("project_id"),
+            "project_name": event.get("project_name") or "No project",
+            "clock_in_time": format_event_datetime(event),
+            "last_seen": format_datetime(location.get("created_at"), event_timezone_name(location)),
+            "latitude": location.get("latitude"),
+            "longitude": location.get("longitude"),
+            "accuracy": location.get("accuracy"),
+            "address": location.get("address") or event.get("address") or "",
+            "timezone": event_timezone_name(location),
+            "source": "Live update" if ping else "Clock in"
+        })
+    return workers
+
+
 def build_attendance_pairs(events):
     pairs = []
     open_checkins = {}
@@ -1101,6 +1205,73 @@ def mobile_time_clock(project_id):
     ).fetchall()
     conn.close()
     return render_template("mobile_time_clock.html", project=project, events=events)
+
+
+@app.route("/mobile/location/status")
+@login_required
+def mobile_location_status():
+    if is_main_admin():
+        return {"active": False}
+    conn = db()
+    event = current_clock_in_event(conn)
+    conn.close()
+    if not event:
+        return {"active": False}
+    return {
+        "active": True,
+        "project_id": event.get("project_id"),
+        "project_name": event.get("project_name") or "",
+        "attendance_event_id": event.get("id"),
+        "interval_ms": 60000
+    }
+
+
+@app.route("/mobile/location/ping", methods=["POST"])
+@login_required
+def mobile_location_ping():
+    if is_main_admin():
+        return {"ok": False, "active": False}
+    data = request.get_json(silent=True) or request.form
+    try:
+        latitude = float(data.get("latitude", ""))
+        longitude = float(data.get("longitude", ""))
+        accuracy = data.get("accuracy")
+        accuracy = float(accuracy) if accuracy not in [None, ""] else None
+    except Exception:
+        return {"ok": False, "active": True, "message": "GPS location is required."}, 400
+
+    conn = db()
+    event = current_clock_in_event(conn)
+    if not event:
+        conn.close()
+        return {"ok": True, "active": False}
+
+    event_timezone = timezone_from_location(
+        latitude,
+        longitude,
+        data.get("event_timezone") or event_timezone_name(event)
+    )
+    conn.execute(
+        """
+        INSERT INTO worker_location_pings
+        (user_id, project_id, attendance_event_id, latitude, longitude, accuracy, address, event_timezone, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            session.get("user_id"),
+            event.get("project_id"),
+            event.get("id"),
+            latitude,
+            longitude,
+            accuracy,
+            (data.get("address") or "").strip(),
+            event_timezone,
+            utc_now_iso()
+        )
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "active": True}
 
 
 
@@ -2059,11 +2230,90 @@ def project_timeline(project_id):
 @admin_required
 def delete_project(project_id):
     conn = db()
-    conn.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+    project = conn.execute("SELECT id, name FROM projects WHERE id = %s", (project_id,)).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("project", project_id=project_id))
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM project_delete_codes WHERE project_id = %s AND admin_id = %s", (project_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO project_delete_codes (project_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (project_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
     conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete project PIN",
+        "\n".join([
+            f"Your 6-digit PIN to delete project '{project['name']}' is:",
+            "",
+            pin,
+            "",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM project_delete_codes WHERE project_id = %s AND admin_id = %s", (project_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("project", project_id=project_id))
     conn.close()
-    flash("Project deleted.")
-    return redirect(url_for("index"))
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_project", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_project(project_id):
+    conn = db()
+    project = conn.execute("SELECT id, name FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM project_delete_codes
+            WHERE project_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (project_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Project again to get a new PIN.")
+            return redirect(url_for("project", project_id=project_id))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_project", project_id=project_id))
+
+        conn.execute("DELETE FROM project_delete_codes WHERE project_id = %s", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+        conn.commit()
+        conn.close()
+        flash("Project deleted.")
+        return redirect(url_for("index"))
+
+    conn.close()
+    return render_template("delete_project_confirm.html", project=project)
 
 
 @app.route("/note/<int:note_id>/delete", methods=["POST"])
@@ -2245,6 +2495,21 @@ def my_tasks():
         ).fetchall()
     conn.close()
     return render_template("tasks.html", tasks=tasks)
+
+
+@app.route("/team-map")
+@admin_required
+def team_map():
+    return render_template("team_map.html")
+
+
+@app.route("/team-map/data")
+@admin_required
+def team_map_data():
+    conn = db()
+    workers = active_worker_locations(conn)
+    conn.close()
+    return {"workers": workers, "updated_at": format_datetime(utc_now_iso())}
 
 
 @app.route("/attendance/report")
@@ -2584,7 +2849,7 @@ def backup():
 
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events", "user_permissions", "project_permissions"]:
+    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events", "worker_location_pings", "user_permissions", "project_permissions"]:
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()

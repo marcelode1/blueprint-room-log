@@ -4,6 +4,9 @@
 <div class="card">
     <h1>ProjectONus Mobile</h1>
     <p>Field version for projects, rooms, pictures, comments, and audio.</p>
+    {% if is_main_admin() %}
+        <a class="btn-link" href="{{ url_for('team_map') }}">Where Is My Team</a>
+    {% endif %}
     <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}">Notifications{% if unread_notification_count() %} ({{ unread_notification_count() }}){% endif %}</a>
     <a class="btn-link" href="{{ url_for('my_tasks') }}">My Tasks</a>
 </div>

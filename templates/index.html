@@ -11,6 +11,7 @@
         <a class="btn-link" href="#projects">Projects</a>
         {% if is_main_admin() %}
             <a class="btn-link" href="{{ url_for('new_project') }}">New Project</a>
+            <a class="btn-link btn-secondary" href="{{ url_for('team_map') }}">Where Is My Team</a>
         {% endif %}
     </div>
 </div>

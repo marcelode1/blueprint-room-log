@@ -22,7 +22,7 @@
     {% if is_main_admin() %}
     <div class="desktop-only projectAdminActions">
         <a class="btn-link btn-secondary projectSmallButton" href="{{ url_for('edit_project', project_id=project.id) }}">Edit Project</a>
-        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');">
+        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
             <button type="submit" class="btn-danger projectSmallButton">Delete Project</button>
         </form>
     </div>

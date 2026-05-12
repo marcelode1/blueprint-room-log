@@ -9,6 +9,11 @@
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
     {% endif %}
+    {% if is_main_admin() %}
+        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <button type="submit" class="btn-danger">Delete Project</button>
+        </form>
+    {% endif %}
 </div>
 {% if is_main_admin() or has_perm("create_rooms") %}
 <div class="card">
