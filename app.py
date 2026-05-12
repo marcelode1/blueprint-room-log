@@ -1609,6 +1609,47 @@ def new_project():
     return render_template("new_project.html")
 
 
+@app.route("/project/<int:project_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_project(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        if not name:
+            conn.close()
+            flash("Project name is required.")
+            return redirect(url_for("edit_project", project_id=project_id))
+
+        conn.execute(
+            """
+            UPDATE projects
+            SET name = %s, customer_name = %s, customer_address = %s, customer_phone = %s, customer_email = %s
+            WHERE id = %s
+            """,
+            (
+                name,
+                request.form.get("customer_name", "").strip(),
+                request.form.get("customer_address", "").strip(),
+                request.form.get("customer_phone", "").strip(),
+                request.form.get("customer_email", "").strip(),
+                project_id
+            )
+        )
+        conn.commit()
+        conn.close()
+        flash("Project updated.")
+        return redirect(url_for("project", project_id=project_id))
+
+    conn.close()
+    return render_template("edit_project.html", project=project)
+
+
 
 
 @app.route("/project/<int:project_id>/materials", methods=["GET", "POST"])

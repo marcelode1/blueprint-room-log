@@ -20,9 +20,12 @@
     {% endif %}
 
     {% if is_main_admin() %}
-    <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');" style="margin-top:8px;">
-        <button type="submit" class="btn-danger">Delete Project</button>
-    </form>
+    <div class="desktop-only projectAdminActions">
+        <a class="btn-link btn-secondary projectSmallButton" href="{{ url_for('edit_project', project_id=project.id) }}">Edit Project</a>
+        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Delete this project and all rooms/comments? This cannot be undone.');">
+            <button type="submit" class="btn-danger projectSmallButton">Delete Project</button>
+        </form>
+    </div>
     {% endif %}
 </div>
 
@@ -199,6 +202,9 @@
 .miniDelete{background:#dc2626;color:white;border:0;border-radius:6px;padding:7px 10px;width:auto;min-height:auto}
 .deleteBox{display:none;background:#fff3cd;padding:10px;border-radius:8px;margin-top:8px}
 .confirmRow{display:flex;gap:8px;align-items:center}.confirmRow form{margin:0}
+.projectAdminActions{display:flex!important;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.projectAdminActions form{margin:0}
+.projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
 .mobileBlueprintNotice{display:none}
 @media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}}
 </style>

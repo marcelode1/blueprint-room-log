@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Edit Project</h2>
+    <form method="post">
+        <label>Project Name</label>
+        <input name="name" value="{{ project.name }}" required>
+        <label>Customer Name</label>
+        <input name="customer_name" value="{{ project.customer_name or '' }}">
+        <label>Customer Address</label>
+        <input name="customer_address" value="{{ project.customer_address or '' }}">
+        <label>Customer Phone</label>
+        <input name="customer_phone" value="{{ project.customer_phone or '' }}">
+        <label>Customer Email</label>
+        <input name="customer_email" type="email" value="{{ project.customer_email or '' }}">
+        <button type="submit">Save Project</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+    </form>
+</div>
+{% endblock %}
