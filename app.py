@@ -310,10 +310,13 @@ def init_db():
     CREATE TABLE IF NOT EXISTS login_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        project_id INTEGER,
+        task_id INTEGER,
         user_name TEXT,
         user_email TEXT,
         role TEXT,
         event_type TEXT NOT NULL DEFAULT 'login',
+        message TEXT,
         is_read BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TEXT NOT NULL
     )
@@ -464,7 +467,10 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
-        "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER, task_id INTEGER, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', message TEXT, is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS project_id INTEGER",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS task_id INTEGER",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -634,7 +640,7 @@ def admin_unread_count():
         return 0
     try:
         conn = db()
-        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
+        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')").fetchone()
         conn.close()
         return row["c"] if row else 0
     except Exception:
@@ -647,7 +653,7 @@ def unread_notification_count():
     try:
         conn = db()
         if session.get("role") == "admin":
-            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'login'").fetchone()
+            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')").fetchone()
         else:
             row = conn.execute(
                 "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
@@ -659,10 +665,14 @@ def unread_notification_count():
         return 0
 
 
-def add_notification(conn, user_id, user_name, user_email, role, event_type):
+def add_notification(conn, user_id, user_name, user_email, role, event_type, project_id=None, task_id=None, message=None):
     conn.execute(
-        "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-        (user_id, user_name, user_email, role, event_type, utc_now_iso())
+        """
+        INSERT INTO login_events
+        (user_id, project_id, task_id, user_name, user_email, role, event_type, message, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (user_id, project_id, task_id, user_name, user_email, role, event_type, message, utc_now_iso())
     )
 
 
@@ -825,7 +835,10 @@ def notify_admins_task_received(conn, task, actor):
         actor.get("name"),
         actor.get("email"),
         actor.get("role"),
-        "task_received"
+        "task_received",
+        task.get("project_id"),
+        task.get("id"),
+        f"{actor.get('name') or 'Worker'} confirmed task received: {task.get('title')}"
     )
     conn.commit()
     body = "\n".join([
@@ -2493,7 +2506,17 @@ def create_task(room_id):
             datetime.now().isoformat()
         )
     ).fetchone()
-    add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
+    add_notification(
+        conn,
+        assigned["id"],
+        assigned["name"],
+        assigned["email"],
+        assigned["role"],
+        "task_assigned",
+        task.get("project_id"),
+        task.get("id"),
+        f"New task assigned: {task.get('title')}"
+    )
     conn.commit()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     send_task_assignment_email(task, assigned, project)
@@ -2573,7 +2596,17 @@ def create_global_task():
                     utc_now_iso()
                 )
             ).fetchone()
-            add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
+            add_notification(
+                conn,
+                assigned["id"],
+                assigned["name"],
+                assigned["email"],
+                assigned["role"],
+                "task_assigned",
+                task.get("project_id"),
+                task.get("id"),
+                f"New task assigned: {task.get('title')}"
+            )
             created_tasks.append((task, assigned))
 
         conn.commit()
@@ -2651,7 +2684,10 @@ def complete_task(task_id):
         session.get("name"),
         "",
         session.get("role"),
-        "task_completed"
+        "task_completed",
+        task.get("project_id"),
+        task.get("id"),
+        f"Task completed: {task.get('title')}"
     )
     conn.commit()
     conn.close()
@@ -2692,6 +2728,14 @@ def receive_task(task_id):
 
     accepted_at = utc_now_iso()
     conn.execute("UPDATE tasks SET accepted_at = %s WHERE id = %s", (accepted_at, task_id))
+    conn.execute(
+        """
+        UPDATE login_events
+        SET is_read = TRUE
+        WHERE user_id = %s AND task_id = %s AND event_type = 'task_assigned'
+        """,
+        (session.get("user_id"), task_id)
+    )
     task["accepted_at"] = accepted_at
     actor = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
     notify_admins_task_received(conn, task, actor)
@@ -3065,7 +3109,7 @@ def notifications():
     conn = db()
     if request.method == "POST":
         if is_main_admin():
-            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type <> 'login'")
+            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')")
         else:
             conn.execute(
                 "UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
@@ -3074,10 +3118,30 @@ def notifications():
         conn.commit()
         flash("Notifications marked as read.")
     if is_main_admin():
-        events = conn.execute("SELECT * FROM login_events WHERE event_type <> 'login' ORDER BY created_at DESC LIMIT 100").fetchall()
+        events = conn.execute(
+            """
+            SELECT login_events.*, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
+                   tasks.status AS task_status, projects.name AS project_name
+            FROM login_events
+            LEFT JOIN tasks ON login_events.task_id = tasks.id
+            LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            WHERE login_events.event_type NOT IN ('login', 'task_assigned')
+            ORDER BY login_events.created_at DESC
+            LIMIT 100
+            """
+        ).fetchall()
     else:
         events = conn.execute(
-            "SELECT * FROM login_events WHERE user_id = %s AND event_type = 'task_assigned' ORDER BY created_at DESC LIMIT 100",
+            """
+            SELECT login_events.*, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
+                   tasks.status AS task_status, projects.name AS project_name
+            FROM login_events
+            LEFT JOIN tasks ON login_events.task_id = tasks.id
+            LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            WHERE login_events.user_id = %s AND login_events.event_type = 'task_assigned'
+            ORDER BY login_events.created_at DESC
+            LIMIT 100
+            """,
             (session.get("user_id"),)
         ).fetchall()
     conn.close()

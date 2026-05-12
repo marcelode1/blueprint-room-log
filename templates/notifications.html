@@ -8,7 +8,7 @@
     {% for e in events %}
         <div class="card" style="border-left:6px solid {% if e.is_read %}#64748b{% else %}#dc2626{% endif %};">
             {% if e.event_type == 'task_assigned' %}
-                <strong>Task assigned</strong> to {{ e.user_name or 'Unknown user' }}<br>
+                <strong>Task assigned</strong>{% if is_main_admin() %} to {{ e.user_name or 'Unknown user' }}{% endif %}<br>
             {% elif e.event_type == 'task_received' %}
                 <strong>Task received</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'task_completed' %}
@@ -26,7 +26,21 @@
             {% elif e.event_type == 'attendance_check_out' %}
                 <strong>Clock out</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% endif %}
+            {% if e.message %}<p>{{ e.message }}</p>{% endif %}
+            {% if e.task_title %}
+                <p><strong>Task:</strong> {{ e.task_title }}{% if e.project_name %}<br><strong>Project:</strong> {{ e.project_name }}{% endif %}</p>
+            {% endif %}
             <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</span>
+            {% if e.event_type == 'task_assigned' and e.task_id and not is_main_admin() %}
+                {% if not e.task_accepted_at %}
+                    <form method="post" action="{{ url_for('receive_task', task_id=e.task_id) }}">
+                        <button type="submit">Confirm Received</button>
+                    </form>
+                {% else %}
+                    <p class="muted">Confirmed {{ format_datetime(e.task_accepted_at) }}</p>
+                {% endif %}
+                <a class="btn-link btn-secondary" href="{{ url_for('my_tasks') }}#task-{{ e.task_id }}">Open Task</a>
+            {% endif %}
         </div>
     {% else %}
         <p>No notifications yet.</p>
