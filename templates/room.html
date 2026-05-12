@@ -58,9 +58,17 @@
     {% for t in tasks %}
         <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
-            <p class="muted">{{ t.task_date }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
+            <p class="muted">{{ format_date(t.task_start_date or t.task_date) }}{% if t.task_end_date %} to {{ format_date(t.task_end_date) }}{% endif %} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
+            {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
-            {% if t.status != 'done' and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+            {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
+            {% if t.task_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>{% endif %}
+            {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+            <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
+                <button type="submit">Received</button>
+            </form>
+            {% endif %}
+            {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
                 {% if t.require_picture or t.allow_picture_upload %}

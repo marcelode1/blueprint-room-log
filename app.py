@@ -365,13 +365,18 @@ def init_db():
         assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         task_date TEXT NOT NULL,
+        task_start_date TEXT,
+        task_end_date TEXT,
         title TEXT NOT NULL,
         instructions TEXT,
+        task_photo_file TEXT,
+        task_audio_file TEXT,
         require_picture BOOLEAN NOT NULL DEFAULT FALSE,
         allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE,
         allow_comment BOOLEAN NOT NULL DEFAULT TRUE,
         allow_audio BOOLEAN NOT NULL DEFAULT TRUE,
         status TEXT NOT NULL DEFAULT 'open',
+        accepted_at TEXT,
         completion_comment TEXT,
         completion_photo_file TEXT,
         completion_audio_file TEXT,
@@ -446,6 +451,11 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_start_date TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_end_date TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_photo_file TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_audio_file TEXT",
         "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
         "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
@@ -766,6 +776,72 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
     for admin in admin_email_rows(conn):
         if admin.get("email"):
             send_email(admin["email"], f"ProjectONus {label} - {actor_name or 'User'}", body)
+
+
+def task_email_body(task, assigned=None, project=None):
+    lines = [
+        "A task was assigned in ProjectONus.",
+        "",
+        f"Task: {task.get('title')}",
+        f"Project: {(project or task).get('project_name') or (project or task).get('name') or '-'}",
+        f"Assigned to: {(assigned or task).get('name') or task.get('assigned_user_name') or '-'}",
+        f"Start: {format_date(task.get('task_start_date') or task.get('task_date'))}",
+        f"End: {format_date(task.get('task_end_date') or task.get('task_date'))}",
+        "",
+    ]
+    if task.get("instructions"):
+        lines.extend(["Instructions:", task.get("instructions"), ""])
+    lines.extend([
+        f"Requires picture: {'Yes' if task.get('require_picture') else 'No'}",
+        f"Allows picture upload: {'Yes' if task.get('allow_picture_upload') else 'No'}",
+        f"Allows comment: {'Yes' if task.get('allow_comment') else 'No'}",
+        f"Allows voice/audio: {'Yes' if task.get('allow_audio') else 'No'}",
+        "",
+        "Open your ProjectONus app and press Received after you review the task.",
+        external_url("my_tasks")
+    ])
+    return "\n".join(lines)
+
+
+def send_task_assignment_email(task, assigned, project):
+    attachments = []
+    for path in [task.get("task_photo_file"), task.get("task_audio_file")]:
+        attachment = storage_attachment(path)
+        if attachment:
+            attachments.append(attachment)
+    if assigned.get("email"):
+        send_email(
+            assigned["email"],
+            f"ProjectONus task assigned - {task.get('title')}",
+            task_email_body(task, assigned, project),
+            attachments=attachments
+        )
+
+
+def notify_admins_task_received(conn, task, actor):
+    add_notification(
+        conn,
+        actor.get("id"),
+        actor.get("name"),
+        actor.get("email"),
+        actor.get("role"),
+        "task_received"
+    )
+    conn.commit()
+    body = "\n".join([
+        "A worker marked a task as received in ProjectONus.",
+        "",
+        f"Worker: {actor.get('name') or 'Unknown user'}",
+        f"Email: {actor.get('email') or '-'}",
+        f"Task: {task.get('title')}",
+        f"Project: {task.get('project_name') or '-'}",
+        f"Received: {format_datetime(task.get('accepted_at') or utc_now_iso())}",
+        "",
+        external_url("my_tasks")
+    ])
+    for admin in admin_email_rows(conn):
+        if admin.get("email"):
+            send_email(admin["email"], f"ProjectONus task received - {task.get('title')}", body)
 
 
 def can_add_notes():
@@ -2393,17 +2469,20 @@ def create_task(room_id):
         flash("That user does not have access to this project. Authorize the project in Settings first.")
         return redirect(url_for("room", room_id=room_id))
 
-    conn.execute(
+    task = conn.execute(
         """
         INSERT INTO tasks
-        (project_id, room_id, assigned_user_id, created_by, task_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
         """,
         (
             room["project_id"],
             room_id,
             assigned_user_id,
             session.get("user_id"),
+            request.form.get("task_date") or datetime.now().date().isoformat(),
+            request.form.get("task_date") or datetime.now().date().isoformat(),
             request.form.get("task_date") or datetime.now().date().isoformat(),
             title,
             request.form.get("instructions", "").strip(),
@@ -2413,12 +2492,101 @@ def create_task(room_id):
             "allow_audio" in request.form,
             datetime.now().isoformat()
         )
-    )
+    ).fetchone()
     add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
     conn.commit()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
+    send_task_assignment_email(task, assigned, project)
     conn.close()
     flash("Task assigned and user notified.")
     return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/tasks/create", methods=["GET", "POST"])
+@admin_required
+def create_global_task():
+    conn = db()
+    if request.method == "POST":
+        project_id = request.form.get("project_id", type=int)
+        user_ids = []
+        for value in request.form.getlist("user_ids"):
+            try:
+                user_ids.append(int(value))
+            except Exception:
+                pass
+        title = request.form.get("title", "").strip()
+        if not project_id or not user_ids or not title:
+            conn.close()
+            flash("Choose a project, at least one worker, and enter a task.")
+            return redirect(url_for("create_global_task"))
+
+        project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+        selected_ids = set(user_ids)
+        selected_users = [
+            u for u in conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+            if u["id"] in selected_ids
+        ]
+        if not project or not selected_users:
+            conn.close()
+            flash("Project or workers not found.")
+            return redirect(url_for("create_global_task"))
+
+        start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
+        end_date = request.form.get("task_end_date") or start_date
+        photo = request.files.get("task_photo")
+        audio = request.files.get("task_audio")
+        task_photo_file = upload_file_to_storage(photo) if photo and photo.filename and allowed_photo(photo.filename) else None
+        task_audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
+        created_tasks = []
+
+        for assigned in selected_users:
+            conn.execute(
+                """
+                INSERT INTO project_permissions (user_id, project_id, created_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, project_id) DO NOTHING
+                """,
+                (assigned["id"], project_id, utc_now_iso())
+            )
+            task = conn.execute(
+                """
+                INSERT INTO tasks
+                (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    project_id,
+                    assigned["id"],
+                    session.get("user_id"),
+                    start_date,
+                    start_date,
+                    end_date,
+                    title,
+                    request.form.get("instructions", "").strip(),
+                    task_photo_file,
+                    task_audio_file,
+                    "require_picture" in request.form,
+                    "allow_picture_upload" in request.form,
+                    "allow_comment" in request.form,
+                    "allow_audio" in request.form,
+                    utc_now_iso()
+                )
+            ).fetchone()
+            add_notification(conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"], "task_assigned")
+            created_tasks.append((task, assigned))
+
+        conn.commit()
+        for task, assigned in created_tasks:
+            send_task_assignment_email(task, assigned, project)
+        conn.close()
+        flash(f"Task sent to {len(created_tasks)} worker(s).")
+        return redirect(url_for("my_tasks"))
+
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    conn.close()
+    return render_template("create_task.html", projects=projects, users=users)
 
 
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
@@ -2429,7 +2597,7 @@ def complete_task(task_id):
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
         FROM tasks
-        JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN users ON tasks.assigned_user_id = users.id
         WHERE tasks.id = %s
@@ -2447,7 +2615,9 @@ def complete_task(task_id):
     if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
         conn.close()
         flash("This task is assigned to another user.")
-        return redirect(url_for("room", room_id=task["room_id"]))
+        if task.get("room_id"):
+            return redirect(url_for("room", room_id=task["room_id"]))
+        return redirect(url_for("my_tasks"))
 
     file = request.files.get("completion_photo") or request.files.get("completion_camera")
     audio = request.files.get("completion_audio")
@@ -2455,7 +2625,9 @@ def complete_task(task_id):
     if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
         conn.close()
         flash("This task requires a picture before it can be completed.")
-        return redirect(url_for("room", room_id=task["room_id"]))
+        if task.get("room_id"):
+            return redirect(url_for("room", room_id=task["room_id"]))
+        return redirect(url_for("my_tasks"))
 
     photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else task.get("completion_photo_file")
     audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else task.get("completion_audio_file")
@@ -2484,9 +2656,52 @@ def complete_task(task_id):
     conn.commit()
     conn.close()
     flash("Task marked done. Admin was notified.")
-    if "/mobile/" in (request.referrer or ""):
+    if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
-    return redirect(url_for("room", room_id=task["room_id"]))
+    if task.get("room_id"):
+        return redirect(url_for("room", room_id=task["room_id"]))
+    return redirect(url_for("my_tasks"))
+
+
+@app.route("/tasks/<int:task_id>/received", methods=["POST"])
+@login_required
+def receive_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, projects.name AS project_name, users.name AS assigned_user_name
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("my_tasks"))
+    if task.get("accepted_at"):
+        conn.close()
+        flash("Task was already marked received.")
+        return redirect(url_for("my_tasks"))
+
+    accepted_at = utc_now_iso()
+    conn.execute("UPDATE tasks SET accepted_at = %s WHERE id = %s", (accepted_at, task_id))
+    task["accepted_at"] = accepted_at
+    actor = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
+    notify_admins_task_received(conn, task, actor)
+    conn.close()
+    flash("Task marked received. Admin was notified.")
+    if task.get("room_id") and "/mobile/" in (request.referrer or ""):
+        return redirect(url_for("mobile_room", room_id=task["room_id"]))
+    if task.get("room_id"):
+        return redirect(url_for("room", room_id=task["room_id"]))
+    return redirect(url_for("my_tasks"))
 
 
 @app.route("/tasks")
@@ -2902,7 +3117,7 @@ def backup():
 
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes", "material_inventory", "attendance_events", "worker_location_pings", "user_permissions", "project_permissions"]:
+    for table in ["users", "projects", "rooms", "notes", "tasks", "material_inventory", "attendance_events", "worker_location_pings", "user_permissions", "project_permissions"]:
         tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
 
     projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
@@ -2960,10 +3175,12 @@ def storage_file(storage_path):
         UNION
         SELECT project_id FROM material_inventory WHERE picture_file = %s
         UNION
-        SELECT project_id FROM tasks WHERE completion_photo_file = %s OR completion_audio_file = %s
+        SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
         LIMIT 1
         """,
         (
+            storage_path,
+            storage_path,
             storage_path,
             storage_path,
             storage_path,

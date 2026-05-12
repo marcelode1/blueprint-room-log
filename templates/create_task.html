@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Create a Task</h2>
+    <p class="muted">Choose a project, select one or more workers, and send task details to their app and email.</p>
+</div>
+
+<div class="card">
+    <form method="post" enctype="multipart/form-data">
+        <label>Project</label>
+        <select name="project_id" required>
+            <option value="">Choose project</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <h3>Workers</h3>
+        <div class="workerList">
+            {% for u in users %}
+                <label><input type="checkbox" name="user_ids" value="{{ u.id }}"> {{ u.name }} - {{ u.email }}</label>
+            {% else %}
+                <p>No workers found. Create users first.</p>
+            {% endfor %}
+        </div>
+
+        <div class="grid">
+            <div>
+                <label>Start Date</label>
+                <input name="task_start_date" type="date" required>
+            </div>
+            <div>
+                <label>End Date</label>
+                <input name="task_end_date" type="date">
+            </div>
+        </div>
+
+        <label>Task</label>
+        <input name="title" placeholder="Task title" required>
+        <label>Task Information / Instructions</label>
+        <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+
+        <div class="grid">
+            <div>
+                <label>Task Picture</label>
+                <input name="task_photo" type="file" accept="image/*">
+            </div>
+            <div>
+                <label>Task Audio</label>
+                <input name="task_audio" type="file" accept="audio/*">
+            </div>
+        </div>
+
+        <div class="grid taskOptions">
+            <label><input type="checkbox" name="require_picture"> Worker must take picture</label>
+            <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
+            <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
+            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
+        </div>
+        <button type="submit">Save Task</button>
+    </form>
+</div>
+
+<style>
+.workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
+.workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+.workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
+</style>
+{% endblock %}

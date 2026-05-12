@@ -9,6 +9,8 @@
         <div class="card" style="border-left:6px solid {% if e.is_read %}#64748b{% else %}#dc2626{% endif %};">
             {% if e.event_type == 'task_assigned' %}
                 <strong>Task assigned</strong> to {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'task_received' %}
+                <strong>Task received</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'task_completed' %}
                 <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'field_comment_added' %}

@@ -29,12 +29,13 @@
         {% if session.get("user_id") %}
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            <a href="{{ url_for('notifications') }}" title="Notifications">Notifications{% if unread_notification_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ unread_notification_count() }}</span>{% endif %}</a>
             {% if is_main_admin() %}
                 <a href="{{ url_for('users') }}">Users</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
-                <a href="{{ url_for('notifications') }}" title="Notifications">Notifications{% if admin_unread_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ admin_unread_count() }}</span>{% endif %}</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
             {% endif %}
             <a href="{{ url_for('privacy') }}">Privacy</a>
@@ -50,9 +51,10 @@
 {% if session.get("user_id") %}
 <nav class="bottom-nav">
     <a href="{{ url_for('index') }}">Projects</a>
+    <a href="{{ url_for('my_tasks') }}">Tasks</a>
+    <a href="{{ url_for('notifications') }}">Alerts{% if unread_notification_count() %} ({{ unread_notification_count() }}){% endif %}</a>
     {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
     {% if is_main_admin() %}<a href="{{ url_for('team_map') }}">Team</a>{% endif %}
-    <a href="{{ url_for('privacy') }}">Privacy</a>
     <a href="{{ url_for('logout') }}">Logout</a>
 </nav>
 {% endif %}
