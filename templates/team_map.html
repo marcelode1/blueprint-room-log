@@ -1,72 +1,113 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="card">
-    <h2>Where Is My Team</h2>
-    <p class="muted" id="teamStatus">Loading team locations...</p>
-</div>
-
-<div class="card">
+<!doctype html>
+<html>
+<head>
+    <title>Where Is My Team - ProjectONus</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <style>
+        :root{--bg:#f6f8fb;--card:#fff;--text:#172033;--muted:#64748b;--primary:#2563eb;--border:#d7dee9;--shadow:0 6px 22px rgba(15,23,42,.08)}
+        *{box-sizing:border-box}
+        body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text)}
+        header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+        header a{color:white;text-decoration:none;font-weight:700;margin-left:12px}
+        main{padding:20px;max-width:1240px;margin:auto}
+        .brand{font-weight:900}
+        .card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
+        .muted{color:var(--muted)}
+        .btn{min-height:44px;background:var(--primary);color:white;border:0;border-radius:12px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:10px 16px;margin:6px 0}
         #teamMap{width:100%;height:620px;border:1px solid var(--border);border-radius:12px;background:white}
         .teamList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:14px}
         .teamPerson{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)}
-        @media(max-width:760px){#teamMap{height:520px}}
+        @media(max-width:760px){main{padding:12px}.card{padding:16px;border-radius:16px}#teamMap{height:520px}.btn{width:100%}}
     </style>
-    <div id="teamMap"></div>
-    <div class="teamList" id="teamList"></div>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script>
-    const teamMap=L.map("teamMap").setView([39.5,-98.35],4);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(teamMap);
-    const markers=new Map();
-    const teamStatus=document.getElementById("teamStatus");
-    const teamList=document.getElementById("teamList");
+</head>
+<body>
+<header>
+    <div class="brand">ProjectONus</div>
+    <div>
+        <a href="/">Home</a>
+        <a href="/attendance/report">Time Report</a>
+        <a href="/logout">Logout</a>
+    </div>
+</header>
+<main>
+    <div class="card">
+        <h2>Where Is My Team</h2>
+        <p class="muted" id="teamStatus">Loading team locations...</p>
+        <button type="button" class="btn" onclick="loadTeam(true)">Refresh</button>
+    </div>
 
-    function markerHtml(worker){
-        const accuracy=worker.accuracy?`<br>Accuracy: ${Math.round(worker.accuracy)} m`:"";
-        return `<strong>${worker.name}</strong><br>${worker.project_name}<br>${worker.source}<br>Clock in: ${worker.clock_in_time}<br>Last seen: ${worker.last_seen}${accuracy}<br>${worker.address||""}`;
-    }
+    <div class="card">
+        <div id="teamMap"></div>
+        <div class="teamList" id="teamList"></div>
+    </div>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const teamMap=L.map("teamMap").setView([39.5,-98.35],4);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(teamMap);
+const markers=new Map();
+const teamStatus=document.getElementById("teamStatus");
+const teamList=document.getElementById("teamList");
 
-    function listHtml(worker){
-        return `<div class="teamPerson"><strong>${worker.name}</strong><br><span class="muted">${worker.email||""}</span><p>${worker.project_name}</p><p>${worker.source}: ${worker.last_seen}</p>${worker.address?`<p>${worker.address}</p>`:""}</div>`;
-    }
+function escapeHtml(value){
+    return String(value||"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+}
 
-    async function loadTeam(){
-        try{
-            const res=await fetch("{{ url_for('team_map_data') }}",{cache:"no-store"});
-            const data=await res.json();
-            const workers=data.workers||[];
-            const seen=new Set();
-            teamStatus.textContent=workers.length?`${workers.length} active worker(s). Last refresh ${data.updated_at}.`:"No active clocked-in workers.";
-            teamList.innerHTML=workers.map(listHtml).join("");
-            const bounds=[];
-            workers.forEach(worker=>{
-                seen.add(String(worker.user_id));
-                const pos=[worker.latitude,worker.longitude];
-                bounds.push(pos);
-                if(!markers.has(String(worker.user_id))){
-                    markers.set(String(worker.user_id),L.marker(pos).addTo(teamMap));
-                }else{
-                    markers.get(String(worker.user_id)).setLatLng(pos);
-                }
-                markers.get(String(worker.user_id)).bindPopup(markerHtml(worker));
-            });
-            for(const [id,marker] of markers.entries()){
-                if(!seen.has(id)){
-                    teamMap.removeLayer(marker);
-                    markers.delete(id);
-                }
-            }
-            if(bounds.length){
-                teamMap.fitBounds(bounds,{padding:[40,40],maxZoom:16});
-            }
-        }catch(e){
-            teamStatus.textContent="Could not load team locations.";
+function markerHtml(worker){
+    const accuracy=worker.accuracy?`<br>Accuracy: ${Math.round(worker.accuracy)} m`:"";
+    return `<strong>${escapeHtml(worker.name)}</strong><br>${escapeHtml(worker.project_name)}<br>${escapeHtml(worker.source)}<br>Clock in: ${escapeHtml(worker.clock_in_time)}<br>Last seen: ${escapeHtml(worker.last_seen)}${accuracy}<br>${escapeHtml(worker.address)}`;
+}
+
+function listHtml(worker){
+    const address=worker.address?`<p>${escapeHtml(worker.address)}</p>`:"";
+    return `<div class="teamPerson"><strong>${escapeHtml(worker.name)}</strong><br><span class="muted">${escapeHtml(worker.email)}</span><p>${escapeHtml(worker.project_name)}</p><p>${escapeHtml(worker.source)}: ${escapeHtml(worker.last_seen)}</p>${address}</div>`;
+}
+
+async function loadTeam(forceFit){
+    try{
+        const res=await fetch("/team-map/data",{cache:"no-store"});
+        if(!res.ok){
+            teamStatus.textContent="Team locations are temporarily unavailable.";
+            return;
         }
+        const data=await res.json();
+        if(data.error){
+            teamStatus.textContent=data.error;
+            teamList.innerHTML="";
+            return;
+        }
+        const workers=data.workers||[];
+        const seen=new Set();
+        teamStatus.textContent=workers.length?`${workers.length} active worker(s). Last refresh ${data.updated_at}.`:"No active clocked-in workers.";
+        teamList.innerHTML=workers.map(listHtml).join("");
+        const bounds=[];
+        workers.forEach(worker=>{
+            seen.add(String(worker.user_id));
+            const pos=[worker.latitude,worker.longitude];
+            bounds.push(pos);
+            if(!markers.has(String(worker.user_id))){
+                markers.set(String(worker.user_id),L.marker(pos).addTo(teamMap));
+            }else{
+                markers.get(String(worker.user_id)).setLatLng(pos);
+            }
+            markers.get(String(worker.user_id)).bindPopup(markerHtml(worker));
+        });
+        for(const [id,marker] of markers.entries()){
+            if(!seen.has(id)){
+                teamMap.removeLayer(marker);
+                markers.delete(id);
+            }
+        }
+        if(bounds.length && (forceFit || markers.size===workers.length)){
+            teamMap.fitBounds(bounds,{padding:[40,40],maxZoom:16});
+        }
+    }catch(e){
+        teamStatus.textContent="Could not load team locations.";
     }
-    loadTeam();
-    setInterval(loadTeam,30000);
-    </script>
-</div>
-{% endblock %}
+}
+loadTeam(true);
+setInterval(()=>loadTeam(false),30000);
+</script>
+</body>
+</html>

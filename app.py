@@ -1019,7 +1019,26 @@ def current_clock_in_event(conn, user_id=None):
     return None
 
 
+def ensure_worker_location_tables(conn):
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS worker_location_pings (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        accuracy REAL,
+        address TEXT,
+        event_timezone TEXT,
+        created_at TEXT NOT NULL
+    )
+    """)
+    conn.commit()
+
+
 def active_worker_locations(conn):
+    ensure_worker_location_tables(conn)
     latest_events = conn.execute(
         """
         SELECT DISTINCT ON (attendance_events.user_id)
@@ -1251,6 +1270,12 @@ def mobile_location_ping():
         longitude,
         data.get("event_timezone") or event_timezone_name(event)
     )
+    try:
+        ensure_worker_location_tables(conn)
+    except Exception as e:
+        print("Worker location table setup failed:", e)
+        conn.close()
+        return {"ok": False, "active": True, "message": "Location tracking table is not ready."}, 200
     conn.execute(
         """
         INSERT INTO worker_location_pings
@@ -2500,16 +2525,44 @@ def my_tasks():
 @app.route("/team-map")
 @admin_required
 def team_map():
-    return render_template("team_map.html")
+    try:
+        return render_template("team_map.html")
+    except Exception as e:
+        print("Team map page failed:", e)
+        return Response(
+            """
+            <!doctype html>
+            <html>
+            <head><title>Where Is My Team - ProjectONus</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family:Arial,sans-serif;padding:20px;">
+                <h1>Where Is My Team</h1>
+                <p>The map page could not load its template, but the team data service is available below.</p>
+                <p><a href="/">Home</a> | <a href="/team-map/data">Open Team Data</a></p>
+            </body>
+            </html>
+            """,
+            mimetype="text/html"
+        )
 
 
 @app.route("/team-map/data")
 @admin_required
 def team_map_data():
-    conn = db()
-    workers = active_worker_locations(conn)
-    conn.close()
-    return {"workers": workers, "updated_at": format_datetime(utc_now_iso())}
+    conn = None
+    try:
+        conn = db()
+        workers = active_worker_locations(conn)
+        return {"workers": workers, "updated_at": format_datetime(utc_now_iso()), "error": ""}
+    except Exception as e:
+        print("Team map data failed:", e)
+        return {
+            "workers": [],
+            "updated_at": format_datetime(utc_now_iso()),
+            "error": "Team locations are temporarily unavailable while the database finishes updating."
+        }
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.route("/attendance/report")
