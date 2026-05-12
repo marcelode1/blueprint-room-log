@@ -2,7 +2,8 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl
 import psycopg
 from psycopg.rows import dict_row
@@ -12,6 +13,11 @@ try:
     import fitz
 except Exception:
     fitz = None
+
+try:
+    from timezonefinder import TimezoneFinder
+except Exception:
+    TimezoneFinder = None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "CHANGE_THIS_SECRET_KEY")
@@ -28,6 +34,20 @@ SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME or "no-reply@projectonus.app")
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
+APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
+TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
+
+COMMON_TIMEZONES = [
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Phoenix",
+    "America/Los_Angeles",
+    "America/Anchorage",
+    "Pacific/Honolulu",
+    "America/Puerto_Rico",
+    "UTC",
+]
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
@@ -369,6 +389,7 @@ def init_db():
         latitude REAL,
         longitude REAL,
         address TEXT,
+        event_timezone TEXT,
         created_at TEXT NOT NULL
     )
     """)
@@ -400,8 +421,9 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
-        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
+        "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
@@ -602,7 +624,7 @@ def unread_notification_count():
 def add_notification(conn, user_id, user_name, user_email, role, event_type):
     conn.execute(
         "INSERT INTO login_events (user_id, user_name, user_email, role, event_type, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-        (user_id, user_name, user_email, role, event_type, datetime.now().isoformat())
+        (user_id, user_name, user_email, role, event_type, utc_now_iso())
     )
 
 
@@ -686,7 +708,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
             send_email(admin["email"], subject, body, attachments=attachments)
 
 
-def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at):
+def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at, event_timezone):
     actor = conn.execute(
         "SELECT name, email, role FROM users WHERE id = %s",
         (session.get("user_id"),)
@@ -706,8 +728,9 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
         f"Project: {project.get('name') if project else '-'}",
         f"User: {actor_name or 'Unknown user'}",
         f"Email: {actor_email or '-'}",
-        f"Time: {format_time(created_at)}",
-        f"Date: {format_date(created_at)}",
+        f"Time: {format_time(created_at, event_timezone)}",
+        f"Date: {format_date(created_at, event_timezone)}",
+        f"Time Zone: {event_timezone}",
         f"Location: {address or '-'}",
         f"GPS: {latitude}, {longitude}",
         f"Map: {maps_url}",
@@ -761,35 +784,135 @@ def fetch_visible_projects(conn, q=""):
     ).fetchall()
 
 
-def parse_iso_datetime(value):
+def zoneinfo_or_none(name):
+    if not name:
+        return None
     try:
-        return datetime.fromisoformat(value)
+        return ZoneInfo(name)
     except Exception:
         return None
 
 
-def format_time(value):
+def app_timezone():
+    return zoneinfo_or_none(APP_TIMEZONE) or timezone(timedelta(hours=-4), "America/New_York")
+
+
+def clean_timezone_name(name):
+    name = (name or "").strip()
+    if name and (zoneinfo_or_none(name) or "/" in name or name == "UTC"):
+        return name
+    return APP_TIMEZONE
+
+
+def timezone_for_name(name):
+    return zoneinfo_or_none(clean_timezone_name(name)) or app_timezone()
+
+
+def timezone_from_location(latitude, longitude, fallback=None):
+    fallback = clean_timezone_name(fallback or APP_TIMEZONE)
+    if TIMEZONE_FINDER is None:
+        return fallback
+    try:
+        lat = float(latitude)
+        lon = float(longitude)
+        found = TIMEZONE_FINDER.timezone_at(lat=lat, lng=lon)
+        if not found:
+            found = TIMEZONE_FINDER.closest_timezone_at(lat=lat, lng=lon)
+        return clean_timezone_name(found or fallback)
+    except Exception:
+        return fallback
+
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+
+def local_now():
+    return datetime.now(timezone.utc).astimezone(app_timezone())
+
+
+def parse_iso_datetime(value):
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value or "").strip()
+        if not text or ("T" not in text and " " not in text):
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except Exception:
+            return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def local_datetime(value, timezone_name=None):
     dt = parse_iso_datetime(value)
+    if not dt:
+        return None
+    return dt.astimezone(timezone_for_name(timezone_name) if timezone_name else app_timezone())
+
+
+def storage_datetime(value, timezone_name=None):
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone_for_name(timezone_name) if timezone_name else app_timezone())
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def local_date_text(value):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except Exception:
+        return None
+
+
+def format_time(value, timezone_name=None):
+    dt = local_datetime(value, timezone_name)
     if not dt:
         return value or "-"
     return dt.strftime("%I:%M%p").lstrip("0")
 
 
-def format_date(value):
-    dt = parse_iso_datetime(value)
+def format_date(value, timezone_name=None):
+    date_text = local_date_text(value)
+    if date_text:
+        return date_text
+    dt = local_datetime(value, timezone_name)
     if dt:
         return dt.strftime("%m/%d/%Y")
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").strftime("%m/%d/%Y")
-    except Exception:
-        return value or "-"
+    return value or "-"
 
 
-def format_datetime(value):
-    dt = parse_iso_datetime(value)
+def format_datetime(value, timezone_name=None):
+    dt = local_datetime(value, timezone_name)
     if not dt:
         return value or "-"
     return f"{dt.strftime('%m/%d/%Y')} {dt.strftime('%I:%M%p').lstrip('0')}"
+
+
+def event_timezone_name(event):
+    if not event:
+        return APP_TIMEZONE
+    saved = (event.get("event_timezone") or "").strip()
+    if saved:
+        return clean_timezone_name(saved)
+    return timezone_from_location(event.get("latitude"), event.get("longitude"), APP_TIMEZONE)
+
+
+def format_event_time(event):
+    return format_time(event.get("created_at") if event else None, event_timezone_name(event))
+
+
+def format_event_date(event):
+    return format_date(event.get("created_at") if event else None, event_timezone_name(event))
+
+
+def format_event_datetime(event):
+    return format_datetime(event.get("created_at") if event else None, event_timezone_name(event))
 
 
 def duration_text(start_value, end_value):
@@ -815,11 +938,12 @@ def duration_minutes(start_value, end_value):
     return int((end - start).total_seconds() // 60)
 
 
-def attendance_range(period, selected_date):
+def attendance_range(period, selected_date, tzinfo=None):
+    tzinfo = tzinfo or app_timezone()
     try:
-        base = datetime.strptime(selected_date, "%Y-%m-%d")
+        base = datetime.strptime(selected_date, "%Y-%m-%d").replace(tzinfo=tzinfo)
     except Exception:
-        base = datetime.now()
+        base = local_now().replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "week":
         start = base - timedelta(days=base.weekday())
         end = start + timedelta(days=7)
@@ -834,6 +958,13 @@ def attendance_range(period, selected_date):
         end = start + timedelta(days=1)
         period = "day"
     return period, start, end
+
+
+def attendance_event_in_range(event, period, selected_date):
+    tzinfo = timezone_for_name(event_timezone_name(event))
+    period, start, end = attendance_range(period, selected_date, tzinfo)
+    event_dt = local_datetime(event.get("created_at"), event_timezone_name(event))
+    return bool(event_dt and start <= event_dt < end)
 
 
 def build_attendance_pairs(events):
@@ -866,6 +997,10 @@ def utility_processor():
         format_time=format_time,
         format_date=format_date,
         format_datetime=format_datetime,
+        format_event_time=format_event_time,
+        format_event_date=format_event_date,
+        format_event_datetime=format_event_datetime,
+        event_timezone_name=event_timezone_name,
         admin_unread_count=admin_unread_count,
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
@@ -938,12 +1073,17 @@ def mobile_time_clock(project_id):
             flash("GPS location is required. Turn on Location Services/GPS and try again.")
             return redirect(url_for("mobile_time_clock", project_id=project_id))
         address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
-        created_at = datetime.now().isoformat()
-        conn.execute(
-            "INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (session.get("user_id"), project_id, event_type, latitude, longitude, address, created_at)
+        event_timezone = timezone_from_location(
+            latitude,
+            longitude,
+            request.form.get("event_timezone") or APP_TIMEZONE
         )
-        notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at)
+        created_at = utc_now_iso()
+        conn.execute(
+            "INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, event_timezone, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (session.get("user_id"), project_id, event_type, latitude, longitude, address, event_timezone, created_at)
+        )
+        notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at, event_timezone)
         conn.close()
         flash(("Clock in" if event_type == "check_in" else "Clock out") + " recorded.")
         return redirect(url_for("mobile_time_clock", project_id=project_id))
@@ -2070,7 +2210,7 @@ def my_tasks():
 @admin_required
 def attendance_report():
     period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or datetime.now().date().isoformat()
+    selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_user_id = request.args.get("user_id", type=int)
     period, start, end = attendance_range(period, selected_date)
 
@@ -2083,13 +2223,17 @@ def attendance_report():
         LEFT JOIN projects ON attendance_events.project_id = projects.id
         WHERE attendance_events.created_at >= %s AND attendance_events.created_at < %s
     """
-    params = [start.isoformat(), end.isoformat()]
+    params = [
+        storage_datetime(start - timedelta(days=1)).isoformat(),
+        storage_datetime(end + timedelta(days=1)).isoformat()
+    ]
     if selected_user_id:
         query += " AND attendance_events.user_id = %s"
         params.append(selected_user_id)
     query += " ORDER BY attendance_events.user_id, attendance_events.project_id, attendance_events.created_at"
     events = conn.execute(query, tuple(params)).fetchall()
     conn.close()
+    events = [e for e in events if attendance_event_in_range(e, period, selected_date)]
     pairs = build_attendance_pairs(events)
     summary = {}
     for p in pairs:
@@ -2119,6 +2263,117 @@ def attendance_report():
         minutes_text=minutes_text,
         format_time=format_time,
         format_date=format_date
+    )
+
+
+@app.route("/attendance/<int:event_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_attendance_event(event_id):
+    conn = db()
+    event = conn.execute(
+        """
+        SELECT attendance_events.*, users.name AS user_name, users.email AS user_email, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN users ON attendance_events.user_id = users.id
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.id = %s
+        """,
+        (event_id,)
+    ).fetchone()
+    if not event:
+        conn.close()
+        flash("Clock record not found.")
+        return redirect(url_for("attendance_report"))
+
+    return_url = request.values.get("return_url", "")
+    if not return_url.startswith("/attendance/report"):
+        return_url = url_for("attendance_report", date=local_now().date().isoformat())
+
+    if request.method == "POST":
+        event_type = request.form.get("event_type", "")
+        if event_type not in ["check_in", "check_out"]:
+            conn.close()
+            flash("Choose Clock In or Clock Out.")
+            return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+
+        user_id = request.form.get("user_id", type=int)
+        project_id = request.form.get("project_id", type=int)
+        if not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
+            conn.close()
+            flash("Choose a valid user.")
+            return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+        if not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
+            conn.close()
+            flash("Choose a valid project.")
+            return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+
+        latitude = None
+        longitude = None
+        try:
+            lat_text = request.form.get("latitude", "").strip()
+            lon_text = request.form.get("longitude", "").strip()
+            latitude = float(lat_text) if lat_text else None
+            longitude = float(lon_text) if lon_text else None
+        except Exception:
+            conn.close()
+            flash("GPS latitude and longitude must be numbers.")
+            return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+
+        event_timezone = request.form.get("event_timezone", "").strip()
+        if latitude is not None and longitude is not None:
+            event_timezone = timezone_from_location(latitude, longitude, event_timezone or APP_TIMEZONE)
+        else:
+            event_timezone = clean_timezone_name(event_timezone or event_timezone_name(event))
+
+        try:
+            local_value = datetime.strptime(
+                request.form.get("event_date", "") + " " + request.form.get("event_time", ""),
+                "%Y-%m-%d %H:%M"
+            )
+            created_at = storage_datetime(local_value, event_timezone).isoformat()
+        except Exception:
+            conn.close()
+            flash("Enter a valid date and time.")
+            return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+
+        conn.execute(
+            """
+            UPDATE attendance_events
+            SET user_id = %s, project_id = %s, event_type = %s, latitude = %s, longitude = %s, address = %s, event_timezone = %s, created_at = %s
+            WHERE id = %s
+            """,
+            (
+                user_id,
+                project_id,
+                event_type,
+                latitude,
+                longitude,
+                request.form.get("address", "").strip(),
+                event_timezone,
+                created_at,
+                event_id
+            )
+        )
+        conn.commit()
+        conn.close()
+        flash("Clock record updated.")
+        return redirect(return_url)
+
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    conn.close()
+    selected_timezone = event_timezone_name(event)
+    event_dt = local_datetime(event.get("created_at"), selected_timezone) or local_now()
+    return render_template(
+        "edit_attendance.html",
+        event=event,
+        users=users,
+        projects=projects,
+        selected_timezone=selected_timezone,
+        event_date=event_dt.date().isoformat(),
+        event_time=event_dt.strftime("%H:%M"),
+        common_timezones=COMMON_TIMEZONES,
+        return_url=return_url
     )
 
 

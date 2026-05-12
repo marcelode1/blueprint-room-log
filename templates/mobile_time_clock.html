@@ -20,6 +20,7 @@
         <input type="hidden" name="latitude" id="latitude">
         <input type="hidden" name="longitude" id="longitude">
         <input type="hidden" name="address" id="address">
+        <input type="hidden" name="event_timezone" id="eventTimezone">
         <button type="submit" id="confirmBtn" disabled>Confirm Location</button>
     </form>
 </div>
@@ -30,7 +31,8 @@
         <div class="card">
             <strong>{% if e.event_type == 'check_in' %}Clock In{% else %}Clock Out{% endif %}</strong>
             <p class="muted">{{ e.project_name or project.name }}</p>
-            <p>{{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</p>
+            <p>{{ format_event_date(e) }} {{ format_event_time(e) }}</p>
+            <p class="muted">{{ event_timezone_name(e) }}</p>
             <p>{{ e.address or '-' }}</p>
             {% if e.latitude and e.longitude %}
                 <a class="btn-link btn-secondary" target="_blank" href="https://www.google.com/maps?q={{ e.latitude }},{{ e.longitude }}">Open Map</a>
@@ -54,6 +56,7 @@ const eventType=document.getElementById("eventType");
 const latitude=document.getElementById("latitude");
 const longitude=document.getElementById("longitude");
 const address=document.getElementById("address");
+const eventTimezone=document.getElementById("eventTimezone");
 
 function startLocation(type){
     eventType.value=type;
@@ -62,6 +65,7 @@ function startLocation(type){
     latitude.value="";
     longitude.value="";
     address.value="";
+    eventTimezone.value="";
     mapFrame.removeAttribute("src");
     locationCard.style.display="block";
     locationTitle.textContent=type==="check_in"?"Confirm Clock In Location":"Confirm Clock Out Location";
@@ -76,6 +80,7 @@ function startLocation(type){
         const lon=pos.coords.longitude;
         latitude.value=lat;
         longitude.value=lon;
+        try{eventTimezone.value=Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch(e){}
         const pad=.003;
         mapFrame.src=`https://www.openstreetmap.org/export/embed.html?bbox=${lon-pad},${lat-pad},${lon+pad},${lat+pad}&layer=mapnik&marker=${lat},${lon}`;
         let label=`${lat.toFixed(6)}, ${lon.toFixed(6)}`;
