@@ -3185,15 +3185,72 @@ def edit_note(note_id):
 @app.route("/backup")
 @admin_required
 def backup():
-
     conn = db()
     tables = {}
-    for table in ["users", "projects", "rooms", "notes", "tasks", "material_inventory", "attendance_events", "worker_location_pings", "user_permissions", "project_permissions"]:
-        tables[f"{table}.json"] = json.dumps(conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall(), indent=2, default=str)
+    backup_warnings = []
+    backup_tables = [
+        ("users", "id"),
+        ("projects", "id"),
+        ("project_blueprints", "id"),
+        ("rooms", "id"),
+        ("notes", "id"),
+        ("tasks", "id"),
+        ("material_inventory", "id"),
+        ("attendance_events", "id"),
+        ("worker_location_pings", "id"),
+        ("login_events", "id"),
+        ("user_permissions", "user_id"),
+        ("project_permissions", "user_id, project_id"),
+        ("app_settings", "key"),
+        ("push_subscriptions", "id"),
+    ]
+    for table, order_by in backup_tables:
+        try:
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY {order_by}").fetchall()
+            tables[f"{table}.json"] = json.dumps([dict(row) for row in rows], indent=2, default=str)
+        except Exception as e:
+            conn.rollback()
+            backup_warnings.append(f"{table}.json could not be exported: {e}")
 
-    projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
-    notes = conn.execute("SELECT photo_file, audio_file FROM notes WHERE photo_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
-    material_pictures = conn.execute("SELECT picture_file FROM material_inventory WHERE picture_file IS NOT NULL").fetchall()
+    try:
+        projects = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM projects").fetchall()
+    except Exception as e:
+        conn.rollback()
+        projects = []
+        backup_warnings.append(f"Project blueprint files could not be listed: {e}")
+    try:
+        project_blueprints = conn.execute("SELECT blueprint_file, blueprint_preview_file FROM project_blueprints").fetchall()
+    except Exception as e:
+        conn.rollback()
+        project_blueprints = []
+        backup_warnings.append(f"Blueprint sheet files could not be listed: {e}")
+    try:
+        notes = conn.execute("SELECT photo_file, audio_file FROM notes WHERE photo_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
+    except Exception as e:
+        conn.rollback()
+        notes = []
+        backup_warnings.append(f"Note files could not be listed: {e}")
+    try:
+        material_pictures = conn.execute("SELECT picture_file FROM material_inventory WHERE picture_file IS NOT NULL").fetchall()
+    except Exception as e:
+        conn.rollback()
+        material_pictures = []
+        backup_warnings.append(f"Material pictures could not be listed: {e}")
+    try:
+        task_files = conn.execute(
+            """
+            SELECT task_photo_file, task_audio_file, completion_photo_file, completion_audio_file
+            FROM tasks
+            WHERE task_photo_file IS NOT NULL
+               OR task_audio_file IS NOT NULL
+               OR completion_photo_file IS NOT NULL
+               OR completion_audio_file IS NOT NULL
+            """
+        ).fetchall()
+    except Exception as e:
+        conn.rollback()
+        task_files = []
+        backup_warnings.append(f"Task files could not be listed: {e}")
     conn.close()
 
     backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -3202,27 +3259,35 @@ def backup():
     with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED) as z:
         for filename, content in tables.items():
             z.writestr(filename, content)
-        for p in projects:
+
+        def add_storage_file(storage_path, folder):
+            if not storage_path:
+                return
+            try:
+                data = download_storage_file(storage_path)
+                if data:
+                    z.writestr(f"{folder}/{os.path.basename(storage_path)}", data)
+                else:
+                    backup_warnings.append(f"{storage_path} could not be downloaded from storage.")
+            except Exception as e:
+                backup_warnings.append(f"{storage_path} could not be added to backup: {e}")
+
+        for p in list(projects) + list(project_blueprints):
             for key, folder in [("blueprint_file", "blueprints"), ("blueprint_preview_file", "blueprints/previews")]:
-                if p.get(key):
-                    data = download_storage_file(p[key])
-                    if data:
-                        z.writestr(f"{folder}/{os.path.basename(p[key])}", data)
+                add_storage_file(p.get(key), folder)
         for n in notes:
-            if n.get("photo_file"):
-                data = download_storage_file(n["photo_file"])
-                if data:
-                    z.writestr(f"photos/{os.path.basename(n['photo_file'])}", data)
+            add_storage_file(n.get("photo_file"), "photos")
+            add_storage_file(n.get("audio_file"), "audio")
         for m in material_pictures:
-            if m.get("picture_file"):
-                data = download_storage_file(m["picture_file"])
-                if data:
-                    z.writestr(f"material_pictures/{os.path.basename(m['picture_file'])}", data)
-            if n.get("audio_file"):
-                data = download_storage_file(n["audio_file"])
-                if data:
-                    z.writestr(f"audio/{os.path.basename(n['audio_file'])}", data)
+            add_storage_file(m.get("picture_file"), "material_pictures")
+        for task in task_files:
+            add_storage_file(task.get("task_photo_file"), "task_files")
+            add_storage_file(task.get("task_audio_file"), "task_files")
+            add_storage_file(task.get("completion_photo_file"), "task_completion_files")
+            add_storage_file(task.get("completion_audio_file"), "task_completion_files")
         z.writestr("README_BACKUP.txt", "Portable backup: JSON table exports plus uploaded files.")
+        if backup_warnings:
+            z.writestr("BACKUP_WARNINGS.txt", "\n".join(backup_warnings))
 
     return Response(open(backup_path, "rb").read(), mimetype="application/zip", headers={"Content-Disposition": f"attachment; filename={backup_name}"})
 
