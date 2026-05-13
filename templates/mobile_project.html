@@ -6,6 +6,7 @@
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
     <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id) }}">Clock In / Clock Out</a>
+    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
     {% endif %}
