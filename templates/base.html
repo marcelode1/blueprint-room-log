@@ -31,6 +31,7 @@
         {% if session.get("user_id") %}
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('index') }}#projects">Projects</a>
             <a href="{{ url_for('my_tasks') }}">Tasks</a>
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
             {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}

@@ -52,7 +52,7 @@
             </div>
             <div>
                 <label>Job Allocation</label>
-                <select name="project_id">
+                <select name="project_id" class="inventoryProjectSelect" data-room-target="addRoomSelect">
                     <option value="">No project yet</option>
                     {% for p in projects %}
                         <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
@@ -61,10 +61,10 @@
             </div>
             <div>
                 <label>Room Allocation</label>
-                <select name="room_id">
-                    <option value="">No room yet</option>
+                <select name="room_id" id="addRoomSelect" class="inventoryRoomSelect">
+                    <option value="" data-project-id="">Choose job first</option>
                     {% for r in rooms %}
-                        <option value="{{ r.id }}">{{ r.project_name }} - {{ r.name }}</option>
+                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -107,7 +107,7 @@
             </div>
             <div>
                 <label>Project</label>
-                <select name="project_id">
+                <select name="project_id" class="inventoryProjectSelect" data-room-target="searchRoomSelect" data-show-all-rooms="1">
                     <option value="">All projects</option>
                     {% for p in projects %}
                         <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
@@ -116,10 +116,10 @@
             </div>
             <div>
                 <label>Room</label>
-                <select name="room_id">
-                    <option value="">All rooms</option>
+                <select name="room_id" id="searchRoomSelect" class="inventoryRoomSelect">
+                    <option value="" data-project-id="">All rooms</option>
                     {% for r in rooms %}
-                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -176,16 +176,16 @@
                                     <option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
-                            <select name="project_id">
+                            <select name="project_id" class="inventoryProjectSelect">
                                 <option value="">No project</option>
                                 {% for p in projects %}
                                     <option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
                                 {% endfor %}
                             </select>
-                            <select name="room_id">
-                                <option value="">No room</option>
+                            <select name="room_id" class="inventoryRoomSelect">
+                                <option value="" data-project-id="">No room</option>
                                 {% for r in rooms %}
-                                    <option value="{{ r.id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
                                 {% endfor %}
                             </select>
                             <input name="location_detail" value="{{ item.location_detail or '' }}" placeholder="Location detail">
@@ -228,4 +228,28 @@
 .legendDot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:4px}
 .availableDot{background:#16a34a}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
 </style>
+<script>
+function filterInventoryRooms(projectSelect){
+    const targetId=projectSelect.dataset.roomTarget;
+    const form=projectSelect.closest("form");
+    const roomSelect=targetId?document.getElementById(targetId):(form?form.querySelector(".inventoryRoomSelect"):null);
+    if(!roomSelect)return;
+    const projectId=projectSelect.value;
+    const showAllRooms=projectSelect.dataset.showAllRooms==="1";
+    let selectedVisible=false;
+    Array.from(roomSelect.options).forEach(option=>{
+        const optionProject=option.dataset.projectId||"";
+        const isPlaceholder=!option.value;
+        const visible=isPlaceholder||(!projectId?showAllRooms:optionProject===projectId);
+        option.hidden=!visible;
+        option.disabled=!visible;
+        if(option.selected&&visible)selectedVisible=true;
+    });
+    if(!selectedVisible)roomSelect.value="";
+}
+document.querySelectorAll(".inventoryProjectSelect").forEach(select=>{
+    filterInventoryRooms(select);
+    select.addEventListener("change",()=>filterInventoryRooms(select));
+});
+</script>
 {% endblock %}

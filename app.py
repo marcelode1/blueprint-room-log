@@ -2539,7 +2539,8 @@ def inventory():
         "project_id": selected_project_id,
         "room_id": selected_room_id
     })
-    projects, rooms = prepare_inventory_form(conn, selected_project_id)
+    projects = fetch_inventory_projects(conn)
+    rooms = fetch_inventory_rooms(conn)
     conn.close()
     return render_template(
         "inventory.html",
