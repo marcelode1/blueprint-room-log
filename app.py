@@ -540,7 +540,13 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER, task_id INTEGER, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', message TEXT, is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS project_id INTEGER",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS task_id INTEGER",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS user_name TEXT",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS user_email TEXT",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS role TEXT",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'login'",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -755,14 +761,18 @@ def add_notification(conn, user_id, user_name, user_email, role, event_type, pro
 
 
 def storage_attachment(path):
-    if not path:
+    try:
+        if not path:
+            return None
+        data = download_storage_file(path)
+        if not data:
+            return None
+        filename = os.path.basename(path)
+        mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return (filename, data, mime_type)
+    except Exception as e:
+        print("Storage attachment skipped:", e)
         return None
-    data = download_storage_file(path)
-    if not data:
-        return None
-    filename = os.path.basename(path)
-    mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    return (filename, data, mime_type)
 
 
 def admin_email_rows(conn):
@@ -770,68 +780,85 @@ def admin_email_rows(conn):
 
 
 def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
-    actor = conn.execute(
-        "SELECT name, email, role FROM users WHERE id = %s",
-        (session.get("user_id"),)
-    ).fetchone() or {}
-    actor_name = actor.get("name") or session.get("name")
-    actor_email = actor.get("email") or ""
-    actor_role = actor.get("role") or session.get("role")
-    notification_types = []
-    if comment:
-        notification_types.append("field_comment_added")
-    if photo_file:
-        notification_types.append("field_picture_added")
-    if audio_file:
-        notification_types.append("field_audio_added")
-    if not notification_types:
-        notification_types.append("field_note_added")
-    for event_type in notification_types:
-        add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, event_type)
-    conn.commit()
+    try:
+        actor = conn.execute(
+            "SELECT name, email, role FROM users WHERE id = %s",
+            (session.get("user_id"),)
+        ).fetchone() or {}
+        actor_name = actor.get("name") or session.get("name")
+        actor_email = actor.get("email") or ""
+        actor_role = actor.get("role") or session.get("role")
+        notification_types = []
+        note_parts = []
+        if comment:
+            notification_types.append("field_comment_added")
+            note_parts.append("comment")
+        if photo_file:
+            notification_types.append("field_picture_added")
+            note_parts.append("picture")
+        if audio_file:
+            notification_types.append("field_audio_added")
+            note_parts.append("audio")
+        if not notification_types:
+            notification_types.append("field_note_added")
+            note_parts.append("field note")
+        message = f"{actor_name or 'User'} added {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
+        project_id = project.get("id") if project else None
+        for event_type in notification_types:
+            add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, event_type, project_id, None, message)
+        conn.commit()
 
-    send_comments = setting_enabled("email_note_comments", True)
-    send_pictures = setting_enabled("email_note_pictures", True)
-    send_audio = setting_enabled("email_note_audio", True)
-    wants_email = (comment and send_comments) or (photo_file and send_pictures) or (audio_file and send_audio)
-    if not wants_email:
-        return
+        send_comments = setting_enabled("email_note_comments", True)
+        send_pictures = setting_enabled("email_note_pictures", True)
+        send_audio = setting_enabled("email_note_audio", True)
+        wants_email = (comment and send_comments) or (photo_file and send_pictures) or (audio_file and send_audio)
+        if not wants_email:
+            return True
 
-    admins = admin_email_rows(conn)
-    if not admins:
-        return
+        admins = admin_email_rows(conn)
+        if not admins:
+            return True
 
-    attachments = []
-    if photo_file and send_pictures:
-        attachment = storage_attachment(photo_file)
-        if attachment:
-            attachments.append(attachment)
-    if audio_file and send_audio:
-        attachment = storage_attachment(audio_file)
-        if attachment:
-            attachments.append(attachment)
+        attachments = []
+        if photo_file and send_pictures:
+            attachment = storage_attachment(photo_file)
+            if attachment:
+                attachments.append(attachment)
+        if audio_file and send_audio:
+            attachment = storage_attachment(audio_file)
+            if attachment:
+                attachments.append(attachment)
 
-    lines = [
-        "A field update was added in ProjectONus.",
-        "",
-        f"Project: {project.get('name') if project else '-'}",
-        f"Room: {room.get('name') if room else '-'}",
-        f"User: {actor_name or 'Unknown user'}",
-        f"Email: {actor_email or '-'}",
-        f"Date: {note_date}",
-        ""
-    ]
-    if comment and send_comments:
-        lines.extend(["Comment:", comment, ""])
-    if photo_file and send_pictures:
-        lines.append("Picture attached.")
-    if audio_file and send_audio:
-        lines.append("Audio attached.")
-    body = "\n".join(lines)
-    subject = f"ProjectONus field update - {room.get('name') if room else 'Room'}"
-    for admin in admins:
-        if admin.get("email"):
-            send_email(admin["email"], subject, body, attachments=attachments)
+        lines = [
+            "A field update was added in ProjectONus.",
+            "",
+            f"Project: {project.get('name') if project else '-'}",
+            f"Room: {room.get('name') if room else '-'}",
+            f"User: {actor_name or 'Unknown user'}",
+            f"Email: {actor_email or '-'}",
+            f"Date: {note_date}",
+            ""
+        ]
+        if comment and send_comments:
+            lines.extend(["Comment:", comment, ""])
+        if photo_file and send_pictures:
+            lines.append("Picture attached.")
+        if audio_file and send_audio:
+            lines.append("Audio attached.")
+        body = "\n".join(lines)
+        subject = f"ProjectONus field update - {room.get('name') if room else 'Room'}"
+        email_ok = True
+        for admin in admins:
+            if admin.get("email"):
+                email_ok = send_email(admin["email"], subject, body, attachments=attachments) and email_ok
+        return email_ok
+    except Exception as e:
+        print("Field note admin notification failed:", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
 
 
 def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at, event_timezone):
@@ -1734,9 +1761,12 @@ def mobile_room(room_id):
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
         )
-        notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         conn.commit()
-        flash("Comment/photo/audio added.")
+        notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
+        if notified:
+            flash("Comment/photo/audio added.")
+        else:
+            flash("Comment/photo/audio added. Admin notification or email could not be sent.")
 
     selected_date = request.args.get("date", "")
     query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
@@ -2525,9 +2555,12 @@ def room(room_id):
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
         )
-        notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         conn.commit()
-        flash("Comment/photo added.")
+        notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
+        if notified:
+            flash("Comment/photo added.")
+        else:
+            flash("Comment/photo added. Admin notification or email could not be sent.")
 
     selected_date = request.args.get("date", "")
     query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
@@ -2904,20 +2937,30 @@ def complete_task(task_id):
             task_id
         )
     )
-    add_notification(
-        conn,
-        session.get("user_id"),
-        session.get("name"),
-        "",
-        session.get("role"),
-        "task_completed",
-        task.get("project_id"),
-        task.get("id"),
-        f"Task completed: {task.get('title')}"
-    )
     conn.commit()
+    notification_ok = True
+    try:
+        add_notification(
+            conn,
+            session.get("user_id"),
+            session.get("name"),
+            "",
+            session.get("role"),
+            "task_completed",
+            task.get("project_id"),
+            task.get("id"),
+            f"Task completed: {task.get('title')}"
+        )
+        conn.commit()
+    except Exception as e:
+        print("Task completion notification failed:", e)
+        conn.rollback()
+        notification_ok = False
     conn.close()
-    flash("Task marked done. Admin was notified.")
+    if notification_ok:
+        flash("Task marked done. Admin was notified.")
+    else:
+        flash("Task marked done. Admin notification could not be sent.")
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
     if task.get("room_id"):
