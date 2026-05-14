@@ -423,6 +423,7 @@ def init_db():
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         task_date TEXT NOT NULL,
         task_start_date TEXT,
+        task_start_time TEXT,
         task_end_date TEXT,
         title TEXT NOT NULL,
         instructions TEXT,
@@ -512,6 +513,7 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_start_date TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_start_time TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_end_date TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_photo_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_audio_file TEXT",
@@ -859,8 +861,7 @@ def task_email_body(task, assigned=None, project=None):
         f"Task: {task.get('title')}",
         f"Project: {(project or task).get('project_name') or (project or task).get('name') or '-'}",
         f"Assigned to: {(assigned or task).get('name') or task.get('assigned_user_name') or '-'}",
-        f"Start: {format_date(task.get('task_start_date') or task.get('task_date'))}",
-        f"End: {format_date(task.get('task_end_date') or task.get('task_date'))}",
+        f"Be There: {task_schedule_text(task)}",
         "",
     ]
     if task.get("instructions"):
@@ -899,7 +900,7 @@ def send_task_assignment_sms(task, assigned, project):
     project_name = project.get("name") if project else task.get("project_name")
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'}. Open the app and press Received: {external_url('my_tasks')}"
+        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'} at {task_schedule_text(task)}. Open the app and press Received: {external_url('my_tasks')}"
     )
 
 
@@ -1086,6 +1087,18 @@ def format_time(value, timezone_name=None):
     return dt.strftime("%I:%M%p").lstrip("0")
 
 
+def format_task_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for fmt in ["%H:%M", "%H:%M:%S"]:
+        try:
+            return datetime.strptime(text, fmt).strftime("%I:%M%p").lstrip("0")
+        except Exception:
+            pass
+    return text
+
+
 def format_date(value, timezone_name=None):
     date_text = local_date_text(value)
     if date_text:
@@ -1122,6 +1135,18 @@ def format_event_date(event):
 
 def format_event_datetime(event):
     return format_datetime(event.get("created_at") if event else None, event_timezone_name(event))
+
+
+def task_schedule_text(task):
+    start_raw = task.get("task_start_date") or task.get("task_date")
+    text = format_date(start_raw)
+    start_time = format_task_time(task.get("task_start_time"))
+    if start_time:
+        text += f" at {start_time}"
+    end_date = task.get("task_end_date")
+    if end_date and end_date != start_raw:
+        text += f" to {format_date(end_date)}"
+    return text
 
 
 def duration_text(start_value, end_value):
@@ -1298,8 +1323,10 @@ def utility_processor():
         has_perm=has_perm,
         get_app_setting=get_app_setting,
         format_time=format_time,
+        format_task_time=format_task_time,
         format_date=format_date,
         format_datetime=format_datetime,
+        task_schedule_text=task_schedule_text,
         format_event_time=format_event_time,
         format_event_date=format_event_date,
         format_event_datetime=format_event_datetime,
@@ -2623,17 +2650,18 @@ def create_task(room_id):
     assigned_user_id = request.form.get("assigned_user_id", type=int)
     assigned = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
     title = request.form.get("title", "").strip()
-    if not assigned or not title:
+    task_start_time = request.form.get("task_start_time", "").strip()
+    if not assigned or not title or not task_start_time:
         conn.close()
-        flash("Choose a user and enter a task title.")
+        flash("Choose a user, enter a task title, and choose the be-there time.")
         return redirect(url_for("room", room_id=room_id))
     grant_project_access(conn, assigned_user_id, room["project_id"], assigned.get("role"))
 
     task = conn.execute(
         """
         INSERT INTO tasks
-        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -2643,6 +2671,7 @@ def create_task(room_id):
             session.get("user_id"),
             request.form.get("task_date") or datetime.now().date().isoformat(),
             request.form.get("task_date") or datetime.now().date().isoformat(),
+            task_start_time,
             request.form.get("task_date") or datetime.now().date().isoformat(),
             title,
             request.form.get("instructions", "").strip(),
@@ -2662,7 +2691,7 @@ def create_task(room_id):
         "task_assigned",
         task.get("project_id"),
         task.get("id"),
-        f"New task assigned: {task.get('title')}. Project access granted."
+        f"New task assigned: {task.get('title')}. Be there {task_schedule_text(task)}. Project access granted."
     )
     conn.commit()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
@@ -2686,9 +2715,10 @@ def create_global_task():
             except Exception:
                 pass
         title = request.form.get("title", "").strip()
-        if not project_id or not user_ids or not title:
+        start_time = request.form.get("task_start_time", "").strip()
+        if not project_id or not user_ids or not title or not start_time:
             conn.close()
-            flash("Choose a project, at least one worker, and enter a task.")
+            flash("Choose a project, at least one worker, enter a task, and choose the be-there time.")
             return redirect(url_for("create_global_task"))
 
         project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
@@ -2715,8 +2745,8 @@ def create_global_task():
             task = conn.execute(
                 """
                 INSERT INTO tasks
-                (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
@@ -2725,6 +2755,7 @@ def create_global_task():
                     session.get("user_id"),
                     start_date,
                     start_date,
+                    start_time,
                     end_date,
                     title,
                     request.form.get("instructions", "").strip(),
@@ -2746,7 +2777,7 @@ def create_global_task():
                 "task_assigned",
                 task.get("project_id"),
                 task.get("id"),
-                f"New task assigned: {task.get('title')}. Project access granted."
+                f"New task assigned: {task.get('title')}. Be there {task_schedule_text(task)}. Project access granted."
             )
             created_tasks.append((task, assigned))
 
@@ -3015,7 +3046,7 @@ def task_report_export():
     writer = csv.writer(output)
     writer.writerow([
         "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
-        "Created Date", "Start Date", "End Date", "Seen By Worker", "Received At",
+        "Created Date", "Start Date", "Be There Time", "End Date", "Seen By Worker", "Received At",
         "Done", "Completed At", "Status", "Instructions"
     ])
     for task in report["tasks"]:
@@ -3028,6 +3059,7 @@ def task_report_export():
             task.get("created_by_name") or "",
             format_datetime(task.get("created_at")),
             format_date(task.get("task_start_date") or task.get("task_date")),
+            format_task_time(task.get("task_start_time")),
             format_date(task.get("task_end_date") or task.get("task_date")),
             "Yes" if task.get("accepted_at") else "No",
             format_datetime(task.get("accepted_at")) if task.get("accepted_at") else "",

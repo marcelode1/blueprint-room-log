@@ -61,7 +61,7 @@
                     <th>Task</th>
                     <th>Worker</th>
                     <th>Created</th>
-                    <th>Period</th>
+                    <th>Be There</th>
                     <th>Seen</th>
                     <th>Done</th>
                     <th>Status</th>
@@ -77,7 +77,7 @@
                     <td><strong>{{ t.title }}</strong><br><span class="muted">Created by {{ t.created_by_name or "-" }}</span></td>
                     <td>{{ t.assigned_user_name or "Unassigned" }}<br><span class="muted">{{ t.assigned_user_email or "" }}</span></td>
                     <td>{{ format_datetime(t.created_at) }}</td>
-                    <td>{{ format_date(t.task_start_date or t.task_date) }}{% if t.task_end_date %} to {{ format_date(t.task_end_date) }}{% endif %}</td>
+                    <td>{{ task_schedule_text(t) }}</td>
                     <td>{% if t.accepted_at %}Yes<br><span class="muted">{{ format_datetime(t.accepted_at) }}</span>{% else %}No{% endif %}</td>
                     <td>{% if t.status == "done" %}Yes<br><span class="muted">{{ format_datetime(t.completed_at) if t.completed_at else "" }}</span>{% else %}No{% endif %}</td>
                     <td><span class="statusPill {% if status == 'Done' %}statusDone{% elif status == 'In Progress' %}statusProgress{% else %}statusNotSeen{% endif %}">{{ status }}</span></td>

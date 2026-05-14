@@ -20,7 +20,7 @@
     {% for t in tasks %}
         <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
-            <p class="muted">{{ format_date(t.task_start_date or t.task_date) }}{% if t.task_end_date %} to {{ format_date(t.task_end_date) }}{% endif %} - {{ t.status }}</p>
+            <p class="muted">{{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
             {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}

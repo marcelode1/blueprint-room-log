@@ -10,7 +10,7 @@
     {% for t in tasks %}
         <div id="task-{{ t.id }}" class="card {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
-            <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ format_date(t.task_start_date or t.task_date) }}{% if t.task_end_date %} to {{ format_date(t.task_end_date) }}{% endif %} - {{ t.status }}</p>
+            <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>{% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}

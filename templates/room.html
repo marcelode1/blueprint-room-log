@@ -39,6 +39,10 @@
                 <label>Due Date</label>
                 <input name="task_date" type="date" value="{{ selected_date or '' }}">
             </div>
+            <div>
+                <label>Be There Time</label>
+                <input name="task_start_time" type="time" required>
+            </div>
         </div>
         <label>Instructions</label>
         <textarea name="instructions" rows="4"></textarea>
@@ -58,7 +62,7 @@
     {% for t in tasks %}
         <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
-            <p class="muted">{{ format_date(t.task_start_date or t.task_date) }}{% if t.task_end_date %} to {{ format_date(t.task_end_date) }}{% endif %} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
+            <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
             {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
