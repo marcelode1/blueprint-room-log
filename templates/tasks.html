@@ -9,6 +9,12 @@
         </div>
     {% else %}
         <h2>My Tasks</h2>
+        <div class="grid">
+            <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search My Tasks</a>
+        </div>
+        {% if task_mode != "search" %}
+            <p class="muted">Completed tasks disappear from this list after you mark them done.</p>
+        {% endif %}
     {% endif %}
 </div>
 
@@ -28,6 +34,34 @@
     </form>
     {% if not selected_project_id %}
         <p class="muted">Choose a project to see its tasks, pictures, audio, comments, and completion status.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if not is_main_admin() and task_mode == "search" %}
+<div class="card">
+    <h2>Search My Tasks</h2>
+    <div class="grid">
+        {% for p in projects %}
+            <a class="btn-link {% if selected_project_id == p.id %}btn-secondary{% endif %}" href="{{ url_for('my_tasks', mode='search', project_id=p.id, period=task_period, date=task_date) }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</a>
+        {% else %}
+            <p>No projects available.</p>
+        {% endfor %}
+    </div>
+    {% if selected_project_id %}
+        <form method="get">
+            <input type="hidden" name="mode" value="search">
+            <input type="hidden" name="project_id" value="{{ selected_project_id }}">
+            <label>Show By</label>
+            <select name="period">
+                <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
+                <option value="week" {% if task_period == "week" %}selected{% endif %}>Week</option>
+                <option value="month" {% if task_period == "month" %}selected{% endif %}>Month</option>
+            </select>
+            <label>Date</label>
+            <input type="date" name="date" value="{{ task_date }}" required>
+            <button type="submit">Show My Tasks</button>
+        </form>
     {% endif %}
 </div>
 {% endif %}
@@ -91,6 +125,10 @@
     {% else %}
         {% if is_main_admin() and not selected_project_id %}
             <p>No project selected.</p>
+        {% elif not is_main_admin() and task_mode == "search" and not selected_project_id %}
+            <p>Choose a project to search your tasks.</p>
+        {% elif not is_main_admin() and task_mode != "search" %}
+            <p>No active tasks. Use Search My Tasks to view completed or older tasks.</p>
         {% else %}
             <p>No tasks found.</p>
         {% endif %}

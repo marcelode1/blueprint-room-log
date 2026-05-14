@@ -1243,6 +1243,18 @@ def attendance_event_in_range(event, period, selected_date):
     return bool(event_dt and start <= event_dt < end)
 
 
+def task_scheduled_in_range(task, period, selected_date):
+    period, start, end = attendance_range(period, selected_date)
+    task_date = local_date_text(task.get("task_start_date") or task.get("task_date"))
+    if not task_date:
+        return False
+    try:
+        scheduled = datetime.strptime(task_date, "%m/%d/%Y").replace(tzinfo=start.tzinfo)
+    except Exception:
+        return False
+    return start <= scheduled < end
+
+
 def current_clock_in_event(conn, user_id=None):
     uid = user_id or session.get("user_id")
     if not uid:
@@ -2972,8 +2984,12 @@ def my_tasks():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
     task_mode = request.args.get("mode", "")
-    if selected_project_id:
+    if selected_project_id and not task_mode:
         task_mode = "search"
+    task_period = request.args.get("period", "day")
+    if task_period not in ["day", "week", "month"]:
+        task_period = "day"
+    task_date = request.args.get("date") or local_now().date().isoformat()
     projects = []
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -2993,21 +3009,56 @@ def my_tasks():
         else:
             tasks = []
     else:
-        tasks = conn.execute(
+        projects = conn.execute(
             """
-            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
-            FROM tasks
-            LEFT JOIN rooms ON tasks.room_id = rooms.id
-            LEFT JOIN projects ON tasks.project_id = projects.id
-            LEFT JOIN users ON tasks.assigned_user_id = users.id
-            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
-            WHERE tasks.assigned_user_id = %s
-            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+            SELECT projects.id, projects.name, projects.customer_name
+            FROM projects
+            JOIN project_permissions ON project_permissions.project_id = projects.id AND project_permissions.user_id = %s
+            ORDER BY projects.name
             """,
-            (session.get("user_id"), session.get("user_id"))
+            (session.get("user_id"),)
         ).fetchall()
+        if task_mode == "search" and selected_project_id:
+            tasks = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                WHERE tasks.assigned_user_id = %s AND tasks.project_id = %s
+                ORDER BY tasks.task_date DESC, tasks.created_at DESC
+                """,
+                (session.get("user_id"), session.get("user_id"), selected_project_id)
+            ).fetchall()
+            tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
+        elif task_mode == "search":
+            tasks = []
+        else:
+            tasks = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                WHERE tasks.assigned_user_id = %s AND tasks.status <> 'done'
+                ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+                """,
+                (session.get("user_id"), session.get("user_id"))
+            ).fetchall()
     conn.close()
-    return render_template("tasks.html", tasks=tasks, projects=projects, selected_project_id=selected_project_id, task_mode=task_mode)
+    return render_template(
+        "tasks.html",
+        tasks=tasks,
+        projects=projects,
+        selected_project_id=selected_project_id,
+        task_mode=task_mode,
+        task_period=task_period,
+        task_date=task_date
+    )
 
 
 @app.route("/tasks/<int:task_id>/delete", methods=["POST"])
