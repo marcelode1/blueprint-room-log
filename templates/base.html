@@ -21,8 +21,9 @@
         .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}.backButton{width:auto;min-height:42px;padding:9px 14px;margin:0 0 12px;background:#475569!important;border-radius:10px;font-size:14px}
         @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:12px}header a{margin-left:8px}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
     </style>
+    {% if session.get("ui_theme") == "pro_test" %}<link rel="stylesheet" href="{{ url_for('static', filename='pro_interface_test.css') }}">{% endif %}
 </head>
-<body>
+<body class="{% if session.get('ui_theme') == 'pro_test' %}proTestTheme{% endif %}">
 <header>
     <div class="brand">ProjectONus</div>
     <div>
@@ -38,6 +39,11 @@
                 <a href="{{ url_for('task_report') }}">Task Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
+                {% if session.get("ui_theme") == "pro_test" %}
+                    <a class="desktop-only ui-theme-link" href="{{ url_for('classic_ui') }}">Classic UI</a>
+                {% else %}
+                    <a class="desktop-only ui-theme-link" href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
+                {% endif %}
             {% endif %}
             <a href="{{ url_for('privacy') }}">Privacy</a>
             <a href="{{ url_for('logout') }}">Logout</a>

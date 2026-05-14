@@ -4010,6 +4010,22 @@ def health():
     return "ok"
 
 
+@app.route("/ui/pro-test")
+@login_required
+def pro_test_ui():
+    session["ui_theme"] = "pro_test"
+    flash("Pro Test UI is on for this browser session. Use Classic UI to go back.")
+    return redirect(request.referrer if request.referrer and request.referrer.startswith(request.host_url) else url_for("index"))
+
+
+@app.route("/ui/classic")
+@login_required
+def classic_ui():
+    session.pop("ui_theme", None)
+    flash("Classic UI restored.")
+    return redirect(request.referrer if request.referrer and request.referrer.startswith(request.host_url) else url_for("index"))
+
+
 try:
     init_db()
 except Exception as e:
