@@ -169,13 +169,24 @@ def send_email(to_email, subject, body, attachments=None):
         return False
 
 
-def send_sms(phone_number, body):
+def send_sms(phone_number, body, return_error=False):
+    def result(ok, message=""):
+        return (ok, message) if return_error else ok
+
     phone_number = (phone_number or "").strip()
     if not phone_number:
-        return False
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER):
-        print("SMS not sent: Twilio environment variables are not configured.")
-        return False
+        return result(False, "Cellphone number is missing.")
+    missing = []
+    if not TWILIO_ACCOUNT_SID:
+        missing.append("TWILIO_ACCOUNT_SID")
+    if not TWILIO_AUTH_TOKEN:
+        missing.append("TWILIO_AUTH_TOKEN")
+    if not TWILIO_FROM_NUMBER:
+        missing.append("TWILIO_FROM_NUMBER")
+    if missing:
+        message = "Missing Render environment variable(s): " + ", ".join(missing)
+        print("SMS not sent:", message)
+        return result(False, message)
     try:
         payload = urllib.parse.urlencode({
             "To": phone_number,
@@ -188,10 +199,23 @@ def send_sms(phone_number, body):
         request_obj.add_header("Authorization", "Basic " + base64.b64encode(token).decode("ascii"))
         request_obj.add_header("Content-Type", "application/x-www-form-urlencoded")
         with urllib.request.urlopen(request_obj, timeout=20) as response:
-            return 200 <= response.status < 300
+            ok = 200 <= response.status < 300
+            return result(ok, "" if ok else f"Twilio returned HTTP {response.status}.")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            raw = e.read().decode("utf-8", errors="replace")
+            parsed = json.loads(raw)
+            detail = parsed.get("message") or raw
+        except Exception:
+            detail = str(e)
+        message = f"Twilio error: {detail}"
+        print("SMS send failed:", message)
+        return result(False, message)
     except Exception as e:
-        print("SMS send failed:", e)
-        return False
+        message = f"SMS send failed: {e}"
+        print(message)
+        return result(False, message)
 
 
 def new_token():
@@ -1964,11 +1988,11 @@ def send_user_sms(user_id):
     if not user.get("sms_enabled"):
         flash("Text messages are not enabled for this user.")
         return redirect(url_for("users"))
-    sent = send_sms(user["phone_number"], f"ProjectONus: {message}")
+    sent, sms_error = send_sms(user["phone_number"], f"ProjectONus: {message}", return_error=True)
     if sent:
         flash(f"Text message sent to {user.get('name') or 'user'}.")
     else:
-        flash("Text message could not be sent. Check Twilio settings on Render.")
+        flash("Text message could not be sent. " + (sms_error or "Check Twilio settings on Render."))
     return redirect(url_for("users"))
 
 
