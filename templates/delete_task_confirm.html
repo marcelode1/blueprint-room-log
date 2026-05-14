@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card desktop-only">
+    <h2>Confirm Delete Task</h2>
+    <p><strong>{{ task.title }}</strong></p>
+    <p class="muted">Project: {{ task.project_name or "-" }}</p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this task.</p>
+    <form method="post">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Task</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', project_id=task.project_id) }}">Cancel</a>
+    </form>
+</div>
+<div class="card mobileDeleteNotice">
+    <p class="muted">Task deletion is available to admin from the desktop version only.</p>
+</div>
+<style>
+.mobileDeleteNotice{display:none}
+@media(max-width:760px){.mobileDeleteNotice{display:block}}
+</style>
+{% endblock %}

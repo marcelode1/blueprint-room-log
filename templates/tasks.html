@@ -1,9 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Tasks</h2>
     {% if is_main_admin() %}
-        <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
+        <h2>Search Task by Project</h2>
+        <form method="get">
+            <label>Project</label>
+            <select name="project_id" required>
+                <option value="">Choose project</option>
+                {% for p in projects %}
+                    <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Show Tasks</button>
+        </form>
+        {% if not selected_project_id %}
+            <p class="muted">Choose a project to see its tasks, pictures, audio, comments, and completion status.</p>
+        {% endif %}
+    {% else %}
+        <h2>My Tasks</h2>
     {% endif %}
 </div>
 <div class="card">
@@ -11,11 +25,18 @@
         <div id="task-{{ t.id }}" class="card {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
             <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ task_schedule_text(t) }} - {{ t.status }}</p>
-            {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>{% endif %}
+            {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
-            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
-            {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
-            {% if t.task_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>{% endif %}
+            {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
+            {% if t.instructions %}<p><strong>Task Information:</strong><br>{{ t.instructions }}</p>{% endif %}
+            {% if t.task_photo_file %}
+                <p><strong>Task Picture</strong></p>
+                <img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">
+            {% endif %}
+            {% if t.task_audio_file %}
+                <p><strong>Task Audio</strong></p>
+                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>
+            {% endif %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                     <button type="submit">Received</button>
@@ -32,14 +53,29 @@
                     <button type="submit">Mark Task Done</button>
                 </form>
             {% endif %}
-            {% if t.completion_comment %}<p>{{ t.completion_comment }}</p>{% endif %}
-            {% if t.completion_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">{% endif %}
-            {% if t.completion_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>{% endif %}
+            {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
+            {% if t.completion_photo_file %}
+                <p><strong>Completion Picture</strong></p>
+                <img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">
+            {% endif %}
+            {% if t.completion_audio_file %}
+                <p><strong>Completion Audio</strong></p>
+                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>
+            {% endif %}
             <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=t.project_id) }}">Open Project</a>
             {% if t.room_id %}<a class="btn-link" href="{{ url_for('room', room_id=t.room_id) }}">Open Room</a>{% endif %}
+            {% if is_main_admin() %}
+                <form class="desktop-only" method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                    <button type="submit" class="btn-danger">Delete Task</button>
+                </form>
+            {% endif %}
         </div>
     {% else %}
-        <p>No tasks yet.</p>
+        {% if is_main_admin() and not selected_project_id %}
+            <p>No project selected.</p>
+        {% else %}
+            <p>No tasks found.</p>
+        {% endif %}
     {% endfor %}
 </div>
 <style>.taskDone{opacity:.82}</style>

@@ -469,6 +469,17 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_delete_codes (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -522,6 +533,7 @@ def init_db():
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
@@ -943,6 +955,11 @@ def can_view_inventory():
 
 def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
+
+
+def is_mobile_request():
+    user_agent = request.headers.get("User-Agent", "").lower()
+    return any(token in user_agent for token in ["mobi", "android", "iphone", "ipad"])
 
 
 def user_can_access_project(conn, project_id, user_id=None):
@@ -2929,17 +2946,25 @@ def receive_task(task_id):
 @login_required
 def my_tasks():
     conn = db()
+    selected_project_id = request.args.get("project_id", type=int)
+    projects = []
     if is_main_admin():
-        tasks = conn.execute(
-            """
-            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
-            FROM tasks
-            LEFT JOIN rooms ON tasks.room_id = rooms.id
-            LEFT JOIN projects ON tasks.project_id = projects.id
-            LEFT JOIN users ON tasks.assigned_user_id = users.id
-            ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
-            """
-        ).fetchall()
+        projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+        if selected_project_id:
+            tasks = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name, users.email AS assigned_user_email
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                WHERE tasks.project_id = %s
+                ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+                """,
+                (selected_project_id,)
+            ).fetchall()
+        else:
+            tasks = []
     else:
         tasks = conn.execute(
             """
@@ -2955,7 +2980,124 @@ def my_tasks():
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
     conn.close()
-    return render_template("tasks.html", tasks=tasks)
+    return render_template("tasks.html", tasks=tasks, projects=projects, selected_project_id=selected_project_id)
+
+
+@app.route("/tasks/<int:task_id>/delete", methods=["POST"])
+@admin_required
+def delete_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.id, tasks.title, tasks.project_id, projects.name AS project_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if is_mobile_request():
+        conn.close()
+        flash("Task deletion is available to admin from the desktop version only.")
+        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s AND admin_id = %s", (task_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO task_delete_codes (task_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (task_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete task PIN",
+        "\n".join([
+            f"Your 6-digit PIN to delete task '{task['title']}' is:",
+            "",
+            pin,
+            "",
+            f"Project: {task.get('project_name') or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s AND admin_id = %s", (task_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_task", task_id=task_id))
+
+
+@app.route("/tasks/<int:task_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.id, tasks.title, tasks.project_id, projects.name AS project_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if is_mobile_request():
+        conn.close()
+        flash("Task deletion is available to admin from the desktop version only.")
+        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM task_delete_codes
+            WHERE task_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (task_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Task again to get a new PIN.")
+            return redirect(url_for("my_tasks", project_id=task["project_id"]))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_task", task_id=task_id))
+
+        conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
+        conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
+        conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+        conn.commit()
+        project_id = task["project_id"]
+        conn.close()
+        flash("Task deleted.")
+        return redirect(url_for("my_tasks", project_id=project_id))
+
+    conn.close()
+    return render_template("delete_task_confirm.html", task=task)
 
 
 def task_report_status(task):
@@ -3528,6 +3670,7 @@ def backup():
         ("attendance_events", "id"),
         ("worker_location_pings", "id"),
         ("login_events", "id"),
+        ("task_delete_codes", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
         ("app_settings", "key"),
