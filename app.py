@@ -3342,7 +3342,60 @@ def task_report_export():
 @app.route("/team-map")
 @admin_required
 def team_map():
-    return render_template("team_map.html")
+    try:
+        return render_template("team_map.html")
+    except Exception as e:
+        print("Team map page failed:", e)
+        try:
+            return render_template("team_map_fallback.html", team_map_error=str(e))
+        except Exception as fallback_error:
+            print("Team map fallback failed:", fallback_error)
+            return Response(
+                """
+                <!doctype html>
+                <html>
+                <head>
+                    <title>Where Is My Team - ProjectONus</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>
+                        body{font-family:Arial,sans-serif;margin:0;background:#eef3f8;color:#172033}
+                        nav{position:fixed;inset:0 auto 0 0;width:264px;background:#102137;color:white;padding:22px 16px}
+                        nav strong{display:block;font-size:24px;margin-bottom:18px}
+                        nav a{display:block;color:#dbe7f6;text-decoration:none;font-weight:700;padding:10px 12px;border-radius:7px}
+                        nav a:hover{background:#183657;color:white}
+                        main{margin-left:264px;padding:24px 30px}
+                        .card{background:white;border:1px solid #d6dee9;border-radius:8px;padding:18px;box-shadow:0 1px 3px rgba(16,33,55,.08)}
+                        .btn{display:inline-block;background:#0b73b9;color:white;text-decoration:none;font-weight:800;padding:10px 14px;border-radius:6px;margin-right:8px}
+                        .muted{color:#687689}
+                    </style>
+                </head>
+                <body>
+                    <nav>
+                        <strong>ProjectONus</strong>
+                        <a href="/">Home</a>
+                        <a href="/tasks">Tasks</a>
+                        <a href="/notifications">Notifications</a>
+                        <a href="/users">Users</a>
+                        <a href="/settings">Settings</a>
+                        <a href="/attendance/report">Time Report</a>
+                        <a href="/tasks/report">Task Report</a>
+                        <a href="/team-map">Where Is My Team</a>
+                        <a href="/backup">Backup</a>
+                    </nav>
+                    <main>
+                        <div class="card">
+                            <h1>Where Is My Team</h1>
+                            <p>The team map could not load, but the navigation is still available.</p>
+                            <p class="muted">Please check the Render logs for the printed team map error.</p>
+                            <a class="btn" href="/team-map/data">Open Team Data</a>
+                            <a class="btn" href="/">Home</a>
+                        </div>
+                    </main>
+                </body>
+                </html>
+                """,
+                mimetype="text/html"
+            )
 
 
 @app.route("/team-map/data")

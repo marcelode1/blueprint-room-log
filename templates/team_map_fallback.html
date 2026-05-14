@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Where Is My Team</h2>
+    <p>The team map could not load, but the ProjectONus navigation is still available.</p>
+    <p class="muted">{{ team_map_error }}</p>
+    <a class="btn-link" href="{{ url_for('team_map_data') }}">Open Team Data</a>
+    <a class="btn-link btn-secondary" href="{{ url_for('index') }}">Home</a>
+</div>
+{% endblock %}
