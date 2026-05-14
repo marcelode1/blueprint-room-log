@@ -39,6 +39,11 @@
             <strong>{{ t.title }}</strong>
             <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
+            {% set address = task_project_address(t) %}
+            {% if address %}
+                <p><strong>Address:</strong> {{ address }}</p>
+                <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
+            {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
             {% if t.instructions %}<p><strong>Task Information:</strong><br>{{ t.instructions }}</p>{% endif %}

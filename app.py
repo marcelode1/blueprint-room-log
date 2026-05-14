@@ -867,6 +867,7 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
 
 
 def task_email_body(task, assigned=None, project=None):
+    address = task_project_address(task, project)
     lines = [
         "A task was assigned in ProjectONus.",
         "",
@@ -876,6 +877,12 @@ def task_email_body(task, assigned=None, project=None):
         f"Be There: {task_schedule_text(task)}",
         "",
     ]
+    if address:
+        lines.extend([
+            f"Address: {address}",
+            f"Google Maps Route: {maps_directions_url(address)}",
+            "",
+        ])
     if task.get("instructions"):
         lines.extend(["Instructions:", task.get("instructions"), ""])
     lines.extend([
@@ -910,9 +917,12 @@ def send_task_assignment_sms(task, assigned, project):
     if not assigned.get("sms_enabled") or not assigned.get("phone_number"):
         return False
     project_name = project.get("name") if project else task.get("project_name")
+    address = task_project_address(task, project)
+    route = maps_directions_url(address)
+    route_text = f" Route: {route}" if route else ""
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'} at {task_schedule_text(task)}. Open the app and press Received: {external_url('my_tasks')}"
+        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks')}"
     )
 
 
@@ -1166,6 +1176,18 @@ def task_schedule_text(task):
     return text
 
 
+def maps_directions_url(address):
+    address = (address or "").strip()
+    if not address:
+        return ""
+    return "https://www.google.com/maps/dir/?api=1&destination=" + urllib.parse.quote_plus(address)
+
+
+def task_project_address(task, project=None):
+    source = project or task or {}
+    return (source.get("customer_address") or source.get("project_address") or "").strip()
+
+
 def duration_text(start_value, end_value):
     start = parse_iso_datetime(start_value)
     end = parse_iso_datetime(end_value)
@@ -1344,6 +1366,8 @@ def utility_processor():
         format_date=format_date,
         format_datetime=format_datetime,
         task_schedule_text=task_schedule_text,
+        maps_directions_url=maps_directions_url,
+        task_project_address=task_project_address,
         format_event_time=format_event_time,
         format_event_date=format_event_date,
         format_event_datetime=format_event_datetime,
@@ -2956,7 +2980,7 @@ def my_tasks():
         if selected_project_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name, users.email AS assigned_user_email
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name, users.email AS assigned_user_email
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -2971,7 +2995,7 @@ def my_tasks():
     else:
         tasks = conn.execute(
             """
-            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, users.name AS assigned_user_name
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
             FROM tasks
             LEFT JOIN rooms ON tasks.room_id = rooms.id
             LEFT JOIN projects ON tasks.project_id = projects.id

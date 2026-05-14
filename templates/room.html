@@ -63,6 +63,10 @@
         <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ t.title }}</strong>
             <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
+            {% if project.customer_address %}
+                <p><strong>Address:</strong> {{ project.customer_address }}</p>
+                <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project.customer_address) }}">Open Route in Google Maps</a>
+            {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
             {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
