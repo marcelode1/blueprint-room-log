@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card noPrint">
-    <h2>Time Report</h2>
+    <h2>{% if my_report %}My Time Report{% else %}Time Report{% endif %}</h2>
     <form method="get">
         <div class="grid">
+            {% if not my_report %}
             <div>
                 <label>User</label>
                 <select name="user_id">
@@ -13,13 +14,14 @@
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
             <div>
                 <label>Period</label>
                 <select name="period">
                     <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
                     <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
                     <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
-                    <option value="year" {% if period == "year" %}selected{% endif %}>Year</option>
+                    {% if not my_report %}<option value="year" {% if period == "year" %}selected{% endif %}>Year</option>{% endif %}
                 </select>
             </div>
             <div>
@@ -28,11 +30,14 @@
             </div>
         </div>
         <button type="submit">Show Report</button>
+        {% if not my_report %}
         <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
         <a class="btn-link btn-secondary" href="{{ url_for('task_report') }}">Task Report</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
+        {% endif %}
     </form>
     <p class="muted">Showing {{ start.date() }} through {{ end.date() }}.</p>
+    {% if my_report %}<p class="muted">This report only shows your own clock in and clock out records.</p>{% endif %}
 </div>
 
 <div class="card">
@@ -83,7 +88,9 @@
                     <td>
                         {% if ci %}
                             {{ format_event_time(ci) }}
+                            {% if not my_report %}
                             <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=request.full_path) }}">Edit</a>
+                            {% endif %}
                         {% else %}-{% endif %}
                     </td>
                     <td>
@@ -95,7 +102,9 @@
                     <td>
                         {% if co %}
                             {{ format_event_time(co) }}
+                            {% if not my_report %}
                             <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=request.full_path) }}">Edit</a>
+                            {% endif %}
                         {% else %}-{% endif %}
                     </td>
                     <td>

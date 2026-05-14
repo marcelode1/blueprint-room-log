@@ -141,6 +141,15 @@ def external_url(endpoint, **values):
     return url_for(endpoint, _external=True, **values)
 
 
+def safe_next_url(default_endpoint="index", **values):
+    target = request.form.get("next") or request.args.get("next") or request.referrer or ""
+    if target.startswith("/"):
+        return target
+    if target and target.startswith(request.host_url):
+        return target
+    return url_for(default_endpoint, **values)
+
+
 def send_email(to_email, subject, body, attachments=None):
     if not SMTP_HOST:
         print("Email not sent: SMTP_HOST is not configured.")
@@ -345,6 +354,31 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS inventory_items (
+        id SERIAL PRIMARY KEY,
+        item_date TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        item_name TEXT NOT NULL,
+        item_model TEXT,
+        brand TEXT,
+        item_condition TEXT NOT NULL DEFAULT 'new',
+        location_type TEXT NOT NULL DEFAULT 'warehouse',
+        location_detail TEXT,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'available',
+        added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        used_at TEXT,
+        used_note TEXT,
+        picture_file TEXT,
+        legacy_material_id INTEGER UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS push_subscriptions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -535,6 +569,39 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS quantity REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_name TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_model TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS brand TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_condition TEXT NOT NULL DEFAULT 'new'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS location_type TEXT NOT NULL DEFAULT 'warehouse'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS location_detail TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'available'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS added_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_at TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_note TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS picture_file TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS legacy_material_id INTEGER",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
+        """
+        INSERT INTO inventory_items
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, legacy_material_id, created_at, updated_at)
+        SELECT material_inventory.item_date, material_inventory.quantity, COALESCE(NULLIF(material_inventory.description, ''), 'Material item'), material_inventory.part_number, '', 'new', 'job_site', '', material_inventory.project_id, NULL,
+               CASE WHEN material_inventory.material_status = 'in_stock' THEN 'available' WHEN material_inventory.material_status = 'used' THEN 'used' ELSE 'needs_purchase' END,
+               material_inventory.user_id,
+               CASE WHEN material_inventory.material_status = 'used' THEN material_inventory.user_id ELSE NULL END,
+               CASE WHEN material_inventory.material_status = 'used' THEN material_inventory.created_at ELSE NULL END,
+               '', material_inventory.picture_file, material_inventory.id, material_inventory.created_at, material_inventory.created_at
+        FROM material_inventory
+        WHERE NOT EXISTS (SELECT 1 FROM inventory_items WHERE inventory_items.legacy_material_id = material_inventory.id)
+        """,
         "CREATE TABLE IF NOT EXISTS project_blueprints (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, blueprint_file TEXT NOT NULL, blueprint_preview_file TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER, task_id INTEGER, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', message TEXT, is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
@@ -994,6 +1061,58 @@ def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
 
 
+INVENTORY_STATUS_LABELS = {
+    "available": "Available",
+    "used": "Used",
+    "needs_purchase": "Needs purchase"
+}
+
+INVENTORY_LOCATION_LABELS = {
+    "storage": "Storage",
+    "warehouse": "Warehouse",
+    "job_site": "Job site"
+}
+
+INVENTORY_CONDITION_LABELS = {
+    "new": "New",
+    "used": "Used"
+}
+
+
+def clean_inventory_status(value):
+    value = (value or "available").strip()
+    return value if value in INVENTORY_STATUS_LABELS else "available"
+
+
+def clean_inventory_location(value):
+    value = (value or "warehouse").strip()
+    return value if value in INVENTORY_LOCATION_LABELS else "warehouse"
+
+
+def clean_inventory_condition(value):
+    value = (value or "new").strip()
+    return value if value in INVENTORY_CONDITION_LABELS else "new"
+
+
+def inventory_status_label(value):
+    return INVENTORY_STATUS_LABELS.get(value or "", "Available")
+
+
+def inventory_location_label(value):
+    return INVENTORY_LOCATION_LABELS.get(value or "", "Warehouse")
+
+
+def inventory_condition_label(value):
+    return INVENTORY_CONDITION_LABELS.get(value or "", "New")
+
+
+def optional_int(value):
+    try:
+        return int(value) if str(value or "").strip() else None
+    except Exception:
+        return None
+
+
 def is_mobile_request():
     user_agent = request.headers.get("User-Agent", "").lower()
     return any(token in user_agent for token in ["mobi", "android", "iphone", "ipad"])
@@ -1042,6 +1161,189 @@ def fetch_visible_projects(conn, q=""):
         f"SELECT projects.* FROM projects {join_sql} {where_sql} ORDER BY projects.created_at DESC",
         tuple(params)
     ).fetchall()
+
+
+def fetch_inventory_projects(conn):
+    if is_main_admin():
+        return conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    return conn.execute(
+        """
+        SELECT projects.id, projects.name, projects.customer_name
+        FROM projects
+        JOIN project_permissions ON project_permissions.project_id = projects.id AND project_permissions.user_id = %s
+        ORDER BY projects.name
+        """,
+        (session.get("user_id"),)
+    ).fetchall()
+
+
+def fetch_inventory_rooms(conn, project_id=None):
+    params = []
+    join_sql = "JOIN projects ON rooms.project_id = projects.id"
+    where = []
+    if not is_main_admin():
+        join_sql += " JOIN project_permissions ON project_permissions.project_id = rooms.project_id AND project_permissions.user_id = %s"
+        params.append(session.get("user_id"))
+    if project_id:
+        where.append("rooms.project_id = %s")
+        params.append(project_id)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    return conn.execute(
+        f"""
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        {join_sql}
+        {where_sql}
+        ORDER BY projects.name, rooms.name
+        """,
+        tuple(params)
+    ).fetchall()
+
+
+def inventory_select_query(where_sql):
+    return f"""
+        SELECT inventory_items.*,
+               projects.name AS project_name,
+               rooms.name AS room_name,
+               added_users.name AS added_by_name,
+               used_users.name AS used_by_name
+        FROM inventory_items
+        LEFT JOIN projects ON inventory_items.project_id = projects.id
+        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+        LEFT JOIN users AS added_users ON inventory_items.added_by = added_users.id
+        LEFT JOIN users AS used_users ON inventory_items.used_by = used_users.id
+        {where_sql}
+        ORDER BY CASE inventory_items.status
+                    WHEN 'available' THEN 0
+                    WHEN 'needs_purchase' THEN 1
+                    WHEN 'used' THEN 2
+                    ELSE 3
+                 END,
+                 inventory_items.item_date DESC,
+                 inventory_items.created_at DESC,
+                 inventory_items.id DESC
+    """
+
+
+def fetch_inventory_items(conn, filters=None):
+    filters = filters or {}
+    where = ["1=1"]
+    params = []
+    if not is_main_admin():
+        where.append(
+            """
+            (
+                inventory_items.project_id IS NULL
+                OR EXISTS (
+                    SELECT 1 FROM project_permissions
+                    WHERE project_permissions.project_id = inventory_items.project_id
+                      AND project_permissions.user_id = %s
+                )
+            )
+            """
+        )
+        params.append(session.get("user_id"))
+    q = (filters.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        where.append(
+            """
+            (
+                inventory_items.item_name ILIKE %s
+                OR inventory_items.item_model ILIKE %s
+                OR inventory_items.brand ILIKE %s
+                OR inventory_items.location_detail ILIKE %s
+                OR projects.name ILIKE %s
+                OR rooms.name ILIKE %s
+            )
+            """
+        )
+        params.extend([like, like, like, like, like, like])
+    status = filters.get("status")
+    if status in INVENTORY_STATUS_LABELS:
+        where.append("inventory_items.status = %s")
+        params.append(status)
+    project_id = filters.get("project_id")
+    if project_id:
+        where.append("inventory_items.project_id = %s")
+        params.append(project_id)
+    room_id = filters.get("room_id")
+    if room_id:
+        where.append("inventory_items.room_id = %s")
+        params.append(room_id)
+    where_sql = "WHERE " + " AND ".join(where)
+    return conn.execute(inventory_select_query(where_sql), tuple(params)).fetchall()
+
+
+def prepare_inventory_form(conn, project_id=None):
+    projects = fetch_inventory_projects(conn)
+    rooms = fetch_inventory_rooms(conn, project_id)
+    return projects, rooms
+
+
+def inventory_item_access_allowed(conn, item):
+    if is_main_admin():
+        return True
+    if not item.get("project_id"):
+        return can_view_inventory()
+    return user_can_access_project(conn, item.get("project_id"))
+
+
+def validate_inventory_allocation(conn, project_id, room_id):
+    if room_id:
+        room = conn.execute("SELECT id, project_id FROM rooms WHERE id = %s", (room_id,)).fetchone()
+        if not room:
+            return None, None, "Room not found."
+        project_id = project_id or room["project_id"]
+        if room["project_id"] != project_id:
+            return None, None, "Room does not belong to the selected project."
+    if project_id and not user_can_access_project(conn, project_id):
+        return None, None, "You do not have access to this project."
+    return project_id, room_id, ""
+
+
+def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
+    project_id = fixed_project_id if fixed_project_id is not None else optional_int(request.form.get("project_id"))
+    room_id = fixed_room_id if fixed_room_id is not None else optional_int(request.form.get("room_id"))
+    project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
+    if error:
+        return error
+    file = request.files.get("picture") or request.files.get("picture_camera")
+    picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+    status = clean_inventory_status(request.form.get("status"))
+    used_by = session.get("user_id") if status == "used" else None
+    used_at = utc_now_iso() if status == "used" else None
+    item_name = (request.form.get("item_name") or request.form.get("description") or "").strip()
+    if not item_name:
+        return "Item name is required."
+    conn.execute(
+        """
+        INSERT INTO inventory_items
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            request.form.get("item_date") or local_now().date().isoformat(),
+            float(request.form.get("quantity") or 0),
+            item_name,
+            (request.form.get("item_model") or request.form.get("part_number") or "").strip(),
+            request.form.get("brand", "").strip(),
+            clean_inventory_condition(request.form.get("item_condition")),
+            clean_inventory_location(request.form.get("location_type")),
+            request.form.get("location_detail", "").strip(),
+            project_id,
+            room_id,
+            status,
+            session.get("user_id"),
+            used_by,
+            used_at,
+            request.form.get("used_note", "").strip(),
+            picture_file,
+            utc_now_iso(),
+            utc_now_iso()
+        )
+    )
+    return ""
 
 
 def zoneinfo_or_none(name):
@@ -1414,7 +1716,10 @@ def utility_processor():
         admin_unread_count=admin_unread_count,
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
-        can_edit_inventory=can_edit_inventory
+        can_edit_inventory=can_edit_inventory,
+        inventory_status_label=inventory_status_label,
+        inventory_location_label=inventory_location_label,
+        inventory_condition_label=inventory_condition_label
     )
 
 
@@ -1607,41 +1912,31 @@ def mobile_project_materials(project_id):
 
     if request.method == "POST":
         if not can_edit_inventory():
+            conn.close()
             flash("You do not have permission to add material inventory.")
             return redirect(url_for("mobile_project_materials", project_id=project_id))
 
-        file = request.files.get("picture") or request.files.get("picture_camera")
-        picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
-
-        conn.execute(
-            "INSERT INTO material_inventory (project_id, user_id, item_date, quantity, part_number, description, material_status, picture_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                project_id,
-                session.get("user_id"),
-                request.form.get("item_date"),
-                float(request.form.get("quantity") or 0),
-                request.form.get("part_number", "").strip(),
-                request.form.get("description", "").strip(),
-                request.form.get("material_status", "not_in_stock"),
-                picture_file,
-                datetime.now().isoformat()
-            )
-        )
+        error = insert_inventory_item(conn, fixed_project_id=project_id)
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("mobile_project_materials", project_id=project_id))
         conn.commit()
-        flash("Material inventory item added.")
+        flash("Inventory item added.")
 
-    materials = conn.execute(
-        """
-        SELECT material_inventory.*, users.name AS user_name
-        FROM material_inventory
-        LEFT JOIN users ON material_inventory.user_id = users.id
-        WHERE project_id = %s
-        ORDER BY item_date DESC, created_at DESC
-        """,
-        (project_id,)
-    ).fetchall()
+    materials = fetch_inventory_items(conn, {"project_id": project_id})
+    rooms = fetch_inventory_rooms(conn, project_id)
     conn.close()
-    return render_template("mobile_materials.html", project=project, materials=materials)
+    return render_template(
+        "mobile_materials.html",
+        project=project,
+        materials=materials,
+        rooms=rooms,
+        today=local_now().date().isoformat(),
+        status_options=INVENTORY_STATUS_LABELS,
+        location_options=INVENTORY_LOCATION_LABELS,
+        condition_options=INVENTORY_CONDITION_LABELS
+    )
 
 
 
@@ -1746,6 +2041,7 @@ def mobile_room(room_id):
         """,
         (room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
+    room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
         if not can_add_notes():
@@ -1777,7 +2073,7 @@ def mobile_room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, selected_date=selected_date)
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, selected_date=selected_date)
 
 
 @app.route("/routes-check")
@@ -2205,6 +2501,138 @@ def edit_project(project_id):
     return render_template("edit_project.html", project=project)
 
 
+@app.route("/inventory", methods=["GET", "POST"])
+@login_required
+def inventory():
+    if not can_view_inventory():
+        flash("You do not have permission to view inventory.")
+        return redirect(url_for("index"))
+
+    conn = db()
+    if request.method == "POST":
+        if not can_edit_inventory():
+            conn.close()
+            flash("You do not have permission to add inventory.")
+            return redirect(url_for("inventory"))
+        error = insert_inventory_item(conn)
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("inventory"))
+        conn.commit()
+        conn.close()
+        flash("Inventory item added.")
+        return redirect(url_for("inventory"))
+
+    selected_project_id = request.args.get("project_id", type=int)
+    if selected_project_id and not user_can_access_project(conn, selected_project_id):
+        selected_project_id = None
+        flash("You do not have access to that project.")
+    selected_room_id = request.args.get("room_id", type=int)
+    selected_status = request.args.get("status", "")
+    if selected_status not in INVENTORY_STATUS_LABELS:
+        selected_status = ""
+    q = request.args.get("q", "").strip()
+    items = fetch_inventory_items(conn, {
+        "q": q,
+        "status": selected_status,
+        "project_id": selected_project_id,
+        "room_id": selected_room_id
+    })
+    projects, rooms = prepare_inventory_form(conn, selected_project_id)
+    conn.close()
+    return render_template(
+        "inventory.html",
+        items=items,
+        projects=projects,
+        rooms=rooms,
+        q=q,
+        selected_status=selected_status,
+        selected_project_id=selected_project_id,
+        selected_room_id=selected_room_id,
+        today=local_now().date().isoformat(),
+        status_options=INVENTORY_STATUS_LABELS,
+        location_options=INVENTORY_LOCATION_LABELS,
+        condition_options=INVENTORY_CONDITION_LABELS
+    )
+
+
+@app.route("/inventory/<int:item_id>/status", methods=["POST"])
+@login_required
+def update_inventory_status(item_id):
+    if not can_edit_inventory():
+        flash("You do not have permission to update inventory.")
+        return redirect(safe_next_url("inventory"))
+    new_status = clean_inventory_status(request.form.get("status") or request.form.get("material_status"))
+    posted_project = "project_id" in request.form
+    posted_room = "room_id" in request.form
+    project_id = optional_int(request.form.get("project_id")) if posted_project else None
+    room_id = optional_int(request.form.get("room_id")) if posted_room else None
+
+    conn = db()
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(safe_next_url("inventory"))
+    if not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("You do not have access to that inventory item.")
+        return redirect(url_for("inventory"))
+    project_id = project_id if posted_project else item.get("project_id")
+    room_id = room_id if posted_room else item.get("room_id")
+    project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(safe_next_url("inventory"))
+
+    used_by = session.get("user_id") if new_status == "used" else None
+    used_at = utc_now_iso() if new_status == "used" else None
+    conn.execute(
+        """
+        UPDATE inventory_items
+        SET status = %s,
+            project_id = %s,
+            room_id = %s,
+            location_type = %s,
+            location_detail = %s,
+            used_by = %s,
+            used_at = %s,
+            used_note = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            new_status,
+            project_id,
+            room_id,
+            clean_inventory_location(request.form.get("location_type") or item.get("location_type")),
+            request.form.get("location_detail", item.get("location_detail") or "").strip(),
+            used_by,
+            used_at,
+            request.form.get("used_note", item.get("used_note") or "").strip(),
+            utc_now_iso(),
+            item_id
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash("Inventory item updated.")
+    return redirect(safe_next_url("inventory"))
+
+
+@app.route("/inventory/<int:item_id>/delete", methods=["POST"])
+@admin_required
+def delete_inventory_item(item_id):
+    conn = db()
+    conn.execute("DELETE FROM inventory_items WHERE id = %s", (item_id,))
+    conn.commit()
+    conn.close()
+    flash("Inventory item deleted.")
+    return redirect(safe_next_url("inventory"))
+
+
 
 
 @app.route("/project/<int:project_id>/materials", methods=["GET", "POST"])
@@ -2227,41 +2655,31 @@ def project_materials(project_id):
 
     if request.method == "POST":
         if not can_edit_inventory():
+            conn.close()
             flash("You do not have permission to add material inventory.")
             return redirect(url_for("project_materials", project_id=project_id))
 
-        file = request.files.get("picture") or request.files.get("picture_camera")
-        picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
-
-        conn.execute(
-            "INSERT INTO material_inventory (project_id, user_id, item_date, quantity, part_number, description, material_status, picture_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                project_id,
-                session.get("user_id"),
-                request.form.get("item_date"),
-                float(request.form.get("quantity") or 0),
-                request.form.get("part_number", "").strip(),
-                request.form.get("description", "").strip(),
-                request.form.get("material_status", "not_in_stock"),
-                picture_file,
-                datetime.now().isoformat()
-            )
-        )
+        error = insert_inventory_item(conn, fixed_project_id=project_id)
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("project_materials", project_id=project_id))
         conn.commit()
-        flash("Material inventory item added.")
+        flash("Inventory item added.")
 
-    materials = conn.execute(
-        """
-        SELECT material_inventory.*, users.name AS user_name
-        FROM material_inventory
-        LEFT JOIN users ON material_inventory.user_id = users.id
-        WHERE project_id = %s
-        ORDER BY item_date DESC, created_at DESC
-        """,
-        (project_id,)
-    ).fetchall()
+    materials = fetch_inventory_items(conn, {"project_id": project_id})
+    rooms = fetch_inventory_rooms(conn, project_id)
     conn.close()
-    return render_template("materials.html", project=project, materials=materials)
+    return render_template(
+        "materials.html",
+        project=project,
+        materials=materials,
+        rooms=rooms,
+        today=local_now().date().isoformat(),
+        status_options=INVENTORY_STATUS_LABELS,
+        location_options=INVENTORY_LOCATION_LABELS,
+        condition_options=INVENTORY_CONDITION_LABELS
+    )
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
@@ -2271,43 +2689,62 @@ def update_material_status(project_id, material_id):
         flash("You do not have permission to update material status.")
         return redirect(url_for("project_materials", project_id=project_id))
 
-    new_status = request.form.get("material_status", "not_in_stock")
-    if new_status not in ["in_stock", "not_in_stock", "used"]:
-        new_status = "not_in_stock"
+    legacy_status = request.form.get("material_status", "")
+    status_map = {"in_stock": "available", "not_in_stock": "needs_purchase", "used": "used"}
+    new_status = clean_inventory_status(request.form.get("status") or status_map.get(legacy_status, legacy_status))
 
     conn = db()
     if not user_can_access_project(conn, project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s AND project_id = %s", (material_id, project_id)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(url_for("project_materials", project_id=project_id))
     conn.execute(
-        "UPDATE material_inventory SET material_status = %s WHERE id = %s AND project_id = %s",
-        (new_status, material_id, project_id)
+        """
+        UPDATE inventory_items
+        SET status = %s,
+            room_id = %s,
+            used_by = %s,
+            used_at = %s,
+            used_note = %s,
+            updated_at = %s
+        WHERE id = %s AND project_id = %s
+        """,
+        (
+            new_status,
+            optional_int(request.form.get("room_id")) or item.get("room_id"),
+            session.get("user_id") if new_status == "used" else None,
+            utc_now_iso() if new_status == "used" else None,
+            request.form.get("used_note", item.get("used_note") or "").strip(),
+            utc_now_iso(),
+            material_id,
+            project_id
+        )
     )
     conn.commit()
     conn.close()
-    flash("Material status updated.")
+    flash("Inventory item updated.")
     if "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_project_materials", project_id=project_id))
     return redirect(url_for("project_materials", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def delete_material(project_id, material_id):
-    if not can_edit_inventory():
-        flash("You do not have permission to delete material inventory.")
-        return redirect(url_for("project_materials", project_id=project_id))
-
     conn = db()
     if not user_can_access_project(conn, project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    conn.execute("DELETE FROM material_inventory WHERE id = %s AND project_id = %s", (material_id, project_id))
+    conn.execute("DELETE FROM inventory_items WHERE id = %s AND project_id = %s", (material_id, project_id))
     conn.commit()
     conn.close()
-    flash("Material inventory item deleted.")
+    flash("Inventory item deleted.")
     return redirect(url_for("project_materials", project_id=project_id))
 
 
@@ -2532,6 +2969,7 @@ def room(room_id):
         """,
         (room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
+    room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
         file = request.files.get("photo") or request.files.get("photo_camera")
@@ -2571,7 +3009,7 @@ def room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, users=users, selected_date=selected_date)
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, users=users, selected_date=selected_date)
 
 
 @app.route("/project/<int:project_id>/timeline")
@@ -3442,6 +3880,32 @@ def attendance_report():
     )
 
 
+@app.route("/my-time-report")
+@login_required
+def my_time_report():
+    period = request.args.get("period", "day")
+    if period not in ["day", "week", "month"]:
+        period = "day"
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    report = attendance_report_data(period, selected_date, session.get("user_id"))
+    return render_template(
+        "attendance_report.html",
+        users=[],
+        pairs=report["pairs"],
+        summary=report["summary"].values(),
+        period=report["period"],
+        selected_date=selected_date,
+        selected_user_id=session.get("user_id"),
+        start=report["start"],
+        end=report["end"],
+        duration_text=duration_text,
+        minutes_text=minutes_text,
+        format_time=format_time,
+        format_date=format_date,
+        my_report=True
+    )
+
+
 def attendance_report_data(period, selected_date, selected_user_id=None):
     period, start, end = attendance_range(period, selected_date)
     conn = db()
@@ -3824,6 +4288,7 @@ def backup():
         ("notes", "id"),
         ("tasks", "id"),
         ("material_inventory", "id"),
+        ("inventory_items", "id"),
         ("attendance_events", "id"),
         ("worker_location_pings", "id"),
         ("login_events", "id"),
@@ -3865,6 +4330,12 @@ def backup():
         conn.rollback()
         material_pictures = []
         backup_warnings.append(f"Material pictures could not be listed: {e}")
+    try:
+        inventory_pictures = conn.execute("SELECT picture_file FROM inventory_items WHERE picture_file IS NOT NULL").fetchall()
+    except Exception as e:
+        conn.rollback()
+        inventory_pictures = []
+        backup_warnings.append(f"Inventory pictures could not be listed: {e}")
     try:
         task_files = conn.execute(
             """
@@ -3909,6 +4380,8 @@ def backup():
             add_storage_file(n.get("audio_file"), "audio")
         for m in material_pictures:
             add_storage_file(m.get("picture_file"), "material_pictures")
+        for item in inventory_pictures:
+            add_storage_file(item.get("picture_file"), "inventory_pictures")
         for task in task_files:
             add_storage_file(task.get("task_photo_file"), "task_files")
             add_storage_file(task.get("task_audio_file"), "task_files")
@@ -3940,6 +4413,8 @@ def storage_file(storage_path):
         UNION
         SELECT project_id FROM material_inventory WHERE picture_file = %s
         UNION
+        SELECT project_id FROM inventory_items WHERE picture_file = %s
+        UNION
         SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
         LIMIT 1
         """,
@@ -3954,10 +4429,11 @@ def storage_file(storage_path):
             storage_path,
             storage_path,
             storage_path,
+            storage_path,
             storage_path
         )
     ).fetchone()
-    if owner and not user_can_access_project(conn, owner["project_id"]):
+    if owner and owner.get("project_id") and not user_can_access_project(conn, owner["project_id"]):
         conn.close()
         return "You do not have access to this project file.", 403
     conn.close()

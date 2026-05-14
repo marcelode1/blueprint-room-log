@@ -9,6 +9,9 @@
     <div class="grid">
         <a class="btn-link" href="#search">Search Projects</a>
         <a class="btn-link" href="#projects">Projects</a>
+        {% if is_main_admin() or can_view_inventory() %}
+            <a class="btn-link btn-secondary" href="{{ url_for('inventory') }}">Inventory</a>
+        {% endif %}
         {% if is_main_admin() %}
             <a class="btn-link" href="{{ url_for('new_project') }}">New Project</a>
             <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
