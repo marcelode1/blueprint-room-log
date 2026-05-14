@@ -10,6 +10,10 @@
         <label>Email</label>
         <input name="email" type="email" required>
 
+        <label>Cellphone Number</label>
+        <input name="phone_number" type="tel" placeholder="+15551234567">
+        <label><input type="checkbox" name="sms_enabled"> Allow text messages for this user</label>
+
         <label>PIN Number</label>
         <input name="pin" inputmode="numeric" minlength="4" required>
 
@@ -22,6 +26,7 @@
         <button type="submit">Send Mobile Invitation</button>
     </form>
     <p class="muted">The invitation email sends the mobile link. Share the PIN with the user separately.</p>
+    <p class="muted">Text messages require Twilio settings on Render: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.</p>
 </div>
 
 <div class="card">
@@ -54,6 +59,21 @@
             width: auto;
             min-width: 90px;
         }
+        .smsBox {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+        .smsBox input[type="checkbox"] {
+            width: auto;
+            min-height: auto;
+            margin-right: 8px;
+        }
+        input[type="checkbox"] {
+            width: auto;
+            min-height: auto;
+            margin-right: 8px;
+        }
         @media(max-width:700px){
             .userRow { grid-template-columns: 1fr; }
             .confirmButtons { flex-direction: column; }
@@ -67,6 +87,7 @@
                 <strong>{{ u.name }}</strong><br>
                 <span>{{ u.email }}</span><br>
                 <small>Role: {{ u.role }}</small>
+                <p class="muted">Cellphone: {{ u.phone_number or "Not set" }}{% if u.sms_enabled %} - Text enabled{% else %} - Text disabled{% endif %}</p>
                 {% if u.role != "admin" %}
                 <form method="post" action="{{ url_for('update_user_pin', user_id=u.id) }}" style="margin-top:10px;">
                     <label>New PIN / Resend Invite</label>
@@ -74,6 +95,19 @@
                     <button type="submit" class="btn-secondary">Update PIN & Send Invite</button>
                 </form>
                 {% endif %}
+                <div class="smsBox">
+                    <form method="post" action="{{ url_for('update_user_phone', user_id=u.id) }}">
+                        <label>Cellphone Number</label>
+                        <input name="phone_number" type="tel" value="{{ u.phone_number or '' }}" placeholder="+15551234567">
+                        <label><input type="checkbox" name="sms_enabled" {% if u.sms_enabled %}checked{% endif %}> Allow text messages</label>
+                        <button type="submit" class="btn-secondary">Save Text Settings</button>
+                    </form>
+                    <form method="post" action="{{ url_for('send_user_sms', user_id=u.id) }}">
+                        <label>Send Text Message</label>
+                        <textarea name="message" rows="2" placeholder="Message to send to this worker"></textarea>
+                        <button type="submit">Send Text</button>
+                    </form>
+                </div>
             </div>
 
             <div>

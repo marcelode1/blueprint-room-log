@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, base64
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -33,6 +33,9 @@ SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME or "no-reply@projectonus.app")
 SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
@@ -166,6 +169,31 @@ def send_email(to_email, subject, body, attachments=None):
         return False
 
 
+def send_sms(phone_number, body):
+    phone_number = (phone_number or "").strip()
+    if not phone_number:
+        return False
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER):
+        print("SMS not sent: Twilio environment variables are not configured.")
+        return False
+    try:
+        payload = urllib.parse.urlencode({
+            "To": phone_number,
+            "From": TWILIO_FROM_NUMBER,
+            "Body": body[:1500],
+        }).encode("utf-8")
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+        request_obj = urllib.request.Request(url, data=payload, method="POST")
+        token = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode("utf-8")
+        request_obj.add_header("Authorization", "Basic " + base64.b64encode(token).decode("ascii"))
+        request_obj.add_header("Content-Type", "application/x-www-form-urlencoded")
+        with urllib.request.urlopen(request_obj, timeout=20) as response:
+            return 200 <= response.status < 300
+    except Exception as e:
+        print("SMS send failed:", e)
+        return False
+
+
 def new_token():
     return uuid.uuid4().hex + uuid.uuid4().hex
 
@@ -221,6 +249,8 @@ def init_db():
         name TEXT NOT NULL,
         username TEXT,
         email TEXT UNIQUE NOT NULL,
+        phone_number TEXT,
+        sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         password_hash TEXT NOT NULL,
         pin_hash TEXT,
         invite_token TEXT,
@@ -437,6 +467,8 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_sent_at TEXT",
@@ -837,6 +869,16 @@ def send_task_assignment_email(task, assigned, project):
         )
 
 
+def send_task_assignment_sms(task, assigned, project):
+    if not assigned.get("sms_enabled") or not assigned.get("phone_number"):
+        return False
+    project_name = project.get("name") if project else task.get("project_name")
+    return send_sms(
+        assigned["phone_number"],
+        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'}. Open the app and press Received: {external_url('my_tasks')}"
+    )
+
+
 def notify_admins_task_received(conn, task, actor):
     add_notification(
         conn,
@@ -1096,6 +1138,9 @@ def attendance_range(period, selected_date, tzinfo=None):
             end = start.replace(year=start.year + 1, month=1)
         else:
             end = start.replace(month=start.month + 1)
+    elif period == "year":
+        start = base.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = start.replace(year=start.year + 1)
     else:
         start = base.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
@@ -1482,9 +1527,27 @@ def mobile_project(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
+    ensure_project_blueprints(conn, project)
+    blueprints = conn.execute(
+        "SELECT * FROM project_blueprints WHERE project_id = %s ORDER BY id",
+        (project_id,)
+    ).fetchall()
+    selected_blueprint_id = request.args.get("blueprint_id", type=int)
+    active_blueprint = None
+    if selected_blueprint_id:
+        active_blueprint = conn.execute(
+            "SELECT * FROM project_blueprints WHERE project_id = %s AND id = %s",
+            (project_id, selected_blueprint_id)
+        ).fetchone()
     rooms = conn.execute("SELECT * FROM rooms WHERE project_id = %s ORDER BY id", (project_id,)).fetchall()
     conn.close()
-    return render_template("mobile_project.html", project=project, rooms=rooms)
+    return render_template(
+        "mobile_project.html",
+        project=project,
+        rooms=rooms,
+        blueprints=blueprints,
+        active_blueprint=active_blueprint
+    )
 
 
 @app.route("/mobile/project/<int:project_id>/rooms", methods=["POST"])
@@ -1786,6 +1849,8 @@ def users():
             if role not in ["customer", "worker"]:
                 role = "worker"
             pin = request.form["pin"].strip()
+            phone_number = request.form.get("phone_number", "").strip()
+            sms_enabled = "sms_enabled" in request.form
             if len(pin) < 4:
                 conn.close()
                 flash("PIN must be at least 4 digits.")
@@ -1793,10 +1858,12 @@ def users():
 
             invite_token = new_token()
             conn.execute(
-                "INSERT INTO users (name, email, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     request.form["name"].strip(),
                     email,
+                    phone_number,
+                    sms_enabled,
                     unusable_password_hash(),
                     generate_password_hash(pin),
                     invite_token,
@@ -1820,7 +1887,7 @@ def users():
             conn.rollback()
             flash("That email may already exist.")
 
-    users = conn.execute("SELECT id, name, email, role, created_at, invite_token FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, created_at, invite_token FROM users ORDER BY name").fetchall()
     conn.close()
     return render_template("users.html", users=users)
 
@@ -1855,6 +1922,53 @@ def update_user_pin(user_id):
         flash("PIN updated and invitation email sent. Share the PIN with the user.")
     else:
         flash("PIN updated. Email could not be sent, so share this mobile link with the user: " + invite_link)
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/phone", methods=["POST"])
+@admin_required
+def update_user_phone(user_id):
+    conn = db()
+    user = conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    conn.execute(
+        "UPDATE users SET phone_number = %s, sms_enabled = %s WHERE id = %s",
+        (
+            request.form.get("phone_number", "").strip(),
+            "sms_enabled" in request.form,
+            user_id
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash("Text message settings updated.")
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/sms", methods=["POST"])
+@admin_required
+def send_user_sms(user_id):
+    message = request.form.get("message", "").strip()
+    if not message:
+        flash("Write a text message before sending.")
+        return redirect(url_for("users"))
+    conn = db()
+    user = conn.execute("SELECT name, phone_number, sms_enabled FROM users WHERE id = %s", (user_id,)).fetchone()
+    conn.close()
+    if not user or not user.get("phone_number"):
+        flash("This user does not have a cellphone number saved.")
+        return redirect(url_for("users"))
+    if not user.get("sms_enabled"):
+        flash("Text messages are not enabled for this user.")
+        return redirect(url_for("users"))
+    sent = send_sms(user["phone_number"], f"ProjectONus: {message}")
+    if sent:
+        flash(f"Text message sent to {user.get('name') or 'user'}.")
+    else:
+        flash("Text message could not be sent. Check Twilio settings on Render.")
     return redirect(url_for("users"))
 
 
@@ -2483,7 +2597,7 @@ def create_task(room_id):
         return redirect(url_for("index"))
 
     assigned_user_id = request.form.get("assigned_user_id", type=int)
-    assigned = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
+    assigned = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE id = %s", (assigned_user_id,)).fetchone()
     title = request.form.get("title", "").strip()
     if not assigned or not title:
         conn.close()
@@ -2529,6 +2643,7 @@ def create_task(room_id):
     conn.commit()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
     send_task_assignment_email(task, assigned, project)
+    send_task_assignment_sms(task, assigned, project)
     conn.close()
     flash("Task assigned, project access granted, and user notified.")
     return redirect(url_for("room", room_id=room_id))
@@ -2555,7 +2670,7 @@ def create_global_task():
         project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         selected_ids = set(user_ids)
         selected_users = [
-            u for u in conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+            u for u in conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
             if u["id"] in selected_ids
         ]
         if not project or not selected_users:
@@ -2614,12 +2729,13 @@ def create_global_task():
         conn.commit()
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
+            send_task_assignment_sms(task, assigned, project)
         conn.close()
         flash(f"Task sent to {len(created_tasks)} worker(s). Project access was granted.")
         return redirect(url_for("my_tasks"))
 
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
-    users = conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     conn.close()
     return render_template("create_task.html", projects=projects, users=users)
 
@@ -2787,6 +2903,123 @@ def my_tasks():
     return render_template("tasks.html", tasks=tasks)
 
 
+def task_report_status(task):
+    if task.get("status") == "done":
+        return "Done"
+    if task.get("accepted_at"):
+        return "In Progress"
+    return "Not Seen"
+
+
+def task_in_report_range(task, period, selected_date):
+    period, start, end = attendance_range(period, selected_date)
+    created = local_datetime(task.get("created_at"))
+    return bool(created and start <= created < end)
+
+
+def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None):
+    period, start, end = attendance_range(period, selected_date)
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    query = """
+        SELECT tasks.*,
+               projects.name AS project_name,
+               rooms.name AS room_name,
+               assigned.name AS assigned_user_name,
+               assigned.email AS assigned_user_email,
+               creator.name AS created_by_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN users assigned ON tasks.assigned_user_id = assigned.id
+        LEFT JOIN users creator ON tasks.created_by = creator.id
+        WHERE tasks.created_at >= %s AND tasks.created_at < %s
+    """
+    params = [
+        storage_datetime(start - timedelta(days=1)).isoformat(),
+        storage_datetime(end + timedelta(days=1)).isoformat()
+    ]
+    if selected_project_id:
+        query += " AND tasks.project_id = %s"
+        params.append(selected_project_id)
+    if selected_user_id:
+        query += " AND tasks.assigned_user_id = %s"
+        params.append(selected_user_id)
+    query += " ORDER BY projects.name, tasks.created_at DESC, tasks.id DESC"
+    tasks = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    tasks = [t for t in tasks if task_in_report_range(t, period, selected_date)]
+    return {
+        "period": period,
+        "start": start,
+        "end": end,
+        "projects": projects,
+        "users": users,
+        "tasks": tasks
+    }
+
+
+@app.route("/tasks/report")
+@admin_required
+def task_report():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
+    return render_template(
+        "task_report.html",
+        report=report,
+        period=report["period"],
+        selected_date=selected_date,
+        selected_project_id=selected_project_id,
+        selected_user_id=selected_user_id,
+        task_report_status=task_report_status
+    )
+
+
+@app.route("/tasks/report/export")
+@admin_required
+def task_report_export():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
+        "Created Date", "Start Date", "End Date", "Seen By Worker", "Received At",
+        "Done", "Completed At", "Status", "Instructions"
+    ])
+    for task in report["tasks"]:
+        writer.writerow([
+            task.get("project_name") or "",
+            task.get("room_name") or "",
+            task.get("title") or "",
+            task.get("assigned_user_name") or "",
+            task.get("assigned_user_email") or "",
+            task.get("created_by_name") or "",
+            format_datetime(task.get("created_at")),
+            format_date(task.get("task_start_date") or task.get("task_date")),
+            format_date(task.get("task_end_date") or task.get("task_date")),
+            "Yes" if task.get("accepted_at") else "No",
+            format_datetime(task.get("accepted_at")) if task.get("accepted_at") else "",
+            "Yes" if task.get("status") == "done" else "No",
+            format_datetime(task.get("completed_at")) if task.get("completed_at") else "",
+            task_report_status(task),
+            task.get("instructions") or ""
+        ])
+    filename = f"projectonus_task_report_{report['period']}_{selected_date}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 @app.route("/team-map")
 @admin_required
 def team_map():
@@ -2836,8 +3069,26 @@ def attendance_report():
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_user_id = request.args.get("user_id", type=int)
-    period, start, end = attendance_range(period, selected_date)
+    report = attendance_report_data(period, selected_date, selected_user_id)
+    return render_template(
+        "attendance_report.html",
+        users=report["users"],
+        pairs=report["pairs"],
+        summary=report["summary"].values(),
+        period=report["period"],
+        selected_date=selected_date,
+        selected_user_id=selected_user_id,
+        start=report["start"],
+        end=report["end"],
+        duration_text=duration_text,
+        minutes_text=minutes_text,
+        format_time=format_time,
+        format_date=format_date
+    )
 
+
+def attendance_report_data(period, selected_date, selected_user_id=None):
+    period, start, end = attendance_range(period, selected_date)
     conn = db()
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     query = """
@@ -2873,20 +3124,42 @@ def attendance_report():
                 "minutes": 0
             }
         summary[uid]["minutes"] += duration_minutes(ci.get("created_at"), co.get("created_at"))
-    return render_template(
-        "attendance_report.html",
-        users=users,
-        pairs=pairs,
-        summary=summary.values(),
-        period=period,
-        selected_date=selected_date,
-        selected_user_id=selected_user_id,
-        start=start,
-        end=end,
-        duration_text=duration_text,
-        minutes_text=minutes_text,
-        format_time=format_time,
-        format_date=format_date
+    return {"users": users, "pairs": pairs, "summary": summary, "period": period, "start": start, "end": end}
+
+
+@app.route("/attendance/report/export")
+@admin_required
+def attendance_report_export():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_user_id = request.args.get("user_id", type=int)
+    report = attendance_report_data(period, selected_date, selected_user_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User", "Email", "Project", "Date", "Time Zone", "Clock In", "Clock In Location", "Clock Out", "Clock Out Location", "Total Minutes", "Total"])
+    for p in report["pairs"]:
+        ci = p.get("check_in")
+        co = p.get("check_out")
+        u = p.get("user") or {}
+        event = ci or co or {}
+        writer.writerow([
+            u.get("user_name") or "Unknown user",
+            u.get("user_email") or "",
+            event.get("project_name") or "No project",
+            format_event_date(event),
+            event_timezone_name(event),
+            format_event_time(ci) if ci else "",
+            ci.get("address") if ci else "",
+            format_event_time(co) if co else "",
+            co.get("address") if co else "",
+            duration_minutes(ci.get("created_at"), co.get("created_at")) if ci and co else "",
+            duration_text(ci.get("created_at"), co.get("created_at")) if ci and co else ""
+        ])
+    filename = f"projectonus_time_report_{report['period']}_{selected_date}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 

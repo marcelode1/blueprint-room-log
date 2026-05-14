@@ -8,9 +8,11 @@
 </div>
 <div class="card">
     <h3>Switch Rooms</h3>
+    <div class="mobileRoomList">
     {% for r in rooms %}
         <a class="btn-link {% if r.id == room.id %}btn-secondary{% endif %}" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% endfor %}
+    </div>
 </div>
 <div class="card">
     <h3>Tasks</h3>
@@ -89,7 +91,7 @@
     {% endfor %}
 </div>
 <style>
-.taskDone{opacity:.82}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+.taskDone{opacity:.82}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>

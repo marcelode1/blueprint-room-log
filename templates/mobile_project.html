@@ -16,6 +16,29 @@
         </form>
     {% endif %}
 </div>
+{% if blueprints %}
+<div class="card">
+    <h3>Blueprint Sheets</h3>
+    <div class="mobileBlueprintTabs">
+        {% for bp in blueprints %}
+            <a class="btn-link {% if active_blueprint and active_blueprint.id == bp.id %}btn-secondary{% endif %}" href="{{ url_for('mobile_project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+        {% endfor %}
+    </div>
+    {% if active_blueprint %}
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Hide Blueprint</a>
+        {% set blueprint_path = active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
+        {% if blueprint_path %}
+            {% if active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
+                <iframe title="{{ active_blueprint.name }}" src="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:12px;background:white;"></iframe>
+            {% else %}
+                <img class="photo" src="{{ url_for('storage_file', storage_path=blueprint_path, bp=active_blueprint.id) }}" alt="{{ active_blueprint.name }}">
+            {% endif %}
+        {% endif %}
+    {% else %}
+        <p class="muted">Tap a blueprint sheet to view it.</p>
+    {% endif %}
+</div>
+{% endif %}
 {% if is_main_admin() or has_perm("create_rooms") %}
 <div class="card">
     <button type="button" id="showCreateRoomBtn">Create Room</button>
@@ -46,11 +69,13 @@
 {% endif %}
 <div class="card">
     <h3>Rooms</h3>
+    <div class="mobileRoomList">
     {% for r in rooms %}
         <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% else %}
         <p>No rooms created yet.</p>
     {% endfor %}
+    </div>
 </div>
 <script>
 const showCreateRoomBtn=document.getElementById("showCreateRoomBtn");
@@ -72,4 +97,7 @@ if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
     });
 }
 </script>
+<style>
+.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+</style>
 {% endblock %}
