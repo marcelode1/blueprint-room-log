@@ -13,6 +13,7 @@
         <a class="btn-link {% if r.id == room.id %}btn-secondary{% endif %}" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
     {% endfor %}
     </div>
+    <p class="muted">Scroll up/down here to move between rooms.</p>
 </div>
 <div class="card">
     <h3>Tasks</h3>
