@@ -31,8 +31,28 @@
 
 <div class="card">
     <h2>Users</h2>
+    <button type="button" class="btn-secondary" id="showUserSearchBtn">Search Users</button>
+    <div id="userSearchPanel" class="userSearchPanel" style="display:none;">
+        <label>Type User Name</label>
+        <input id="userSearchInput" placeholder="Start typing the first letters">
+        <label>Go Directly to User</label>
+        <select id="userJumpSelect">
+            <option value="">Choose user</option>
+            {% for u in users %}
+                <option value="userRow{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
+            {% endfor %}
+        </select>
+        <p id="userSearchCount" class="muted"></p>
+    </div>
 
     <style>
+        .userSearchPanel {
+            margin: 12px 0 18px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
         .userRow {
             display: grid;
             grid-template-columns: 1fr auto;
@@ -82,7 +102,7 @@
     </style>
 
     {% for u in users %}
-        <div class="userRow">
+        <div class="userRow" id="userRow{{ u.id }}" data-user-name="{{ u.name|lower }}" data-user-email="{{ u.email|lower }}">
             <div>
                 <strong>{{ u.name }}</strong><br>
                 <span>{{ u.email }}</span><br>
@@ -141,6 +161,49 @@
 </div>
 
 <script>
+const showUserSearchBtn = document.getElementById("showUserSearchBtn");
+const userSearchPanel = document.getElementById("userSearchPanel");
+const userSearchInput = document.getElementById("userSearchInput");
+const userJumpSelect = document.getElementById("userJumpSelect");
+const userSearchCount = document.getElementById("userSearchCount");
+const userRows = Array.from(document.querySelectorAll(".userRow"));
+
+function updateUserSearch() {
+    const term = (userSearchInput.value || "").trim().toLowerCase();
+    let shown = 0;
+    userRows.forEach(row => {
+        const name = row.dataset.userName || "";
+        const email = row.dataset.userEmail || "";
+        const match = !term || name.startsWith(term) || email.startsWith(term) || name.includes(term) || email.includes(term);
+        row.style.display = match ? "grid" : "none";
+        if (match) shown += 1;
+    });
+    userSearchCount.textContent = shown + " user" + (shown === 1 ? "" : "s") + " shown";
+}
+
+if (showUserSearchBtn && userSearchPanel) {
+    showUserSearchBtn.addEventListener("click", () => {
+        const opening = userSearchPanel.style.display === "none";
+        userSearchPanel.style.display = opening ? "block" : "none";
+        if (opening && userSearchInput) userSearchInput.focus();
+        updateUserSearch();
+    });
+}
+if (userSearchInput) userSearchInput.addEventListener("input", updateUserSearch);
+if (userJumpSelect) {
+    userJumpSelect.addEventListener("change", () => {
+        const row = document.getElementById(userJumpSelect.value);
+        if (!row) return;
+        if (userSearchInput) {
+            userSearchInput.value = "";
+            updateUserSearch();
+        }
+        row.scrollIntoView({behavior: "smooth", block: "center"});
+        row.style.outline = "3px solid #2563eb";
+        setTimeout(() => { row.style.outline = ""; }, 1800);
+    });
+}
+
 function showDeleteConfirm(userId) {
     const box = document.getElementById("deleteConfirm" + userId);
     if (box) box.style.display = "block";
