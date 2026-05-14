@@ -2947,6 +2947,9 @@ def receive_task(task_id):
 def my_tasks():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
+    task_mode = request.args.get("mode", "")
+    if selected_project_id:
+        task_mode = "search"
     projects = []
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -2980,7 +2983,7 @@ def my_tasks():
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
     conn.close()
-    return render_template("tasks.html", tasks=tasks, projects=projects, selected_project_id=selected_project_id)
+    return render_template("tasks.html", tasks=tasks, projects=projects, selected_project_id=selected_project_id, task_mode=task_mode)
 
 
 @app.route("/tasks/<int:task_id>/delete", methods=["POST"])
