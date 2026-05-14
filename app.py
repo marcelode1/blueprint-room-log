@@ -3342,24 +3342,7 @@ def task_report_export():
 @app.route("/team-map")
 @admin_required
 def team_map():
-    try:
-        return render_template("team_map.html")
-    except Exception as e:
-        print("Team map page failed:", e)
-        return Response(
-            """
-            <!doctype html>
-            <html>
-            <head><title>Where Is My Team - ProjectONus</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-            <body style="font-family:Arial,sans-serif;padding:20px;">
-                <h1>Where Is My Team</h1>
-                <p>The map page could not load its template, but the team data service is available below.</p>
-                <p><a href="/">Home</a> | <a href="/team-map/data">Open Team Data</a></p>
-            </body>
-            </html>
-            """,
-            mimetype="text/html"
-        )
+    return render_template("team_map.html")
 
 
 @app.route("/team-map/data")

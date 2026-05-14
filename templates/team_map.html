@@ -1,47 +1,25 @@
-<!doctype html>
-<html>
-<head>
-    <title>Where Is My Team - ProjectONus</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-    <style>
-        :root{--bg:#f6f8fb;--card:#fff;--text:#172033;--muted:#64748b;--primary:#2563eb;--border:#d7dee9;--shadow:0 6px 22px rgba(15,23,42,.08)}
-        *{box-sizing:border-box}
-        body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text)}
-        header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-        header a{color:white;text-decoration:none;font-weight:700;margin-left:12px}
-        main{padding:20px;max-width:1240px;margin:auto}
-        .brand{font-weight:900}
-        .card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
-        .muted{color:var(--muted)}
-        .btn{min-height:44px;background:var(--primary);color:white;border:0;border-radius:12px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:10px 16px;margin:6px 0}
-        #teamMap{width:100%;height:620px;border:1px solid var(--border);border-radius:12px;background:white}
-        .teamList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:14px}
-        .teamPerson{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)}
-        @media(max-width:760px){main{padding:12px}.card{padding:16px;border-radius:16px}#teamMap{height:520px}.btn{width:100%}}
-    </style>
-</head>
-<body>
-<header>
-    <div class="brand">ProjectONus</div>
-    <div>
-        <a href="/">Home</a>
-        <a href="/attendance/report">Time Report</a>
-        <a href="/logout">Logout</a>
-    </div>
-</header>
-<main>
-    <div class="card">
-        <h2>Where Is My Team</h2>
-        <p class="muted" id="teamStatus">Loading team locations...</p>
-        <button type="button" class="btn" onclick="loadTeam(true)">Refresh</button>
-    </div>
+{% extends "base.html" %}
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Where Is My Team</h2>
+    <p class="muted" id="teamStatus">Loading team locations...</p>
+    <button type="button" onclick="loadTeam(true)">Refresh</button>
+</div>
 
-    <div class="card">
-        <div id="teamMap"></div>
-        <div class="teamList" id="teamList"></div>
-    </div>
-</main>
+<div class="card">
+    <div id="teamMap"></div>
+    <div class="teamList" id="teamList"></div>
+</div>
+
+<style>
+#teamMap{width:100%;height:620px;border:1px solid var(--border);border-radius:12px;background:white}
+.teamList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:14px}
+.teamPerson{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)}
+@media(max-width:760px){#teamMap{height:520px}}
+</style>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const teamMap=L.map("teamMap").setView([39.5,-98.35],4);
@@ -66,7 +44,7 @@ function listHtml(worker){
 
 async function loadTeam(forceFit){
     try{
-        const res=await fetch("/team-map/data",{cache:"no-store"});
+        const res=await fetch("{{ url_for('team_map_data') }}",{cache:"no-store"});
         if(!res.ok){
             teamStatus.textContent="Team locations are temporarily unavailable.";
             return;
@@ -109,5 +87,4 @@ async function loadTeam(forceFit){
 loadTeam(true);
 setInterval(()=>loadTeam(false),30000);
 </script>
-</body>
-</html>
+{% endblock %}
