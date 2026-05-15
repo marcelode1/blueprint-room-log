@@ -2173,6 +2173,19 @@ def build_attendance_pairs(events):
     return pairs
 
 
+def attendance_pair_sort_key(pair):
+    event = pair.get("check_in") or pair.get("check_out") or {}
+    dt = parse_iso_datetime(event.get("created_at")) or datetime.max.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (
+        dt,
+        (event.get("user_name") or "").lower(),
+        (event.get("project_name") or "").lower(),
+        event.get("id") or 0
+    )
+
+
 @app.context_processor
 def utility_processor():
     return dict(
@@ -4541,11 +4554,12 @@ def attendance_report_data(period, selected_date, selected_user_id=None):
     if selected_user_id:
         query += " AND attendance_events.user_id = %s"
         params.append(selected_user_id)
-    query += " ORDER BY attendance_events.user_id, attendance_events.project_id, attendance_events.created_at"
+    query += " ORDER BY attendance_events.created_at ASC, attendance_events.user_id, attendance_events.project_id, attendance_events.id"
     events = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     events = [e for e in events if attendance_event_in_range(e, period, selected_date)]
     pairs = build_attendance_pairs(events)
+    pairs.sort(key=attendance_pair_sort_key)
     summary = {}
     for p in pairs:
         ci = p.get("check_in")
