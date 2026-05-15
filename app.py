@@ -150,6 +150,38 @@ def safe_next_url(default_endpoint="index", **values):
     return url_for(default_endpoint, **values)
 
 
+def build_full_address(street, city, state, zip_code):
+    city_state = ", ".join(part for part in [city, state] if part)
+    if zip_code:
+        city_state = f"{city_state} {zip_code}".strip()
+    return street, ", ".join(part for part in [street, city_state] if part), city, state, zip_code
+
+
+def project_address_from_form():
+    return build_full_address(
+        request.form.get("customer_address", "").strip(),
+        request.form.get("customer_city", "").strip(),
+        request.form.get("customer_state", "").strip().upper(),
+        request.form.get("customer_zip", "").strip()
+    )
+
+
+def billing_address_from_form(customer_address_parts):
+    billing_same_as_customer = request.form.get("billing_same_as_customer") == "on"
+    if billing_same_as_customer:
+        return (True, *customer_address_parts)
+
+    return (
+        False,
+        *build_full_address(
+            request.form.get("billing_street", "").strip(),
+            request.form.get("billing_city", "").strip(),
+            request.form.get("billing_state", "").strip().upper(),
+            request.form.get("billing_zip", "").strip()
+        )
+    )
+
+
 def send_email(to_email, subject, body, attachments=None):
     if not SMTP_HOST:
         print("Email not sent: SMTP_HOST is not configured.")
@@ -302,7 +334,17 @@ def init_db():
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         customer_name TEXT,
+        customer_street TEXT,
         customer_address TEXT,
+        customer_city TEXT,
+        customer_state TEXT,
+        customer_zip TEXT,
+        billing_street TEXT,
+        billing_address TEXT,
+        billing_city TEXT,
+        billing_state TEXT,
+        billing_zip TEXT,
+        billing_same_as_customer BOOLEAN NOT NULL DEFAULT TRUE,
         customer_phone TEXT,
         customer_email TEXT,
         blueprint_file TEXT,
@@ -533,7 +575,17 @@ def init_db():
     # Safe migrations for older deployments
     migrations = [
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_name TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_street TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_address TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_city TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_state TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_zip TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_street TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_address TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_city TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_state TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_zip TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_same_as_customer BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
@@ -1154,8 +1206,21 @@ def fetch_visible_projects(conn, q=""):
     where_sql = ""
     if q:
         like = f"%{q}%"
-        where_sql = "WHERE projects.name ILIKE %s OR projects.customer_name ILIKE %s OR projects.customer_address ILIKE %s"
-        params.extend([like, like, like])
+        where_sql = """
+        WHERE projects.name ILIKE %s
+           OR projects.customer_name ILIKE %s
+           OR projects.customer_address ILIKE %s
+           OR projects.customer_street ILIKE %s
+           OR projects.customer_city ILIKE %s
+           OR projects.customer_state ILIKE %s
+           OR projects.customer_zip ILIKE %s
+           OR projects.billing_address ILIKE %s
+           OR projects.billing_street ILIKE %s
+           OR projects.billing_city ILIKE %s
+           OR projects.billing_state ILIKE %s
+           OR projects.billing_zip ILIKE %s
+        """
+        params.extend([like, like, like, like, like, like, like, like, like, like, like, like])
 
     return conn.execute(
         f"SELECT projects.* FROM projects {join_sql} {where_sql} ORDER BY projects.created_at DESC",
@@ -2432,7 +2497,9 @@ def new_project():
     if request.method == "POST":
         name = request.form["name"].strip()
         customer_name = request.form.get("customer_name", "").strip()
-        customer_address = request.form.get("customer_address", "").strip()
+        customer_address_parts = project_address_from_form()
+        customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
+        billing_same_as_customer, billing_street, billing_address, billing_city, billing_state, billing_zip = billing_address_from_form(customer_address_parts)
         customer_phone = request.form.get("customer_phone", "").strip()
         customer_email = request.form.get("customer_email", "").strip()
         file = request.files.get("blueprint")
@@ -2449,8 +2516,32 @@ def new_project():
         conn = db()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO projects (name, customer_name, customer_address, customer_phone, customer_email, blueprint_file, blueprint_preview_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (name, customer_name, customer_address, customer_phone, customer_email, blueprint_file, blueprint_preview_file, datetime.now().isoformat())
+            """
+            INSERT INTO projects
+            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                name,
+                customer_name,
+                customer_street,
+                customer_address,
+                customer_city,
+                customer_state,
+                customer_zip,
+                billing_street,
+                billing_address,
+                billing_city,
+                billing_state,
+                billing_zip,
+                billing_same_as_customer,
+                customer_phone,
+                customer_email,
+                blueprint_file,
+                blueprint_preview_file,
+                datetime.now().isoformat()
+            )
         )
         project_id = cur.fetchone()["id"]
         conn.commit()
@@ -2476,17 +2567,44 @@ def edit_project(project_id):
             conn.close()
             flash("Project name is required.")
             return redirect(url_for("edit_project", project_id=project_id))
+        customer_address_parts = project_address_from_form()
+        customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
+        billing_same_as_customer, billing_street, billing_address, billing_city, billing_state, billing_zip = billing_address_from_form(customer_address_parts)
 
         conn.execute(
             """
             UPDATE projects
-            SET name = %s, customer_name = %s, customer_address = %s, customer_phone = %s, customer_email = %s
+            SET name = %s,
+                customer_name = %s,
+                customer_street = %s,
+                customer_address = %s,
+                customer_city = %s,
+                customer_state = %s,
+                customer_zip = %s,
+                billing_street = %s,
+                billing_address = %s,
+                billing_city = %s,
+                billing_state = %s,
+                billing_zip = %s,
+                billing_same_as_customer = %s,
+                customer_phone = %s,
+                customer_email = %s
             WHERE id = %s
             """,
             (
                 name,
                 request.form.get("customer_name", "").strip(),
-                request.form.get("customer_address", "").strip(),
+                customer_street,
+                customer_address,
+                customer_city,
+                customer_state,
+                customer_zip,
+                billing_street,
+                billing_address,
+                billing_city,
+                billing_state,
+                billing_zip,
+                billing_same_as_customer,
                 request.form.get("customer_phone", "").strip(),
                 request.form.get("customer_email", "").strip(),
                 project_id
@@ -3670,8 +3788,14 @@ def task_report_status(task):
 
 def task_in_report_range(task, period, selected_date):
     period, start, end = attendance_range(period, selected_date)
-    created = local_datetime(task.get("created_at"))
-    return bool(created and start <= created < end)
+    task_date = local_date_text(task.get("task_start_date") or task.get("task_date"))
+    if not task_date:
+        return False
+    try:
+        scheduled = datetime.strptime(task_date, "%m/%d/%Y").replace(tzinfo=start.tzinfo)
+    except Exception:
+        return False
+    return start <= scheduled < end
 
 
 def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None):
@@ -3691,11 +3815,12 @@ def task_report_data(period, selected_date, selected_project_id=None, selected_u
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN users assigned ON tasks.assigned_user_id = assigned.id
         LEFT JOIN users creator ON tasks.created_by = creator.id
-        WHERE tasks.created_at >= %s AND tasks.created_at < %s
+        WHERE COALESCE(tasks.task_start_date, tasks.task_date) >= %s
+          AND COALESCE(tasks.task_start_date, tasks.task_date) < %s
     """
     params = [
-        storage_datetime(start - timedelta(days=1)).isoformat(),
-        storage_datetime(end + timedelta(days=1)).isoformat()
+        (start - timedelta(days=1)).date().isoformat(),
+        (end + timedelta(days=1)).date().isoformat()
     ]
     if selected_project_id:
         query += " AND tasks.project_id = %s"
@@ -3748,7 +3873,7 @@ def task_report_export():
     writer = csv.writer(output)
     writer.writerow([
         "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
-        "Created Date", "Start Date", "Be There Time", "End Date", "Seen By Worker", "Received At",
+        "Created Date", "Scheduled Date", "Be There Time", "End Date", "Seen By Worker", "Received At",
         "Done", "Completed At", "Status", "Instructions"
     ])
     for task in report["tasks"]:

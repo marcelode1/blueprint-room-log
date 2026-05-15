@@ -39,6 +39,9 @@
             <div class="desktop-only">
                 <p><strong>Phone:</strong> {{ p.customer_phone or '-' }}</p>
                 <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
+                {% if is_main_admin() %}
+                    <p><strong>Billing Address:</strong> {{ p.billing_address or p.customer_address or '-' }}</p>
+                {% endif %}
             </div>
             <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
             {% if is_main_admin() %}

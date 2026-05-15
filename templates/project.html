@@ -8,6 +8,9 @@
     <div class="desktop-only">
         <p><strong>Phone:</strong> {{ project.customer_phone or '-' }}</p>
         <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
+        {% if is_main_admin() %}
+            <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+        {% endif %}
     </div>
 
     <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id) }}">Clock In / Clock Out</a>

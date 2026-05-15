@@ -7,17 +7,92 @@
         <label>Project Name</label>
         <input name="name" required>
         <label>Customer Name</label>
-        <input name="customer_name">
-        <label>Customer Address</label>
-        <input name="customer_address">
+        <input name="customer_name" autocomplete="name">
+        <label>Street Address</label>
+        <input id="customerStreet" name="customer_address" autocomplete="street-address" placeholder="Start typing the street address">
+        <div class="grid">
+            <div>
+                <label>City</label>
+                <input id="customerCity" name="customer_city" autocomplete="address-level2">
+            </div>
+            <div>
+                <label>State</label>
+                <input id="customerState" name="customer_state" autocomplete="address-level1" maxlength="2" placeholder="FL">
+            </div>
+            <div>
+                <label>ZIP Code</label>
+                <input id="customerZip" name="customer_zip" autocomplete="postal-code" inputmode="numeric">
+            </div>
+        </div>
+        <div class="billingAddressBlock">
+            <h3>Billing Address</h3>
+            <label class="inlineCheck">
+                <input id="billingSame" name="billing_same_as_customer" type="checkbox" checked>
+                Billing address is the same as customer address
+            </label>
+            <label>Billing Street Address</label>
+            <input id="billingStreet" name="billing_street" autocomplete="billing street-address" placeholder="Billing street address">
+            <div class="grid">
+                <div>
+                    <label>Billing City</label>
+                    <input id="billingCity" name="billing_city" autocomplete="billing address-level2">
+                </div>
+                <div>
+                    <label>Billing State</label>
+                    <input id="billingState" name="billing_state" autocomplete="billing address-level1" maxlength="2" placeholder="FL">
+                </div>
+                <div>
+                    <label>Billing ZIP Code</label>
+                    <input id="billingZip" name="billing_zip" autocomplete="billing postal-code" inputmode="numeric">
+                </div>
+            </div>
+        </div>
         <label>Customer Phone</label>
-        <input name="customer_phone">
+        <input name="customer_phone" autocomplete="tel">
         <label>Customer Email</label>
-        <input name="customer_email" type="email">
+        <input name="customer_email" type="email" autocomplete="email">
         <label>Upload PDF Blueprint / Image (optional)</label>
         <input name="blueprint" type="file" accept=".pdf,image/*">
         <p style="font-size:13px;">You can create the project now and upload or replace the blueprint later.</p>
         <button type="submit">Create Project</button>
     </form>
 </div>
+<style>
+.billingAddressBlock{border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin:16px 0;background:#f8fafc}
+.billingAddressBlock h3{margin-top:0}
+.inlineCheck{display:flex;gap:10px;align-items:center;margin:8px 0 14px;font-weight:800}
+.inlineCheck input{width:auto}
+.billingAddressBlock input[readonly]{background:#eef2ff;color:#334155}
+</style>
+<script>
+(function(){
+    const pairs = [
+        ["customerStreet", "billingStreet"],
+        ["customerCity", "billingCity"],
+        ["customerState", "billingState"],
+        ["customerZip", "billingZip"]
+    ];
+    const same = document.getElementById("billingSame");
+    function syncBilling(){
+        if(!same) return;
+        pairs.forEach(([sourceId, targetId]) => {
+            const source = document.getElementById(sourceId);
+            const target = document.getElementById(targetId);
+            if(!source || !target) return;
+            if(same.checked){
+                target.value = source.value;
+                target.setAttribute("readonly", "readonly");
+            }else{
+                target.removeAttribute("readonly");
+            }
+        });
+    }
+    pairs.forEach(([sourceId]) => {
+        const source = document.getElementById(sourceId);
+        if(source) source.addEventListener("input", syncBilling);
+    });
+    if(same) same.addEventListener("change", syncBilling);
+    syncBilling();
+})();
+</script>
 {% endblock %}

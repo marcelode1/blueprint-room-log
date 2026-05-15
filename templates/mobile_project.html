@@ -5,6 +5,9 @@
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    {% if is_main_admin() %}
+        <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+    {% endif %}
     <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id) }}">Clock In / Clock Out</a>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     {% if can_view_inventory() %}
