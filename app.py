@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, base64
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -346,6 +346,7 @@ def init_db():
         billing_state TEXT,
         billing_zip TEXT,
         billing_same_as_customer BOOLEAN NOT NULL DEFAULT TRUE,
+        dtools_cloud_project_ref TEXT,
         customer_phone TEXT,
         customer_email TEXT,
         blueprint_file TEXT,
@@ -416,6 +417,9 @@ def init_db():
         used_note TEXT,
         picture_file TEXT,
         legacy_material_id INTEGER UNIQUE,
+        dtools_cloud_source_id TEXT,
+        dtools_cloud_item_id TEXT,
+        dtools_cloud_project_ref TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT
     )
@@ -587,6 +591,7 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_state TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_zip TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS billing_same_as_customer BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS dtools_cloud_project_ref TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
@@ -640,6 +645,9 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_note TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS picture_file TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS legacy_material_id INTEGER",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS dtools_cloud_source_id TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS dtools_cloud_item_id TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS dtools_cloud_project_ref TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
@@ -1200,6 +1208,9 @@ INVENTORY_CONDITION_LABELS = {
     "used": "Used"
 }
 
+DTOOLS_CLOUD_DEFAULT_BASE_URL = "https://dtcloudapi.d-tools.cloud/api/v1"
+DTOOLS_CLOUD_DEFAULT_AUTH = "Basic RFRDbG91ZEFQSVVzZXI6MyNRdVkrMkR1QCV3Kk15JTU8Yi1aZzlV"
+
 
 def clean_inventory_status(value):
     value = (value or "available").strip()
@@ -1226,6 +1237,20 @@ def inventory_location_label(value):
 
 def inventory_condition_label(value):
     return INVENTORY_CONDITION_LABELS.get(value or "", "New")
+
+
+def dtools_cloud_config():
+    return {
+        "api_key": get_app_setting("dtools_cloud_api_key", os.environ.get("DTOOLS_CLOUD_API_KEY", "")).strip(),
+        "base_url": get_app_setting("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL,
+        "auth_header": get_app_setting("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH,
+        "material_path": get_app_setting("dtools_cloud_material_path", "Projects/GetProject").strip() or "Projects/GetProject",
+        "id_param": get_app_setting("dtools_cloud_id_param", "Id").strip() or "Id",
+    }
+
+
+def dtools_cloud_configured():
+    return bool(dtools_cloud_config().get("api_key"))
 
 
 def optional_int(value):
@@ -1479,6 +1504,259 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
         )
     )
     return ""
+
+
+def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
+    config = dtools_cloud_config()
+    api_key = config["api_key"]
+    if not api_key:
+        raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings.")
+
+    path = (endpoint_path or config["material_path"]).strip()
+    if not path:
+        raise RuntimeError("D-Tools Cloud material endpoint path is missing.")
+    if path.startswith("http://") or path.startswith("https://"):
+        url = path
+    else:
+        url = config["base_url"].rstrip("/") + "/" + path.lstrip("/")
+
+    ref = (external_ref or "").strip()
+    if ref:
+        if "{id}" in url:
+            url = url.replace("{id}", urllib.parse.quote(ref))
+        else:
+            separator = "&" if "?" in url else "?"
+            url += separator + urllib.parse.urlencode({config["id_param"]: ref})
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "X-API-Key": api_key,
+            "Authorization": config["auth_header"],
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw or "{}")
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"D-Tools Cloud returned {e.code}: {details or e.reason}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach D-Tools Cloud: {e.reason}")
+    except json.JSONDecodeError:
+        raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
+
+
+def normalize_lookup_key(value):
+    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+
+def dtools_scalar(value):
+    return isinstance(value, (str, int, float, bool)) and str(value).strip() != ""
+
+
+def dtools_pick(data, names):
+    wanted = {normalize_lookup_key(name) for name in names}
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if normalize_lookup_key(key) in wanted and dtools_scalar(value):
+                    return str(value).strip()
+            for value in obj.values():
+                found = walk(value)
+                if found:
+                    return found
+        elif isinstance(obj, list):
+            for value in obj:
+                found = walk(value)
+                if found:
+                    return found
+        return ""
+
+    return walk(data)
+
+
+def dtools_quantity(value):
+    text = str(value or "").replace(",", "").strip()
+    try:
+        qty = float(text)
+        return qty if qty > 0 else 1
+    except Exception:
+        return 1
+
+
+DTOOLS_ITEM_LIST_KEYS = {
+    "items", "lineitems", "quoteitems", "projectitems", "products", "materials",
+    "equipment", "productitems", "designitems", "bom", "billofmaterials"
+}
+
+
+def dtools_item_like(item):
+    if not isinstance(item, dict):
+        return False
+    name = dtools_pick(item, ["itemName", "productName", "name", "description", "model", "partNumber"])
+    indicator = dtools_pick(item, ["quantity", "qty", "totalQuantity", "model", "partNumber", "manufacturer", "brand", "locationName", "roomName"])
+    return bool(name and indicator)
+
+
+def dtools_collect_item_candidates(payload):
+    candidates = []
+    seen = set()
+
+    def add_item(item):
+        marker = id(item)
+        if marker not in seen and dtools_item_like(item):
+            seen.add(marker)
+            candidates.append(item)
+
+    def walk(obj, parent_key=""):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                key_norm = normalize_lookup_key(key)
+                if isinstance(value, list) and key_norm in DTOOLS_ITEM_LIST_KEYS:
+                    for child in value:
+                        if isinstance(child, dict):
+                            add_item(child)
+                walk(value, key_norm)
+        elif isinstance(obj, list):
+            if parent_key in DTOOLS_ITEM_LIST_KEYS or sum(1 for child in obj[:12] if dtools_item_like(child)) >= 2:
+                for child in obj:
+                    if isinstance(child, dict):
+                        add_item(child)
+            for child in obj:
+                walk(child, parent_key)
+
+    walk(payload)
+    return candidates
+
+
+def dtools_normalize_material(item, index, external_ref):
+    item_type = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"])
+    type_text = item_type.lower()
+    name = dtools_pick(item, ["itemName", "productName", "product", "name", "description", "shortDescription", "model", "partNumber"])
+    if not name:
+        return None
+    if any(token in type_text for token in ["labor", "labour", "service", "subscription", "allowance"]):
+        return None
+    if any(token in name.lower() for token in ["labor", "labour"]) and not dtools_pick(item, ["model", "partNumber", "sku"]):
+        return None
+
+    quantity = dtools_quantity(dtools_pick(item, ["totalQuantity", "quantity", "qty", "count"]))
+    brand = dtools_pick(item, ["manufacturer", "manufacturerName", "brand", "brandName", "vendor", "vendorName"])
+    model = dtools_pick(item, ["model", "modelNumber", "partNumber", "manufacturerPartNumber", "sku"])
+    location = dtools_pick(item, ["location", "locationName", "room", "roomName", "sublocation", "subLocation", "area", "areaName"])
+    system = dtools_pick(item, ["system", "systemName"])
+    phase = dtools_pick(item, ["phase", "phaseName"])
+    category = dtools_pick(item, ["category", "categoryName"])
+    source_item_id = dtools_pick(item, ["id", "itemId", "lineItemId", "quoteItemId", "projectItemId", "productId", "uuid"])
+    if not source_item_id:
+        stable = json.dumps(item, sort_keys=True, default=str)[:1200]
+        source_item_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{external_ref}:{index}:{stable}").hex
+
+    return {
+        "source_item_id": source_item_id,
+        "item_name": name,
+        "quantity": quantity,
+        "brand": brand,
+        "model": model,
+        "location": location,
+        "system": system,
+        "phase": phase,
+        "category": category,
+    }
+
+
+def dtools_extract_materials(payload, external_ref):
+    materials = []
+    for index, item in enumerate(dtools_collect_item_candidates(payload), start=1):
+        material = dtools_normalize_material(item, index, external_ref)
+        if material:
+            materials.append(material)
+    return materials
+
+
+def match_dtools_room(room_lookup, location):
+    location_key = normalize_lookup_key(location)
+    if not location_key:
+        return None
+    if location_key in room_lookup:
+        return room_lookup[location_key]
+    for room_key, room_id in room_lookup.items():
+        if room_key and (room_key in location_key or location_key in room_key):
+            return room_id
+    return None
+
+
+def import_dtools_materials(conn, project_id, external_ref, payload):
+    rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s", (project_id,)).fetchall()
+    room_lookup = {normalize_lookup_key(room["name"]): room["id"] for room in rooms}
+    materials = dtools_extract_materials(payload, external_ref)
+    imported = 0
+    skipped = 0
+    unmatched_rooms = 0
+    now = utc_now_iso()
+
+    for material in materials:
+        exists = conn.execute(
+            """
+            SELECT id FROM inventory_items
+            WHERE project_id = %s
+              AND dtools_cloud_project_ref = %s
+              AND dtools_cloud_item_id = %s
+            """,
+            (project_id, external_ref, material["source_item_id"])
+        ).fetchone()
+        if exists:
+            skipped += 1
+            continue
+
+        room_id = match_dtools_room(room_lookup, material.get("location"))
+        if material.get("location") and not room_id:
+            unmatched_rooms += 1
+        detail_parts = []
+        for label, key in [("Location", "location"), ("System", "system"), ("Phase", "phase"), ("Category", "category")]:
+            if material.get(key):
+                detail_parts.append(f"{label}: {material[key]}")
+        location_detail = "; ".join(detail_parts) or "Imported from D-Tools Cloud"
+        used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+
+        conn.execute(
+            """
+            INSERT INTO inventory_items
+            (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_note, dtools_cloud_source_id, dtools_cloud_item_id, dtools_cloud_project_ref, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                local_now().date().isoformat(),
+                material["quantity"],
+                material["item_name"],
+                material["model"],
+                material["brand"],
+                "new",
+                "job_site",
+                location_detail[:500],
+                project_id,
+                room_id,
+                "needs_purchase",
+                session.get("user_id"),
+                used_note,
+                "dtools_cloud",
+                material["source_item_id"],
+                external_ref,
+                now,
+                now
+            )
+        )
+        imported += 1
+
+    conn.execute(
+        "UPDATE projects SET dtools_cloud_project_ref = %s WHERE id = %s",
+        (external_ref, project_id)
+    )
+    return {"found": len(materials), "imported": imported, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
 
 
 def zoneinfo_or_none(name):
@@ -1918,6 +2196,8 @@ def utility_processor():
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
         can_edit_inventory=can_edit_inventory,
+        dtools_cloud_config=dtools_cloud_config,
+        dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
         inventory_condition_label=inventory_condition_label
@@ -2939,6 +3219,41 @@ def project_materials(project_id):
         location_options=INVENTORY_LOCATION_LABELS,
         condition_options=INVENTORY_CONDITION_LABELS
     )
+
+
+@app.route("/project/<int:project_id>/materials/import-dtools", methods=["POST"])
+@admin_required
+def import_dtools_inventory(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    external_ref = request.form.get("dtools_ref", "").strip()
+    endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
+    if not external_ref:
+        conn.close()
+        flash("Enter the D-Tools Cloud Project or Quote ID.")
+        return redirect(url_for("project_materials", project_id=project_id))
+    try:
+        payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
+        result = import_dtools_materials(conn, project_id, external_ref, payload)
+        conn.commit()
+        message = f"D-Tools import complete: {result['imported']} item(s) added as Needs Purchase."
+        if result["skipped"]:
+            message += f" {result['skipped']} duplicate item(s) skipped."
+        if result["unmatched_rooms"]:
+            message += f" {result['unmatched_rooms']} item(s) did not match a room name and were placed in Project general."
+        if result["found"] == 0:
+            message = "D-Tools connected, but no material items were found in that response. Check the endpoint path in Settings."
+        flash(message)
+    except Exception as e:
+        conn.rollback()
+        flash(str(e))
+    conn.close()
+    return redirect(url_for("project_materials", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
@@ -4416,6 +4731,19 @@ def settings():
             set_app_setting("email_note_pictures", "1" if "email_note_pictures" in request.form else "0")
             set_app_setting("email_note_audio", "1" if "email_note_audio" in request.form else "0")
             flash("Email notification preferences updated.")
+        elif action == "dtools_cloud":
+            set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
+            set_app_setting("dtools_cloud_auth_header", request.form.get("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH)
+            set_app_setting("dtools_cloud_material_path", request.form.get("dtools_cloud_material_path", "Projects/GetProject").strip() or "Projects/GetProject")
+            set_app_setting("dtools_cloud_id_param", request.form.get("dtools_cloud_id_param", "Id").strip() or "Id")
+            api_key = request.form.get("dtools_cloud_api_key", "").strip()
+            if "dtools_cloud_clear_key" in request.form:
+                set_app_setting("dtools_cloud_api_key", "")
+                flash("D-Tools Cloud API settings saved and API key cleared.")
+            else:
+                if api_key:
+                    set_app_setting("dtools_cloud_api_key", api_key)
+                flash("D-Tools Cloud API settings saved.")
         elif action == "permissions":
             user_id = int(request.form.get("user_id"))
             values = {k: (k in request.form) for k in PERMISSION_KEYS}
@@ -4553,10 +4881,17 @@ def notifications():
 @login_required
 def notifications_live():
     try:
-        return notification_summary()
+        response = Response(json.dumps(notification_summary()), mimetype="application/json")
     except Exception as e:
         print("Live notification check failed:", e)
-        return {"unread_count": unread_notification_count(), "latest": None}
+        response = Response(
+            json.dumps({"unread_count": unread_notification_count(), "latest": None}),
+            mimetype="application/json"
+        )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/note/<int:note_id>/edit", methods=["GET", "POST"])

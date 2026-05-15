@@ -46,6 +46,38 @@
     </form>
 </div>
 
+<div class="card">
+    {% set dtools = dtools_cloud_config() %}
+    <h3>D-Tools Cloud Integration</h3>
+    <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="dtools_cloud">
+        <div class="grid">
+            <div>
+                <label>D-Tools Cloud API Key</label>
+                <input name="dtools_cloud_api_key" type="password" placeholder="{% if dtools.api_key %}API key is saved{% else %}Paste API key from D-Tools Cloud{% endif %}">
+            </div>
+            <div>
+                <label>Base API URL</label>
+                <input name="dtools_cloud_base_url" value="{{ dtools.base_url or 'https://dtcloudapi.d-tools.cloud/api/v1' }}">
+            </div>
+            <div>
+                <label>Material Endpoint Path</label>
+                <input name="dtools_cloud_material_path" value="{{ dtools.material_path or 'Projects/GetProject' }}" placeholder="Projects/GetProject or Quotes/GetQuote">
+            </div>
+            <div>
+                <label>ID Parameter Name</label>
+                <input name="dtools_cloud_id_param" value="{{ dtools.id_param or 'Id' }}">
+            </div>
+        </div>
+        <label>Authorization Header</label>
+        <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or 'Basic RFRDbG91ZEFQSVVzZXI6MyNRdVkrMkR1QCV3Kk15JTU8Yi1aZzlV' }}">
+        <label><input type="checkbox" name="dtools_cloud_clear_key"> Clear saved API key</label>
+        <button type="submit">Save D-Tools Cloud Settings</button>
+    </form>
+    <p class="muted">Default authentication follows D-Tools Cloud API documentation: API key plus the required Basic Authorization header.</p>
+</div>
+
 <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">
     <h3>User Permissions</h3>
     <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>

@@ -47,6 +47,32 @@
 </div>
 {% endif %}
 
+{% if is_main_admin() %}
+<div class="card">
+    <h3>Import from D-Tools Cloud</h3>
+    {% if dtools_cloud_configured() %}
+        {% set dtools = dtools_cloud_config() %}
+        <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
+            <div class="grid">
+                <div>
+                    <label>D-Tools Project or Quote ID</label>
+                    <input name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="Paste the D-Tools Cloud ID" required>
+                </div>
+                <div>
+                    <label>Endpoint Path</label>
+                    <input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}">
+                </div>
+            </div>
+            <button type="submit">Import D-Tools Material List</button>
+        </form>
+        <p class="muted">Imported products are added to this project inventory as Needs Purchase. If a D-Tools location matches a ProjectONus room name, the item is assigned to that room.</p>
+    {% else %}
+        <p class="muted">Add your D-Tools Cloud API key in Settings before importing materials.</p>
+        <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">Open Settings</a>
+    {% endif %}
+</div>
+{% endif %}
+
 <div class="card">
     <h3>Project Inventory List</h3>
     <div class="inventoryWrap">
