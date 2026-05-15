@@ -25,6 +25,7 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body class="{% if session.get('ui_theme') == 'pro_test' %}proTestTheme{% endif %}">
+{% set live_unread_count = unread_notification_count() if session.get("user_id") else 0 %}
 <header>
     <div class="brand">ProjectONus</div>
     <div>
@@ -35,7 +36,7 @@
             <a href="{{ url_for('my_tasks') }}">Tasks</a>
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
             {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
-            <a href="{{ url_for('notifications') }}" title="Notifications">Notifications{% if unread_notification_count() %}<span style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;">{{ unread_notification_count() }}</span>{% endif %}</a>
+            <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
             {% if is_main_admin() %}
                 <a href="{{ url_for('users') }}">Users</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
@@ -96,12 +97,109 @@
 </script>
 {% endif %}
 {% if session.get("user_id") %}
+<div class="liveNotificationToast" id="liveNotificationToast" hidden>
+    <div>
+        <strong id="liveNotificationTitle">New Notification</strong>
+        <p id="liveNotificationMessage"></p>
+    </div>
+    <div class="liveNotificationActions">
+        <a class="btn-link" id="liveNotificationOpen" href="{{ url_for('notifications') }}">Open</a>
+        <button type="button" class="btn-secondary" id="liveNotificationClose">Close</button>
+    </div>
+</div>
+<style>
+.liveNotificationToast{position:fixed;right:18px;bottom:92px;z-index:480;background:var(--card);color:var(--text);border:1px solid var(--border);border-left:6px solid var(--danger);border-radius:14px;box-shadow:0 14px 44px rgba(15,23,42,.24);padding:14px;max-width:380px;width:calc(100% - 36px)}
+.liveNotificationToast[hidden]{display:none}.liveNotificationToast p{margin:6px 0 0}.liveNotificationActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.liveNotificationActions .btn-link,.liveNotificationActions button{min-height:44px;margin:0;padding:9px 12px}
+@media(max-width:760px){.liveNotificationToast{left:12px;right:12px;bottom:92px;width:auto}.liveNotificationActions{grid-template-columns:1fr}}
+</style>
+<script>
+(function(){
+    const pollUrl="{{ url_for('notifications_live') }}";
+    const stateKey="projectonus_last_notification_{{ session.get('user_id') }}";
+    const toast=document.getElementById("liveNotificationToast");
+    const titleEl=document.getElementById("liveNotificationTitle");
+    const messageEl=document.getElementById("liveNotificationMessage");
+    const openEl=document.getElementById("liveNotificationOpen");
+    const closeEl=document.getElementById("liveNotificationClose");
+    let lastSeen=parseInt(localStorage.getItem(stateKey)||"0",10)||0;
+    let firstCheck=true;
+    let checking=false;
+
+    function setBadges(count){
+        document.querySelectorAll("[data-notification-badge]").forEach(el=>{
+            el.textContent=String(count);
+            el.style.display=count>0?"inline-block":"none";
+        });
+        document.querySelectorAll("[data-notification-inline-count]").forEach(el=>{
+            el.textContent="("+count+")";
+            el.style.display=count>0?"inline":"none";
+        });
+    }
+
+    function hideToast(){
+        if(toast) toast.hidden=true;
+    }
+
+    function showToast(latest){
+        if(!toast||!latest)return;
+        const isTask=latest.event_type==="task_assigned";
+        const title=isTask?"New Task Assigned":"New Notification";
+        const parts=[];
+        if(latest.task_title)parts.push(latest.task_title);
+        if(latest.project_name)parts.push(latest.project_name);
+        const message=parts.length?parts.join(" - "):(latest.message||"Open notifications to review it.");
+        if(titleEl)titleEl.textContent=title;
+        if(messageEl)messageEl.textContent=message;
+        if(openEl)openEl.href=latest.url||"{{ url_for('notifications') }}";
+        toast.hidden=false;
+        if(navigator.vibrate)navigator.vibrate([140,70,140]);
+        if("Notification" in window&&Notification.permission==="granted"&&document.hidden){
+            try{new Notification(title,{body:message});}catch(e){}
+        }
+    }
+
+    async function checkLiveNotifications(){
+        if(checking)return;
+        checking=true;
+        try{
+            const res=await fetch(pollUrl,{cache:"no-store",headers:{"Accept":"application/json"}});
+            if(!res.ok)return;
+            const data=await res.json();
+            const count=parseInt(data.unread_count||0,10)||0;
+            setBadges(count);
+            const latest=data.latest;
+            if(latest&&latest.id){
+                const latestId=parseInt(latest.id,10)||0;
+                if(!firstCheck&&latestId>lastSeen){
+                    showToast(latest);
+                }
+                if(latestId>lastSeen){
+                    lastSeen=latestId;
+                    localStorage.setItem(stateKey,String(latestId));
+                }
+            }
+            firstCheck=false;
+        }catch(e){
+        }finally{
+            checking=false;
+        }
+    }
+
+    if(closeEl)closeEl.addEventListener("click",hideToast);
+    checkLiveNotifications();
+    setInterval(checkLiveNotifications,15000);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)checkLiveNotifications();});
+    window.addEventListener("focus",checkLiveNotifications);
+})();
+</script>
+{% endif %}
+{% if session.get("user_id") %}
 <nav class="bottom-nav">
     <a href="{{ url_for('index') }}">Projects</a>
     <a href="{{ url_for('my_tasks') }}">Tasks</a>
     {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
     {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time</a>{% endif %}
-    <a href="{{ url_for('notifications') }}">Alerts{% if unread_notification_count() %} ({{ unread_notification_count() }}){% endif %}</a>
+    <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
     {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
     {% if is_main_admin() %}<a href="{{ url_for('team_map') }}">Team</a>{% endif %}
     <a href="{{ url_for('logout') }}">Logout</a>

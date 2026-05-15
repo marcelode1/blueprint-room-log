@@ -8,7 +8,8 @@
         <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
         <a class="btn-link" href="{{ url_for('team_map') }}">Where Is My Team</a>
     {% endif %}
-    <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}">Notifications{% if unread_notification_count() %} ({{ unread_notification_count() }}){% endif %}</a>
+    {% set mobile_unread_count = unread_notification_count() %}
+    <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
     <a class="btn-link" href="{{ url_for('my_tasks') }}">My Tasks</a>
 </div>
 <div class="card" id="search">

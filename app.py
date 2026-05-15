@@ -869,6 +869,75 @@ def unread_notification_count():
         return 0
 
 
+def notification_summary():
+    if "user_id" not in session:
+        return {"unread_count": 0, "latest": None}
+    conn = db()
+    if session.get("role") == "admin":
+        count_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')"
+        ).fetchone()
+        latest = conn.execute(
+            """
+            SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
+                   login_events.task_id, tasks.title AS task_title, projects.name AS project_name
+            FROM login_events
+            LEFT JOIN tasks ON login_events.task_id = tasks.id
+            LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            WHERE login_events.is_read = FALSE
+              AND login_events.event_type NOT IN ('login', 'task_assigned')
+            ORDER BY login_events.id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    else:
+        count_row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM login_events
+            JOIN tasks ON login_events.task_id = tasks.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+            WHERE login_events.is_read = FALSE
+              AND login_events.user_id = %s
+              AND login_events.event_type = 'task_assigned'
+            """,
+            (session.get("user_id"), session.get("user_id"))
+        ).fetchone()
+        latest = conn.execute(
+            """
+            SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
+                   login_events.task_id, tasks.title AS task_title, projects.name AS project_name
+            FROM login_events
+            JOIN tasks ON login_events.task_id = tasks.id
+            JOIN projects ON tasks.project_id = projects.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+            WHERE login_events.is_read = FALSE
+              AND login_events.user_id = %s
+              AND login_events.event_type = 'task_assigned'
+            ORDER BY login_events.id DESC
+            LIMIT 1
+            """,
+            (session.get("user_id"), session.get("user_id"))
+        ).fetchone()
+    conn.close()
+    latest_data = None
+    if latest:
+        latest_url = url_for("notifications")
+        if session.get("role") != "admin" and latest.get("task_id"):
+            latest_url = url_for("my_tasks") + f"#task-{latest.get('task_id')}"
+        latest_data = {
+            "id": latest.get("id"),
+            "event_type": latest.get("event_type"),
+            "message": latest.get("message") or "",
+            "task_id": latest.get("task_id"),
+            "task_title": latest.get("task_title") or "",
+            "project_name": latest.get("project_name") or "",
+            "created_at": latest.get("created_at") or "",
+            "url": latest_url
+        }
+    return {"unread_count": count_row["c"] if count_row else 0, "latest": latest_data}
+
+
 def add_notification(conn, user_id, user_name, user_email, role, event_type, project_id=None, task_id=None, message=None):
     conn.execute(
         """
@@ -4478,6 +4547,16 @@ def notifications():
         ).fetchall()
     conn.close()
     return render_template("notifications.html", events=events)
+
+
+@app.route("/notifications/live")
+@login_required
+def notifications_live():
+    try:
+        return notification_summary()
+    except Exception as e:
+        print("Live notification check failed:", e)
+        return {"unread_count": unread_notification_count(), "latest": None}
 
 
 @app.route("/note/<int:note_id>/edit", methods=["GET", "POST"])
