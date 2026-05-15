@@ -7,8 +7,16 @@
         <input name="email" type="email" value="{{ email or '' }}" required>
         <label>PIN</label>
         <input name="pin" inputmode="numeric" autocomplete="one-time-code" required>
+        <label class="stayLoginCheck">
+            <input name="stay_logged_in" type="checkbox" {% if stay_logged_in %}checked{% endif %}>
+            Stay logged in on this phone
+        </label>
         <button type="submit">Open Mobile Version</button>
     </form>
     <a class="btn-link btn-secondary" href="{{ url_for('login') }}">Admin Login</a>
 </div>
+<style>
+.stayLoginCheck{display:flex;align-items:center;gap:10px;margin:10px 0 14px;font-weight:800}
+.stayLoginCheck input{width:auto;min-height:auto;margin:0}
+</style>
 {% endblock %}

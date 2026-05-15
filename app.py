@@ -22,6 +22,7 @@ except Exception:
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "CHANGE_THIS_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_IN_DAYS", "365")))
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -1570,6 +1571,72 @@ def task_schedule_text(task):
     return text
 
 
+def task_calendar_start(task):
+    start_date = (task.get("task_start_date") or task.get("task_date") or "").strip()
+    start_time = (task.get("task_start_time") or "09:00").strip()
+    try:
+        return datetime.strptime(f"{start_date} {start_time[:5]}", "%Y-%m-%d %H:%M")
+    except Exception:
+        return None
+
+
+def ics_escape(value):
+    return str(value or "").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+
+def ics_fold(line):
+    if len(line) <= 73:
+        return line
+    parts = []
+    while len(line) > 73:
+        parts.append(line[:73])
+        line = " " + line[73:]
+    parts.append(line)
+    return "\r\n".join(parts)
+
+
+def task_calendar_ics(task):
+    start_dt = task_calendar_start(task)
+    if not start_dt:
+        start_dt = local_now().replace(second=0, microsecond=0)
+    tz_name = clean_timezone_name(APP_TIMEZONE)
+    uid = f"projectonus-task-{task.get('id')}@projectonus.com"
+    address = task_project_address(task)
+    description_lines = [
+        task.get("instructions") or "",
+        "",
+        f"Project: {task.get('project_name') or '-'}",
+        f"Room: {task.get('room_name') or '-'}",
+        f"Task: {task.get('title') or '-'}",
+    ]
+    if address:
+        description_lines.extend(["", f"Address: {address}", f"Route: {maps_directions_url(address)}"])
+    description_lines.extend(["", external_url("my_tasks")])
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ProjectONus//Task Calendar//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        f"DTSTART;TZID={tz_name}:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+        "DURATION:PT1H",
+        f"SUMMARY:{ics_escape('ProjectONus Task - ' + (task.get('title') or 'Task'))}",
+        f"DESCRIPTION:{ics_escape(chr(10).join(description_lines))}",
+        f"LOCATION:{ics_escape(address)}",
+        "BEGIN:VALARM",
+        "TRIGGER:-PT30M",
+        "ACTION:DISPLAY",
+        f"DESCRIPTION:{ics_escape(task.get('title') or 'ProjectONus task')}",
+        "END:VALARM",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(ics_fold(line) for line in lines) + "\r\n"
+
+
 def maps_directions_url(address):
     address = (address or "").strip()
     if not address:
@@ -2165,6 +2232,7 @@ def login():
         ).fetchone()
         conn.close()
         if user and check_password_hash(user["password_hash"], password):
+            session.permanent = False
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
@@ -2178,6 +2246,7 @@ def mobile_login():
     if request.method == "POST":
         email = request.form["email"].strip().lower()
         pin = request.form["pin"].strip()
+        stay_logged_in = request.form.get("stay_logged_in") == "on"
         conn = db()
         user = conn.execute(
             "SELECT * FROM users WHERE email = %s AND role <> 'admin'",
@@ -2185,12 +2254,14 @@ def mobile_login():
         ).fetchone()
         conn.close()
         if user and user.get("pin_hash") and check_password_hash(user["pin_hash"], pin):
+            session.permanent = stay_logged_in
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
-    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower())
+        return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
+    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower(), stay_logged_in=True)
 
 
 @app.route("/admin/setup", methods=["GET", "POST"])
@@ -3531,7 +3602,7 @@ def receive_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.*, projects.name AS project_name, users.name AS assigned_user_name
+        SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN users ON tasks.assigned_user_id = users.id
@@ -3571,11 +3642,47 @@ def receive_task(task_id):
     notify_admins_task_received(conn, task, actor)
     conn.close()
     flash("Task marked received. Admin was notified.")
+    calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
-        return redirect(url_for("mobile_room", room_id=task["room_id"]))
+        return redirect(url_for("mobile_room", room_id=task["room_id"], **calendar_args))
     if task.get("room_id"):
-        return redirect(url_for("room", room_id=task["room_id"]))
-    return redirect(url_for("my_tasks"))
+        return redirect(url_for("room", room_id=task["room_id"], **calendar_args))
+    return redirect(url_for("my_tasks", **calendar_args))
+
+
+@app.route("/tasks/<int:task_id>/calendar.ics")
+@login_required
+def task_calendar_file(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address
+        FROM tasks
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        return Response("Task not found.", status=404)
+    if not (is_main_admin() or task["assigned_user_id"] == session.get("user_id")):
+        conn.close()
+        return Response("This task is assigned to another user.", status=403)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        return Response("You do not have access to this project.", status=403)
+    conn.close()
+
+    filename = secure_filename(f"ProjectONus_{task.get('title') or 'task'}.ics") or "ProjectONus_task.ics"
+    if not filename.lower().endswith(".ics"):
+        filename += ".ics"
+    return Response(
+        task_calendar_ics(task),
+        mimetype="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 @app.route("/tasks")

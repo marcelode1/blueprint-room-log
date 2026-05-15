@@ -62,6 +62,39 @@
     {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
     {% block content %}{% endblock %}
 </main>
+{% set calendar_task_id = request.args.get("calendar_task") %}
+{% if calendar_task_id and session.get("user_id") and not is_main_admin() %}
+<div class="calendarPromptOverlay" id="calendarPromptOverlay">
+    <div class="calendarPrompt">
+        <h3>Add Task to Calendar?</h3>
+        <p>The task was received. Add it to this phone calendar using the be-there date and time?</p>
+        <div class="calendarPromptActions">
+            <a class="btn-link" id="calendarYesBtn" target="_blank" href="{{ url_for('task_calendar_file', task_id=calendar_task_id) }}">Yes, Add to Calendar</a>
+            <button type="button" class="btn-secondary" id="calendarNoBtn">No</button>
+        </div>
+    </div>
+</div>
+<style>
+.calendarPromptOverlay{position:fixed;inset:0;background:rgba(15,23,42,.58);z-index:500;display:flex;align-items:center;justify-content:center;padding:18px}
+.calendarPrompt{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);max-width:420px;width:100%;padding:20px}
+.calendarPrompt h3{margin-top:0}.calendarPromptActions{display:grid;gap:10px}
+</style>
+<script>
+(function(){
+    const overlay=document.getElementById("calendarPromptOverlay");
+    function closeCalendarPrompt(){
+        if(overlay) overlay.style.display="none";
+        const url=new URL(window.location.href);
+        url.searchParams.delete("calendar_task");
+        window.history.replaceState({}, "", url.toString());
+    }
+    const noBtn=document.getElementById("calendarNoBtn");
+    const yesBtn=document.getElementById("calendarYesBtn");
+    if(noBtn) noBtn.addEventListener("click", closeCalendarPrompt);
+    if(yesBtn) yesBtn.addEventListener("click", function(){setTimeout(closeCalendarPrompt, 300);});
+})();
+</script>
+{% endif %}
 {% if session.get("user_id") %}
 <nav class="bottom-nav">
     <a href="{{ url_for('index') }}">Projects</a>
