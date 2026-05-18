@@ -1,0 +1,20 @@
+<form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+    <input type="hidden" name="completion_room_id" value="{{ r.id }}">
+    <h4>Room Task Status</h4>
+    <label>Comment</label>
+    <textarea name="completion_comment" rows="3"></textarea>
+    <div class="completionBlocks">
+        <div class="completionBlock">
+            <input type="hidden" name="completion_attachment_indexes" value="0">
+            <label>Take Picture</label>
+            <input name="completion_attachment_0_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+            <label>Upload Picture</label>
+            <input name="completion_attachment_0_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
+            <label>Voice / Audio</label>
+            <input name="completion_attachment_0_audio" type="file" accept="audio/*">
+        </div>
+    </div>
+    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+    <button type="submit">Mark This Room Done</button>
+</form>

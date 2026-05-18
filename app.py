@@ -1131,6 +1131,15 @@ def load_task_details(conn, tasks, room_id=None):
         task = dict(task_row)
         attachments = load_task_attachments(conn, task["id"], room_id)
         task["_attachments"] = attachments
+        attachments_by_room = {}
+        global_attachments = []
+        for attachment in attachments:
+            if attachment.get("room_id"):
+                attachments_by_room.setdefault(attachment["room_id"], []).append(attachment)
+            else:
+                global_attachments.append(attachment)
+        task["_attachments_by_room"] = attachments_by_room
+        task["_global_attachments"] = global_attachments
         task["_supplier"] = None
         task["_supplier_inventory_item"] = None
         if task.get("supplier_id"):
@@ -1222,6 +1231,15 @@ def task_with_attachments_for_email(conn, task):
     task_copy = dict(task)
     task_copy["_attachments"] = load_task_attachments(conn, task["id"])
     return task_copy
+
+
+def task_room_attachments(task, room_id):
+    if not task or not room_id:
+        return []
+    room_specific = (task.get("_attachments_by_room") or {}).get(room_id, [])
+    if task.get("room_id") == room_id:
+        return list(task.get("_global_attachments") or []) + list(room_specific)
+    return list(room_specific)
 
 
 def ensure_project_blueprints(conn, project):
@@ -2972,6 +2990,7 @@ def utility_processor():
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
+        task_room_attachments=task_room_attachments,
         maps_directions_url=maps_directions_url,
         is_mobile_request=is_mobile_request,
         task_project_address=task_project_address,
@@ -5394,12 +5413,13 @@ def my_tasks():
     task_mode = request.args.get("mode", "")
     if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id) and not task_mode:
         task_mode = "search"
+    has_filter_selection = bool(selected_project_id or selected_room_id or selected_supplier_id or selected_user_id)
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
         task_period = "day"
     task_date_arg = request.args.get("date")
     task_date = task_date_arg or local_now().date().isoformat()
-    task_date_filter = bool(task_date_arg)
+    task_date_filter = bool(task_date_arg) or (task_mode == "search" and has_filter_selection)
     projects = []
     project_rooms = []
     suppliers = []
@@ -5529,7 +5549,7 @@ def my_tasks():
             ).fetchall()
     tasks = load_task_details(conn, tasks, selected_room_id)
     tasks_by_room = {}
-    if task_mode == "search" and selected_project_id and not selected_room_id:
+    if task_mode == "search" and selected_project_id:
         for room in project_rooms:
             room_tasks = []
             for task in tasks:

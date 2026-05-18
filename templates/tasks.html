@@ -105,10 +105,10 @@
             {% endif %}
         </p>
     {% endif %}
-    {% if is_mobile_request() and task_mode == "search" and selected_project_id and not selected_room_id %}
+    {% if is_mobile_request() and task_mode == "search" and selected_project_id %}
         {% for r in project_rooms %}
             {% set room_tasks = tasks_by_room.get(r.id, []) %}
-            {% if room_tasks %}
+            {% if room_tasks and (not selected_room_id or selected_room_id == r.id) %}
                 <div class="card mobileRoomTaskGroup">
                     <h3>{{ r.name }}</h3>
                     <h4>Room Checklist</h4>
@@ -126,36 +126,42 @@
                             {% set task_info = task_instruction_text(t) %}
                             {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
                             {% include "_supplier_task_info.html" %}
-                            {% set suppress_task_room_checklist = true %}
-                            {% include "_task_media.html" %}
+                            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or t.status == 'done' %}done{% endif %}">{{ 'Done' if room_state.done or t.status == 'done' else 'Open' }}</span></p>
+                            {% set room_media = task_room_attachments(t, r.id) %}
+                            {% set media_state = namespace(has_photo=false) %}
+                            {% if room_media %}
+                                <div class="taskMediaList">
+                                    {% for attachment in room_media %}
+                                        <div class="taskMediaItem">
+                                            {% if attachment.comment %}
+                                                <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
+                                            {% endif %}
+                                            <p class="muted">
+                                                {{ attachment.original_filename or 'Task file' }}
+                                                {% if attachment.created_by_name %} - Added by {{ attachment.created_by_name }}{% endif %}
+                                            </p>
+                                            {% if attachment.file_type == 'photo' %}
+                                                {% set media_state.has_photo = true %}
+                                                <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                                                {% if t.status != 'done' and not room_state.done and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                                                    {% include "_mobile_room_completion_form.html" %}
+                                                {% endif %}
+                                            {% else %}
+                                                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
+                                            {% endif %}
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <p class="muted">No room picture, upload, or audio from admin yet.</p>
+                            {% endif %}
                             {% if t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                                     <button type="submit">Received</button>
                                 </form>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
-                                <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
-                                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                                    <input type="hidden" name="completion_room_id" value="{{ r.id }}">
-                                    {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                                    <div class="completionBlocks">
-                                        <div class="completionBlock">
-                                            <input type="hidden" name="completion_attachment_indexes" value="0">
-                                            <label>Take Picture</label>
-                                            <input name="completion_attachment_0_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-                                            {% if t.allow_picture_upload %}
-                                                <label>Upload Picture</label>
-                                                <input name="completion_attachment_0_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-                                            {% endif %}
-                                            {% if t.allow_audio %}
-                                                <label>Voice / Audio</label>
-                                                <input name="completion_attachment_0_audio" type="file" accept="audio/*">
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
-                                    <button type="submit">Mark This Room Done</button>
-                                </form>
+                            {% if t.status != 'done' and not room_state.done and not media_state.has_photo and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                                {% include "_mobile_room_completion_form.html" %}
                             {% endif %}
                         </div>
                     {% endfor %}
@@ -263,5 +269,5 @@ document.querySelectorAll(".mobileRoomCompletionForm").forEach(form=>{
     });
 });
 </script>
-<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
+<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}
