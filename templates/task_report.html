@@ -83,7 +83,7 @@
                     <td>{% if t.accepted_at %}Yes<br><span class="muted">{{ format_datetime(t.accepted_at) }}</span>{% else %}No{% endif %}</td>
                     <td>{% if t.status == "done" %}Yes<br><span class="muted">{{ format_datetime(t.completed_at) if t.completed_at else "" }}</span>{% else %}No{% endif %}</td>
                     <td><span class="statusPill {% if status == 'Done' %}statusDone{% elif status == 'In Progress' %}statusProgress{% else %}statusNotSeen{% endif %}">{{ status }}</span></td>
-                    <td>{{ t.instructions or "-" }}</td>
+                    <td>{{ task_instruction_text(t) or "-" }}</td>
                 </tr>
             {% else %}
                 <tr><td colspan="11">No tasks for this report.</td></tr>

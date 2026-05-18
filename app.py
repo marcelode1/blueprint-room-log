@@ -5487,7 +5487,7 @@ def task_report_export():
             "Yes" if task.get("status") == "done" else "No",
             format_datetime(task.get("completed_at")) if task.get("completed_at") else "",
             task_report_status(task),
-            task.get("instructions") or ""
+            task_instruction_text(task)
         ])
     filename = f"projectonus_task_report_{report['period']}_{selected_date}.csv"
     return Response(
