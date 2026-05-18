@@ -34,6 +34,15 @@
                 </select>
             </div>
             <div>
+                <label>Supplier</label>
+                <select name="supplier_id" onchange="this.form.submit()">
+                    <option value="">All Suppliers</option>
+                    {% for s in suppliers %}
+                        <option value="{{ s.id }}" {% if selected_supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>View Scope</label>
                 <select name="room_id" {% if not selected_project_id %}disabled{% endif %} onchange="this.form.submit()">
                     <option value="">Full Project</option>
@@ -67,8 +76,8 @@
         </div>
         <button type="submit">Show Tasks</button>
     </form>
-    {% if not selected_project_id and not selected_user_id and not task_date_filter %}
-        <p class="muted">Choose a project, a user, or a task date to see tasks, pictures, audio, comments, and completion status.</p>
+    {% if not selected_project_id and not selected_supplier_id and not selected_user_id and not task_date_filter %}
+        <p class="muted">Choose a project, supplier, user, or task date to see tasks, pictures, audio, comments, and completion status.</p>
     {% endif %}
 </div>
 {% endif %}
@@ -83,10 +92,31 @@
             <p>No projects available.</p>
         {% endfor %}
     </div>
-    {% if selected_project_id %}
+    <form method="get">
+        <input type="hidden" name="mode" value="search">
+        <label>Supplier</label>
+        <select name="supplier_id" onchange="this.form.submit()">
+            <option value="">Search by supplier</option>
+            {% for s in suppliers %}
+                <option value="{{ s.id }}" {% if selected_supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+            {% endfor %}
+        </select>
+        <label>Show By</label>
+        <select name="period">
+            <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
+            <option value="week" {% if task_period == "week" %}selected{% endif %}>Week</option>
+            <option value="month" {% if task_period == "month" %}selected{% endif %}>Month</option>
+        </select>
+        <label>Date</label>
+        <input type="date" name="date" value="{{ task_date }}" required>
+        <button type="submit">Show Supplier Tasks</button>
+    </form>
+    {% if selected_project_id or selected_supplier_id %}
         <form method="get">
             <input type="hidden" name="mode" value="search">
-            <input type="hidden" name="project_id" value="{{ selected_project_id }}">
+            <input type="hidden" name="project_id" value="{{ selected_project_id or '' }}">
+            <input type="hidden" name="supplier_id" value="{{ selected_supplier_id or '' }}">
+            {% if selected_project_id %}
             <label>View Scope</label>
             <select name="room_id" onchange="this.form.submit()">
                 <option value="">Full Project</option>
@@ -94,6 +124,7 @@
                     <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>Room: {{ r.name }}</option>
                 {% endfor %}
             </select>
+            {% endif %}
             <label>Show By</label>
             <select name="period">
                 <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
@@ -110,10 +141,12 @@
 
 {% if not is_main_admin() or task_mode == "search" %}
 <div class="card">
-    {% if task_mode == "search" and selected_project_id %}
+    {% if task_mode == "search" and (selected_project_id or selected_supplier_id) %}
         <p class="muted taskScopeSummary">
             Showing {{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} for
-            {% if selected_room_id %}
+            {% if selected_supplier_id %}
+                {% for s in suppliers %}{% if s.id == selected_supplier_id %}{{ s.name }}{% endif %}{% endfor %}
+            {% elif selected_room_id %}
                 {% for r in project_rooms %}{% if r.id == selected_room_id %}{{ r.name }}{% endif %}{% endfor %}
             {% else %}
                 the full project
@@ -174,10 +207,10 @@
             {% endif %}
         </div>
     {% else %}
-        {% if is_main_admin() and not selected_project_id and not selected_user_id and not task_date_filter %}
-            <p>No project, user, or task date selected.</p>
-        {% elif not is_main_admin() and task_mode == "search" and not selected_project_id %}
-            <p>Choose a project to search your tasks.</p>
+        {% if is_main_admin() and not selected_project_id and not selected_supplier_id and not selected_user_id and not task_date_filter %}
+            <p>No project, supplier, user, or task date selected.</p>
+        {% elif not is_main_admin() and task_mode == "search" and not selected_project_id and not selected_supplier_id %}
+            <p>Choose a project or supplier to search your tasks.</p>
         {% elif not is_main_admin() and task_mode != "search" %}
             <p>No active tasks. Use Search My Tasks to view completed or older tasks.</p>
         {% else %}

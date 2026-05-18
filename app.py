@@ -5073,9 +5073,10 @@ def my_tasks():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
+    selected_supplier_id = request.args.get("supplier_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
     task_mode = request.args.get("mode", "")
-    if (selected_project_id or selected_room_id or selected_user_id) and not task_mode:
+    if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id) and not task_mode:
         task_mode = "search"
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
@@ -5085,6 +5086,7 @@ def my_tasks():
     task_date_filter = bool(task_date_arg)
     projects = []
     project_rooms = []
+    suppliers = []
     task_users = []
     if selected_project_id:
         if is_main_admin():
@@ -5107,13 +5109,17 @@ def my_tasks():
             selected_room_id = None
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+        suppliers = fetch_suppliers(conn)
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-        if task_mode == "search" and (selected_project_id or selected_room_id or selected_user_id or task_date_filter):
+        if task_mode == "search" and (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or task_date_filter):
             where = []
             params = []
             if selected_project_id:
                 where.append("tasks.project_id = %s")
                 params.append(selected_project_id)
+            if selected_supplier_id:
+                where.append("tasks.supplier_id = %s")
+                params.append(selected_supplier_id)
             if selected_room_id:
                 where.append("(tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))")
                 params.extend([selected_room_id, selected_room_id])
@@ -5147,9 +5153,26 @@ def my_tasks():
             """,
             (session.get("user_id"),)
         ).fetchall()
-        if task_mode == "search" and selected_project_id:
-            where = ["tasks.assigned_user_id = %s", "tasks.project_id = %s"]
-            params = [session.get("user_id"), selected_project_id]
+        suppliers = conn.execute(
+            """
+            SELECT DISTINCT suppliers.*
+            FROM suppliers
+            JOIN tasks ON tasks.supplier_id = suppliers.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+            WHERE tasks.assigned_user_id = %s
+            ORDER BY suppliers.name
+            """,
+            (session.get("user_id"), session.get("user_id"))
+        ).fetchall()
+        if task_mode == "search" and (selected_project_id or selected_supplier_id):
+            where = ["tasks.assigned_user_id = %s"]
+            params = [session.get("user_id")]
+            if selected_project_id:
+                where.append("tasks.project_id = %s")
+                params.append(selected_project_id)
+            if selected_supplier_id:
+                where.append("tasks.supplier_id = %s")
+                params.append(selected_supplier_id)
             if selected_room_id:
                 where.append("(tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))")
                 params.extend([selected_room_id, selected_room_id])
@@ -5190,8 +5213,10 @@ def my_tasks():
         tasks=tasks,
         projects=projects,
         task_users=task_users,
+        suppliers=suppliers,
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
+        selected_supplier_id=selected_supplier_id,
         selected_user_id=selected_user_id,
         project_rooms=project_rooms,
         task_mode=task_mode,
