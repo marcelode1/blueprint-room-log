@@ -4030,6 +4030,125 @@ def create_global_task():
     return render_template("create_task.html", projects=projects, users=users)
 
 
+@app.route("/tasks/<int:task_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_task(task_id):
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, projects.name AS project_name, rooms.name AS room_name
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    next_url = safe_next_url("my_tasks", project_id=task["project_id"])
+    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+
+    if request.method == "POST":
+        assigned_user_id = request.form.get("assigned_user_id", type=int)
+        assigned = None
+        for user in users:
+            if user["id"] == assigned_user_id:
+                assigned = user
+                break
+        title = request.form.get("title", "").strip()
+        start_date = request.form.get("task_start_date") or request.form.get("task_date") or task.get("task_start_date") or task.get("task_date") or local_now().date().isoformat()
+        start_time = request.form.get("task_start_time", "").strip()
+        end_date = request.form.get("task_end_date") or start_date
+        if not assigned or not title or not start_time:
+            flash("Choose a worker, enter a task title, and choose the be-there time.")
+            conn.close()
+            return redirect(url_for("edit_task", task_id=task_id, next=next_url))
+
+        photo = first_uploaded_file("task_camera_photo", "task_photo")
+        audio = first_uploaded_file("task_audio")
+        if photo and not allowed_photo(photo.filename):
+            conn.close()
+            flash("Please upload a valid task picture.")
+            return redirect(url_for("edit_task", task_id=task_id, next=next_url))
+        if audio and not allowed_audio(audio.filename):
+            conn.close()
+            flash("Please upload a valid task audio file.")
+            return redirect(url_for("edit_task", task_id=task_id, next=next_url))
+
+        task_photo_file = upload_file_to_storage(photo) if photo else task.get("task_photo_file")
+        task_audio_file = upload_file_to_storage(audio) if audio else task.get("task_audio_file")
+        assigned_changed = assigned_user_id != task.get("assigned_user_id")
+        reset_received = assigned_changed and task.get("status") != "done"
+        grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
+        conn.execute(
+            """
+            UPDATE tasks
+            SET assigned_user_id = %s,
+                task_date = %s,
+                task_start_date = %s,
+                task_start_time = %s,
+                task_end_date = %s,
+                title = %s,
+                instructions = %s,
+                task_photo_file = %s,
+                task_audio_file = %s,
+                require_picture = %s,
+                allow_picture_upload = %s,
+                allow_comment = %s,
+                allow_audio = %s,
+                accepted_at = CASE WHEN %s THEN NULL ELSE accepted_at END
+            WHERE id = %s
+            """,
+            (
+                assigned_user_id,
+                start_date,
+                start_date,
+                start_time,
+                end_date,
+                title,
+                request.form.get("instructions", "").strip(),
+                task_photo_file,
+                task_audio_file,
+                "require_picture" in request.form,
+                "allow_picture_upload" in request.form,
+                "allow_comment" in request.form,
+                "allow_audio" in request.form,
+                reset_received,
+                task_id
+            )
+        )
+        if reset_received:
+            conn.execute(
+                "UPDATE login_events SET is_read = TRUE WHERE task_id = %s AND event_type = 'task_assigned'",
+                (task_id,)
+            )
+        updated_task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+        add_notification(
+            conn,
+            assigned["id"],
+            assigned["name"],
+            assigned["email"],
+            assigned["role"],
+            "task_assigned",
+            updated_task.get("project_id"),
+            updated_task.get("id"),
+            f"Task updated: {task_display_name(updated_task)}. Be there {task_schedule_text(updated_task)}."
+        )
+        conn.commit()
+        project = conn.execute("SELECT * FROM projects WHERE id = %s", (task["project_id"],)).fetchone()
+        send_task_assignment_email(updated_task, assigned, project)
+        send_task_assignment_sms(updated_task, assigned, project)
+        conn.close()
+        flash("Task updated and worker notified.")
+        return redirect(next_url)
+
+    conn.close()
+    return render_template("edit_task.html", task=task, users=users, next_url=next_url)
+
+
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
 @login_required
 def complete_task(task_id):

@@ -82,6 +82,7 @@
             {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
             {% if t.task_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>{% endif %}
             {% if is_main_admin() %}
+            <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
             <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
                 <button type="submit" class="btn-danger">Delete Task</button>
