@@ -120,6 +120,14 @@ def upload_file_to_storage(file_storage):
     )
 
 
+def first_uploaded_file(*field_names):
+    for field_name in field_names:
+        uploaded = request.files.get(field_name)
+        if uploaded and uploaded.filename:
+            return uploaded
+    return None
+
+
 def file_url(path):
     if not path:
         return ""
@@ -3767,12 +3775,14 @@ def create_task(room_id):
         flash("Choose a user, enter a task title, and choose the be-there time.")
         return redirect(url_for("room", room_id=room_id))
     grant_project_access(conn, assigned_user_id, room["project_id"], assigned.get("role"))
+    photo = first_uploaded_file("task_camera_photo", "task_photo")
+    task_photo_file = upload_file_to_storage(photo) if photo and allowed_photo(photo.filename) else None
 
     task = conn.execute(
         """
         INSERT INTO tasks
-        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -3786,6 +3796,7 @@ def create_task(room_id):
             request.form.get("task_date") or datetime.now().date().isoformat(),
             title,
             request.form.get("instructions", "").strip(),
+            task_photo_file,
             "require_picture" in request.form,
             "allow_picture_upload" in request.form,
             "allow_comment" in request.form,
@@ -3845,10 +3856,10 @@ def create_global_task():
 
         start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
         end_date = request.form.get("task_end_date") or start_date
-        photo = request.files.get("task_photo")
-        audio = request.files.get("task_audio")
-        task_photo_file = upload_file_to_storage(photo) if photo and photo.filename and allowed_photo(photo.filename) else None
-        task_audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
+        photo = first_uploaded_file("task_camera_photo", "task_photo")
+        audio = first_uploaded_file("task_audio")
+        task_photo_file = upload_file_to_storage(photo) if photo and allowed_photo(photo.filename) else None
+        task_audio_file = upload_file_to_storage(audio) if audio and allowed_audio(audio.filename) else None
         created_tasks = []
 
         for assigned in selected_users:

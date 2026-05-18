@@ -46,8 +46,12 @@
 
         <div class="grid">
             <div>
-                <label>Task Picture</label>
+                <label>Upload Task Picture</label>
                 <input name="task_photo" type="file" accept="image/*">
+            </div>
+            <div class="mobileTaskCamera">
+                <label>Take Picture From Phone</label>
+                <input name="task_camera_photo" type="file" accept="image/*" capture="environment">
             </div>
             <div>
                 <label>Task Audio</label>
@@ -69,5 +73,7 @@
 .workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
 .workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
 .workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
+.mobileTaskCamera{display:none}
+@media(max-width:760px){.mobileTaskCamera{display:block}}
 </style>
 {% endblock %}
