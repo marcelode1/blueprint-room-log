@@ -8,10 +8,18 @@
 <div class="card">
     <form method="post" enctype="multipart/form-data">
         <label>Project</label>
-        <select name="project_id" required>
+        <select name="project_id" id="taskProjectSelect" required>
             <option value="">Choose project</option>
             {% for p in projects %}
                 <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <label>Main Room</label>
+        <select name="room_id" id="taskMainRoomSelect">
+            <option value="">No room</option>
+            {% for r in rooms %}
+                <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
             {% endfor %}
         </select>
 
@@ -44,20 +52,8 @@
         <label>Task Information / Instructions</label>
         <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
 
-        <div class="grid">
-            <div>
-                <label>Upload Task Picture</label>
-                <input name="task_photo" type="file" accept="image/*">
-            </div>
-            <div class="mobileTaskCamera">
-                <label>Take Picture From Phone</label>
-                <input name="task_camera_photo" type="file" accept="image/*" capture="environment">
-            </div>
-            <div>
-                <label>Task Audio</label>
-                <input name="task_audio" type="file" accept="audio/*">
-            </div>
-        </div>
+        {% set attachment_project_select_id = "taskProjectSelect" %}
+        {% include "_task_attachments_form.html" %}
 
         <div class="grid taskOptions">
             <label><input type="checkbox" name="require_picture"> Worker must take picture</label>
@@ -73,7 +69,24 @@
 .workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
 .workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
 .workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
-.mobileTaskCamera{display:none}
-@media(max-width:760px){.mobileTaskCamera{display:block}}
 </style>
+<script>
+(function(){
+    const projectSelect=document.getElementById("taskProjectSelect");
+    const roomSelect=document.getElementById("taskMainRoomSelect");
+    if(!projectSelect||!roomSelect)return;
+    function filterMainRooms(){
+        const projectId=projectSelect.value;
+        Array.from(roomSelect.options).forEach(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            option.hidden=Boolean(optionProject)&&Boolean(projectId)&&optionProject!==projectId;
+            if(optionProject&&!projectId)option.hidden=true;
+        });
+        const selectedOption=roomSelect.options[roomSelect.selectedIndex];
+        if(selectedOption&&selectedOption.hidden)roomSelect.value="";
+    }
+    projectSelect.addEventListener("change",filterMainRooms);
+    filterMainRooms();
+})();
+</script>
 {% endblock %}

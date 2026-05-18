@@ -7,6 +7,12 @@
 </div>
 
 <div class="card">
+    <h3>Task Media</h3>
+    {% set t = task %}
+    {% include "_task_media.html" %}
+</div>
+
+<div class="card">
     <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="next" value="{{ next_url }}">
         <label>Assign To</label>
@@ -14,6 +20,14 @@
             <option value="">Choose worker</option>
             {% for u in users %}
                 <option value="{{ u.id }}" {% if task.assigned_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+            {% endfor %}
+        </select>
+
+        <label>Main Room</label>
+        <select name="room_id">
+            <option value="">No room</option>
+            {% for r in rooms %}
+                <option value="{{ r.id }}" {% if task.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
             {% endfor %}
         </select>
 
@@ -37,29 +51,7 @@
         <label>Task Information / Instructions</label>
         <textarea name="instructions" rows="6">{{ task.instructions or '' }}</textarea>
 
-        {% if task.task_photo_file %}
-            <p><strong>Current Task Picture</strong></p>
-            <img class="photo" src="{{ url_for('storage_file', storage_path=task.task_photo_file) }}">
-        {% endif %}
-        {% if task.task_audio_file %}
-            <p><strong>Current Task Audio</strong></p>
-            <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=task.task_audio_file) }}"></audio>
-        {% endif %}
-
-        <div class="grid">
-            <div>
-                <label>Replace Task Picture</label>
-                <input name="task_photo" type="file" accept="image/*">
-            </div>
-            <div class="mobileTaskCamera">
-                <label>Take New Picture From Phone</label>
-                <input name="task_camera_photo" type="file" accept="image/*" capture="environment">
-            </div>
-            <div>
-                <label>Replace Task Audio</label>
-                <input name="task_audio" type="file" accept="audio/*">
-            </div>
-        </div>
+        {% include "_task_attachments_form.html" %}
 
         <div class="grid taskOptions">
             <label><input type="checkbox" name="require_picture" {% if task.require_picture %}checked{% endif %}> Worker must take picture</label>
@@ -74,7 +66,6 @@
 
 <style>
 .taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
-.taskOptions input{width:auto;min-height:auto;margin-right:8px}.mobileTaskCamera{display:none}
-@media(max-width:760px){.mobileTaskCamera{display:block}}
+.taskOptions input{width:auto;min-height:auto;margin-right:8px}
 </style>
 {% endblock %}

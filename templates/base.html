@@ -300,12 +300,35 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
     const cancelBtn=document.getElementById("globalPictureMarkCancel");
     let activeInput=null;
     let originalFile=null;
+    let activeFilename="";
     let imageObjectUrl="";
     let drawing=false;
     let lastPoint=null;
 
-    function markableInputs(){
-        return Array.from(document.querySelectorAll('input[type="file"][accept*="image"]:not(.annotatablePhoto):not([name="blueprint"]):not([name="company_logo"])'));
+    function isMarkableInput(input){
+        return input&&input.matches&&input.matches('input[type="file"][accept*="image"]:not(.annotatablePhoto):not([name="blueprint"]):not([name="company_logo"])');
+    }
+
+    function pad2(value){
+        return String(value).padStart(2,"0");
+    }
+
+    function phoneStyleFilename(){
+        const now=new Date();
+        return "IMG_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+".jpg";
+    }
+
+    function jpegFilename(name){
+        const clean=name||phoneStyleFilename();
+        return clean.match(/\.[A-Za-z0-9]+$/)?clean.replace(/\.[A-Za-z0-9]+$/,".jpg"):clean+".jpg";
+    }
+
+    function displayFilename(file,input){
+        const name=file&&file.name?file.name:"";
+        const lower=name.toLowerCase();
+        const generic=["image.jpg","image.jpeg","image.png","photo.jpg","photo.jpeg","photo.png","picture.jpg","picture.jpeg","picture.png","marked_picture.jpg","blob"];
+        if((input&&input.hasAttribute("capture"))||generic.includes(lower))return phoneStyleFilename();
+        return name||phoneStyleFilename();
     }
 
     function canvasPoint(event){
@@ -348,35 +371,16 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
 
     function setInputOriginal(){
         if(!activeInput||!originalFile)return;
-        const image=new Image();
-        const originalUrl=URL.createObjectURL(originalFile);
-        image.onload=function(){
-            const maxSize=1600;
-            const ratio=Math.min(1,maxSize/Math.max(image.width,image.height));
-            canvas.width=Math.max(1,Math.round(image.width*ratio));
-            canvas.height=Math.max(1,Math.round(image.height*ratio));
-            ctx.clearRect(0,0,canvas.width,canvas.height);
-            ctx.drawImage(image,0,0,canvas.width,canvas.height);
-            canvas.toBlob(blob=>{
-                if(blob)setInputFile(activeInput, blob, "picture.jpg");
-                URL.revokeObjectURL(originalUrl);
-                closeModal();
-            },"image/jpeg",.86);
-        };
-        image.onerror=function(){
-            const dt=new DataTransfer();
-            dt.items.add(originalFile);
-            activeInput.files=dt.files;
-            URL.revokeObjectURL(originalUrl);
-            closeModal();
-        };
-        image.src=originalUrl;
+        const dt=new DataTransfer();
+        dt.items.add(originalFile);
+        activeInput.files=dt.files;
+        closeModal();
     }
 
     function saveCanvasToInput(){
         if(!activeInput)return;
         canvas.toBlob(blob=>{
-            if(blob)setInputFile(activeInput, blob, "marked_picture.jpg");
+            if(blob)setInputFile(activeInput, blob, jpegFilename(activeFilename));
             closeModal();
         },"image/jpeg",.86);
     }
@@ -404,15 +408,16 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         image.src=imageObjectUrl;
     }
 
-    markableInputs().forEach(input=>{
-        input.addEventListener("change",()=>{
-            if(!input.files||!input.files[0])return;
-            const file=input.files[0];
-            if(!file.type||!file.type.startsWith("image/"))return;
-            activeInput=input;
-            originalFile=file;
-            loadPicture(file);
-        });
+    document.addEventListener("change",event=>{
+        const input=event.target;
+        if(!isMarkableInput(input))return;
+        if(!input.files||!input.files[0])return;
+        const file=input.files[0];
+        if(!file.type||!file.type.startsWith("image/"))return;
+        activeInput=input;
+        originalFile=file;
+        activeFilename=displayFilename(file,input);
+        loadPicture(file);
     });
 
     ["mousedown","touchstart"].forEach(eventName=>canvas.addEventListener(eventName,event=>{

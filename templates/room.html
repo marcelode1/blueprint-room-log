@@ -46,16 +46,7 @@
         </div>
         <label>Instructions</label>
         <textarea name="instructions" rows="4"></textarea>
-        <div class="grid">
-            <div>
-                <label>Upload Task Picture</label>
-                <input name="task_photo" type="file" accept="image/*">
-            </div>
-            <div class="mobileTaskCamera">
-                <label>Take Picture From Phone</label>
-                <input name="task_camera_photo" type="file" accept="image/*" capture="environment">
-            </div>
-        </div>
+        {% include "_task_attachments_form.html" %}
         <div class="grid taskOptions">
             <label><input type="checkbox" name="require_picture"> Must take picture</label>
             <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
@@ -79,8 +70,7 @@
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
-            {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
-            {% if t.task_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>{% endif %}
+            {% include "_task_media.html" %}
             {% if is_main_admin() %}
             <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
             <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
@@ -229,7 +219,7 @@ async function openDrawModal(input){if(!input.files||!input.files[0]||!input.fil
 ["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
 ["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
 ["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
-document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const file=new File([blob],"marked_picture.jpg",{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
+document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
 document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
 document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}

@@ -1,0 +1,56 @@
+{% set attachments = t.get('_attachments', []) %}
+{% if attachments %}
+    <div class="taskMediaList">
+        {% for attachment in attachments %}
+            <div class="taskMediaItem">
+                {% if attachment.comment %}
+                    <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
+                {% endif %}
+                <p class="muted">
+                    {{ attachment.original_filename or 'Task file' }}
+                    {% if attachment.room_name %} - Room: {{ attachment.room_name }}{% endif %}
+                </p>
+                {% if attachment.file_type == 'photo' %}
+                    <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                {% else %}
+                    <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
+                {% endif %}
+            </div>
+        {% endfor %}
+    </div>
+{% else %}
+    {% if t.task_photo_file %}
+        <p><strong>Task Picture</strong></p>
+        <img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">
+    {% endif %}
+    {% if t.task_audio_file %}
+        <p><strong>Task Audio</strong></p>
+        <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>
+    {% endif %}
+{% endif %}
+
+{% set room_statuses = t.get('_room_statuses', []) %}
+{% if room_statuses %}
+    <div class="taskRoomChecklist">
+        <h4>Room Checklist</h4>
+        {% for status in room_statuses %}
+            <form method="post" action="{{ url_for('update_task_room_status', task_id=t.id, room_id=status.room_id) }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <span>{{ status.room_name }}</span>
+                <span class="taskRoomState {% if status.is_done %}done{% endif %}">{{ 'Done' if status.is_done else 'Open' }}</span>
+                <button type="submit" name="is_done" value="{{ '0' if status.is_done else '1' }}" class="btn-secondary">{{ 'Mark Open' if status.is_done else 'Mark Done' }}</button>
+            </form>
+        {% endfor %}
+    </div>
+{% endif %}
+
+<style>
+.taskMediaList{display:grid;gap:12px;margin:12px 0}
+.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}
+.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}
+.taskRoomChecklist{border-top:1px solid var(--border);margin-top:12px;padding-top:10px}
+.taskRoomChecklist form{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:8px 0}
+.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}
+.taskRoomState.done{color:#047857;background:#ecfdf5}
+@media(max-width:760px){.taskRoomChecklist form{grid-template-columns:1fr}.taskRoomChecklist button{width:100%}}
+</style>

@@ -542,6 +542,31 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_attachments (
+        id SERIAL PRIMARY KEY,
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+        file_type TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        original_filename TEXT,
+        comment TEXT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_room_statuses (
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        is_done BOOLEAN NOT NULL DEFAULT FALSE,
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TEXT,
+        PRIMARY KEY (task_id, room_id)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -632,6 +657,8 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS tasks_task_number_idx ON tasks(task_number) WHERE task_number IS NOT NULL",
         "CREATE TABLE IF NOT EXISTS task_number_counters (month_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_attachments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, file_type TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, comment TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_room_statuses (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, is_done BOOLEAN NOT NULL DEFAULT FALSE, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT, PRIMARY KEY (task_id, room_id))",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
@@ -797,6 +824,206 @@ def task_display_name(task):
     number = (task or {}).get("task_number")
     return f"{number} - {title}" if number else title
 
+
+GENERIC_PHOTO_FILENAMES = {
+    "image.jpg", "image.jpeg", "image.png",
+    "photo.jpg", "photo.jpeg", "photo.png",
+    "picture.jpg", "picture.jpeg", "picture.png",
+    "marked_picture.jpg", "blob", "file.jpg",
+}
+
+
+def phone_style_photo_filename():
+    return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}.jpg"
+
+
+def task_attachment_display_filename(file_storage, field_name, file_type):
+    original = (file_storage.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    safe_original = secure_filename(original)
+    lower_name = safe_original.lower()
+    if file_type == "photo" and ("camera" in (field_name or "").lower() or lower_name in GENERIC_PHOTO_FILENAMES):
+        return phone_style_photo_filename()
+    if original:
+        return original
+    extension = "webm" if file_type == "audio" else "jpg"
+    return f"{file_type}_{local_now().strftime('%Y%m%d_%H%M%S')}.{extension}"
+
+
+def project_room_id_or_none(conn, project_id, value):
+    room_id = optional_int(value)
+    if not room_id:
+        return None
+    room = conn.execute(
+        "SELECT id FROM rooms WHERE id = %s AND project_id = %s",
+        (room_id, project_id)
+    ).fetchone()
+    return room["id"] if room else None
+
+
+def collect_task_attachment_uploads(conn, project_id, default_room_id=None):
+    uploads = []
+    related_room_ids = set()
+    indexes = [idx for idx in request.form.getlist("attachment_indexes") if str(idx).strip()]
+
+    def add_upload(field_name, room_id, comment, file_type):
+        uploaded = request.files.get(field_name)
+        if not uploaded or not uploaded.filename:
+            return None
+        if file_type == "photo" and not allowed_photo(uploaded.filename):
+            return "Please upload a valid task picture."
+        if file_type == "audio" and not allowed_audio(uploaded.filename):
+            return "Please upload a valid task audio file."
+        data = uploaded.read()
+        if not data:
+            return None
+        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
+        uploads.append({
+            "room_id": room_id,
+            "file_type": file_type,
+            "data": data,
+            "filename": display_name,
+            "content_type": uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg"),
+            "comment": comment,
+        })
+        if room_id:
+            related_room_ids.add(room_id)
+        return None
+
+    for idx in indexes:
+        requested_room = request.form.get(f"attachment_{idx}_room_id", "")
+        room_id = project_room_id_or_none(conn, project_id, requested_room)
+        if requested_room and not room_id:
+            return "Choose a room that belongs to this project.", [], set()
+        comment = request.form.get(f"attachment_{idx}_comment", "").strip()
+        for field_name, file_type in [
+            (f"attachment_{idx}_photo", "photo"),
+            (f"attachment_{idx}_camera", "photo"),
+            (f"attachment_{idx}_audio", "audio"),
+        ]:
+            error = add_upload(field_name, room_id, comment, file_type)
+            if error:
+                return error, [], set()
+
+    if not indexes:
+        comment = request.form.get("task_attachment_comment", "").strip()
+        for field_name, file_type in [
+            ("task_photo", "photo"),
+            ("task_camera_photo", "photo"),
+            ("task_audio", "audio"),
+        ]:
+            error = add_upload(field_name, default_room_id, comment, file_type)
+            if error:
+                return error, [], set()
+
+    return None, uploads, related_room_ids
+
+
+def insert_task_attachments(conn, task_id, uploads):
+    inserted = []
+    first_photo = None
+    first_audio = None
+    related_room_ids = set()
+    for item in uploads:
+        storage_path = upload_bytes_to_storage(item["data"], item["filename"], item["content_type"])
+        attachment = conn.execute(
+            """
+            INSERT INTO task_attachments
+            (task_id, room_id, file_type, storage_path, original_filename, comment, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                task_id,
+                item.get("room_id"),
+                item["file_type"],
+                storage_path,
+                item["filename"],
+                item.get("comment", ""),
+                session.get("user_id"),
+                utc_now_iso(),
+            )
+        ).fetchone()
+        inserted.append(attachment)
+        if item.get("room_id"):
+            related_room_ids.add(item["room_id"])
+        if item["file_type"] == "photo" and not first_photo:
+            first_photo = storage_path
+        if item["file_type"] == "audio" and not first_audio:
+            first_audio = storage_path
+    return inserted, first_photo, first_audio, related_room_ids
+
+
+def apply_task_legacy_media(conn, task, first_photo=None, first_audio=None):
+    updates = []
+    params = []
+    if first_photo and not task.get("task_photo_file"):
+        updates.append("task_photo_file = %s")
+        params.append(first_photo)
+    if first_audio and not task.get("task_audio_file"):
+        updates.append("task_audio_file = %s")
+        params.append(first_audio)
+    if not updates:
+        return task
+    params.append(task["id"])
+    conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id = %s", tuple(params))
+    refreshed = conn.execute("SELECT * FROM tasks WHERE id = %s", (task["id"],)).fetchone()
+    return refreshed or task
+
+
+def load_task_attachments(conn, task_id):
+    return conn.execute(
+        """
+        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name
+        FROM task_attachments
+        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+        LEFT JOIN users ON task_attachments.created_by = users.id
+        WHERE task_attachments.task_id = %s
+        ORDER BY task_attachments.id
+        """,
+        (task_id,)
+    ).fetchall()
+
+
+def load_task_details(conn, tasks):
+    detailed = []
+    for task_row in tasks:
+        task = dict(task_row)
+        attachments = load_task_attachments(conn, task["id"])
+        task["_attachments"] = attachments
+        room_ids = set()
+        if task.get("room_id"):
+            room_ids.add(task["room_id"])
+        for attachment in attachments:
+            if attachment.get("room_id"):
+                room_ids.add(attachment["room_id"])
+        room_statuses = []
+        if room_ids:
+            room_rows = conn.execute(
+                "SELECT id, name FROM rooms WHERE id = ANY(%s) ORDER BY name",
+                (list(room_ids),)
+            ).fetchall()
+            status_rows = conn.execute(
+                "SELECT room_id, is_done, updated_at FROM task_room_statuses WHERE task_id = %s AND room_id = ANY(%s)",
+                (task["id"], list(room_ids))
+            ).fetchall()
+            status_by_room = {row["room_id"]: row for row in status_rows}
+            for room in room_rows:
+                status = status_by_room.get(room["id"])
+                room_statuses.append({
+                    "room_id": room["id"],
+                    "room_name": room["name"],
+                    "is_done": bool(status.get("is_done")) if status else False,
+                    "updated_at": status.get("updated_at") if status else None,
+                })
+        task["_room_statuses"] = room_statuses
+        detailed.append(task)
+    return detailed
+
+
+def task_with_attachments_for_email(conn, task):
+    task_copy = dict(task)
+    task_copy["_attachments"] = load_task_attachments(conn, task["id"])
+    return task_copy
 
 
 def ensure_project_blueprints(conn, project):
@@ -1067,14 +1294,14 @@ def add_notification(conn, user_id, user_name, user_email, role, event_type, pro
     )
 
 
-def storage_attachment(path):
+def storage_attachment(path, display_name=None):
     try:
         if not path:
             return None
         data = download_storage_file(path)
         if not data:
             return None
-        filename = os.path.basename(path)
+        filename = secure_filename(display_name or "") or os.path.basename(path)
         mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
         return (filename, data, mime_type)
     except Exception as e:
@@ -1235,7 +1462,18 @@ def task_email_body(task, assigned=None, project=None):
 
 def send_task_assignment_email(task, assigned, project):
     attachments = []
+    seen_paths = set()
+    for task_attachment in task.get("_attachments", []) or []:
+        path = task_attachment.get("storage_path")
+        if path and path not in seen_paths:
+            seen_paths.add(path)
+            attachment = storage_attachment(path, task_attachment.get("original_filename"))
+            if attachment:
+                attachments.append(attachment)
     for path in [task.get("task_photo_file"), task.get("task_audio_file")]:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
         attachment = storage_attachment(path)
         if attachment:
             attachments.append(attachment)
@@ -2638,17 +2876,19 @@ def mobile_room(room_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
-    rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
     tasks = conn.execute(
         """
         SELECT tasks.*, users.name AS assigned_user_name
         FROM tasks
         LEFT JOIN users ON tasks.assigned_user_id = users.id
-        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        WHERE (tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))
+          AND (tasks.assigned_user_id = %s OR %s = 'admin')
         ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
         """,
-        (room_id, session.get("user_id"), session.get("role"))
+        (room_id, room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
+    tasks = load_task_details(conn, tasks)
     room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
@@ -3656,7 +3896,7 @@ def room(room_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    project_rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
+    project_rooms = conn.execute("SELECT id, name, project_id FROM rooms WHERE project_id = %s ORDER BY id", (room["project_id"],)).fetchall()
     users = conn.execute(
         "SELECT id, name, email, role FROM users ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, name"
     ).fetchall() if is_main_admin() else []
@@ -3665,11 +3905,13 @@ def room(room_id):
         SELECT tasks.*, users.name AS assigned_user_name
         FROM tasks
         LEFT JOIN users ON tasks.assigned_user_id = users.id
-        WHERE tasks.room_id = %s AND (tasks.assigned_user_id = %s OR %s = 'admin')
+        WHERE (tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))
+          AND (tasks.assigned_user_id = %s OR %s = 'admin')
         ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
         """,
-        (room_id, session.get("user_id"), session.get("role"))
+        (room_id, room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
+    tasks = load_task_details(conn, tasks)
     room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
@@ -3881,8 +4123,11 @@ def create_task(room_id):
         flash("Choose a user, enter a task title, and choose the be-there time.")
         return redirect(url_for("room", room_id=room_id))
     grant_project_access(conn, assigned_user_id, room["project_id"], assigned.get("role"))
-    photo = first_uploaded_file("task_camera_photo", "task_photo")
-    task_photo_file = upload_file_to_storage(photo) if photo and allowed_photo(photo.filename) else None
+    attachment_error, attachment_uploads, attachment_room_ids = collect_task_attachment_uploads(conn, room["project_id"], room_id)
+    if attachment_error:
+        conn.close()
+        flash(attachment_error)
+        return redirect(url_for("room", room_id=room_id))
     task_date = request.form.get("task_date") or local_now().date().isoformat()
     created_at = utc_now_iso()
     task_number = next_task_number(conn, created_at)
@@ -3906,7 +4151,7 @@ def create_task(room_id):
             task_date,
             title,
             request.form.get("instructions", "").strip(),
-            task_photo_file,
+            None,
             "require_picture" in request.form,
             "allow_picture_upload" in request.form,
             "allow_comment" in request.form,
@@ -3914,6 +4159,9 @@ def create_task(room_id):
             created_at
         )
     ).fetchone()
+    inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task["id"], attachment_uploads)
+    task = apply_task_legacy_media(conn, task, first_photo, first_audio)
+    task["_attachments"] = inserted_attachments
     add_notification(
         conn,
         assigned["id"],
@@ -3964,12 +4212,19 @@ def create_global_task():
             flash("Project or workers not found.")
             return redirect(url_for("create_global_task"))
 
+        requested_room_id = request.form.get("room_id", "")
+        room_id = project_room_id_or_none(conn, project_id, requested_room_id)
+        if requested_room_id and not room_id:
+            conn.close()
+            flash("Choose a room that belongs to this project.")
+            return redirect(url_for("create_global_task"))
+        attachment_error, attachment_uploads, attachment_room_ids = collect_task_attachment_uploads(conn, project_id, room_id)
+        if attachment_error:
+            conn.close()
+            flash(attachment_error)
+            return redirect(url_for("create_global_task"))
         start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
         end_date = request.form.get("task_end_date") or start_date
-        photo = first_uploaded_file("task_camera_photo", "task_photo")
-        audio = first_uploaded_file("task_audio")
-        task_photo_file = upload_file_to_storage(photo) if photo and allowed_photo(photo.filename) else None
-        task_audio_file = upload_file_to_storage(audio) if audio and allowed_audio(audio.filename) else None
         created_tasks = []
 
         for assigned in selected_users:
@@ -3980,12 +4235,13 @@ def create_global_task():
                 """
                 INSERT INTO tasks
                 (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-                VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
                     task_number,
                     project_id,
+                    room_id,
                     assigned["id"],
                     session.get("user_id"),
                     start_date,
@@ -3994,8 +4250,8 @@ def create_global_task():
                     end_date,
                     title,
                     request.form.get("instructions", "").strip(),
-                    task_photo_file,
-                    task_audio_file,
+                    None,
+                    None,
                     "require_picture" in request.form,
                     "allow_picture_upload" in request.form,
                     "allow_comment" in request.form,
@@ -4003,6 +4259,9 @@ def create_global_task():
                     created_at
                 )
             ).fetchone()
+            inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task["id"], attachment_uploads)
+            task = apply_task_legacy_media(conn, task, first_photo, first_audio)
+            task["_attachments"] = inserted_attachments
             add_notification(
                 conn,
                 assigned["id"],
@@ -4025,9 +4284,17 @@ def create_global_task():
         return redirect(url_for("my_tasks"))
 
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    rooms = conn.execute(
+        """
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        JOIN projects ON rooms.project_id = projects.id
+        ORDER BY projects.name, rooms.name
+        """
+    ).fetchall()
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     conn.close()
-    return render_template("create_task.html", projects=projects, users=users)
+    return render_template("create_task.html", projects=projects, users=users, rooms=rooms)
 
 
 @app.route("/tasks/<int:task_id>/edit", methods=["GET", "POST"])
@@ -4050,6 +4317,7 @@ def edit_task(task_id):
         return redirect(url_for("my_tasks"))
     next_url = safe_next_url("my_tasks", project_id=task["project_id"])
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms WHERE project_id = %s ORDER BY name", (task["project_id"],)).fetchall()
 
     if request.method == "POST":
         assigned_user_id = request.form.get("assigned_user_id", type=int)
@@ -4067,19 +4335,18 @@ def edit_task(task_id):
             conn.close()
             return redirect(url_for("edit_task", task_id=task_id, next=next_url))
 
-        photo = first_uploaded_file("task_camera_photo", "task_photo")
-        audio = first_uploaded_file("task_audio")
-        if photo and not allowed_photo(photo.filename):
+        requested_room_id = request.form.get("room_id", "")
+        room_id = project_room_id_or_none(conn, task["project_id"], requested_room_id)
+        if requested_room_id and not room_id:
             conn.close()
-            flash("Please upload a valid task picture.")
+            flash("Choose a room that belongs to this project.")
             return redirect(url_for("edit_task", task_id=task_id, next=next_url))
-        if audio and not allowed_audio(audio.filename):
+        attachment_error, attachment_uploads, attachment_room_ids = collect_task_attachment_uploads(conn, task["project_id"], room_id)
+        if attachment_error:
             conn.close()
-            flash("Please upload a valid task audio file.")
+            flash(attachment_error)
             return redirect(url_for("edit_task", task_id=task_id, next=next_url))
 
-        task_photo_file = upload_file_to_storage(photo) if photo else task.get("task_photo_file")
-        task_audio_file = upload_file_to_storage(audio) if audio else task.get("task_audio_file")
         assigned_changed = assigned_user_id != task.get("assigned_user_id")
         reset_received = assigned_changed and task.get("status") != "done"
         grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
@@ -4087,14 +4354,13 @@ def edit_task(task_id):
             """
             UPDATE tasks
             SET assigned_user_id = %s,
+                room_id = %s,
                 task_date = %s,
                 task_start_date = %s,
                 task_start_time = %s,
                 task_end_date = %s,
                 title = %s,
                 instructions = %s,
-                task_photo_file = %s,
-                task_audio_file = %s,
                 require_picture = %s,
                 allow_picture_upload = %s,
                 allow_comment = %s,
@@ -4104,14 +4370,13 @@ def edit_task(task_id):
             """,
             (
                 assigned_user_id,
+                room_id,
                 start_date,
                 start_date,
                 start_time,
                 end_date,
                 title,
                 request.form.get("instructions", "").strip(),
-                task_photo_file,
-                task_audio_file,
                 "require_picture" in request.form,
                 "allow_picture_upload" in request.form,
                 "allow_comment" in request.form,
@@ -4126,6 +4391,9 @@ def edit_task(task_id):
                 (task_id,)
             )
         updated_task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+        inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, attachment_uploads)
+        updated_task = apply_task_legacy_media(conn, updated_task, first_photo, first_audio)
+        updated_task = task_with_attachments_for_email(conn, updated_task)
         add_notification(
             conn,
             assigned["id"],
@@ -4145,8 +4413,52 @@ def edit_task(task_id):
         flash("Task updated and worker notified.")
         return redirect(next_url)
 
+    task = load_task_details(conn, [task])[0]
     conn.close()
-    return render_template("edit_task.html", task=task, users=users, next_url=next_url)
+    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url)
+
+
+@app.route("/tasks/<int:task_id>/room-status/<int:room_id>", methods=["POST"])
+@login_required
+def update_task_room_status(task_id, room_id):
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("my_tasks"))
+    room = conn.execute(
+        "SELECT id FROM rooms WHERE id = %s AND project_id = %s",
+        (room_id, task["project_id"])
+    ).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found for this task.")
+        return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
+    is_done = request.form.get("is_done") == "1"
+    conn.execute(
+        """
+        INSERT INTO task_room_statuses (task_id, room_id, is_done, updated_by, updated_at)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (task_id, room_id) DO UPDATE SET
+            is_done = EXCLUDED.is_done,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = EXCLUDED.updated_at
+        """,
+        (task_id, room_id, is_done, session.get("user_id"), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash("Task room checklist updated.")
+    return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
 
 
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
@@ -4412,6 +4724,7 @@ def my_tasks():
                 """,
                 (session.get("user_id"), session.get("user_id"))
             ).fetchall()
+    tasks = load_task_details(conn, tasks)
     conn.close()
     return render_template(
         "tasks.html",
@@ -5220,6 +5533,8 @@ def backup():
         ("rooms", "id"),
         ("notes", "id"),
         ("tasks", "id"),
+        ("task_attachments", "id"),
+        ("task_room_statuses", "task_id, room_id"),
         ("material_inventory", "id"),
         ("inventory_items", "id"),
         ("attendance_events", "id"),
@@ -5285,6 +5600,12 @@ def backup():
         conn.rollback()
         task_files = []
         backup_warnings.append(f"Task files could not be listed: {e}")
+    try:
+        task_attachment_files = conn.execute("SELECT storage_path FROM task_attachments WHERE storage_path IS NOT NULL").fetchall()
+    except Exception as e:
+        conn.rollback()
+        task_attachment_files = []
+        backup_warnings.append(f"Task attachment files could not be listed: {e}")
     conn.close()
 
     backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -5321,6 +5642,8 @@ def backup():
             add_storage_file(task.get("task_audio_file"), "task_files")
             add_storage_file(task.get("completion_photo_file"), "task_completion_files")
             add_storage_file(task.get("completion_audio_file"), "task_completion_files")
+        for attachment in task_attachment_files:
+            add_storage_file(attachment.get("storage_path"), "task_attachments")
         z.writestr("README_BACKUP.txt", "Portable backup: JSON table exports plus uploaded files.")
         if backup_warnings:
             z.writestr("BACKUP_WARNINGS.txt", "\n".join(backup_warnings))
@@ -5350,9 +5673,12 @@ def storage_file(storage_path):
         SELECT project_id FROM inventory_items WHERE picture_file = %s
         UNION
         SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
+        UNION
+        SELECT tasks.project_id FROM task_attachments JOIN tasks ON task_attachments.task_id = tasks.id WHERE task_attachments.storage_path = %s
         LIMIT 1
         """,
         (
+            storage_path,
             storage_path,
             storage_path,
             storage_path,

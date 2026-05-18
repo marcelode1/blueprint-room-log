@@ -106,14 +106,7 @@
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
             {% if t.instructions %}<p><strong>Task Information:</strong><br>{{ t.instructions }}</p>{% endif %}
-            {% if t.task_photo_file %}
-                <p><strong>Task Picture</strong></p>
-                <img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">
-            {% endif %}
-            {% if t.task_audio_file %}
-                <p><strong>Task Audio</strong></p>
-                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>
-            {% endif %}
+            {% include "_task_media.html" %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                     <button type="submit">Received</button>
