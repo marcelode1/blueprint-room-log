@@ -4337,13 +4337,15 @@ def my_tasks():
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
         task_period = "day"
-    task_date = request.args.get("date") or local_now().date().isoformat()
+    task_date_arg = request.args.get("date")
+    task_date = task_date_arg or local_now().date().isoformat()
+    task_date_filter = bool(task_date_arg)
     projects = []
     task_users = []
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-        if task_mode == "search" and (selected_project_id or selected_user_id):
+        if task_mode == "search" and (selected_project_id or selected_user_id or task_date_filter):
             where = []
             params = []
             if selected_project_id:
@@ -4365,6 +4367,8 @@ def my_tasks():
                 """,
                 tuple(params)
             ).fetchall()
+            if task_date_filter:
+                tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
         else:
             tasks = []
     else:
@@ -4418,7 +4422,8 @@ def my_tasks():
         selected_user_id=selected_user_id,
         task_mode=task_mode,
         task_period=task_period,
-        task_date=task_date
+        task_date=task_date,
+        task_date_filter=task_date_filter
     )
 
 

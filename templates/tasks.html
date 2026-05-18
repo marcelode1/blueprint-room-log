@@ -42,11 +42,23 @@
                     {% endfor %}
                 </select>
             </div>
+            <div>
+                <label>Show By</label>
+                <select name="period">
+                    <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if task_period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if task_period == "month" %}selected{% endif %}>Month</option>
+                </select>
+            </div>
+            <div>
+                <label>Task Date</label>
+                <input type="date" name="date" value="{{ task_date }}" required>
+            </div>
         </div>
         <button type="submit">Show Tasks</button>
     </form>
-    {% if not selected_project_id and not selected_user_id %}
-        <p class="muted">Choose a project, a user, or both to see tasks, pictures, audio, comments, and completion status.</p>
+    {% if not selected_project_id and not selected_user_id and not task_date_filter %}
+        <p class="muted">Choose a project, a user, or a task date to see tasks, pictures, audio, comments, and completion status.</p>
     {% endif %}
 </div>
 {% endif %}
@@ -141,8 +153,8 @@
             {% endif %}
         </div>
     {% else %}
-        {% if is_main_admin() and not selected_project_id and not selected_user_id %}
-            <p>No project or user selected.</p>
+        {% if is_main_admin() and not selected_project_id and not selected_user_id and not task_date_filter %}
+            <p>No project, user, or task date selected.</p>
         {% elif not is_main_admin() and task_mode == "search" and not selected_project_id %}
             <p>Choose a project to search your tasks.</p>
         {% elif not is_main_admin() and task_mode != "search" %}
