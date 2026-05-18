@@ -1710,6 +1710,16 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
         return None, "Enter a valid supplier quantity."
     if quantity <= 0:
         return None, "Enter a supplier quantity greater than zero."
+    note_parts = []
+    pickup_date = request.form.get("supplier_item_date") or local_now().date().isoformat()
+    pickup_time = request.form.get("supplier_pickup_time", "").strip()
+    if pickup_date:
+        note_parts.append(f"Pickup date: {pickup_date}")
+    if pickup_time:
+        note_parts.append(f"Pickup time: {pickup_time}")
+    purchase_note = request.form.get("supplier_purchase_note", "").strip()
+    if purchase_note:
+        note_parts.append(purchase_note)
     return conn.execute(
         """
         INSERT INTO inventory_items
@@ -1718,7 +1728,7 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
         RETURNING *
         """,
         (
-            request.form.get("supplier_item_date") or local_now().date().isoformat(),
+            pickup_date,
             quantity,
             item_name,
             request.form.get("supplier_model", "").strip(),
@@ -1728,7 +1738,7 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
             room_id,
             session.get("user_id"),
             supplier["id"],
-            request.form.get("supplier_purchase_note", "").strip(),
+            "\n".join(note_parts),
             utc_now_iso(),
             utc_now_iso()
         )
@@ -1753,6 +1763,8 @@ def supplier_task_instructions(base_instructions, supplier, inventory_item):
         f"Quantity: {inventory_item.get('quantity') or '-'}",
         f"Brand: {inventory_item.get('brand') or '-'}",
         f"Model #: {inventory_item.get('item_model') or '-'}",
+        f"Pickup Date: {inventory_item.get('item_date') or '-'}",
+        f"Pickup / Purchase Note: {inventory_item.get('used_note') or '-'}",
         "Inventory status: Needs purchase"
     ]
     return "\n".join(line for line in lines if line is not None).strip()

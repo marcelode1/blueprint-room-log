@@ -20,13 +20,15 @@
                 <div>
                     <label>Supplier</label>
                     <select name="supplier_id" id="supplierSelect">
-                        <option value="">Enter new supplier below</option>
+                        <option value="">Choose supplier</option>
                         {% for s in suppliers %}
                             <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
                         {% endfor %}
+                        <option value="__new__">Add new supplier...</option>
                     </select>
                 </div>
-                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time"></div>
                 <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
                 <div><label>Material / Item</label><input name="supplier_item_name" placeholder="Cable, keypad, speakers"></div>
                 <div><label>Brand</label><input name="supplier_brand"></div>
@@ -34,22 +36,16 @@
             </div>
             <label>Purchase Note</label>
             <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
-            <details class="newSupplierDetails">
-                <summary>Enter New Supplier</summary>
-                <div class="grid">
-                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
-                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
-                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
-                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
-                    <div><label>Street Address</label><input name="new_supplier_address"></div>
-                    <div><label>City</label><input name="new_supplier_city"></div>
-                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
-                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
-                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
-                </div>
-                <label>Supplier Notes</label>
-                <textarea name="new_supplier_notes" rows="2"></textarea>
-            </details>
+            <input type="hidden" name="new_supplier_name" id="newSupplierName">
+            <input type="hidden" name="new_supplier_contact_name" id="newSupplierContactName">
+            <input type="hidden" name="new_supplier_phone" id="newSupplierPhone">
+            <input type="hidden" name="new_supplier_email" id="newSupplierEmail">
+            <input type="hidden" name="new_supplier_address" id="newSupplierAddress">
+            <input type="hidden" name="new_supplier_city" id="newSupplierCity">
+            <input type="hidden" name="new_supplier_state" id="newSupplierState">
+            <input type="hidden" name="new_supplier_zip" id="newSupplierZip">
+            <input type="hidden" name="new_supplier_website" id="newSupplierWebsite">
+            <input type="hidden" name="new_supplier_notes" id="newSupplierNotes">
         </div>
 
         <label id="projectSelectLabel">Project</label>
@@ -110,13 +106,39 @@
     </form>
 </div>
 
+<div id="newSupplierModal" class="newSupplierModal" aria-hidden="true">
+    <div class="newSupplierDialog">
+        <h3>Add New Supplier</h3>
+        <div class="grid">
+            <div><label>Supplier Name</label><input id="modalSupplierName"></div>
+            <div><label>Contact Name</label><input id="modalSupplierContactName"></div>
+            <div><label>Phone</label><input id="modalSupplierPhone" type="tel"></div>
+            <div><label>Email</label><input id="modalSupplierEmail" type="email"></div>
+            <div><label>Street Address</label><input id="modalSupplierAddress"></div>
+            <div><label>City</label><input id="modalSupplierCity"></div>
+            <div><label>State</label><input id="modalSupplierState" maxlength="2"></div>
+            <div><label>ZIP</label><input id="modalSupplierZip"></div>
+            <div><label>Website</label><input id="modalSupplierWebsite" type="url"></div>
+        </div>
+        <label>Supplier Notes</label>
+        <textarea id="modalSupplierNotes" rows="2"></textarea>
+        <div class="modalActions">
+            <button type="button" id="saveNewSupplierBtn">Save Supplier</button>
+            <button type="button" class="btn-secondary" id="cancelNewSupplierBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <style>
 .workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
 .workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
 .workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
 .supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
-.newSupplierDetails{border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px}
-.newSupplierDetails summary{cursor:pointer;font-weight:800;min-height:38px;display:flex;align-items:center}
+.newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
+.newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
+.newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
+.modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:760px){.modalActions{grid-template-columns:1fr}}
 </style>
 <script>
 (function(){
@@ -138,8 +160,36 @@
     const taskTypeSelect=document.getElementById("taskTypeSelect");
     const supplierPanel=document.getElementById("supplierTaskPanel");
     const supplierEnabled=document.getElementById("supplierEnabled");
+    const supplierSelect=document.getElementById("supplierSelect");
+    const newSupplierModal=document.getElementById("newSupplierModal");
+    const saveNewSupplierBtn=document.getElementById("saveNewSupplierBtn");
+    const cancelNewSupplierBtn=document.getElementById("cancelNewSupplierBtn");
     const projectLabel=document.getElementById("projectSelectLabel");
     const roomLabel=document.getElementById("roomSelectLabel");
+    const hiddenSupplierFields={
+        name:document.getElementById("newSupplierName"),
+        contact:document.getElementById("newSupplierContactName"),
+        phone:document.getElementById("newSupplierPhone"),
+        email:document.getElementById("newSupplierEmail"),
+        address:document.getElementById("newSupplierAddress"),
+        city:document.getElementById("newSupplierCity"),
+        state:document.getElementById("newSupplierState"),
+        zip:document.getElementById("newSupplierZip"),
+        website:document.getElementById("newSupplierWebsite"),
+        notes:document.getElementById("newSupplierNotes")
+    };
+    const modalSupplierFields={
+        name:document.getElementById("modalSupplierName"),
+        contact:document.getElementById("modalSupplierContactName"),
+        phone:document.getElementById("modalSupplierPhone"),
+        email:document.getElementById("modalSupplierEmail"),
+        address:document.getElementById("modalSupplierAddress"),
+        city:document.getElementById("modalSupplierCity"),
+        state:document.getElementById("modalSupplierState"),
+        zip:document.getElementById("modalSupplierZip"),
+        website:document.getElementById("modalSupplierWebsite"),
+        notes:document.getElementById("modalSupplierNotes")
+    };
     function updateTaskType(){
         const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
         if(supplierPanel)supplierPanel.style.display=supplierMode?"block":"none";
@@ -149,6 +199,56 @@
     }
     if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
     updateTaskType();
+    function openNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.add("open");
+        newSupplierModal.setAttribute("aria-hidden","false");
+        if(modalSupplierFields.name)modalSupplierFields.name.focus();
+    }
+    function closeNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.remove("open");
+        newSupplierModal.setAttribute("aria-hidden","true");
+    }
+    if(supplierSelect){
+        supplierSelect.addEventListener("change",()=>{
+            if(supplierSelect.value==="__new__")openNewSupplierModal();
+            else Object.values(hiddenSupplierFields).forEach(field=>{if(field)field.value="";});
+        });
+    }
+    if(cancelNewSupplierBtn)cancelNewSupplierBtn.addEventListener("click",()=>{
+        closeNewSupplierModal();
+        if(supplierSelect)supplierSelect.value="";
+    });
+    if(saveNewSupplierBtn)saveNewSupplierBtn.addEventListener("click",()=>{
+        const name=(modalSupplierFields.name&&modalSupplierFields.name.value.trim())||"";
+        if(!name){
+            alert("Supplier name is required.");
+            if(modalSupplierFields.name)modalSupplierFields.name.focus();
+            return;
+        }
+        Object.keys(hiddenSupplierFields).forEach(key=>{
+            if(hiddenSupplierFields[key]&&modalSupplierFields[key])hiddenSupplierFields[key].value=modalSupplierFields[key].value.trim();
+        });
+        if(supplierSelect){
+            let newOption=Array.from(supplierSelect.options).find(option=>option.dataset.newSupplier==="1");
+            if(!newOption){
+                newOption=document.createElement("option");
+                newOption.value="";
+                newOption.dataset.newSupplier="1";
+                supplierSelect.insertBefore(newOption,supplierSelect.querySelector('option[value="__new__"]'));
+            }
+            newOption.textContent=name+" (new)";
+            newOption.selected=true;
+        }
+        closeNewSupplierModal();
+    });
+    if(newSupplierModal)newSupplierModal.addEventListener("click",event=>{
+        if(event.target===newSupplierModal){
+            closeNewSupplierModal();
+            if(supplierSelect&&supplierSelect.value==="__new__")supplierSelect.value="";
+        }
+    });
 })();
 </script>
 {% endblock %}
