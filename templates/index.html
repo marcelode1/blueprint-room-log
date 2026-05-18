@@ -7,15 +7,15 @@
     <h1>{{ get_app_setting("company_name", "ProjectONus") }}</h1>
     <p class="muted">Powered by ProjectONus</p>
     <div class="grid">
-        <a class="btn-link" href="#search">Search Projects</a>
         <a class="btn-link" href="#projects">Projects</a>
-        {% if is_main_admin() or can_view_inventory() %}
-            <a class="btn-link btn-secondary" href="{{ url_for('inventory') }}">Inventory</a>
-        {% endif %}
+        <a class="btn-link" href="#search">Search Projects</a>
         {% if is_main_admin() %}
-            <a class="btn-link" href="{{ url_for('new_project') }}">New Project</a>
+            <a class="btn-link" href="{{ url_for('new_project') }}">Create Project</a>
+            <a class="btn-link" href="{{ url_for('my_tasks') }}">Task</a>
+            <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
             <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
-            <a class="btn-link btn-secondary" href="{{ url_for('team_map') }}">Where Is My Team</a>
+        {% elif can_view_inventory() %}
+            <a class="btn-link btn-secondary" href="{{ url_for('inventory') }}">Inventory</a>
         {% endif %}
     </div>
 </div>
