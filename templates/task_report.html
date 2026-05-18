@@ -73,7 +73,11 @@
             {% for t in report.tasks %}
                 {% set status = task_report_status(t) %}
                 <tr>
-                    <td>{{ t.task_number or "-" }}</td>
+                    <td>
+                        <a href="{{ url_for('my_tasks', mode='search', project_id=t.project_id, period=period, date=selected_date) }}#task-{{ t.id }}">
+                            {{ t.task_number or t.id }}
+                        </a>
+                    </td>
                     <td>{{ t.project_name or "-" }}</td>
                     <td>{{ t.room_name or "-" }}</td>
                     <td><strong>{{ task_display_name(t) }}</strong><br><span class="muted">Created by {{ t.created_by_name or "-" }}</span></td>
