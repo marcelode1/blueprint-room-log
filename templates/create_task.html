@@ -7,29 +7,18 @@
 
 <div class="card">
     <form method="post" enctype="multipart/form-data">
-        <label>Project</label>
-        <select name="project_id" id="taskProjectSelect" required>
-            <option value="">Choose project</option>
-            {% for p in projects %}
-                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
-            {% endfor %}
+        <label>Create Task For</label>
+        <select id="taskTypeSelect" name="task_type">
+            <option value="project">Project</option>
+            <option value="supplier">Supplier</option>
         </select>
 
-        <label>Main Room</label>
-        <select name="room_id" id="taskMainRoomSelect">
-            <option value="">No room</option>
-            {% for r in rooms %}
-                <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
-            {% endfor %}
-        </select>
-
-        <button type="button" class="btn-secondary" id="supplierTaskBtn">Supplier</button>
         <input type="hidden" name="supplier_enabled" id="supplierEnabled" value="0">
         <div id="supplierTaskPanel" class="supplierTaskPanel" style="display:none;">
-            <h3>Supplier Material</h3>
+            <h3>Supplier</h3>
             <div class="grid">
                 <div>
-                    <label>Existing Supplier</label>
+                    <label>Supplier</label>
                     <select name="supplier_id" id="supplierSelect">
                         <option value="">Enter new supplier below</option>
                         {% for s in suppliers %}
@@ -62,6 +51,22 @@
                 <textarea name="new_supplier_notes" rows="2"></textarea>
             </details>
         </div>
+
+        <label id="projectSelectLabel">Project</label>
+        <select name="project_id" id="taskProjectSelect" required>
+            <option value="">Choose project</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <label id="roomSelectLabel">Main Room</label>
+        <select name="room_id" id="taskMainRoomSelect">
+            <option value="">No room</option>
+            {% for r in rooms %}
+                <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
+            {% endfor %}
+        </select>
 
         <h3>Workers</h3>
         <div class="workerList">
@@ -130,17 +135,20 @@
     }
     if(projectSelect)projectSelect.addEventListener("change",filterMainRooms);
     filterMainRooms();
-    const supplierBtn=document.getElementById("supplierTaskBtn");
+    const taskTypeSelect=document.getElementById("taskTypeSelect");
     const supplierPanel=document.getElementById("supplierTaskPanel");
     const supplierEnabled=document.getElementById("supplierEnabled");
-    if(supplierBtn&&supplierPanel&&supplierEnabled){
-        supplierBtn.addEventListener("click",()=>{
-            const opening=supplierPanel.style.display==="none";
-            supplierPanel.style.display=opening?"block":"none";
-            supplierEnabled.value=opening?"1":"0";
-            supplierBtn.textContent=opening?"Remove Supplier":"Supplier";
-        });
+    const projectLabel=document.getElementById("projectSelectLabel");
+    const roomLabel=document.getElementById("roomSelectLabel");
+    function updateTaskType(){
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(supplierPanel)supplierPanel.style.display=supplierMode?"block":"none";
+        if(supplierEnabled)supplierEnabled.value=supplierMode?"1":"0";
+        if(projectLabel)projectLabel.textContent=supplierMode?"Project Where Material Will Go":"Project";
+        if(roomLabel)roomLabel.textContent=supplierMode?"Room Where Material Will Go":"Main Room";
     }
+    if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
+    updateTaskType();
 })();
 </script>
 {% endblock %}
