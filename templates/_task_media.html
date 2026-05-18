@@ -30,7 +30,7 @@
 {% endif %}
 
 {% set room_statuses = t.get('_room_statuses', []) %}
-{% if room_statuses %}
+{% if room_statuses and not suppress_task_room_checklist|default(false) %}
     <div class="taskRoomChecklist">
         <h4>Room Checklist</h4>
         {% for status in room_statuses %}

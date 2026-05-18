@@ -906,7 +906,7 @@ GENERIC_PHOTO_FILENAMES = {
 
 def phone_style_photo_filename(extension="jpg"):
     safe_ext = extension if extension in ALLOWED_PHOTOS else "jpg"
-    return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}.{safe_ext}"
+    return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6].upper()}.{safe_ext}"
 
 
 def task_attachment_display_filename(file_storage, field_name, file_type):
@@ -992,6 +992,66 @@ def collect_task_attachment_uploads(conn, project_id, default_room_id=None):
                 return error, [], set()
 
     return None, uploads, related_room_ids
+
+
+def collect_completion_uploads(conn, project_id, default_room_id=None):
+    uploads = []
+    indexes = [idx for idx in request.form.getlist("completion_attachment_indexes") if str(idx).strip()]
+
+    def add_upload(field_name, room_id, comment, file_type):
+        uploaded = request.files.get(field_name)
+        if not uploaded or not uploaded.filename:
+            return None
+        if file_type == "photo" and not allowed_photo(uploaded.filename):
+            return "Please upload a valid completion picture."
+        if file_type == "audio" and not allowed_audio(uploaded.filename):
+            return "Please upload a valid completion audio file."
+        data = uploaded.read()
+        if not data:
+            return None
+        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
+        uploads.append({
+            "room_id": room_id,
+            "file_type": file_type,
+            "data": data,
+            "filename": display_name,
+            "content_type": upload_content_type(
+                display_name,
+                uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg")
+            ),
+            "comment": comment,
+        })
+        return None
+
+    if indexes:
+        for idx in indexes:
+            room_id = default_room_id
+            requested_room = request.form.get(f"completion_attachment_{idx}_room_id", "")
+            if requested_room:
+                room_id = project_room_id_or_none(conn, project_id, requested_room)
+                if not room_id:
+                    return "Choose a room that belongs to this project.", []
+            comment = request.form.get(f"completion_attachment_{idx}_comment", "").strip()
+            for field_name, file_type in [
+                (f"completion_attachment_{idx}_camera", "photo"),
+                (f"completion_attachment_{idx}_photo", "photo"),
+                (f"completion_attachment_{idx}_audio", "audio"),
+            ]:
+                error = add_upload(field_name, room_id, comment, file_type)
+                if error:
+                    return error, []
+    else:
+        comment = request.form.get("completion_comment", "").strip()
+        for field_name, file_type in [
+            ("completion_camera", "photo"),
+            ("completion_photo", "photo"),
+            ("completion_audio", "audio"),
+        ]:
+            error = add_upload(field_name, default_room_id, comment, file_type)
+            if error:
+                return error, []
+
+    return None, uploads
 
 
 def insert_task_attachments(conn, task_id, uploads):
@@ -1124,6 +1184,38 @@ def load_task_details(conn, tasks, room_id=None):
         task["_room_statuses"] = room_statuses
         detailed.append(task)
     return detailed
+
+
+def task_related_room_ids(conn, task_id, task=None):
+    room_ids = set()
+    if task and task.get("room_id"):
+        room_ids.add(task["room_id"])
+    rows = conn.execute(
+        "SELECT DISTINCT room_id FROM task_attachments WHERE task_id = %s AND room_id IS NOT NULL",
+        (task_id,)
+    ).fetchall()
+    for row in rows:
+        if row.get("room_id"):
+            room_ids.add(row["room_id"])
+    rows = conn.execute(
+        "SELECT DISTINCT room_id FROM task_room_statuses WHERE task_id = %s",
+        (task_id,)
+    ).fetchall()
+    for row in rows:
+        if row.get("room_id"):
+            room_ids.add(row["room_id"])
+    return room_ids
+
+
+def all_task_rooms_done(conn, task_id, room_ids):
+    if not room_ids:
+        return False
+    rows = conn.execute(
+        "SELECT room_id, is_done FROM task_room_statuses WHERE task_id = %s AND room_id = ANY(%s)",
+        (task_id, list(room_ids))
+    ).fetchall()
+    done_by_room = {row["room_id"]: bool(row["is_done"]) for row in rows}
+    return all(done_by_room.get(room_id) for room_id in room_ids)
 
 
 def task_with_attachments_for_email(conn, task):
@@ -2881,6 +2973,7 @@ def utility_processor():
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
         maps_directions_url=maps_directions_url,
+        is_mobile_request=is_mobile_request,
         task_project_address=task_project_address,
         format_event_time=format_event_time,
         format_event_date=format_event_date,
@@ -5094,9 +5187,17 @@ def complete_task(task_id):
             return redirect(url_for("room", room_id=task["room_id"]))
         return redirect(url_for("my_tasks"))
 
-    file = request.files.get("completion_photo") or request.files.get("completion_camera")
-    audio = request.files.get("completion_audio")
-    wants_photo = bool(file and file.filename)
+    completion_room_id = project_room_id_or_none(conn, task["project_id"], request.form.get("completion_room_id"))
+    if request.form.get("completion_room_id") and not completion_room_id:
+        conn.close()
+        flash("Choose a room that belongs to this project.")
+        return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
+    upload_error, completion_uploads = collect_completion_uploads(conn, task["project_id"], completion_room_id)
+    if upload_error:
+        conn.close()
+        flash(upload_error)
+        return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
+    wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
     if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
         conn.close()
         flash("This task requires a picture before it can be completed.")
@@ -5104,23 +5205,45 @@ def complete_task(task_id):
             return redirect(url_for("room", room_id=task["room_id"]))
         return redirect(url_for("my_tasks"))
 
-    photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else task.get("completion_photo_file")
-    audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else task.get("completion_audio_file")
-    conn.execute(
-        """
-        UPDATE tasks
-        SET status = 'done', completion_comment = %s, completion_photo_file = %s, completion_audio_file = %s, completed_at = %s
-        WHERE id = %s
-        """,
-        (
-            request.form.get("completion_comment", "").strip(),
-            photo_file,
-            audio_file,
-            datetime.now().isoformat(),
-            task_id
+    inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
+    photo_file = first_photo or task.get("completion_photo_file")
+    audio_file = first_audio or task.get("completion_audio_file")
+    completed_at = datetime.now().isoformat()
+    mark_entire_task_done = True
+    if completion_room_id:
+        conn.execute(
+            """
+            INSERT INTO task_room_statuses (task_id, room_id, is_done, updated_by, updated_at)
+            VALUES (%s, %s, TRUE, %s, %s)
+            ON CONFLICT (task_id, room_id) DO UPDATE SET
+                is_done = TRUE,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (task_id, completion_room_id, session.get("user_id"), utc_now_iso())
         )
+        related_room_ids = task_related_room_ids(conn, task_id, task)
+        related_room_ids.add(completion_room_id)
+        mark_entire_task_done = all_task_rooms_done(conn, task_id, related_room_ids)
+    update_fields = [
+        "completion_comment = %s",
+        "completion_photo_file = %s",
+        "completion_audio_file = %s",
+    ]
+    params = [
+        request.form.get("completion_comment", "").strip(),
+        photo_file,
+        audio_file,
+    ]
+    if mark_entire_task_done:
+        update_fields.extend(["status = 'done'", "completed_at = %s"])
+        params.append(completed_at)
+    params.append(task_id)
+    conn.execute(
+        f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
+        tuple(params)
     )
-    if task.get("supplier_id"):
+    if task.get("supplier_id") and mark_entire_task_done:
         conn.execute(
             """
             UPDATE inventory_items
@@ -5158,9 +5281,12 @@ def complete_task(task_id):
         notification_ok = False
     conn.close()
     if notification_ok:
-        flash("Task marked done. Admin was notified.")
+        flash("Task marked done. Admin was notified." if mark_entire_task_done else "Room marked done. Admin was notified.")
     else:
-        flash("Task marked done. Admin notification could not be sent.")
+        flash("Task updated. Admin notification could not be sent.")
+    next_url = request.form.get("next")
+    if next_url and next_url.startswith("/"):
+        return redirect(next_url)
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
     if task.get("room_id"):
@@ -5301,7 +5427,9 @@ def my_tasks():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
         suppliers = fetch_suppliers(conn)
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-        if task_mode == "search" and (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or task_date_filter):
+        should_show_search = selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or task_date_filter
+        apply_task_date_filter = task_mode == "search" and should_show_search
+        if task_mode == "search" and should_show_search:
             where = []
             params = []
             if selected_project_id:
@@ -5329,7 +5457,7 @@ def my_tasks():
                 """,
                 tuple(params)
             ).fetchall()
-            if task_date_filter:
+            if apply_task_date_filter:
                 tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
         else:
             tasks = []
@@ -5354,7 +5482,9 @@ def my_tasks():
             """,
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
-        if task_mode == "search" and (selected_project_id or selected_supplier_id or task_date_filter):
+        should_show_search = selected_project_id or selected_supplier_id or task_date_filter
+        apply_task_date_filter = task_mode == "search" and should_show_search
+        if task_mode == "search" and should_show_search:
             where = ["tasks.assigned_user_id = %s"]
             params = [session.get("user_id")]
             if selected_project_id:
@@ -5379,7 +5509,7 @@ def my_tasks():
                 """,
                 tuple([session.get("user_id")] + params)
             ).fetchall()
-            if task_date_filter:
+            if apply_task_date_filter:
                 tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
         elif task_mode == "search":
             tasks = []
@@ -5398,6 +5528,15 @@ def my_tasks():
                 (session.get("user_id"), session.get("user_id"))
             ).fetchall()
     tasks = load_task_details(conn, tasks, selected_room_id)
+    tasks_by_room = {}
+    if task_mode == "search" and selected_project_id and not selected_room_id:
+        for room in project_rooms:
+            room_tasks = []
+            for task in tasks:
+                status_rooms = [status.get("room_id") for status in task.get("_room_statuses", [])]
+                if task.get("room_id") == room["id"] or room["id"] in status_rooms:
+                    room_tasks.append(task)
+            tasks_by_room[room["id"]] = room_tasks
     conn.close()
     return render_template(
         "tasks.html",
@@ -5410,6 +5549,7 @@ def my_tasks():
         selected_supplier_id=selected_supplier_id,
         selected_user_id=selected_user_id,
         project_rooms=project_rooms,
+        tasks_by_room=tasks_by_room,
         task_mode=task_mode,
         task_period=task_period,
         task_date=task_date,
