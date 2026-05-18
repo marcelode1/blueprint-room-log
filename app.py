@@ -5354,7 +5354,7 @@ def my_tasks():
             """,
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
-        if task_mode == "search" and (selected_project_id or selected_supplier_id):
+        if task_mode == "search" and (selected_project_id or selected_supplier_id or task_date_filter):
             where = ["tasks.assigned_user_id = %s"]
             params = [session.get("user_id")]
             if selected_project_id:
@@ -5379,7 +5379,8 @@ def my_tasks():
                 """,
                 tuple([session.get("user_id")] + params)
             ).fetchall()
-            tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
+            if task_date_filter:
+                tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
         elif task_mode == "search":
             tasks = []
         else:
