@@ -29,6 +29,15 @@
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
             {% if t.task_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">{% endif %}
             {% if t.task_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>{% endif %}
+            {% if is_main_admin() %}
+            <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <button type="submit" class="btn-danger">Delete Task</button>
+            </form>
+            {% if t.accepted_at %}
+                <p class="muted mobile-only-delete-note">Received tasks can only be deleted from the desktop version with an email PIN.</p>
+            {% endif %}
+            {% endif %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
             <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                 <button type="submit">Received</button>
@@ -124,7 +133,7 @@
     {% endfor %}
 </div>
 <style>
-.taskDone{opacity:.82}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>

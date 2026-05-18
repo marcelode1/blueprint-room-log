@@ -4196,7 +4196,7 @@ def delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.title, tasks.project_id, projects.name AS project_name
+        SELECT tasks.id, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -4208,14 +4208,23 @@ def delete_task(task_id):
         conn.close()
         flash("Task not found.")
         return redirect(url_for("my_tasks"))
+    next_url = safe_next_url("my_tasks", project_id=task["project_id"])
+    if not task.get("accepted_at"):
+        conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
+        conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
+        conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+        conn.commit()
+        conn.close()
+        flash("Task deleted.")
+        return redirect(next_url)
     if is_mobile_request():
         conn.close()
-        flash("Task deletion is available to admin from the desktop version only.")
-        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+        flash("This task was already received by the worker. Delete it from the desktop version with an email PIN.")
+        return redirect(next_url)
     if not admin or not admin.get("email"):
         conn.close()
         flash("Your admin account needs an email before a delete PIN can be sent.")
-        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+        return redirect(next_url)
 
     pin = f"{secrets.randbelow(1000000):06d}"
     conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s AND admin_id = %s", (task_id, admin["id"]))
@@ -4245,10 +4254,10 @@ def delete_task(task_id):
         conn.commit()
         conn.close()
         flash("Delete PIN could not be sent. Check SMTP email settings first.")
-        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+        return redirect(next_url)
     conn.close()
     flash("A 6-digit delete PIN was sent to your admin email.")
-    return redirect(url_for("confirm_delete_task", task_id=task_id))
+    return redirect(url_for("confirm_delete_task", task_id=task_id, next=next_url))
 
 
 @app.route("/tasks/<int:task_id>/delete/confirm", methods=["GET", "POST"])
@@ -4257,7 +4266,7 @@ def confirm_delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.title, tasks.project_id, projects.name AS project_name
+        SELECT tasks.id, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -4268,10 +4277,11 @@ def confirm_delete_task(task_id):
         conn.close()
         flash("Task not found.")
         return redirect(url_for("my_tasks"))
+    next_url = safe_next_url("my_tasks", project_id=task["project_id"])
     if is_mobile_request():
         conn.close()
-        flash("Task deletion is available to admin from the desktop version only.")
-        return redirect(url_for("my_tasks", project_id=task["project_id"]))
+        flash("This task was already received by the worker. Delete it from the desktop version with an email PIN.")
+        return redirect(next_url)
 
     if request.method == "POST":
         pin = request.form.get("pin", "").strip()
@@ -4288,23 +4298,22 @@ def confirm_delete_task(task_id):
         if not code or not expires_at or expires_at < datetime.now(timezone.utc):
             conn.close()
             flash("Delete PIN expired. Press Delete Task again to get a new PIN.")
-            return redirect(url_for("my_tasks", project_id=task["project_id"]))
+            return redirect(next_url)
         if not check_password_hash(code["pin_hash"], pin):
             conn.close()
             flash("Invalid delete PIN.")
-            return redirect(url_for("confirm_delete_task", task_id=task_id))
+            return redirect(url_for("confirm_delete_task", task_id=task_id, next=next_url))
 
         conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
         conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
         conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
         conn.commit()
-        project_id = task["project_id"]
         conn.close()
         flash("Task deleted.")
-        return redirect(url_for("my_tasks", project_id=project_id))
+        return redirect(next_url)
 
     conn.close()
-    return render_template("delete_task_confirm.html", task=task)
+    return render_template("delete_task_confirm.html", task=task, next_url=next_url)
 
 
 def task_report_status(task):

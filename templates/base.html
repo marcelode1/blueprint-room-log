@@ -270,6 +270,164 @@ if(mobileMenuButton&&mobileMenuPanel){
 }
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 </script>
+<style>
+#globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
+#globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
+.globalPictureMarkActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:10px}
+.globalPictureMarkActions button{margin:0}
+</style>
+<div id="globalPictureMarkModal">
+    <canvas id="globalPictureMarkCanvas"></canvas>
+    <div class="globalPictureMarkActions">
+        <button type="button" id="globalPictureMarkSave">Use Marked Picture</button>
+        <button type="button" class="btn-secondary" id="globalPictureMarkClear">Clear Drawing</button>
+        <button type="button" class="btn-secondary" id="globalPictureMarkUseOriginal">Use Picture Without Drawing</button>
+        <button type="button" class="btn-danger" id="globalPictureMarkCancel">Cancel Picture</button>
+    </div>
+</div>
+<script>
+(function(){
+    const modal=document.getElementById("globalPictureMarkModal");
+    const canvas=document.getElementById("globalPictureMarkCanvas");
+    if(!modal||!canvas||!window.File||!window.DataTransfer)return;
+    const ctx=canvas.getContext("2d");
+    const saveBtn=document.getElementById("globalPictureMarkSave");
+    const clearBtn=document.getElementById("globalPictureMarkClear");
+    const useOriginalBtn=document.getElementById("globalPictureMarkUseOriginal");
+    const cancelBtn=document.getElementById("globalPictureMarkCancel");
+    let activeInput=null;
+    let originalFile=null;
+    let imageObjectUrl="";
+    let drawing=false;
+    let lastPoint=null;
+
+    function markableInputs(){
+        return Array.from(document.querySelectorAll('input[type="file"][accept*="image"]:not(.annotatablePhoto):not([name="blueprint"]):not([name="company_logo"])'));
+    }
+
+    function canvasPoint(event){
+        const rect=canvas.getBoundingClientRect();
+        const pointer=event.touches?event.touches[0]:event;
+        return {
+            x:(pointer.clientX-rect.left)*(canvas.width/rect.width),
+            y:(pointer.clientY-rect.top)*(canvas.height/rect.height)
+        };
+    }
+
+    function drawMove(event){
+        if(!drawing)return;
+        event.preventDefault();
+        const point=canvasPoint(event);
+        ctx.strokeStyle="#ef4444";
+        ctx.lineWidth=Math.max(6,canvas.width/180);
+        ctx.lineCap="round";
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x,lastPoint.y);
+        ctx.lineTo(point.x,point.y);
+        ctx.stroke();
+        lastPoint=point;
+    }
+
+    function closeModal(){
+        modal.style.display="none";
+        if(imageObjectUrl){
+            URL.revokeObjectURL(imageObjectUrl);
+            imageObjectUrl="";
+        }
+    }
+
+    function setInputFile(input, blob, filename){
+        const file=new File([blob], filename, {type:"image/jpeg"});
+        const dt=new DataTransfer();
+        dt.items.add(file);
+        input.files=dt.files;
+    }
+
+    function setInputOriginal(){
+        if(!activeInput||!originalFile)return;
+        const image=new Image();
+        const originalUrl=URL.createObjectURL(originalFile);
+        image.onload=function(){
+            const maxSize=1600;
+            const ratio=Math.min(1,maxSize/Math.max(image.width,image.height));
+            canvas.width=Math.max(1,Math.round(image.width*ratio));
+            canvas.height=Math.max(1,Math.round(image.height*ratio));
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(image,0,0,canvas.width,canvas.height);
+            canvas.toBlob(blob=>{
+                if(blob)setInputFile(activeInput, blob, "picture.jpg");
+                URL.revokeObjectURL(originalUrl);
+                closeModal();
+            },"image/jpeg",.86);
+        };
+        image.onerror=function(){
+            const dt=new DataTransfer();
+            dt.items.add(originalFile);
+            activeInput.files=dt.files;
+            URL.revokeObjectURL(originalUrl);
+            closeModal();
+        };
+        image.src=originalUrl;
+    }
+
+    function saveCanvasToInput(){
+        if(!activeInput)return;
+        canvas.toBlob(blob=>{
+            if(blob)setInputFile(activeInput, blob, "marked_picture.jpg");
+            closeModal();
+        },"image/jpeg",.86);
+    }
+
+    function loadPicture(file){
+        if(imageObjectUrl){
+            URL.revokeObjectURL(imageObjectUrl);
+            imageObjectUrl="";
+        }
+        const image=new Image();
+        image.onload=function(){
+            const maxSize=1600;
+            const ratio=Math.min(1,maxSize/Math.max(image.width,image.height));
+            canvas.width=Math.max(1,Math.round(image.width*ratio));
+            canvas.height=Math.max(1,Math.round(image.height*ratio));
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(image,0,0,canvas.width,canvas.height);
+            modal.style.display="block";
+        };
+        image.onerror=function(){
+            closeModal();
+            alert("This picture type could not be opened for drawing. It will still be attached without marking.");
+        };
+        imageObjectUrl=URL.createObjectURL(file);
+        image.src=imageObjectUrl;
+    }
+
+    markableInputs().forEach(input=>{
+        input.addEventListener("change",()=>{
+            if(!input.files||!input.files[0])return;
+            const file=input.files[0];
+            if(!file.type||!file.type.startsWith("image/"))return;
+            activeInput=input;
+            originalFile=file;
+            loadPicture(file);
+        });
+    });
+
+    ["mousedown","touchstart"].forEach(eventName=>canvas.addEventListener(eventName,event=>{
+        drawing=true;
+        lastPoint=canvasPoint(event);
+        event.preventDefault();
+    },{passive:false}));
+    ["mousemove","touchmove"].forEach(eventName=>canvas.addEventListener(eventName,drawMove,{passive:false}));
+    ["mouseup","mouseleave","touchend"].forEach(eventName=>canvas.addEventListener(eventName,()=>{drawing=false;}));
+    if(saveBtn)saveBtn.addEventListener("click",saveCanvasToInput);
+    if(clearBtn)clearBtn.addEventListener("click",()=>{if(originalFile)loadPicture(originalFile);});
+    if(useOriginalBtn)useOriginalBtn.addEventListener("click",setInputOriginal);
+    if(cancelBtn)cancelBtn.addEventListener("click",()=>{
+        if(activeInput)activeInput.value="";
+        closeModal();
+    });
+})();
+</script>
 {% if session.get("user_id") and not is_main_admin() %}
 <script>
 (function(){

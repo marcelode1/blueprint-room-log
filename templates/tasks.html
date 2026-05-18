@@ -130,9 +130,13 @@
             <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=t.project_id) }}">Open Project</a>
             {% if t.room_id %}<a class="btn-link" href="{{ url_for('room', room_id=t.room_id) }}">Open Room</a>{% endif %}
             {% if is_main_admin() %}
-                <form class="desktop-only" method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
                     <button type="submit" class="btn-danger">Delete Task</button>
                 </form>
+                {% if t.accepted_at %}
+                    <p class="muted mobile-only-delete-note">Received tasks can only be deleted from the desktop version with an email PIN.</p>
+                {% endif %}
             {% endif %}
         </div>
     {% else %}
@@ -148,5 +152,5 @@
     {% endfor %}
 </div>
 {% endif %}
-<style>.taskDone{opacity:.82}</style>
+<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}
