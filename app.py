@@ -4655,9 +4655,10 @@ def task_calendar_file(task_id):
 def my_tasks():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
+    selected_room_id = request.args.get("room_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
     task_mode = request.args.get("mode", "")
-    if (selected_project_id or selected_user_id) and not task_mode:
+    if (selected_project_id or selected_room_id or selected_user_id) and not task_mode:
         task_mode = "search"
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
@@ -4666,16 +4667,39 @@ def my_tasks():
     task_date = task_date_arg or local_now().date().isoformat()
     task_date_filter = bool(task_date_arg)
     projects = []
+    project_rooms = []
     task_users = []
+    if selected_project_id:
+        if is_main_admin():
+            project_rooms = conn.execute(
+                "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
+                (selected_project_id,)
+            ).fetchall()
+        else:
+            project_rooms = conn.execute(
+                """
+                SELECT rooms.id, rooms.name
+                FROM rooms
+                JOIN project_permissions ON project_permissions.project_id = rooms.project_id AND project_permissions.user_id = %s
+                WHERE rooms.project_id = %s
+                ORDER BY rooms.name, rooms.id
+                """,
+                (session.get("user_id"), selected_project_id)
+            ).fetchall()
+        if selected_room_id and not any(r["id"] == selected_room_id for r in project_rooms):
+            selected_room_id = None
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-        if task_mode == "search" and (selected_project_id or selected_user_id or task_date_filter):
+        if task_mode == "search" and (selected_project_id or selected_room_id or selected_user_id or task_date_filter):
             where = []
             params = []
             if selected_project_id:
                 where.append("tasks.project_id = %s")
                 params.append(selected_project_id)
+            if selected_room_id:
+                where.append("(tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))")
+                params.extend([selected_room_id, selected_room_id])
             if selected_user_id:
                 where.append("tasks.assigned_user_id = %s")
                 params.append(selected_user_id)
@@ -4707,6 +4731,11 @@ def my_tasks():
             (session.get("user_id"),)
         ).fetchall()
         if task_mode == "search" and selected_project_id:
+            where = ["tasks.assigned_user_id = %s", "tasks.project_id = %s"]
+            params = [session.get("user_id"), selected_project_id]
+            if selected_room_id:
+                where.append("(tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))")
+                params.extend([selected_room_id, selected_room_id])
             tasks = conn.execute(
                 """
                 SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
@@ -4715,10 +4744,10 @@ def my_tasks():
                 LEFT JOIN projects ON tasks.project_id = projects.id
                 LEFT JOIN users ON tasks.assigned_user_id = users.id
                 JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
-                WHERE tasks.assigned_user_id = %s AND tasks.project_id = %s
+                WHERE """ + " AND ".join(where) + """
                 ORDER BY tasks.task_date DESC, tasks.created_at DESC
                 """,
-                (session.get("user_id"), session.get("user_id"), selected_project_id)
+                tuple([session.get("user_id")] + params)
             ).fetchall()
             tasks = [t for t in tasks if task_scheduled_in_range(t, task_period, task_date)]
         elif task_mode == "search":
@@ -4745,7 +4774,9 @@ def my_tasks():
         projects=projects,
         task_users=task_users,
         selected_project_id=selected_project_id,
+        selected_room_id=selected_room_id,
         selected_user_id=selected_user_id,
+        project_rooms=project_rooms,
         task_mode=task_mode,
         task_period=task_period,
         task_date=task_date,

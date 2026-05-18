@@ -26,12 +26,22 @@
         <div class="grid">
             <div>
                 <label>Project</label>
-                <select name="project_id">
+                <select name="project_id" onchange="this.form.submit()">
                     <option value="">All Projects</option>
                     {% for p in projects %}
                         <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
                     {% endfor %}
                 </select>
+            </div>
+            <div>
+                <label>View Scope</label>
+                <select name="room_id" {% if not selected_project_id %}disabled{% endif %}>
+                    <option value="">Full Project</option>
+                    {% for r in project_rooms %}
+                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>Room: {{ r.name }}</option>
+                    {% endfor %}
+                </select>
+                {% if not selected_project_id %}<p class="muted">Choose a project to filter by room.</p>{% endif %}
             </div>
             <div>
                 <label>User</label>
@@ -77,6 +87,13 @@
         <form method="get">
             <input type="hidden" name="mode" value="search">
             <input type="hidden" name="project_id" value="{{ selected_project_id }}">
+            <label>View Scope</label>
+            <select name="room_id">
+                <option value="">Full Project</option>
+                {% for r in project_rooms %}
+                    <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>Room: {{ r.name }}</option>
+                {% endfor %}
+            </select>
             <label>Show By</label>
             <select name="period">
                 <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
@@ -93,6 +110,16 @@
 
 {% if not is_main_admin() or task_mode == "search" %}
 <div class="card">
+    {% if task_mode == "search" and selected_project_id %}
+        <p class="muted taskScopeSummary">
+            Showing {{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} for
+            {% if selected_room_id %}
+                {% for r in project_rooms %}{% if r.id == selected_room_id %}{{ r.name }}{% endif %}{% endfor %}
+            {% else %}
+                the full project
+            {% endif %}
+        </p>
+    {% endif %}
     {% for t in tasks %}
         <div id="task-{{ t.id }}" class="card {% if t.status == 'done' %}taskDone{% endif %}">
             <strong>{{ task_display_name(t) }}</strong>

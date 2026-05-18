@@ -19,6 +19,19 @@
         </form>
     {% endif %}
 </div>
+<div class="card">
+    <h3>Tasks</h3>
+    <a class="btn-link" href="{{ url_for('my_tasks', mode='search', project_id=project.id) }}">Full Project Tasks</a>
+    {% if rooms %}
+        <label>Open Tasks By Room</label>
+        <select id="mobileTaskRoomSelect">
+            <option value="">Choose a room</option>
+            {% for r in rooms %}
+                <option value="{{ url_for('my_tasks', mode='search', project_id=project.id, room_id=r.id) }}">{{ r.name }}</option>
+            {% endfor %}
+        </select>
+    {% endif %}
+</div>
 {% if blueprints %}
 <div class="card">
     <h3>Blueprint Sheets</h3>
@@ -97,6 +110,12 @@ if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
         mobileRoomForm.reset();
         mobileRoomForm.style.display="none";
         showCreateRoomBtn.style.display="inline-flex";
+    });
+}
+const mobileTaskRoomSelect=document.getElementById("mobileTaskRoomSelect");
+if(mobileTaskRoomSelect){
+    mobileTaskRoomSelect.addEventListener("change",()=>{
+        if(mobileTaskRoomSelect.value)window.location.href=mobileTaskRoomSelect.value;
     });
 }
 </script>
