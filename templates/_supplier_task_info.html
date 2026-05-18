@@ -1,5 +1,6 @@
 {% set supplier = t.get('_supplier') %}
 {% set supplier_item = t.get('_supplier_inventory_item') %}
+{% set supplier_items = t.get('_supplier_inventory_items', []) %}
 {% if supplier %}
     <div class="supplierTaskInfo">
         <h4>Supplier</h4>
@@ -9,7 +10,19 @@
             {% if supplier.phone %}<br>Phone: <a href="tel:{{ supplier.phone }}">{{ supplier.phone }}</a>{% endif %}
             {% if supplier.email %}<br>Email: <a href="mailto:{{ supplier.email }}">{{ supplier.email }}</a>{% endif %}
         </p>
-        {% if supplier_item %}
+        {% if supplier_items %}
+            <div class="supplierMaterialList">
+            {% for item in supplier_items %}
+                <div class="supplierMaterialItem">
+                    <strong>{{ item.item_name }}</strong><br>
+                    Qty: {{ item.quantity }}{% if item.brand %}<br>Brand: {{ item.brand }}{% endif %}{% if item.item_model %}<br>Model #: {{ item.item_model }}{% endif %}<br>
+                    Pickup: {{ item.item_date or '-' }}{% if item.supplier_pickup_time %} {{ item.supplier_pickup_time }}{% endif %}<br>
+                    Project: {{ item.project_name or '-' }}{% if item.room_name %}<br>Room: {{ item.room_name }}{% endif %}<br>
+                    Status: {{ inventory_status_label(item.status) }}
+                </div>
+            {% endfor %}
+            </div>
+        {% elif supplier_item %}
             <p><strong>Material:</strong> {{ supplier_item.item_name }}<br>
             <strong>Qty:</strong> {{ supplier_item.quantity }}{% if supplier_item.brand %}<br><strong>Brand:</strong> {{ supplier_item.brand }}{% endif %}{% if supplier_item.item_model %}<br><strong>Model #:</strong> {{ supplier_item.item_model }}{% endif %}<br>
             <strong>Status:</strong> {{ inventory_status_label(supplier_item.status) }}</p>
@@ -25,4 +38,6 @@
 <style>
 .supplierTaskInfo{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(245,158,11,.09)}
 .supplierTaskInfo h4{margin:0 0 8px}
+.supplierMaterialList{display:grid;gap:8px;margin:10px 0}
+.supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.25)}
 </style>

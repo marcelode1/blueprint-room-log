@@ -34,8 +34,7 @@
                 <div><label>Brand</label><input name="supplier_brand"></div>
                 <div><label>Model Number</label><input name="supplier_model"></div>
             </div>
-            <label>Purchase Note</label>
-            <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
+            <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
             <input type="hidden" name="new_supplier_name" id="newSupplierName">
             <input type="hidden" name="new_supplier_contact_name" id="newSupplierContactName">
             <input type="hidden" name="new_supplier_phone" id="newSupplierPhone">
@@ -64,6 +63,13 @@
             {% endfor %}
         </select>
 
+        <div id="supplierItemActions" class="supplierItemActions" style="display:none;">
+            <button type="button" id="addSupplierItemBtn">Add to List</button>
+            <div id="supplierItemList" class="supplierItemList"></div>
+            <label>Purchase Note</label>
+            <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
+        </div>
+
         <h3>Workers</h3>
         <div class="workerList">
             {% for u in users %}
@@ -73,7 +79,7 @@
             {% endfor %}
         </div>
 
-        <div class="grid">
+        <div class="grid" id="taskScheduleFields">
             <div>
                 <label>Start Date</label>
                 <input name="task_start_date" type="date" required>
@@ -88,10 +94,12 @@
             </div>
         </div>
 
-        <label>Task</label>
-        <input name="title" placeholder="Task title" required>
-        <label>Task Information / Instructions</label>
-        <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+        <div id="taskTextFields">
+            <label>Task</label>
+            <input name="title" placeholder="Task title" required>
+            <label>Task Information / Instructions</label>
+            <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+        </div>
 
         {% set attachment_project_select_id = "taskProjectSelect" %}
         {% include "_task_attachments_form.html" %}
@@ -134,6 +142,10 @@
 .workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
 .workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
 .supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
+.supplierItemActions{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(245,158,11,.08)}
+.supplierItemList{display:grid;gap:8px;margin-top:8px}
+.supplierItemRow{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.supplierItemRow button{width:auto;min-height:40px;padding:8px 12px;margin:0}
 .newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
@@ -161,11 +173,28 @@
     const supplierPanel=document.getElementById("supplierTaskPanel");
     const supplierEnabled=document.getElementById("supplierEnabled");
     const supplierSelect=document.getElementById("supplierSelect");
+    const supplierItemsJson=document.getElementById("supplierItemsJson");
+    const supplierItemActions=document.getElementById("supplierItemActions");
+    const addSupplierItemBtn=document.getElementById("addSupplierItemBtn");
+    const supplierItemList=document.getElementById("supplierItemList");
+    const taskForm=supplierEnabled?supplierEnabled.closest("form"):null;
     const newSupplierModal=document.getElementById("newSupplierModal");
     const saveNewSupplierBtn=document.getElementById("saveNewSupplierBtn");
     const cancelNewSupplierBtn=document.getElementById("cancelNewSupplierBtn");
     const projectLabel=document.getElementById("projectSelectLabel");
     const roomLabel=document.getElementById("roomSelectLabel");
+    const scheduleFields=document.getElementById("taskScheduleFields");
+    const taskTextFields=document.getElementById("taskTextFields");
+    const supplierItemFields={
+        pickupDate:document.querySelector('[name="supplier_item_date"]'),
+        pickupTime:document.querySelector('[name="supplier_pickup_time"]'),
+        quantity:document.querySelector('[name="supplier_quantity"]'),
+        itemName:document.querySelector('[name="supplier_item_name"]'),
+        brand:document.querySelector('[name="supplier_brand"]'),
+        model:document.querySelector('[name="supplier_model"]'),
+        note:document.querySelector('[name="supplier_purchase_note"]')
+    };
+    let supplierItems=[];
     const hiddenSupplierFields={
         name:document.getElementById("newSupplierName"),
         contact:document.getElementById("newSupplierContactName"),
@@ -193,12 +222,91 @@
     function updateTaskType(){
         const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
         if(supplierPanel)supplierPanel.style.display=supplierMode?"block":"none";
+        if(supplierItemActions)supplierItemActions.style.display=supplierMode?"block":"none";
         if(supplierEnabled)supplierEnabled.value=supplierMode?"1":"0";
         if(projectLabel)projectLabel.textContent=supplierMode?"Project Where Material Will Go":"Project";
         if(roomLabel)roomLabel.textContent=supplierMode?"Room Where Material Will Go":"Main Room";
+        if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
+        if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
+        const titleInput=document.querySelector('[name="title"]');
+        const startDateInput=document.querySelector('[name="task_start_date"]');
+        const startTimeInput=document.querySelector('[name="task_start_time"]');
+        if(titleInput)titleInput.required=!supplierMode;
+        if(startDateInput)startDateInput.required=!supplierMode;
+        if(startTimeInput)startTimeInput.required=!supplierMode;
     }
     if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
     updateTaskType();
+    function optionText(select){
+        if(!select||select.selectedIndex<0)return "";
+        return select.options[select.selectedIndex].textContent.trim();
+    }
+    function renderSupplierItems(){
+        if(supplierItemsJson)supplierItemsJson.value=JSON.stringify(supplierItems);
+        if(!supplierItemList)return;
+        supplierItemList.innerHTML="";
+        supplierItems.forEach((item,index)=>{
+            const row=document.createElement("div");
+            row.className="supplierItemRow";
+            const text=document.createElement("div");
+            text.innerHTML="<strong>"+(index+1)+". "+item.item_name+"</strong><br>Qty: "+item.quantity+
+                (item.brand?" | Brand: "+item.brand:"")+
+                (item.model?" | Model #: "+item.model:"")+
+                "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"");
+            const remove=document.createElement("button");
+            remove.type="button";
+            remove.className="btn-danger";
+            remove.textContent="Remove";
+            remove.addEventListener("click",()=>{
+                supplierItems.splice(index,1);
+                renderSupplierItems();
+            });
+            row.appendChild(text);
+            row.appendChild(remove);
+            supplierItemList.appendChild(row);
+        });
+    }
+    function addSupplierItem(showAlert=true){
+        const projectId=projectSelect?projectSelect.value:"";
+        const roomId=roomSelect?roomSelect.value:"";
+        const item={
+            pickup_date:supplierItemFields.pickupDate?supplierItemFields.pickupDate.value:"",
+            pickup_time:supplierItemFields.pickupTime?supplierItemFields.pickupTime.value:"",
+            quantity:supplierItemFields.quantity?supplierItemFields.quantity.value:"",
+            item_name:supplierItemFields.itemName?supplierItemFields.itemName.value.trim():"",
+            brand:supplierItemFields.brand?supplierItemFields.brand.value.trim():"",
+            model:supplierItemFields.model?supplierItemFields.model.value.trim():"",
+            project_id:projectId,
+            project_name:optionText(projectSelect),
+            room_id:roomId,
+            room_name:roomId?optionText(roomSelect):"Project general"
+        };
+        if(!item.project_id||!item.item_name||!item.quantity){
+            if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
+            return false;
+        }
+        supplierItems.push(item);
+        renderSupplierItems();
+        if(supplierItemFields.quantity)supplierItemFields.quantity.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.value="";
+        if(supplierItemFields.brand)supplierItemFields.brand.value="";
+        if(supplierItemFields.model)supplierItemFields.model.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.focus();
+        return true;
+    }
+    if(addSupplierItemBtn)addSupplierItemBtn.addEventListener("click",()=>addSupplierItem(true));
+    if(taskForm)taskForm.addEventListener("submit",event=>{
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(!supplierMode)return;
+        const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
+        if(hasDraft||!supplierItems.length){
+            addSupplierItem(false);
+        }
+        if(!supplierItems.length){
+            event.preventDefault();
+            alert("Add at least one supplier material item before saving the task.");
+        }
+    });
     function openNewSupplierModal(){
         if(!newSupplierModal)return;
         newSupplierModal.classList.add("open");

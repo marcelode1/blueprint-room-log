@@ -454,6 +454,7 @@ def init_db():
         location_detail TEXT,
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+        supplier_pickup_time TEXT,
         status TEXT NOT NULL DEFAULT 'available',
         added_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -608,6 +609,15 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_supplier_items (
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        inventory_item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (task_id, inventory_item_id)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS attendance_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -701,6 +711,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS task_number_counters (month_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_attachments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, file_type TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, comment TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_room_statuses (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, is_done BOOLEAN NOT NULL DEFAULT FALSE, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT, PRIMARY KEY (task_id, room_id))",
+        "CREATE TABLE IF NOT EXISTS task_supplier_items (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, inventory_item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (task_id, inventory_item_id))",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
@@ -729,6 +740,7 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS location_detail TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_pickup_time TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'available'",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS added_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
@@ -1056,6 +1068,20 @@ def load_task_details(conn, tasks, room_id=None):
                 "SELECT * FROM inventory_items WHERE id = %s",
                 (task["supplier_inventory_item_id"],)
             ).fetchone()
+        task["_supplier_inventory_items"] = conn.execute(
+            """
+            SELECT inventory_items.*, projects.name AS project_name, rooms.name AS room_name
+            FROM task_supplier_items
+            JOIN inventory_items ON task_supplier_items.inventory_item_id = inventory_items.id
+            LEFT JOIN projects ON inventory_items.project_id = projects.id
+            LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+            WHERE task_supplier_items.task_id = %s
+            ORDER BY task_supplier_items.created_at, inventory_items.id
+            """,
+            (task["id"],)
+        ).fetchall()
+        if task["_supplier_inventory_items"] and not task["_supplier_inventory_item"]:
+            task["_supplier_inventory_item"] = task["_supplier_inventory_items"][0]
         room_ids = set()
         if room_id:
             room_ids.add(room_id)
@@ -1723,8 +1749,8 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
     return conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, supplier_id, used_note, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -1736,6 +1762,7 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
             "Needs purchase from supplier",
             project_id,
             room_id,
+            pickup_time,
             session.get("user_id"),
             supplier["id"],
             "\n".join(note_parts),
@@ -1745,8 +1772,87 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
     ).fetchone(), ""
 
 
+def supplier_items_from_task_form(conn, supplier):
+    if not supplier:
+        return [], ""
+    raw = request.form.get("supplier_items_json", "").strip()
+    if not raw:
+        item, error = create_supplier_inventory_item(conn, supplier, request.form.get("project_id", type=int), request.form.get("room_id", type=int))
+        return ([item] if item else []), error
+    try:
+        rows = json.loads(raw)
+    except Exception:
+        return [], "Supplier material list could not be read. Add the items again."
+    if not isinstance(rows, list) or not rows:
+        return [], "Add at least one supplier material item."
+    created = []
+    for row in rows:
+        project_id = optional_int(row.get("project_id"))
+        room_id = optional_int(row.get("room_id"))
+        project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
+        if error:
+            return [], error
+        item_name = (row.get("item_name") or "").strip()
+        if not item_name:
+            return [], "Every supplier material needs an item name."
+        try:
+            quantity = float(row.get("quantity") or 0)
+        except Exception:
+            return [], "Every supplier material needs a valid quantity."
+        if quantity <= 0:
+            return [], "Every supplier material needs a quantity greater than zero."
+        pickup_date = (row.get("pickup_date") or local_now().date().isoformat()).strip()
+        pickup_time = (row.get("pickup_time") or "").strip()
+        note_parts = []
+        if pickup_date:
+            note_parts.append(f"Pickup date: {pickup_date}")
+        if pickup_time:
+            note_parts.append(f"Pickup time: {pickup_time}")
+        purchase_note = (row.get("purchase_note") or request.form.get("supplier_purchase_note") or "").strip()
+        if purchase_note:
+            note_parts.append(purchase_note)
+        created.append(conn.execute(
+            """
+            INSERT INTO inventory_items
+            (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+            RETURNING *
+            """,
+            (
+                pickup_date,
+                quantity,
+                item_name,
+                (row.get("model") or "").strip(),
+                (row.get("brand") or "").strip(),
+                "Needs purchase from supplier",
+                project_id,
+                room_id,
+                pickup_time,
+                session.get("user_id"),
+                supplier["id"],
+                "\n".join(note_parts),
+                utc_now_iso(),
+                utc_now_iso()
+            )
+        ).fetchone())
+    return created, ""
+
+
+def link_supplier_items_to_task(conn, task_id, inventory_items):
+    for item in inventory_items or []:
+        conn.execute(
+            """
+            INSERT INTO task_supplier_items (task_id, inventory_item_id, created_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (task_id, item["id"], utc_now_iso())
+        )
+
+
 def supplier_task_instructions(base_instructions, supplier, inventory_item):
-    if not supplier or not inventory_item:
+    inventory_items = inventory_item if isinstance(inventory_item, list) else ([inventory_item] if inventory_item else [])
+    if not supplier or not inventory_items:
         return base_instructions
     lines = [
         base_instructions.strip(),
@@ -1758,15 +1864,19 @@ def supplier_task_instructions(base_instructions, supplier, inventory_item):
         f"Email: {supplier.get('email') or '-'}",
         f"Address: {supplier.get('address') or '-'}",
         "",
-        "Material:",
-        f"Item: {inventory_item.get('item_name') or '-'}",
-        f"Quantity: {inventory_item.get('quantity') or '-'}",
-        f"Brand: {inventory_item.get('brand') or '-'}",
-        f"Model #: {inventory_item.get('item_model') or '-'}",
-        f"Pickup Date: {inventory_item.get('item_date') or '-'}",
-        f"Pickup / Purchase Note: {inventory_item.get('used_note') or '-'}",
-        "Inventory status: Needs purchase"
+        "Materials:"
     ]
+    for idx, item in enumerate(inventory_items, 1):
+        lines.extend([
+            f"{idx}. {item.get('item_name') or '-'}",
+            f"Quantity: {item.get('quantity') or '-'}",
+            f"Brand: {item.get('brand') or '-'}",
+            f"Model #: {item.get('item_model') or '-'}",
+            f"Pickup Date: {item.get('item_date') or '-'}",
+            f"Pickup Time: {item.get('supplier_pickup_time') or '-'}",
+            f"Pickup / Purchase Note: {item.get('used_note') or '-'}",
+            "Inventory status: Needs purchase"
+        ])
     return "\n".join(line for line in lines if line is not None).strip()
 
 
@@ -4467,6 +4577,7 @@ def create_global_task():
     conn = db()
     if request.method == "POST":
         project_id = request.form.get("project_id", type=int)
+        supplier_mode = request.form.get("supplier_enabled") == "1"
         user_ids = []
         for value in request.form.getlist("user_ids"):
             try:
@@ -4475,7 +4586,7 @@ def create_global_task():
                 pass
         title = request.form.get("title", "").strip()
         start_time = request.form.get("task_start_time", "").strip()
-        if not project_id or not user_ids or not title or not start_time:
+        if not project_id or not user_ids or (not supplier_mode and (not title or not start_time)):
             conn.close()
             flash("Choose a project, at least one worker, enter a task, and choose the be-there time.")
             return redirect(url_for("create_global_task"))
@@ -4507,14 +4618,22 @@ def create_global_task():
             conn.close()
             flash(supplier_error)
             return redirect(url_for("create_global_task"))
-        supplier_inventory_item, supplier_inventory_error = create_supplier_inventory_item(conn, supplier, project_id, room_id)
+        supplier_inventory_items, supplier_inventory_error = supplier_items_from_task_form(conn, supplier)
         if supplier_inventory_error:
             conn.close()
             flash(supplier_inventory_error)
             return redirect(url_for("create_global_task"))
-        start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
+        if supplier_inventory_items:
+            project_id = supplier_inventory_items[0].get("project_id") or project_id
+            room_id = supplier_inventory_items[0].get("room_id")
+        if supplier_mode and supplier_inventory_items:
+            title = f"Supplier pickup - {supplier.get('name') or 'Supplier'}"
+            start_date = supplier_inventory_items[0].get("item_date") or local_now().date().isoformat()
+            start_time = supplier_inventory_items[0].get("supplier_pickup_time") or "08:00"
+        else:
+            start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
         end_date = request.form.get("task_end_date") or start_date
-        task_instructions = supplier_task_instructions(request.form.get("instructions", "").strip(), supplier, supplier_inventory_item)
+        task_instructions = supplier_task_instructions(request.form.get("instructions", "").strip(), supplier, supplier_inventory_items)
         created_tasks = []
 
         for assigned in selected_users:
@@ -4543,7 +4662,7 @@ def create_global_task():
                     None,
                     None,
                     supplier["id"] if supplier else None,
-                    supplier_inventory_item["id"] if supplier_inventory_item else None,
+                    supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
                     "require_picture" in request.form,
                     "allow_picture_upload" in request.form,
                     "allow_comment" in request.form,
@@ -4552,6 +4671,7 @@ def create_global_task():
                 )
             ).fetchone()
             inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task["id"], attachment_uploads)
+            link_supplier_items_to_task(conn, task["id"], supplier_inventory_items)
             task = apply_task_legacy_media(conn, task, first_photo, first_audio)
             task["_attachments"] = inserted_attachments
             add_notification(
@@ -4810,6 +4930,23 @@ def complete_task(task_id):
             task_id
         )
     )
+    if task.get("supplier_id"):
+        conn.execute(
+            """
+            UPDATE inventory_items
+            SET status = 'available',
+                purchased_by = COALESCE(purchased_by, %s),
+                purchased_at = COALESCE(purchased_at, %s),
+                updated_at = %s
+            WHERE id IN (
+                SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
+                UNION
+                SELECT supplier_inventory_item_id FROM tasks WHERE id = %s AND supplier_inventory_item_id IS NOT NULL
+            )
+              AND status = 'needs_purchase'
+            """,
+            (session.get("user_id"), utc_now_iso(), utc_now_iso(), task_id, task_id)
+        )
     conn.commit()
     notification_ok = True
     try:
