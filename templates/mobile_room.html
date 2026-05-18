@@ -27,6 +27,7 @@
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
+            {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
             {% if is_main_admin() %}
             <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
@@ -81,18 +82,20 @@
         <div class="card roomInventoryItem inventory-{{ item.status }}">
             <strong>{{ item.item_name }}</strong>
             <p><strong>Qty:</strong> {{ item.quantity }}<br><strong>Model #:</strong> {{ item.item_model or '-' }}<br><strong>Brand:</strong> {{ item.brand or '-' }}</p>
+            {% if item.supplier_name %}<p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Status:</strong> {{ inventory_status_label(item.status) }}<br><strong>Located:</strong> {{ inventory_location_label(item.location_type) }}{% if item.location_detail %} - {{ item.location_detail }}{% endif %}</p>
             {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
             {% if item.picture_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
             {% if can_edit_inventory() and item.status != 'used' %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
-                <input type="hidden" name="status" value="used">
+                <input type="hidden" name="status" value="{{ 'available' if item.status == 'needs_purchase' else 'used' }}">
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <input type="hidden" name="room_id" value="{{ room.id }}">
-                <label>Used Note</label>
+                {% if item.status != 'needs_purchase' %}<label>Used Note</label>
                 <input name="used_note" placeholder="Where/how it was used">
-                <button type="submit">Used</button>
+                {% endif %}
+                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> {{ 'Purchased' if item.status == 'needs_purchase' else 'Used' }}</label>
             </form>
             {% endif %}
         </div>
@@ -133,7 +136,7 @@
     {% endfor %}
 </div>
 <style>
-.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>

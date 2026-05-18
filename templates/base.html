@@ -51,6 +51,7 @@
             <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
             {% if is_main_admin() %}
                 <a href="{{ url_for('users') }}">Users</a>
+                <a href="{{ url_for('suppliers') }}">Suppliers</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
                 <a href="{{ url_for('task_report') }}">Task Report</a>
@@ -78,6 +79,7 @@
     <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
     {% if is_main_admin() %}
         <a href="{{ url_for('users') }}">Users</a>
+        <a href="{{ url_for('suppliers') }}">Suppliers</a>
         <a href="{{ url_for('settings') }}">Settings</a>
         <a href="{{ url_for('attendance_report') }}">Time Report</a>
         <a href="{{ url_for('task_report') }}">Task Report</a>

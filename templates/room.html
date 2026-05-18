@@ -46,6 +46,43 @@
         </div>
         <label>Instructions</label>
         <textarea name="instructions" rows="4"></textarea>
+        <button type="button" class="btn-secondary roomSupplierBtn">Supplier</button>
+        <input type="hidden" name="supplier_enabled" class="roomSupplierEnabled" value="0">
+        <div class="roomSupplierPanel" style="display:none;">
+            <h3>Supplier Material</h3>
+            <div class="grid">
+                <div>
+                    <label>Existing Supplier</label>
+                    <select name="supplier_id">
+                        <option value="">Enter new supplier below</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name"></div>
+                <div><label>Brand</label><input name="supplier_brand"></div>
+                <div><label>Model Number</label><input name="supplier_model"></div>
+            </div>
+            <label>Purchase Note</label><textarea name="supplier_purchase_note" rows="2"></textarea>
+            <details>
+                <summary>Enter New Supplier</summary>
+                <div class="grid">
+                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
+                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
+                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
+                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
+                    <div><label>Street Address</label><input name="new_supplier_address"></div>
+                    <div><label>City</label><input name="new_supplier_city"></div>
+                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
+                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
+                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
+                </div>
+                <label>Supplier Notes</label><textarea name="new_supplier_notes" rows="2"></textarea>
+            </details>
+        </div>
         {% include "_task_attachments_form.html" %}
         <div class="grid taskOptions">
             <label><input type="checkbox" name="require_picture"> Must take picture</label>
@@ -70,6 +107,7 @@
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
+            {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
             {% if is_main_admin() %}
             <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
@@ -114,18 +152,20 @@
         <div class="card roomInventoryItem inventory-{{ item.status }}">
             <strong>{{ item.item_name }}</strong>
             <p><strong>Qty:</strong> {{ item.quantity }} | <strong>Model #:</strong> {{ item.item_model or '-' }} | <strong>Brand:</strong> {{ item.brand or '-' }}</p>
+            {% if item.supplier_name %}<p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Status:</strong> {{ inventory_status_label(item.status) }} | <strong>Located:</strong> {{ inventory_location_label(item.location_type) }}{% if item.location_detail %} - {{ item.location_detail }}{% endif %}</p>
             {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
             {% if item.picture_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
             {% if can_edit_inventory() and item.status != 'used' %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
-                <input type="hidden" name="status" value="used">
+                <input type="hidden" name="status" value="{{ 'available' if item.status == 'needs_purchase' else 'used' }}">
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <input type="hidden" name="room_id" value="{{ room.id }}">
-                <label>Used Note</label>
+                {% if item.status != 'needs_purchase' %}<label>Used Note</label>
                 <input name="used_note" placeholder="Where/how it was used">
-                <button type="submit">Used</button>
+                {% endif %}
+                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> {{ 'Purchased' if item.status == 'needs_purchase' else 'Used' }}</label>
             </form>
             {% endif %}
         </div>
@@ -194,7 +234,7 @@
 </div>
 
 <style>
-.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
+.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -208,6 +248,7 @@
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
 const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
+document.querySelectorAll(".roomSupplierBtn").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form"),panel=form?form.querySelector(".roomSupplierPanel"):null,enabled=form?form.querySelector(".roomSupplierEnabled"):null;if(!panel||!enabled)return;const opening=panel.style.display==="none";panel.style.display=opening?"block":"none";enabled.value=opening?"1":"0";btn.textContent=opening?"Remove Supplier":"Supplier"}));
 function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}

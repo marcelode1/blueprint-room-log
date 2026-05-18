@@ -23,6 +23,46 @@
             {% endfor %}
         </select>
 
+        <button type="button" class="btn-secondary" id="supplierTaskBtn">Supplier</button>
+        <input type="hidden" name="supplier_enabled" id="supplierEnabled" value="0">
+        <div id="supplierTaskPanel" class="supplierTaskPanel" style="display:none;">
+            <h3>Supplier Material</h3>
+            <div class="grid">
+                <div>
+                    <label>Existing Supplier</label>
+                    <select name="supplier_id" id="supplierSelect">
+                        <option value="">Enter new supplier below</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name" placeholder="Cable, keypad, speakers"></div>
+                <div><label>Brand</label><input name="supplier_brand"></div>
+                <div><label>Model Number</label><input name="supplier_model"></div>
+            </div>
+            <label>Purchase Note</label>
+            <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
+            <details class="newSupplierDetails">
+                <summary>Enter New Supplier</summary>
+                <div class="grid">
+                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
+                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
+                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
+                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
+                    <div><label>Street Address</label><input name="new_supplier_address"></div>
+                    <div><label>City</label><input name="new_supplier_city"></div>
+                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
+                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
+                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
+                </div>
+                <label>Supplier Notes</label>
+                <textarea name="new_supplier_notes" rows="2"></textarea>
+            </details>
+        </div>
+
         <h3>Workers</h3>
         <div class="workerList">
             {% for u in users %}
@@ -69,13 +109,16 @@
 .workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
 .workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
 .workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
+.supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
+.newSupplierDetails{border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:10px}
+.newSupplierDetails summary{cursor:pointer;font-weight:800;min-height:38px;display:flex;align-items:center}
 </style>
 <script>
 (function(){
     const projectSelect=document.getElementById("taskProjectSelect");
     const roomSelect=document.getElementById("taskMainRoomSelect");
-    if(!projectSelect||!roomSelect)return;
     function filterMainRooms(){
+        if(!projectSelect||!roomSelect)return;
         const projectId=projectSelect.value;
         Array.from(roomSelect.options).forEach(option=>{
             const optionProject=option.getAttribute("data-project-id")||"";
@@ -85,8 +128,19 @@
         const selectedOption=roomSelect.options[roomSelect.selectedIndex];
         if(selectedOption&&selectedOption.hidden)roomSelect.value="";
     }
-    projectSelect.addEventListener("change",filterMainRooms);
+    if(projectSelect)projectSelect.addEventListener("change",filterMainRooms);
     filterMainRooms();
+    const supplierBtn=document.getElementById("supplierTaskBtn");
+    const supplierPanel=document.getElementById("supplierTaskPanel");
+    const supplierEnabled=document.getElementById("supplierEnabled");
+    if(supplierBtn&&supplierPanel&&supplierEnabled){
+        supplierBtn.addEventListener("click",()=>{
+            const opening=supplierPanel.style.display==="none";
+            supplierPanel.style.display=opening?"block":"none";
+            supplierEnabled.value=opening?"1":"0";
+            supplierBtn.textContent=opening?"Remove Supplier":"Supplier";
+        });
+    }
 })();
 </script>
 {% endblock %}

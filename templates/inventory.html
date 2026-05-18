@@ -145,6 +145,7 @@
                     <th>Item</th>
                     <th>Model #</th>
                     <th>Brand</th>
+                    <th>Supplier</th>
                     <th>Condition</th>
                     <th>Located</th>
                     <th>Project / Room</th>
@@ -162,13 +163,36 @@
                     <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}</td>
                     <td>{{ item.item_model or '-' }}</td>
                     <td>{{ item.brand or '-' }}</td>
+                    <td>
+                        {{ item.supplier_name or '-' }}
+                        {% if item.supplier_phone %}<br><span class="muted">{{ item.supplier_phone }}</span>{% endif %}
+                        {% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Map</a>{% endif %}
+                    </td>
                     <td>{{ inventory_condition_label(item.item_condition) }}</td>
                     <td>{{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}</td>
                     <td>{{ item.project_name or 'Unallocated' }}{% if item.room_name %}<br><span class="muted">{{ item.room_name }}</span>{% endif %}</td>
-                    <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
+                    <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.purchased_by_name %}<br><span class="muted">Purchased by {{ item.purchased_by_name }}</span>{% endif %}{% if item.used_by_name %}<br><span class="muted">Used by {{ item.used_by_name }}</span>{% endif %}</td>
                     <td>{% if item.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
                     <td>
+                        {% if item.status == "needs_purchase" %}
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="status" value="available">
+                            <input type="hidden" name="project_id" value="{{ item.project_id or '' }}">
+                            <input type="hidden" name="room_id" value="{{ item.room_id or '' }}">
+                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased</label>
+                        </form>
+                        {% elif item.status == "available" %}
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="status" value="used">
+                            <input type="hidden" name="project_id" value="{{ item.project_id or '' }}">
+                            <input type="hidden" name="room_id" value="{{ item.room_id or '' }}">
+                            <input name="used_note" value="{{ item.used_note or '' }}" placeholder="Used note">
+                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Used</label>
+                        </form>
+                        {% endif %}
                         <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <select name="status">
@@ -204,7 +228,7 @@
                     {% endif %}
                 </tr>
             {% else %}
-                <tr><td colspan="12">No inventory items found.</td></tr>
+                <tr><td colspan="14">No inventory items found.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -227,6 +251,7 @@
 .inventoryLegend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .legendDot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:4px}
 .availableDot{background:#16a34a}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
+.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 </style>
 <script>
 function filterInventoryRooms(projectSelect){
