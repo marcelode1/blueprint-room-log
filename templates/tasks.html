@@ -35,7 +35,7 @@
             </div>
             <div>
                 <label>View Scope</label>
-                <select name="room_id" {% if not selected_project_id %}disabled{% endif %}>
+                <select name="room_id" {% if not selected_project_id %}disabled{% endif %} onchange="this.form.submit()">
                     <option value="">Full Project</option>
                     {% for r in project_rooms %}
                         <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>Room: {{ r.name }}</option>
@@ -88,7 +88,7 @@
             <input type="hidden" name="mode" value="search">
             <input type="hidden" name="project_id" value="{{ selected_project_id }}">
             <label>View Scope</label>
-            <select name="room_id">
+            <select name="room_id" onchange="this.form.submit()">
                 <option value="">Full Project</option>
                 {% for r in project_rooms %}
                     <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>Room: {{ r.name }}</option>

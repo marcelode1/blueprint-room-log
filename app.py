@@ -983,28 +983,35 @@ def apply_task_legacy_media(conn, task, first_photo=None, first_audio=None):
     return refreshed or task
 
 
-def load_task_attachments(conn, task_id):
+def load_task_attachments(conn, task_id, room_id=None):
+    where = ["task_attachments.task_id = %s"]
+    params = [task_id]
+    if room_id:
+        where.append("(task_attachments.room_id = %s OR task_attachments.room_id IS NULL)")
+        params.append(room_id)
     return conn.execute(
         """
         SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name
         FROM task_attachments
         LEFT JOIN rooms ON task_attachments.room_id = rooms.id
         LEFT JOIN users ON task_attachments.created_by = users.id
-        WHERE task_attachments.task_id = %s
+        WHERE """ + " AND ".join(where) + """
         ORDER BY task_attachments.id
         """,
-        (task_id,)
+        tuple(params)
     ).fetchall()
 
 
-def load_task_details(conn, tasks):
+def load_task_details(conn, tasks, room_id=None):
     detailed = []
     for task_row in tasks:
         task = dict(task_row)
-        attachments = load_task_attachments(conn, task["id"])
+        attachments = load_task_attachments(conn, task["id"], room_id)
         task["_attachments"] = attachments
         room_ids = set()
-        if task.get("room_id"):
+        if room_id:
+            room_ids.add(room_id)
+        elif task.get("room_id"):
             room_ids.add(task["room_id"])
         for attachment in attachments:
             if attachment.get("room_id"):
@@ -2901,7 +2908,7 @@ def mobile_room(room_id):
         """,
         (room_id, room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
-    tasks = load_task_details(conn, tasks)
+    tasks = load_task_details(conn, tasks, room_id)
     room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
@@ -3924,7 +3931,7 @@ def room(room_id):
         """,
         (room_id, room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
-    tasks = load_task_details(conn, tasks)
+    tasks = load_task_details(conn, tasks, room_id)
     room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
 
     if request.method == "POST":
@@ -4766,7 +4773,7 @@ def my_tasks():
                 """,
                 (session.get("user_id"), session.get("user_id"))
             ).fetchall()
-    tasks = load_task_details(conn, tasks)
+    tasks = load_task_details(conn, tasks, selected_room_id)
     conn.close()
     return render_template(
         "tasks.html",
