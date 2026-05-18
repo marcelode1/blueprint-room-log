@@ -11,7 +11,7 @@
         *{box-sizing:border-box}
         body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
         header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
-        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
         main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
         input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
         button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
@@ -19,16 +19,25 @@
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.photo,img.photo{max-width:100%;border-radius:14px;border:1px solid var(--border)}
         .flash{background:#fff3cd;color:#1f2937;padding:12px;border-radius:12px;margin-bottom:14px}.desktop-only{display:block}.muted{color:var(--muted)}
         .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}.backButton{width:auto;min-height:42px;padding:9px 14px;margin:0 0 12px;background:#475569!important;border-radius:10px;font-size:14px}
-        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:12px}header a{margin-left:8px}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
+        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:10px 12px;flex-wrap:nowrap}header a{margin-left:0}.topNav{display:none}.mobileMenuButton{display:inline-flex!important;width:48px!important;min-height:48px!important;margin:0!important;padding:0!important;border-radius:12px!important;background:#1e293b!important;align-items:center!important;justify-content:center!important;flex-direction:column;gap:5px}.mobileMenuButton span{display:block;width:24px;height:3px;background:white;border-radius:999px}.brandWrap{min-width:0}.brandLogo{width:40px;height:40px}.brand{white-space:nowrap}.mobileMenuPanel{position:fixed;top:64px;left:12px;right:12px;z-index:250;background:#0f172a;border:1px solid #334155;border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:12px;max-height:calc(100vh - 88px);overflow-y:auto}.mobileMenuPanel.open{display:block}.mobileMenuPanel a,.mobileMenuPanel button{width:100%;min-height:50px;margin:5px 0;border-radius:12px;justify-content:center}.mobileMenuPanel a{display:flex;align-items:center;background:#1e293b;color:white;text-decoration:none;font-weight:800;padding:12px}.mobileMenuPanel .dark-toggle{margin:5px 0!important;background:#334155!important}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
     </style>
     {% if session.get("ui_theme") == "pro_test" %}<link rel="stylesheet" href="{{ url_for('static', filename='pro_interface_test.css') }}">{% endif %}
     {% block extra_head %}{% endblock %}
 </head>
 <body class="{% if session.get('ui_theme') == 'pro_test' %}proTestTheme{% endif %}">
 {% set live_unread_count = unread_notification_count() if session.get("user_id") else 0 %}
+{% set app_logo = get_app_setting("company_logo") %}
 <header>
-    <div class="brand">ProjectONus</div>
-    <div>
+    <div class="brandWrap">
+        {% if app_logo %}<img class="brandLogo" src="{{ url_for('storage_file', storage_path=app_logo) }}" alt="Business Logo">{% endif %}
+        <div class="brand">ProjectONus</div>
+    </div>
+    {% if session.get("user_id") %}
+    <button type="button" class="mobileMenuButton" id="mobileMenuButton" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenuPanel">
+        <span></span><span></span><span></span>
+    </button>
+    {% endif %}
+    <div class="topNav">
         {% if session.get("user_id") %}
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
@@ -56,6 +65,32 @@
         {% endif %}
     </div>
 </header>
+{% if session.get("user_id") %}
+<div class="mobileMenuPanel" id="mobileMenuPanel">
+    <a href="{{ url_for('index') }}">Home</a>
+    <a href="{{ url_for('index') }}#projects">Projects</a>
+    <a href="{{ url_for('my_tasks') }}">Tasks</a>
+    {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+    {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
+    <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+    {% if is_main_admin() %}
+        <a href="{{ url_for('users') }}">Users</a>
+        <a href="{{ url_for('settings') }}">Settings</a>
+        <a href="{{ url_for('attendance_report') }}">Time Report</a>
+        <a href="{{ url_for('task_report') }}">Task Report</a>
+        <a href="{{ url_for('team_map') }}">Where Is My Team</a>
+        <a href="{{ url_for('backup') }}">Backup</a>
+        {% if session.get("ui_theme") == "pro_test" %}
+            <a href="{{ url_for('classic_ui') }}">Classic UI</a>
+        {% else %}
+            <a href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
+        {% endif %}
+    {% endif %}
+    <a href="{{ url_for('privacy') }}">Privacy</a>
+    <a href="{{ url_for('logout') }}">Logout</a>
+    <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
+</div>
+{% endif %}
 <main>
     {% if session.get("user_id") %}
         <button type="button" class="backButton" onclick="goBackOnePage()">Back</button>
@@ -210,6 +245,27 @@ function goBackOnePage(){if(window.history.length>1){window.history.back()}else{
 function applyDarkMode(){if(localStorage.getItem("projectonus_dark")==="1")document.body.classList.add("dark")}
 function toggleDarkMode(){document.body.classList.toggle("dark");localStorage.setItem("projectonus_dark",document.body.classList.contains("dark")?"1":"0")}
 applyDarkMode();
+const mobileMenuButton=document.getElementById("mobileMenuButton");
+const mobileMenuPanel=document.getElementById("mobileMenuPanel");
+function closeMobileMenu(){
+    if(!mobileMenuPanel||!mobileMenuButton)return;
+    mobileMenuPanel.classList.remove("open");
+    mobileMenuButton.setAttribute("aria-expanded","false");
+}
+if(mobileMenuButton&&mobileMenuPanel){
+    mobileMenuButton.addEventListener("click",event=>{
+        event.stopPropagation();
+        const isOpen=mobileMenuPanel.classList.toggle("open");
+        mobileMenuButton.setAttribute("aria-expanded",isOpen?"true":"false");
+    });
+    mobileMenuPanel.querySelectorAll("a").forEach(link=>link.addEventListener("click",closeMobileMenu));
+    document.addEventListener("click",event=>{
+        if(!mobileMenuPanel.classList.contains("open"))return;
+        if(mobileMenuPanel.contains(event.target)||mobileMenuButton.contains(event.target))return;
+        closeMobileMenu();
+    });
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")closeMobileMenu();});
+}
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 </script>
 {% if session.get("user_id") and not is_main_admin() %}
