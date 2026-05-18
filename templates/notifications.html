@@ -28,7 +28,7 @@
             {% endif %}
             {% if e.message %}<p>{{ e.message }}</p>{% endif %}
             {% if e.task_title %}
-                <p><strong>Task:</strong> {{ e.task_title }}{% if e.project_name %}<br><strong>Project:</strong> {{ e.project_name }}{% endif %}</p>
+                <p><strong>Task #:</strong> {{ e.task_number or '-' }}<br><strong>Task:</strong> {{ task_display_name(e) }}{% if e.project_name %}<br><strong>Project:</strong> {{ e.project_name }}{% endif %}</p>
             {% endif %}
             <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</span>
             {% if e.event_type == 'task_assigned' and e.task_id and not is_main_admin() %}

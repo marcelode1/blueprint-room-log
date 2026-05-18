@@ -19,7 +19,7 @@
     <h3>Tasks</h3>
     {% for t in tasks %}
         <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
-            <strong>{{ t.title }}</strong>
+            <strong>{{ task_display_name(t) }}</strong>
             <p class="muted">{{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if project.customer_address %}
                 <p><strong>Address:</strong> {{ project.customer_address }}</p>

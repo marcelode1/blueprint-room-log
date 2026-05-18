@@ -506,6 +506,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
         id SERIAL PRIMARY KEY,
+        task_number TEXT,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
         assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -529,6 +530,14 @@ def init_db():
         completion_audio_file TEXT,
         completed_at TEXT,
         created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_number_counters (
+        month_key TEXT PRIMARY KEY,
+        next_sequence INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
     )
     """)
 
@@ -619,7 +628,10 @@ def init_db():
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
-        "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, task_number TEXT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS tasks_task_number_idx ON tasks(task_number) WHERE task_number IS NOT NULL",
+        "CREATE TABLE IF NOT EXISTS task_number_counters (month_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
@@ -694,7 +706,96 @@ def init_db():
             print("Migration skipped:", sql, e)
     conn.commit()
 
+    try:
+        assign_missing_task_numbers(conn)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Task number backfill skipped:", e)
+
     conn.close()
+
+
+def task_number_month_key(value=None):
+    dt = local_datetime(value) if value else None
+    if dt:
+        return dt.strftime("%Y%m")
+    text = str(value or "").strip()
+    if text:
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").strftime("%Y%m")
+        except Exception:
+            pass
+    return local_now().strftime("%Y%m")
+
+
+def task_number_for_sequence(month_key, sequence):
+    return f"{month_key}{int(sequence):04d}"
+
+
+def next_task_number(conn, reference_value=None):
+    month_key = task_number_month_key(reference_value)
+    row = conn.execute(
+        """
+        INSERT INTO task_number_counters (month_key, next_sequence, updated_at)
+        VALUES (%s, 1, %s)
+        ON CONFLICT (month_key) DO UPDATE SET
+            next_sequence = task_number_counters.next_sequence + 1,
+            updated_at = EXCLUDED.updated_at
+        RETURNING next_sequence - 1 AS sequence_number
+        """,
+        (month_key, utc_now_iso())
+    ).fetchone()
+    return task_number_for_sequence(month_key, row["sequence_number"])
+
+
+def sync_task_number_counters(conn):
+    rows = conn.execute(
+        "SELECT task_number FROM tasks WHERE task_number IS NOT NULL AND task_number <> ''"
+    ).fetchall()
+    max_by_month = {}
+    for row in rows:
+        number = str(row.get("task_number") or "").strip()
+        if len(number) < 10 or not number[:6].isdigit() or not number[6:].isdigit():
+            continue
+        month_key = number[:6]
+        sequence = int(number[6:])
+        max_by_month[month_key] = max(sequence, max_by_month.get(month_key, -1))
+    for month_key, max_sequence in max_by_month.items():
+        conn.execute(
+            """
+            INSERT INTO task_number_counters (month_key, next_sequence, updated_at)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (month_key) DO UPDATE SET
+                next_sequence = GREATEST(task_number_counters.next_sequence, EXCLUDED.next_sequence),
+                updated_at = EXCLUDED.updated_at
+            """,
+            (month_key, max_sequence + 1, utc_now_iso())
+        )
+
+
+def assign_missing_task_numbers(conn):
+    sync_task_number_counters(conn)
+    rows = conn.execute(
+        """
+        SELECT id, created_at, task_start_date, task_date
+        FROM tasks
+        WHERE task_number IS NULL OR task_number = ''
+        ORDER BY COALESCE(created_at, task_start_date, task_date), id
+        """
+    ).fetchall()
+    for row in rows:
+        reference_value = row.get("created_at") or row.get("task_start_date") or row.get("task_date")
+        conn.execute(
+            "UPDATE tasks SET task_number = %s WHERE id = %s",
+            (next_task_number(conn, reference_value), row["id"])
+        )
+
+
+def task_display_name(task):
+    title = (task or {}).get("title") or (task or {}).get("task_title") or "Task"
+    number = (task or {}).get("task_number")
+    return f"{number} - {title}" if number else title
 
 
 
@@ -896,7 +997,7 @@ def notification_summary():
         latest = conn.execute(
             """
             SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
-                   login_events.task_id, tasks.title AS task_title, projects.name AS project_name
+                   login_events.task_id, tasks.task_number, tasks.title AS task_title, projects.name AS project_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
@@ -922,7 +1023,7 @@ def notification_summary():
         latest = conn.execute(
             """
             SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
-                   login_events.task_id, tasks.title AS task_title, projects.name AS project_name
+                   login_events.task_id, tasks.task_number, tasks.title AS task_title, projects.name AS project_name
             FROM login_events
             JOIN tasks ON login_events.task_id = tasks.id
             JOIN projects ON tasks.project_id = projects.id
@@ -946,7 +1047,8 @@ def notification_summary():
             "event_type": latest.get("event_type"),
             "message": latest.get("message") or "",
             "task_id": latest.get("task_id"),
-            "task_title": latest.get("task_title") or "",
+            "task_title": task_display_name(latest) if latest.get("task_title") else "",
+            "task_number": latest.get("task_number") or "",
             "project_name": latest.get("project_name") or "",
             "created_at": latest.get("created_at") or "",
             "url": latest_url
@@ -1103,7 +1205,8 @@ def task_email_body(task, assigned=None, project=None):
     lines = [
         "A task was assigned in ProjectONus.",
         "",
-        f"Task: {task.get('title')}",
+        f"Task #: {task.get('task_number') or '-'}",
+        f"Task: {task_display_name(task)}",
         f"Project: {(project or task).get('project_name') or (project or task).get('name') or '-'}",
         f"Assigned to: {(assigned or task).get('name') or task.get('assigned_user_name') or '-'}",
         f"Be There: {task_schedule_text(task)}",
@@ -1139,7 +1242,7 @@ def send_task_assignment_email(task, assigned, project):
     if assigned.get("email"):
         send_email(
             assigned["email"],
-            f"ProjectONus task assigned - {task.get('title')}",
+            f"ProjectONus task assigned - {task_display_name(task)}",
             task_email_body(task, assigned, project),
             attachments=attachments
         )
@@ -1154,7 +1257,7 @@ def send_task_assignment_sms(task, assigned, project):
     route_text = f" Route: {route}" if route else ""
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task.get('title')} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks')}"
+        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks')}"
     )
 
 
@@ -1168,7 +1271,7 @@ def notify_admins_task_received(conn, task, actor):
         "task_received",
         task.get("project_id"),
         task.get("id"),
-        f"{actor.get('name') or 'Worker'} confirmed task received: {task.get('title')}"
+        f"{actor.get('name') or 'Worker'} confirmed task received: {task_display_name(task)}"
     )
     conn.commit()
     body = "\n".join([
@@ -1176,7 +1279,8 @@ def notify_admins_task_received(conn, task, actor):
         "",
         f"Worker: {actor.get('name') or 'Unknown user'}",
         f"Email: {actor.get('email') or '-'}",
-        f"Task: {task.get('title')}",
+        f"Task #: {task.get('task_number') or '-'}",
+        f"Task: {task_display_name(task)}",
         f"Project: {task.get('project_name') or '-'}",
         f"Received: {format_datetime(task.get('accepted_at') or utc_now_iso())}",
         "",
@@ -1184,7 +1288,7 @@ def notify_admins_task_received(conn, task, actor):
     ])
     for admin in admin_email_rows(conn):
         if admin.get("email"):
-            send_email(admin["email"], f"ProjectONus task received - {task.get('title')}", body)
+            send_email(admin["email"], f"ProjectONus task received - {task_display_name(task)}", body)
 
 
 def can_add_notes():
@@ -1962,7 +2066,8 @@ def task_calendar_ics(task):
         "",
         f"Project: {task.get('project_name') or '-'}",
         f"Room: {task.get('room_name') or '-'}",
-        f"Task: {task.get('title') or '-'}",
+        f"Task #: {task.get('task_number') or '-'}",
+        f"Task: {task_display_name(task)}",
     ]
     if address:
         description_lines.extend(["", f"Address: {address}", f"Route: {maps_directions_url(address)}"])
@@ -1978,13 +2083,13 @@ def task_calendar_ics(task):
         f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
         f"DTSTART;TZID={tz_name}:{start_dt.strftime('%Y%m%dT%H%M%S')}",
         "DURATION:PT1H",
-        f"SUMMARY:{ics_escape('ProjectONus Task - ' + (task.get('title') or 'Task'))}",
+        f"SUMMARY:{ics_escape('ProjectONus Task - ' + task_display_name(task))}",
         f"DESCRIPTION:{ics_escape(chr(10).join(description_lines))}",
         f"LOCATION:{ics_escape(address)}",
         "BEGIN:VALARM",
         "TRIGGER:-PT30M",
         "ACTION:DISPLAY",
-        f"DESCRIPTION:{ics_escape(task.get('title') or 'ProjectONus task')}",
+        f"DESCRIPTION:{ics_escape(task_display_name(task))}",
         "END:VALARM",
         "END:VEVENT",
         "END:VCALENDAR",
@@ -2207,6 +2312,7 @@ def utility_processor():
         format_date=format_date,
         format_datetime=format_datetime,
         task_schedule_text=task_schedule_text,
+        task_display_name=task_display_name,
         maps_directions_url=maps_directions_url,
         task_project_address=task_project_address,
         format_event_time=format_event_time,
@@ -3777,23 +3883,27 @@ def create_task(room_id):
     grant_project_access(conn, assigned_user_id, room["project_id"], assigned.get("role"))
     photo = first_uploaded_file("task_camera_photo", "task_photo")
     task_photo_file = upload_file_to_storage(photo) if photo and allowed_photo(photo.filename) else None
+    task_date = request.form.get("task_date") or local_now().date().isoformat()
+    created_at = utc_now_iso()
+    task_number = next_task_number(conn, created_at)
 
     task = conn.execute(
         """
         INSERT INTO tasks
-        (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
+            task_number,
             room["project_id"],
             room_id,
             assigned_user_id,
             session.get("user_id"),
-            request.form.get("task_date") or datetime.now().date().isoformat(),
-            request.form.get("task_date") or datetime.now().date().isoformat(),
+            task_date,
+            task_date,
             task_start_time,
-            request.form.get("task_date") or datetime.now().date().isoformat(),
+            task_date,
             title,
             request.form.get("instructions", "").strip(),
             task_photo_file,
@@ -3801,7 +3911,7 @@ def create_task(room_id):
             "allow_picture_upload" in request.form,
             "allow_comment" in request.form,
             "allow_audio" in request.form,
-            datetime.now().isoformat()
+            created_at
         )
     ).fetchone()
     add_notification(
@@ -3813,7 +3923,7 @@ def create_task(room_id):
         "task_assigned",
         task.get("project_id"),
         task.get("id"),
-        f"New task assigned: {task.get('title')}. Be there {task_schedule_text(task)}. Project access granted."
+        f"New task assigned: {task_display_name(task)}. Be there {task_schedule_text(task)}. Project access granted."
     )
     conn.commit()
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (room["project_id"],)).fetchone()
@@ -3864,14 +3974,17 @@ def create_global_task():
 
         for assigned in selected_users:
             grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
+            created_at = utc_now_iso()
+            task_number = next_task_number(conn, created_at)
             task = conn.execute(
                 """
                 INSERT INTO tasks
-                (project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
+                VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
+                    task_number,
                     project_id,
                     assigned["id"],
                     session.get("user_id"),
@@ -3887,7 +4000,7 @@ def create_global_task():
                     "allow_picture_upload" in request.form,
                     "allow_comment" in request.form,
                     "allow_audio" in request.form,
-                    utc_now_iso()
+                    created_at
                 )
             ).fetchone()
             add_notification(
@@ -3899,7 +4012,7 @@ def create_global_task():
                 "task_assigned",
                 task.get("project_id"),
                 task.get("id"),
-                f"New task assigned: {task.get('title')}. Be there {task_schedule_text(task)}. Project access granted."
+                f"New task assigned: {task_display_name(task)}. Be there {task_schedule_text(task)}. Project access granted."
             )
             created_tasks.append((task, assigned))
 
@@ -3985,7 +4098,7 @@ def complete_task(task_id):
             "task_completed",
             task.get("project_id"),
             task.get("id"),
-            f"Task completed: {task.get('title')}"
+            f"Task completed: {task_display_name(task)}"
         )
         conn.commit()
     except Exception as e:
@@ -4083,7 +4196,7 @@ def task_calendar_file(task_id):
         return Response("You do not have access to this project.", status=403)
     conn.close()
 
-    filename = secure_filename(f"ProjectONus_{task.get('title') or 'task'}.ics") or "ProjectONus_task.ics"
+    filename = secure_filename(f"ProjectONus_{task_display_name(task)}.ics") or "ProjectONus_task.ics"
     if not filename.lower().endswith(".ics"):
         filename += ".ics"
     return Response(
@@ -4196,7 +4309,7 @@ def delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -4240,7 +4353,7 @@ def delete_task(task_id):
         admin["email"],
         "ProjectONus delete task PIN",
         "\n".join([
-            f"Your 6-digit PIN to delete task '{task['title']}' is:",
+            f"Your 6-digit PIN to delete task '{task_display_name(task)}' is:",
             "",
             pin,
             "",
@@ -4266,7 +4379,7 @@ def confirm_delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -4366,7 +4479,7 @@ def task_report_data(period, selected_date, selected_project_id=None, selected_u
     if selected_user_id:
         query += " AND tasks.assigned_user_id = %s"
         params.append(selected_user_id)
-    query += " ORDER BY projects.name, tasks.created_at DESC, tasks.id DESC"
+    query += " ORDER BY projects.name, tasks.task_number DESC NULLS LAST, tasks.created_at DESC, tasks.id DESC"
     tasks = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     tasks = [t for t in tasks if task_in_report_range(t, period, selected_date)]
@@ -4410,12 +4523,13 @@ def task_report_export():
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
+        "Task #", "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
         "Created Date", "Scheduled Date", "Be There Time", "End Date", "Seen By Worker", "Received At",
         "Done", "Completed At", "Status", "Instructions"
     ])
     for task in report["tasks"]:
         writer.writerow([
+            task.get("task_number") or "",
             task.get("project_name") or "",
             task.get("room_name") or "",
             task.get("title") or "",
@@ -4896,7 +5010,7 @@ def notifications():
     if is_main_admin():
         events = conn.execute(
             """
-            SELECT login_events.*, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
+            SELECT login_events.*, tasks.task_number, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
                    tasks.status AS task_status, projects.name AS project_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
@@ -4909,7 +5023,7 @@ def notifications():
     else:
         events = conn.execute(
             """
-            SELECT login_events.*, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
+            SELECT login_events.*, tasks.task_number, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
                    tasks.status AS task_status, projects.name AS project_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
@@ -4987,6 +5101,7 @@ def backup():
         ("attendance_events", "id"),
         ("worker_location_pings", "id"),
         ("login_events", "id"),
+        ("task_number_counters", "month_key"),
         ("task_delete_codes", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),

@@ -83,7 +83,7 @@
 <div class="card">
     {% for t in tasks %}
         <div id="task-{{ t.id }}" class="card {% if t.status == 'done' %}taskDone{% endif %}">
-            <strong>{{ t.title }}</strong>
+            <strong>{{ task_display_name(t) }}</strong>
             <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
             {% set address = task_project_address(t) %}

@@ -2,7 +2,7 @@
 {% block content %}
 <div class="card desktop-only">
     <h2>Confirm Delete Task</h2>
-    <p><strong>{{ task.title }}</strong></p>
+    <p><strong>{{ task_display_name(task) }}</strong></p>
     <p class="muted">Project: {{ task.project_name or "-" }}</p>
     <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this task.</p>
     <form method="post">

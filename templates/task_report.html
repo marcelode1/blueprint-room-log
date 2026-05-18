@@ -56,6 +56,7 @@
         <table class="taskReportTable">
             <thead>
                 <tr>
+                    <th>Task #</th>
                     <th>Project</th>
                     <th>Room</th>
                     <th>Task</th>
@@ -72,9 +73,10 @@
             {% for t in report.tasks %}
                 {% set status = task_report_status(t) %}
                 <tr>
+                    <td>{{ t.task_number or "-" }}</td>
                     <td>{{ t.project_name or "-" }}</td>
                     <td>{{ t.room_name or "-" }}</td>
-                    <td><strong>{{ t.title }}</strong><br><span class="muted">Created by {{ t.created_by_name or "-" }}</span></td>
+                    <td><strong>{{ task_display_name(t) }}</strong><br><span class="muted">Created by {{ t.created_by_name or "-" }}</span></td>
                     <td>{{ t.assigned_user_name or "Unassigned" }}<br><span class="muted">{{ t.assigned_user_email or "" }}</span></td>
                     <td>{{ format_datetime(t.created_at) }}</td>
                     <td>{{ task_schedule_text(t) }}</td>
@@ -84,7 +86,7 @@
                     <td>{{ t.instructions or "-" }}</td>
                 </tr>
             {% else %}
-                <tr><td colspan="10">No tasks for this report.</td></tr>
+                <tr><td colspan="11">No tasks for this report.</td></tr>
             {% endfor %}
             </tbody>
         </table>
