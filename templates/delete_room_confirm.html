@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Confirm Delete Room</h2>
+    <p><strong>{{ room.name }}</strong></p>
+    <p><strong>Project:</strong> {{ room.project_name or '-' }}</p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this room.</p>
+    <p class="muted">Room notes, pictures, audio, blueprint trace, and room checklist statuses will be removed. Existing tasks and inventory remain, but they will no longer be assigned to this room.</p>
+    <form method="post">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Room</button>
+        <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

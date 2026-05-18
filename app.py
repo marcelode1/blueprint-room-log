@@ -654,6 +654,17 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS room_delete_codes (
+        id SERIAL PRIMARY KEY,
+        room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -728,6 +739,7 @@ def init_db():
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
@@ -4231,8 +4243,15 @@ def add_room(project_id):
 
     polygon_points = request.form.get("polygon_points", "").strip()
     blueprint_id = request.form.get("blueprint_id") or None
+    room_action = request.form.get("room_action", "create")
     name = request.form.get("name", "").strip()
-    if not name:
+    existing_room_id = request.form.get("existing_room_id", type=int)
+    if room_action == "link" and not existing_room_id:
+        flash("Choose an existing room to link this trace.")
+        if blueprint_id:
+            return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+        return redirect(url_for("project", project_id=project_id))
+    if room_action != "link" and not name:
         flash("Room name is required.")
         if blueprint_id:
             return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
@@ -4250,6 +4269,49 @@ def add_room(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if room_action == "link":
+        existing_room = conn.execute(
+            "SELECT id, name FROM rooms WHERE id = %s AND project_id = %s",
+            (existing_room_id, project_id)
+        ).fetchone()
+        if not existing_room:
+            conn.close()
+            flash("Existing room not found in this project.")
+            if blueprint_id:
+                return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+            return redirect(url_for("project", project_id=project_id))
+        conn.execute(
+            """
+            UPDATE rooms
+            SET blueprint_id = %s,
+                x = %s,
+                y = %s,
+                w = %s,
+                h = %s,
+                polygon_points = %s,
+                category = %s,
+                room_color = %s
+            WHERE id = %s AND project_id = %s
+            """,
+            (
+                room_blueprint_id,
+                float(request.form.get("x") or 0),
+                float(request.form.get("y") or 0),
+                float(request.form.get("w") or 0),
+                float(request.form.get("h") or 0),
+                polygon_points,
+                request.form.get("category", "general"),
+                request.form.get("room_color", "blue"),
+                existing_room_id,
+                project_id
+            )
+        )
+        conn.commit()
+        conn.close()
+        flash(f"Trace linked to existing room: {existing_room['name']}.")
+        if blueprint_id:
+            return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+        return redirect(url_for("project", project_id=project_id))
     conn.execute(
         "INSERT INTO rooms (project_id, blueprint_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
@@ -4470,6 +4532,115 @@ def confirm_delete_project(project_id):
 
     conn.close()
     return render_template("delete_project_confirm.html", project=project)
+
+
+@app.route("/room/<int:room_id>/delete", methods=["POST"])
+@admin_required
+def delete_room(room_id):
+    conn = db()
+    room = conn.execute(
+        """
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        JOIN projects ON rooms.project_id = projects.id
+        WHERE rooms.id = %s
+        """,
+        (room_id,)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found.")
+        return redirect(url_for("index"))
+    next_url = safe_next_url("project", project_id=room["project_id"])
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(next_url)
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM room_delete_codes WHERE room_id = %s AND admin_id = %s", (room_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO room_delete_codes (room_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (room_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete room PIN",
+        "\n".join([
+            f"Your 6-digit PIN to delete room '{room['name']}' is:",
+            "",
+            pin,
+            "",
+            f"Project: {room.get('project_name') or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM room_delete_codes WHERE room_id = %s AND admin_id = %s", (room_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(next_url)
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_room", room_id=room_id, next=next_url))
+
+
+@app.route("/room/<int:room_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_room(room_id):
+    conn = db()
+    room = conn.execute(
+        """
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        JOIN projects ON rooms.project_id = projects.id
+        WHERE rooms.id = %s
+        """,
+        (room_id,)
+    ).fetchone()
+    if not room:
+        conn.close()
+        flash("Room not found.")
+        return redirect(url_for("index"))
+    next_url = safe_next_url("project", project_id=room["project_id"])
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM room_delete_codes
+            WHERE room_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (room_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Room again to get a new PIN.")
+            return redirect(next_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_room", room_id=room_id, next=next_url))
+
+        conn.execute("DELETE FROM room_delete_codes WHERE room_id = %s", (room_id,))
+        conn.execute("DELETE FROM rooms WHERE id = %s", (room_id,))
+        conn.commit()
+        conn.close()
+        flash("Room deleted.")
+        return redirect(next_url)
+
+    conn.close()
+    return render_template("delete_room_confirm.html", room=room, next_url=next_url)
 
 
 @app.route("/note/<int:note_id>/delete", methods=["POST"])

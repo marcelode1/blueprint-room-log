@@ -87,7 +87,15 @@
     {% endif %}
     <div class="roomScroller">
         {% for r in rooms %}
-            <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+            <div class="roomChipWrap">
+                <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+                {% if is_main_admin() %}
+                    <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <button type="submit" class="roomDeleteButton btn-danger" aria-label="Delete {{ r.name }}">Delete</button>
+                    </form>
+                {% endif %}
+            </div>
         {% else %}
             <p>No rooms created yet.</p>
         {% endfor %}
@@ -98,10 +106,26 @@
 <div class="card" id="desktopCreateRoomPanel" style="display:none;">
     <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
         <div class="grid">
-            <div><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
+            <div>
+                <label>Room Action</label>
+                <select name="room_action" id="roomActionSelect">
+                    <option value="create">Create a Room</option>
+                    <option value="link">Link to Existing Room</option>
+                </select>
+            </div>
+            <div id="newRoomNameWrap"><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
+            <div id="existingRoomWrap" style="display:none;">
+                <label>Existing Room</label>
+                <select name="existing_room_id" id="existingRoomSelect">
+                    <option value="">Choose room</option>
+                    {% for r in rooms %}
+                        <option value="{{ r.id }}" data-category="{{ r.category or 'general' }}" data-color="{{ r.room_color or 'blue' }}">{{ r.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
             <div>
                 <label>Room Type</label>
-                <select name="category">
+                <select name="category" id="roomCategorySelect">
                     <option value="general">General</option>
                     <option value="electrical">Electrical</option>
                     <option value="av">AV / Low Voltage</option>
@@ -110,7 +134,7 @@
             </div>
             <div>
                 <label>Highlight Color</label>
-                <select name="room_color">
+                <select name="room_color" id="roomColorSelect">
                     <option value="blue">Blue</option><option value="red">Red</option><option value="green">Green</option>
                     <option value="yellow">Yellow</option><option value="purple">Purple</option><option value="orange">Orange</option><option value="gray">Gray</option>
                 </select>
@@ -120,7 +144,7 @@
         <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
         <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
         <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
-        <p class="muted">Create Room adds a usable room without requiring a blueprint trace.</p>
+        <p class="muted">Create a new room or link this trace to an existing room without losing its tasks, notes, or inventory.</p>
         {% if active_blueprint %}
         <div class="blueprintDesktopOnly">
             <button type="button" class="btn-secondary" id="showBlueprintTraceBtn">Use Blueprint Trace</button>
@@ -130,7 +154,7 @@
             </div>
         </div>
         {% endif %}
-        <button type="submit">Create Room</button>
+        <button type="submit" id="roomSubmitBtn">Create a Room or Link to Existing Room</button>
         {% if not active_blueprint %}<p class="muted">No blueprint selected. The room will still be created and usable.</p>{% endif %}
     </form>
 </div>
@@ -198,7 +222,7 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChip{flex:0 0 auto;scroll-snap-align:start;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChipWrap{flex:0 0 auto;scroll-snap-align:start;display:flex;align-items:stretch;gap:6px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.roomChipWrap form{margin:0}.roomDeleteButton{width:auto!important;min-width:74px!important;min-height:48px!important;padding:10px 12px!important;border-radius:999px!important;font-size:13px!important;margin:0!important}
 .blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
 .blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:190px}
 .blueprintTab a{font-weight:bold;text-decoration:none;display:block;margin-bottom:6px}
@@ -210,7 +234,7 @@
 .projectAdminActions form{margin:0}
 .projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
 .mobileBlueprintNotice{display:none}
-@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}.roomScroller{display:block;max-height:420px;overflow-y:auto;overflow-x:hidden}.roomChip{display:flex;width:100%;margin:8px 0;border-radius:14px;justify-content:center}}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}.roomScroller{display:block;max-height:420px;overflow-y:auto;overflow-x:hidden}.roomChipWrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:8px 0}.roomChip{display:flex;width:100%;border-radius:14px;justify-content:center}.roomDeleteButton{border-radius:14px!important;min-height:58px!important}}
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
@@ -332,7 +356,7 @@ function finishTrace(){
     document.getElementById("y").value=Math.min(...ys);
     document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);
     document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);
-    alert("Room trace finished. Now enter the room name and click Save Room.");
+    alert("Room trace finished. Now create a room or choose an existing room to link.");
 }
 function clearTrace(){points=[];redrawTrace();updateStatus();}
 function showBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="block";}
@@ -343,6 +367,28 @@ const desktopCreateRoomPanel=document.getElementById("desktopCreateRoomPanel");
 const desktopDrawTools=document.getElementById("desktopDrawTools");
 const showBlueprintTraceBtn=document.getElementById("showBlueprintTraceBtn");
 const blueprintTraceActions=document.getElementById("blueprintTraceActions");
+const roomActionSelect=document.getElementById("roomActionSelect");
+const newRoomNameWrap=document.getElementById("newRoomNameWrap");
+const existingRoomWrap=document.getElementById("existingRoomWrap");
+const roomNameInput=document.getElementById("roomName");
+const existingRoomSelect=document.getElementById("existingRoomSelect");
+const roomCategorySelect=document.getElementById("roomCategorySelect");
+const roomColorSelect=document.getElementById("roomColorSelect");
+function updateRoomAction(){
+    const linking=roomActionSelect&&roomActionSelect.value==="link";
+    if(newRoomNameWrap)newRoomNameWrap.style.display=linking?"none":"block";
+    if(existingRoomWrap)existingRoomWrap.style.display=linking?"block":"none";
+    if(roomNameInput)roomNameInput.required=!linking;
+    if(existingRoomSelect)existingRoomSelect.required=linking;
+    const selected=existingRoomSelect&&existingRoomSelect.options[existingRoomSelect.selectedIndex];
+    if(linking&&selected){
+        if(roomCategorySelect&&selected.dataset.category)roomCategorySelect.value=selected.dataset.category;
+        if(roomColorSelect&&selected.dataset.color)roomColorSelect.value=selected.dataset.color;
+    }
+}
+if(roomActionSelect)roomActionSelect.addEventListener("change",updateRoomAction);
+if(existingRoomSelect)existingRoomSelect.addEventListener("change",updateRoomAction);
+updateRoomAction();
 if(showDesktopCreateRoomBtn){
     showDesktopCreateRoomBtn.addEventListener("click",()=>{
         if(desktopCreateRoomPanel)desktopCreateRoomPanel.style.display="block";

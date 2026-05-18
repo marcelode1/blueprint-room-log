@@ -87,7 +87,15 @@
     <h3>Rooms</h3>
     <div class="mobileRoomList">
     {% for r in rooms %}
-        <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
+        <div class="mobileRoomRow">
+            <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
+            {% if is_main_admin() %}
+                <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-danger mobileRoomDeleteButton" aria-label="Delete {{ r.name }}">Delete</button>
+                </form>
+            {% endif %}
+        </div>
     {% else %}
         <p>No rooms created yet.</p>
     {% endfor %}
@@ -120,6 +128,6 @@ if(mobileTaskRoomSelect){
 }
 </script>
 <style>
-.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}.mobileRoomRow .btn-link,.mobileRoomRow button{margin:0}.mobileRoomRow form{margin:0}.mobileRoomDeleteButton{width:auto!important;min-width:88px!important;padding:12px!important;border-radius:14px!important}
 </style>
 {% endblock %}
