@@ -201,7 +201,7 @@
                 {% for r in rooms %}
                     {% if r.polygon_points %}
                         <a href="{{ url_for('room', room_id=r.id) }}">
-                            <polygon points="{{ r.polygon_points }}" class="savedRoom {{ r.room_color or 'blue' }}"></polygon>
+                            <polygon points="{{ r.polygon_points }}" class="savedRoom {{ r.room_color or 'blue' }}" data-room-id="{{ r.id }}" data-room-name="{{ r.name }}" data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"></polygon>
                         </a>
                         <text x="{{ (r.x or 0) + 6 }}" y="{{ (r.y or 0) + 18 }}" class="roomText">{{ r.name }}</text>
                     {% endif %}
@@ -210,6 +210,15 @@
                 <polygon id="currentPolygon" points="" class="currentPolygon"></polygon>
                 <g id="pointGroup"></g>
             </svg>
+            {% if is_main_admin() %}
+            <div id="roomContextMenu" class="roomContextMenu" hidden>
+                <div class="roomContextTitle" id="roomContextTitle"></div>
+                <form method="post" id="roomContextDeleteForm" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-danger roomContextDeleteButton">Delete Room</button>
+                </form>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -223,6 +232,7 @@
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
 .roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChipWrap{flex:0 0 auto;scroll-snap-align:start;display:flex;align-items:stretch;gap:6px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.roomChipWrap form{margin:0}.roomDeleteButton{width:auto!important;min-width:74px!important;min-height:48px!important;padding:10px 12px!important;border-radius:999px!important;font-size:13px!important;margin:0!important}
+.roomContextMenu{position:absolute;z-index:60;width:190px;background:white;border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.28);padding:10px}.roomContextTitle{font-weight:800;margin-bottom:8px;color:#0f172a;word-break:break-word}.roomContextMenu form{margin:0}.roomContextDeleteButton{width:100%!important;min-height:42px!important;border-radius:8px!important;margin:0!important;padding:8px 10px!important}
 .blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
 .blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:190px}
 .blueprintTab a{font-weight:bold;text-decoration:none;display:block;margin-bottom:6px}
@@ -247,6 +257,7 @@ window.pdfjsLib = pdfjsLib;
 const viewport=document.getElementById("viewport"),wrap=document.getElementById("blueprintWrap"),svg=document.getElementById("roomSvg");
 const currentLine=document.getElementById("currentLine"),currentPolygon=document.getElementById("currentPolygon"),pointGroup=document.getElementById("pointGroup");
 const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
+const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitle=document.getElementById("roomContextTitle"),roomContextDeleteForm=document.getElementById("roomContextDeleteForm");
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 
 let pdfDocCached = null;
@@ -314,6 +325,20 @@ async function renderPdfBlueprint(){
 }
 
 function applyTransform(){if(wrap)wrap.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;}
+function hideRoomContextMenu(){if(roomContextMenu)roomContextMenu.hidden=true;}
+function showRoomContextMenu(e,roomShape){
+    if(!roomContextMenu||!roomContextDeleteForm)return;
+    e.preventDefault();
+    e.stopPropagation();
+    const roomName=roomShape.dataset.roomName||"Room";
+    if(roomContextTitle)roomContextTitle.textContent=roomName;
+    roomContextDeleteForm.action=roomShape.dataset.deleteUrl||"";
+    const wrapRect=wrap.getBoundingClientRect();
+    const menuWidth=190;
+    roomContextMenu.style.left=Math.max(8,Math.min(e.clientX-wrapRect.left,wrapRect.width-menuWidth-8))+"px";
+    roomContextMenu.style.top=Math.max(8,e.clientY-wrapRect.top)+"px";
+    roomContextMenu.hidden=false;
+}
 function resizeSvg(){
     if(!svg)return;
     const b=document.getElementById("blueprint");
@@ -340,13 +365,22 @@ function redrawTrace(){
 function updateStatus(){if(!drawingMode||!drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
 if(drawingMode){drawingMode.addEventListener("change",updateStatus);}
 if(viewport){
-    viewport.addEventListener("wheel",e=>{e.preventDefault();const delta=e.deltaY<0?1.1:.9;scale=Math.max(.15,Math.min(6,scale*delta));applyTransform();});
-    viewport.addEventListener("mousedown",e=>{if(e.button===2){e.preventDefault();points.pop();redrawTrace();updateStatus();return;}isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
+    viewport.addEventListener("wheel",e=>{hideRoomContextMenu();e.preventDefault();const delta=e.deltaY<0?1.1:.9;scale=Math.max(.15,Math.min(6,scale*delta));applyTransform();});
+    viewport.addEventListener("mousedown",e=>{if(roomContextMenu&&roomContextMenu.contains(e.target))return;if(e.target&&e.target.classList&&e.target.classList.contains("savedRoom"))return;hideRoomContextMenu();if(e.button===2){e.preventDefault();points.pop();redrawTrace();updateStatus();return;}isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
     window.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>3||Math.abs(dy)>3)didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();});
     window.addEventListener("mouseup",()=>{isDragging=false;});
-    viewport.addEventListener("click",e=>{if(!drawingMode||!drawingMode.checked||didDrag)return;const p=screenToSvg(e);points.push({x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))});redrawTrace();updateStatus();});
+    viewport.addEventListener("click",e=>{if(roomContextMenu&&roomContextMenu.contains(e.target))return;hideRoomContextMenu();if(!drawingMode||!drawingMode.checked||didDrag)return;const p=screenToSvg(e);points.push({x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))});redrawTrace();updateStatus();});
     viewport.addEventListener("contextmenu",e=>e.preventDefault());
 }
+document.querySelectorAll(".savedRoom").forEach(shape=>{
+    shape.addEventListener("mousedown",e=>{if(e.button===2)e.stopPropagation();});
+    shape.addEventListener("contextmenu",e=>showRoomContextMenu(e,shape));
+});
+if(roomContextMenu){
+    roomContextMenu.addEventListener("mousedown",e=>e.stopPropagation());
+    roomContextMenu.addEventListener("click",e=>e.stopPropagation());
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")hideRoomContextMenu();});
 function finishTrace(){
     if(!drawingMode)return;
     if(points.length<3){alert("Trace at least 3 points around the room.");return;}
