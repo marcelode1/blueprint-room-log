@@ -4,13 +4,18 @@
 <div class="card">
     <h1>ProjectONus Mobile</h1>
     <p>Field version for projects, rooms, pictures, comments, and audio.</p>
-    {% if is_main_admin() %}
-        <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
-        <a class="btn-link" href="{{ url_for('team_map') }}">Where Is My Team</a>
-    {% endif %}
     {% set mobile_unread_count = unread_notification_count() %}
-    <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
-    <a class="btn-link" href="{{ url_for('my_tasks') }}">My Tasks</a>
+    {% if is_main_admin() %}
+        <a class="btn-link" href="#projects">Projects</a>
+        <a class="btn-link" href="{{ url_for('new_project') }}">Create Project</a>
+        <a class="btn-link" href="{{ url_for('my_tasks') }}">Tasks</a>
+        <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
+    {% else %}
+        <a class="btn-link" href="#projects">Projects</a>
+        <a class="btn-link" href="{{ url_for('my_tasks') }}">My Tasks</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
+    {% endif %}
 </div>
 <div class="card" id="search">
     <h2>Search Projects</h2>
@@ -19,7 +24,7 @@
         <button type="submit">Search</button>
     </form>
 </div>
-<div class="card">
+<div class="card" id="projects">
     <h2>Projects</h2>
     {% for p in projects %}
         <div class="card">

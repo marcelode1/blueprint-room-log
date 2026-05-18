@@ -4087,28 +4087,40 @@ def task_calendar_file(task_id):
 def my_tasks():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
     task_mode = request.args.get("mode", "")
-    if selected_project_id and not task_mode:
+    if (selected_project_id or selected_user_id) and not task_mode:
         task_mode = "search"
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
         task_period = "day"
     task_date = request.args.get("date") or local_now().date().isoformat()
     projects = []
+    task_users = []
     if is_main_admin():
         projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
-        if selected_project_id:
+        task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+        if task_mode == "search" and (selected_project_id or selected_user_id):
+            where = []
+            params = []
+            if selected_project_id:
+                where.append("tasks.project_id = %s")
+                params.append(selected_project_id)
+            if selected_user_id:
+                where.append("tasks.assigned_user_id = %s")
+                params.append(selected_user_id)
+            where_sql = " AND ".join(where) if where else "1=1"
             tasks = conn.execute(
-                """
+                f"""
                 SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name, users.email AS assigned_user_email
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
                 LEFT JOIN users ON tasks.assigned_user_id = users.id
-                WHERE tasks.project_id = %s
+                WHERE {where_sql}
                 ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
                 """,
-                (selected_project_id,)
+                tuple(params)
             ).fetchall()
         else:
             tasks = []
@@ -4158,7 +4170,9 @@ def my_tasks():
         "tasks.html",
         tasks=tasks,
         projects=projects,
+        task_users=task_users,
         selected_project_id=selected_project_id,
+        selected_user_id=selected_user_id,
         task_mode=task_mode,
         task_period=task_period,
         task_date=task_date
