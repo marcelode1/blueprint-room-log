@@ -116,8 +116,8 @@
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
                     {% if t.require_picture or t.allow_picture_upload %}
-                        <label>Take Picture</label><input name="completion_camera" type="file" accept="image/*" capture="environment">
-                        {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" type="file" accept="image/*">{% endif %}
+                        <label>Take Picture</label><input name="completion_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                        {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
                     {% endif %}
                     {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
                     <button type="submit">Mark Task Done</button>

@@ -90,8 +90,8 @@
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
                 {% if t.require_picture or t.allow_picture_upload %}
-                    <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
-                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*">{% endif %}
+                    <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">{% endif %}
                 {% endif %}
                 {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
                 <button type="submit">Mark Task Done</button>
@@ -149,9 +149,9 @@
         <p id="voiceStatus" class="muted"></p>
         {% if has_perm("add_pictures") %}
         <label>Upload Picture</label>
-        <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*">
+        <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
         <label>Take Picture From Phone</label>
-        <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*" capture="environment">
+        <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
         {% endif %}
         {% if has_perm("add_audio") %}
         <label>Upload Audio Recording</label>
@@ -208,14 +208,15 @@
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
 const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
-async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||!file.type||!file.type.startsWith("image/"))return file;if(file.type.includes("heic")||file.type.includes("heif"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
+function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
+async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
 ["photoInput","cameraInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>replaceWithCompressed(el))});
 document.querySelectorAll(".annotatablePhoto").forEach(el=>el.addEventListener("change",async()=>{await replaceWithCompressed(el);openDrawModal(el)}));
 let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
 function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}
 function drawMove(e){if(!isDrawing)return;e.preventDefault();const p=canvasPoint(e);drawCtx.strokeStyle="#ef4444";drawCtx.lineWidth=Math.max(6,drawCanvas.width/180);drawCtx.lineCap="round";drawCtx.beginPath();drawCtx.moveTo(lastPoint.x,lastPoint.y);drawCtx.lineTo(p.x,p.y);drawCtx.stroke();lastPoint=p}
-async function openDrawModal(input){if(!input.files||!input.files[0]||!input.files[0].type.startsWith("image/"))return;activePhotoInput=input;const img=new Image();img.onload=()=>{drawCanvas.width=img.width;drawCanvas.height=img.height;drawCtx.drawImage(img,0,0);drawModal.style.display="block"};img.src=URL.createObjectURL(input.files[0])}
+async function openDrawModal(input){if(!input.files||!input.files[0]||isHeicFile(input.files[0])||!input.files[0].type.startsWith("image/"))return;activePhotoInput=input;const img=new Image();img.onload=()=>{drawCanvas.width=img.width;drawCanvas.height=img.height;drawCtx.drawImage(img,0,0);drawModal.style.display="block"};img.src=URL.createObjectURL(input.files[0])}
 ["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
 ["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
 ["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));

@@ -57,6 +57,10 @@ ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
+CONTENT_TYPES_BY_EXT = {
+    "heic": "image/heic",
+    "heif": "image/heif",
+}
 
 
 def file_ext(filename):
@@ -77,6 +81,10 @@ def allowed_audio(filename):
 
 def allowed_logo(filename):
     return file_ext(filename) in ALLOWED_LOGOS
+
+
+def upload_content_type(filename, fallback="application/octet-stream"):
+    return CONTENT_TYPES_BY_EXT.get(file_ext(filename)) or fallback or "application/octet-stream"
 
 
 def is_pdf(filename):
@@ -116,7 +124,7 @@ def upload_file_to_storage(file_storage):
     return upload_bytes_to_storage(
         file_storage.read(),
         file_storage.filename,
-        file_storage.content_type or "application/octet-stream"
+        upload_content_type(file_storage.filename, file_storage.content_type)
     )
 
 
@@ -833,16 +841,18 @@ GENERIC_PHOTO_FILENAMES = {
 }
 
 
-def phone_style_photo_filename():
-    return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}.jpg"
+def phone_style_photo_filename(extension="jpg"):
+    safe_ext = extension if extension in ALLOWED_PHOTOS else "jpg"
+    return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}.{safe_ext}"
 
 
 def task_attachment_display_filename(file_storage, field_name, file_type):
     original = (file_storage.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     safe_original = secure_filename(original)
     lower_name = safe_original.lower()
+    original_ext = file_ext(safe_original)
     if file_type == "photo" and ("camera" in (field_name or "").lower() or lower_name in GENERIC_PHOTO_FILENAMES):
-        return phone_style_photo_filename()
+        return phone_style_photo_filename(original_ext)
     if original:
         return original
     extension = "webm" if file_type == "audio" else "jpg"
@@ -882,7 +892,10 @@ def collect_task_attachment_uploads(conn, project_id, default_room_id=None):
             "file_type": file_type,
             "data": data,
             "filename": display_name,
-            "content_type": uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg"),
+            "content_type": upload_content_type(
+                display_name,
+                uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg")
+            ),
             "comment": comment,
         })
         if room_id:

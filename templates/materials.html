@@ -37,8 +37,8 @@
                 <label>Status</label>
                 <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
             </div>
-            <div><label>Picture</label><input type="file" name="picture" accept="image/*"></div>
-            <div><label>Take Picture</label><input type="file" name="picture_camera" accept="image/*" capture="environment"></div>
+            <div><label>Picture</label><input type="file" name="picture" accept="image/*,.heic,.heif"></div>
+            <div><label>Take Picture</label><input type="file" name="picture_camera" accept="image/*,.heic,.heif" capture="environment"></div>
         </div>
         <label>Used / Purchase Note</label>
         <textarea name="used_note" rows="2"></textarea>

@@ -331,6 +331,12 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         return name||phoneStyleFilename();
     }
 
+    function isHeicFile(file){
+        const type=(file&&file.type?file.type:"").toLowerCase();
+        const name=(file&&file.name?file.name:"").toLowerCase();
+        return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif");
+    }
+
     function canvasPoint(event){
         const rect=canvas.getBoundingClientRect();
         const pointer=event.touches?event.touches[0]:event;
@@ -414,6 +420,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         if(!input.files||!input.files[0])return;
         const file=input.files[0];
         if(!file.type||!file.type.startsWith("image/"))return;
+        if(isHeicFile(file))return;
         activeInput=input;
         originalFile=file;
         activeFilename=displayFilename(file,input);
