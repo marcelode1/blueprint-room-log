@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re
 import psycopg
 from psycopg.rows import dict_row
 from supabase import create_client
@@ -1884,6 +1884,14 @@ def task_instruction_text(task):
     instructions = ((task or {}).get("instructions") or "").strip()
     if not instructions:
         return ""
+    if instructions.startswith("Supplier:"):
+        notes = []
+        for match in re.findall(r"Pickup / Purchase Note:\s*(.*?)(?=\s+Inventory status:|\s+\d+\.\s|\Z)", instructions, flags=re.S):
+            cleaned = re.sub(r"Pickup date:\s*\S+\s*", "", match).strip()
+            cleaned = re.sub(r"Pickup time:\s*\S+\s*", "", cleaned).strip()
+            if cleaned and cleaned not in notes:
+                notes.append(cleaned)
+        return "\n".join(notes).strip()
     for marker in ["\nSupplier:", "\r\nSupplier:", "\n\nSupplier:", "\r\n\r\nSupplier:"]:
         if marker in instructions:
             return instructions.split(marker, 1)[0].strip()
