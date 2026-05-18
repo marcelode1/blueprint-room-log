@@ -1880,6 +1880,16 @@ def supplier_task_instructions(base_instructions, supplier, inventory_item):
     return "\n".join(line for line in lines if line is not None).strip()
 
 
+def task_instruction_text(task):
+    instructions = ((task or {}).get("instructions") or "").strip()
+    if not instructions:
+        return ""
+    for marker in ["\nSupplier:", "\r\nSupplier:", "\n\nSupplier:", "\r\n\r\nSupplier:"]:
+        if marker in instructions:
+            return instructions.split(marker, 1)[0].strip()
+    return instructions
+
+
 def dtools_cloud_config():
     return {
         "api_key": get_app_setting("dtools_cloud_api_key", os.environ.get("DTOOLS_CLOUD_API_KEY", "")).strip(),
@@ -2849,6 +2859,7 @@ def utility_processor():
         format_datetime=format_datetime,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
+        task_instruction_text=task_instruction_text,
         maps_directions_url=maps_directions_url,
         task_project_address=task_project_address,
         format_event_time=format_event_time,
@@ -4515,7 +4526,7 @@ def create_task(room_id):
         flash(supplier_inventory_error)
         return redirect(url_for("room", room_id=room_id))
     task_date = request.form.get("task_date") or local_now().date().isoformat()
-    task_instructions = supplier_task_instructions(request.form.get("instructions", "").strip(), supplier, supplier_inventory_item)
+    task_instructions = request.form.get("instructions", "").strip()
     created_at = utc_now_iso()
     task_number = next_task_number(conn, created_at)
 
@@ -4633,7 +4644,7 @@ def create_global_task():
         else:
             start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
         end_date = request.form.get("task_end_date") or start_date
-        task_instructions = supplier_task_instructions(request.form.get("instructions", "").strip(), supplier, supplier_inventory_items)
+        task_instructions = request.form.get("instructions", "").strip()
         created_tasks = []
 
         for assigned in selected_users:

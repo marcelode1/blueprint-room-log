@@ -26,7 +26,8 @@
                 <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project.customer_address) }}">Open Route in Google Maps</a>
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
-            {% if t.instructions %}<p>{{ t.instructions }}</p>{% endif %}
+            {% set task_info = task_instruction_text(t) %}
+            {% if task_info %}<p>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
             {% if is_main_admin() %}

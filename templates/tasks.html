@@ -165,7 +165,8 @@
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
-            {% if t.instructions %}<p><strong>Task Information:</strong><br>{{ t.instructions }}</p>{% endif %}
+            {% set task_info = task_instruction_text(t) %}
+            {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
