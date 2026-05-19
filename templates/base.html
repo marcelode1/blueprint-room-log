@@ -78,6 +78,7 @@
         <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+        <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('logout') }}">Logout</a>
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
@@ -249,6 +250,7 @@
         <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+        <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
         <a href="{{ url_for('index') }}#projects">Projects</a>

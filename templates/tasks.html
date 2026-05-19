@@ -105,7 +105,7 @@
             {% endif %}
         </p>
     {% endif %}
-    {% if is_mobile_request() and task_mode == "search" and selected_project_id %}
+    {% if is_mobile_request() and task_mode in ["search", "task"] and selected_project_id %}
         {% for r in project_rooms %}
             {% set room_tasks = tasks_by_room.get(r.id, []) %}
             {% if room_tasks and (not selected_room_id or selected_room_id == r.id) %}
@@ -118,6 +118,7 @@
                                 {% set room_state.done = true %}
                             {% endif %}
                         {% endfor %}
+                        {% if selected_task_id == t.id %}<span id="task-{{ t.id }}"></span>{% endif %}
                         <div id="task-{{ t.id }}-room-{{ r.id }}" class="card {% if room_state.done or t.status == 'done' %}taskDone{% endif %}">
                             <strong>{{ task_display_name(t) }}</strong>
                             <p class="muted">{{ task_schedule_text(t) }} - {{ 'Done for this room' if room_state.done or t.status == 'done' else 'Open for this room' }}</p>
@@ -152,6 +153,7 @@
                             {% endif %}
                             {% if t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
+                                    <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                                     <button type="submit">Received</button>
                                 </form>
                             {% endif %}
@@ -185,11 +187,13 @@
             {% include "_task_media.html" %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
+                    <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     <button type="submit">Received</button>
                 </form>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
+                    <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
                     {% if t.require_picture or t.allow_picture_upload %}
                         <label>Take Picture</label><input name="completion_camera" type="file" accept="image/*,.heic,.heif" capture="environment">

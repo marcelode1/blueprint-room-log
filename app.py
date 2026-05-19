@@ -495,6 +495,7 @@ def init_db():
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         project_id INTEGER,
         task_id INTEGER,
+        room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
         user_name TEXT,
         user_email TEXT,
         role TEXT,
@@ -786,6 +787,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS login_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER, task_id INTEGER, user_name TEXT, user_email TEXT, role TEXT, event_type TEXT NOT NULL DEFAULT 'login', message TEXT, is_read BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL)",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS project_id INTEGER",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS task_id INTEGER",
+        "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS user_name TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS user_email TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS role TEXT",
@@ -1440,10 +1442,13 @@ def notification_summary():
         latest = conn.execute(
             """
             SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
-                   login_events.task_id, tasks.task_number, tasks.title AS task_title, projects.name AS project_name
+                   login_events.project_id, COALESCE(login_events.project_id, tasks.project_id) AS target_project_id,
+                   login_events.task_id, login_events.room_id, rooms.name AS room_name,
+                   tasks.task_number, tasks.title AS task_title, projects.name AS project_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            LEFT JOIN rooms ON login_events.room_id = rooms.id
             WHERE login_events.is_read = FALSE
               AND login_events.event_type NOT IN ('login', 'task_assigned')
             ORDER BY login_events.id DESC
@@ -1466,10 +1471,13 @@ def notification_summary():
         latest = conn.execute(
             """
             SELECT login_events.id, login_events.event_type, login_events.message, login_events.created_at,
-                   login_events.task_id, tasks.task_number, tasks.title AS task_title, projects.name AS project_name
+                   login_events.project_id, COALESCE(login_events.project_id, tasks.project_id) AS target_project_id,
+                   login_events.task_id, login_events.room_id, rooms.name AS room_name,
+                   tasks.task_number, tasks.title AS task_title, projects.name AS project_name
             FROM login_events
             JOIN tasks ON login_events.task_id = tasks.id
             JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN rooms ON login_events.room_id = rooms.id
             JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
             WHERE login_events.is_read = FALSE
               AND login_events.user_id = %s
@@ -1479,12 +1487,9 @@ def notification_summary():
             """,
             (session.get("user_id"), session.get("user_id"))
         ).fetchone()
-    conn.close()
     latest_data = None
     if latest:
-        latest_url = url_for("notifications")
-        if session.get("role") != "admin" and latest.get("task_id"):
-            latest_url = url_for("my_tasks") + f"#task-{latest.get('task_id')}"
+        latest_url = notification_target_url(conn, latest)
         latest_data = {
             "id": latest.get("id"),
             "event_type": latest.get("event_type"),
@@ -1496,18 +1501,47 @@ def notification_summary():
             "created_at": latest.get("created_at") or "",
             "url": latest_url
         }
+    conn.close()
     return {"unread_count": count_row["c"] if count_row else 0, "latest": latest_data}
 
 
-def add_notification(conn, user_id, user_name, user_email, role, event_type, project_id=None, task_id=None, message=None):
+def add_notification(conn, user_id, user_name, user_email, role, event_type, project_id=None, task_id=None, message=None, room_id=None):
     conn.execute(
         """
         INSERT INTO login_events
-        (user_id, project_id, task_id, user_name, user_email, role, event_type, message, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (user_id, project_id, task_id, room_id, user_name, user_email, role, event_type, message, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (user_id, project_id, task_id, user_name, user_email, role, event_type, message, utc_now_iso())
+        (user_id, project_id, task_id, room_id, user_name, user_email, role, event_type, message, utc_now_iso())
     )
+
+
+def notification_target_url(conn, event):
+    if not event:
+        return url_for("notifications")
+    if event.get("task_id"):
+        return url_for("my_tasks", task_id=event.get("task_id")) + f"#task-{event.get('task_id')}"
+
+    project_id = event.get("target_project_id") or event.get("project_id")
+    room_id = event.get("room_id")
+    if not room_id and project_id and event.get("event_type") in ["field_comment_added", "field_picture_added", "field_audio_added", "field_note_added"]:
+        room_name = (event.get("room_name") or "").strip()
+        if not room_name:
+            match = re.search(r"\bin\s+(.+?)\.", event.get("message") or "", flags=re.IGNORECASE)
+            room_name = match.group(1).strip() if match else ""
+        if room_name:
+            row = conn.execute(
+                "SELECT id FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) ORDER BY id LIMIT 1",
+                (project_id, room_name)
+            ).fetchone()
+            room_id = row["id"] if row else None
+    if room_id:
+        return url_for("mobile_room" if is_mobile_request() else "room", room_id=room_id)
+    if project_id:
+        return url_for("mobile_project" if is_mobile_request() else "project", project_id=project_id)
+    if event.get("event_type") in ["attendance_check_in", "attendance_check_out"]:
+        return url_for("attendance_report" if is_main_admin() else "my_time_report")
+    return url_for("notifications")
 
 
 def storage_attachment(path, display_name=None):
@@ -1554,8 +1588,9 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
             note_parts.append("field note")
         message = f"{actor_name or 'User'} added {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
         project_id = project.get("id") if project else None
+        room_id = room.get("id") if room else None
         for event_type in notification_types:
-            add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, event_type, project_id, None, message)
+            add_notification(conn, session.get("user_id"), actor_name, actor_email, actor_role, event_type, project_id, None, message, room_id)
         conn.commit()
 
         send_comments = setting_enabled("email_note_comments", True)
@@ -1711,7 +1746,7 @@ def send_task_assignment_sms(task, assigned, project):
     route_text = f" Route: {route}" if route else ""
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks')}"
+        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks', task_id=task.get('id'))}"
     )
 
 
@@ -2138,6 +2173,24 @@ def fetch_inventory_rooms(conn, project_id=None):
         ORDER BY projects.name, rooms.name
         """,
         tuple(params)
+    ).fetchall()
+
+
+def fetch_visible_project_rooms(conn, project_id):
+    if is_main_admin():
+        return conn.execute(
+            "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
+            (project_id,)
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT rooms.id, rooms.name
+        FROM rooms
+        JOIN project_permissions ON project_permissions.project_id = rooms.project_id AND project_permissions.user_id = %s
+        WHERE rooms.project_id = %s
+        ORDER BY rooms.name, rooms.id
+        """,
+        (session.get("user_id"), project_id)
     ).fetchall()
 
 
@@ -5426,8 +5479,11 @@ def receive_task(task_id):
         flash("You do not have access to this project.")
         return redirect(url_for("my_tasks"))
     if task.get("accepted_at"):
+        next_url = request.form.get("next")
         conn.close()
         flash("Task was already marked received.")
+        if next_url and next_url.startswith("/"):
+            return redirect(next_url)
         return redirect(url_for("my_tasks"))
 
     accepted_at = utc_now_iso()
@@ -5445,6 +5501,9 @@ def receive_task(task_id):
     notify_admins_task_received(conn, task, actor)
     conn.close()
     flash("Task marked received. Admin was notified.")
+    next_url = request.form.get("next")
+    if next_url and next_url.startswith("/"):
+        return redirect(next_url)
     calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"], **calendar_args))
@@ -5492,11 +5551,14 @@ def task_calendar_file(task_id):
 @login_required
 def my_tasks():
     conn = db()
+    selected_task_id = request.args.get("task_id", type=int)
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
     selected_supplier_id = request.args.get("supplier_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
     task_mode = request.args.get("mode", "")
+    if selected_task_id and not task_mode:
+        task_mode = "task"
     if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id) and not task_mode:
         task_mode = "search"
     has_filter_selection = bool(selected_project_id or selected_room_id or selected_supplier_id or selected_user_id)
@@ -5511,22 +5573,7 @@ def my_tasks():
     suppliers = []
     task_users = []
     if selected_project_id:
-        if is_main_admin():
-            project_rooms = conn.execute(
-                "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
-                (selected_project_id,)
-            ).fetchall()
-        else:
-            project_rooms = conn.execute(
-                """
-                SELECT rooms.id, rooms.name
-                FROM rooms
-                JOIN project_permissions ON project_permissions.project_id = rooms.project_id AND project_permissions.user_id = %s
-                WHERE rooms.project_id = %s
-                ORDER BY rooms.name, rooms.id
-                """,
-                (session.get("user_id"), selected_project_id)
-            ).fetchall()
+        project_rooms = fetch_visible_project_rooms(conn, selected_project_id)
         if selected_room_id and not any(r["id"] == selected_room_id for r in project_rooms):
             selected_room_id = None
     if is_main_admin():
@@ -5535,7 +5582,22 @@ def my_tasks():
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
         should_show_search = selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or task_date_filter
         apply_task_date_filter = task_mode == "search" and should_show_search
-        if task_mode == "search" and should_show_search:
+        if selected_task_id:
+            tasks = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name, users.email AS assigned_user_email
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                WHERE tasks.id = %s
+                """,
+                (selected_task_id,)
+            ).fetchall()
+            if tasks and not selected_project_id:
+                selected_project_id = tasks[0]["project_id"]
+                project_rooms = fetch_visible_project_rooms(conn, selected_project_id)
+        elif task_mode == "search" and should_show_search:
             where = []
             params = []
             if selected_project_id:
@@ -5590,7 +5652,23 @@ def my_tasks():
         ).fetchall()
         should_show_search = selected_project_id or selected_supplier_id or task_date_filter
         apply_task_date_filter = task_mode == "search" and should_show_search
-        if task_mode == "search" and should_show_search:
+        if selected_task_id:
+            tasks = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                WHERE tasks.id = %s AND tasks.assigned_user_id = %s
+                """,
+                (session.get("user_id"), selected_task_id, session.get("user_id"))
+            ).fetchall()
+            if tasks and not selected_project_id:
+                selected_project_id = tasks[0]["project_id"]
+                project_rooms = fetch_visible_project_rooms(conn, selected_project_id)
+        elif task_mode == "search" and should_show_search:
             where = ["tasks.assigned_user_id = %s"]
             params = [session.get("user_id")]
             if selected_project_id:
@@ -5640,8 +5718,11 @@ def my_tasks():
             ]
             tasks = sorted(tasks, key=task_active_sort_key)
     tasks = load_task_details(conn, tasks, selected_room_id)
+    if selected_task_id and tasks and not tasks[0].get("room_id") and not tasks[0].get("_room_statuses"):
+        selected_project_id = None
+        project_rooms = []
     tasks_by_room = {}
-    if task_mode == "search" and selected_project_id:
+    if task_mode in ["search", "task"] and selected_project_id:
         for room in project_rooms:
             room_tasks = []
             for task in tasks:
@@ -5660,6 +5741,7 @@ def my_tasks():
         selected_room_id=selected_room_id,
         selected_supplier_id=selected_supplier_id,
         selected_user_id=selected_user_id,
+        selected_task_id=selected_task_id,
         project_rooms=project_rooms,
         tasks_by_room=tasks_by_room,
         task_mode=task_mode,
@@ -6377,10 +6459,13 @@ def notifications():
         events = conn.execute(
             """
             SELECT login_events.*, tasks.task_number, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
-                   tasks.status AS task_status, projects.name AS project_name
+                   tasks.status AS task_status, projects.name AS project_name,
+                   COALESCE(login_events.project_id, tasks.project_id) AS target_project_id,
+                   rooms.name AS room_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            LEFT JOIN rooms ON login_events.room_id = rooms.id
             WHERE login_events.event_type NOT IN ('login', 'task_assigned')
             ORDER BY login_events.created_at DESC
             LIMIT 100
@@ -6390,10 +6475,13 @@ def notifications():
         events = conn.execute(
             """
             SELECT login_events.*, tasks.task_number, tasks.title AS task_title, tasks.accepted_at AS task_accepted_at,
-                   tasks.status AS task_status, projects.name AS project_name
+                   tasks.status AS task_status, projects.name AS project_name,
+                   COALESCE(login_events.project_id, tasks.project_id) AS target_project_id,
+                   rooms.name AS room_name
             FROM login_events
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+            LEFT JOIN rooms ON login_events.room_id = rooms.id
             JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
             WHERE login_events.user_id = %s AND login_events.event_type = 'task_assigned'
             ORDER BY login_events.created_at DESC
@@ -6402,7 +6490,52 @@ def notifications():
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
     conn.close()
-    return render_template("notifications.html", events=events)
+    event_list = [dict(event) for event in events]
+    conn = db()
+    for event in event_list:
+        event["target_url"] = notification_target_url(conn, event)
+    conn.close()
+    return render_template("notifications.html", events=event_list)
+
+
+@app.route("/notifications/<int:notification_id>/open")
+@login_required
+def open_notification(notification_id):
+    conn = db()
+    event = conn.execute(
+        """
+        SELECT login_events.*, tasks.project_id AS task_project_id, tasks.assigned_user_id,
+               projects.name AS project_name, COALESCE(login_events.project_id, tasks.project_id) AS target_project_id,
+               rooms.name AS room_name
+        FROM login_events
+        LEFT JOIN tasks ON login_events.task_id = tasks.id
+        LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
+        LEFT JOIN rooms ON login_events.room_id = rooms.id
+        WHERE login_events.id = %s
+        """,
+        (notification_id,)
+    ).fetchone()
+    if not event:
+        conn.close()
+        flash("Notification not found.")
+        return redirect(url_for("notifications"))
+    target_project_id = event.get("target_project_id")
+    allowed = False
+    if is_main_admin():
+        allowed = True
+    elif event.get("user_id") == session.get("user_id"):
+        allowed = True
+    elif target_project_id and user_can_access_project(conn, target_project_id):
+        allowed = True
+    if not allowed:
+        conn.close()
+        flash("You do not have access to that notification.")
+        return redirect(url_for("notifications"))
+    target_url = notification_target_url(conn, event)
+    conn.execute("UPDATE login_events SET is_read = TRUE WHERE id = %s", (notification_id,))
+    conn.commit()
+    conn.close()
+    return redirect(target_url)
 
 
 @app.route("/notifications/live")

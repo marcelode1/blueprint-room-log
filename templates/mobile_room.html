@@ -72,6 +72,7 @@
             {% endif %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
             <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
+                <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                 <button type="submit">Received</button>
             </form>
             {% endif %}
