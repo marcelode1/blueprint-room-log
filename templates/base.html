@@ -72,6 +72,7 @@
 {% if session.get("user_id") %}
 <div class="mobileMenuPanel" id="mobileMenuPanel">
     {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_home') }}">Home</a>
         <a href="{{ url_for('mobile_projects') }}">Projects</a>
         <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
         <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
@@ -242,13 +243,15 @@
 {% if session.get("user_id") %}
 <nav class="bottom-nav">
     {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_home') }}">Home</a>
         <a href="{{ url_for('mobile_projects') }}">Projects</a>
         <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
         <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% else %}
-        <a href="{{ url_for('index') }}">Projects</a>
+        <a href="{{ url_for('index') }}">Home</a>
+        <a href="{{ url_for('index') }}#projects">Projects</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
