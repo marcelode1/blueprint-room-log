@@ -40,6 +40,7 @@
                         <button type="submit">Confirm Received</button>
                     </form>
                 {% else %}
+                    <button type="button" class="btn-secondary" disabled>Received</button>
                     <p class="muted">Confirmed {{ format_datetime(e.task_accepted_at) }}</p>
                 {% endif %}
             {% endif %}

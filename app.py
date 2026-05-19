@@ -1864,6 +1864,25 @@ def notify_admins_task_received(conn, task, actor):
             send_email(admin["email"], f"ProjectONus task received - {task_display_name(task)}", body)
 
 
+def mark_task_received(conn, task):
+    if not task or task.get("accepted_at"):
+        return False
+    accepted_at = utc_now_iso()
+    conn.execute("UPDATE tasks SET accepted_at = %s WHERE id = %s", (accepted_at, task["id"]))
+    conn.execute(
+        """
+        UPDATE login_events
+        SET is_read = TRUE
+        WHERE user_id = %s AND task_id = %s AND event_type = 'task_assigned'
+        """,
+        (session.get("user_id"), task["id"])
+    )
+    task["accepted_at"] = accepted_at
+    actor = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
+    notify_admins_task_received(conn, task, actor)
+    return True
+
+
 def can_add_notes():
     return has_perm("write_comments") or has_perm("add_pictures") or has_perm("add_audio")
 
@@ -5515,6 +5534,35 @@ def pickup_task_supplier_item(task_id, item_id):
     return redirect(next_url)
 
 
+@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/delete", methods=["POST"])
+@login_required
+def delete_task_attachment(task_id, attachment_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    attachment = conn.execute(
+        "SELECT * FROM task_attachments WHERE id = %s AND task_id = %s",
+        (attachment_id, task_id)
+    ).fetchone()
+    if not task or not attachment:
+        conn.close()
+        flash("Picture not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id")):
+        conn.close()
+        flash("You do not have permission to delete this picture.")
+        return redirect(next_url)
+    conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
+    conn.commit()
+    conn.close()
+    flash("Picture deleted.")
+    return redirect(next_url)
+
+
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
 @login_required
 def complete_task(task_id):
@@ -5580,9 +5628,12 @@ def complete_task(task_id):
             """,
             (task_id, completion_room_id, session.get("user_id"), utc_now_iso())
         )
-        related_room_ids = task_related_room_ids(conn, task_id, task)
-        related_room_ids.add(completion_room_id)
-        mark_entire_task_done = all_task_rooms_done(conn, task_id, related_room_ids)
+        if task.get("supplier_id"):
+            mark_entire_task_done = True
+        else:
+            related_room_ids = task_related_room_ids(conn, task_id, task)
+            related_room_ids.add(completion_room_id)
+            mark_entire_task_done = all_task_rooms_done(conn, task_id, related_room_ids)
     update_fields = [
         "completion_comment = %s",
         "completion_photo_file = %s",
@@ -5611,7 +5662,7 @@ def complete_task(task_id):
                 purchased_by = COALESCE(purchased_by, %s),
                 purchased_at = COALESCE(purchased_at, %s),
                 updated_at = %s
-            WHERE status = 'needs_purchase'
+            WHERE status <> 'used'
               AND COALESCE(supplier_picked_up, FALSE) = TRUE
               AND id IN (
                   SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
@@ -5620,6 +5671,23 @@ def complete_task(task_id):
               )
             """,
             (session.get("user_id"), now, now, task_id, task_id)
+        )
+        conn.execute(
+            """
+            UPDATE inventory_items
+            SET status = 'needs_purchase',
+                purchased_by = NULL,
+                purchased_at = NULL,
+                updated_at = %s
+            WHERE status <> 'used'
+              AND COALESCE(supplier_picked_up, FALSE) = FALSE
+              AND id IN (
+                  SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
+                  UNION
+                  SELECT supplier_inventory_item_id FROM tasks WHERE id = %s AND supplier_inventory_item_id IS NOT NULL
+              )
+            """,
+            (now, task_id, task_id)
         )
     conn.commit()
     notification_ok = True
@@ -5689,19 +5757,7 @@ def receive_task(task_id):
             return redirect(next_url)
         return redirect(url_for("my_tasks"))
 
-    accepted_at = utc_now_iso()
-    conn.execute("UPDATE tasks SET accepted_at = %s WHERE id = %s", (accepted_at, task_id))
-    conn.execute(
-        """
-        UPDATE login_events
-        SET is_read = TRUE
-        WHERE user_id = %s AND task_id = %s AND event_type = 'task_assigned'
-        """,
-        (session.get("user_id"), task_id)
-    )
-    task["accepted_at"] = accepted_at
-    actor = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
-    notify_admins_task_received(conn, task, actor)
+    mark_task_received(conn, task)
     conn.close()
     flash("Task marked received. Admin was notified.")
     next_url = request.form.get("next")
@@ -6735,6 +6791,20 @@ def open_notification(notification_id):
         flash("You do not have access to that notification.")
         return redirect(url_for("notifications"))
     target_url = notification_target_url(conn, event)
+    if event.get("event_type") == "task_assigned" and event.get("task_id") and not is_main_admin():
+        task = conn.execute(
+            """
+            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+            FROM tasks
+            JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            WHERE tasks.id = %s
+            """,
+            (event["task_id"],)
+        ).fetchone()
+        if task and task.get("assigned_user_id") == session.get("user_id") and user_can_access_project(conn, task["project_id"]):
+            if mark_task_received(conn, task):
+                flash("Task marked received. Admin was notified.")
     conn.execute("UPDATE login_events SET is_read = TRUE WHERE id = %s", (notification_id,))
     conn.commit()
     conn.close()

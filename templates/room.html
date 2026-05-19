@@ -124,15 +124,17 @@
             <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                 <button type="submit">Received</button>
             </form>
+            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+            <button type="button" class="btn-secondary" disabled>Received</button>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                {% if t.require_picture or t.allow_picture_upload %}
+                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload) %}
                     <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
                     {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">{% endif %}
                 {% endif %}
-                {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
+                {% if not t.supplier_id and t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
                 <button type="submit">Mark Task Done</button>
             </form>
             {% endif %}

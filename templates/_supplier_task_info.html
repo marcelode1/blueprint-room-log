@@ -44,6 +44,12 @@
                                     {% endif %}
                                     <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
                                     <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
+                                    {% if can_pickup_supplier_item %}
+                                        <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this picture?');">
+                                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                                            <button type="submit" class="btn-danger">Delete Picture</button>
+                                        </form>
+                                    {% endif %}
                                 </div>
                             {% endif %}
                         {% endfor %}
@@ -53,7 +59,7 @@
                     <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
                         <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
                         <label class="supplierPickupCheck">
-                            <input type="checkbox" name="picked_up" value="1" {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %} {% if item.status == 'used' %}disabled{% endif %}>
+                            <input type="checkbox" name="picked_up" value="1" onchange="this.form.submit()" {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %} {% if item.status == 'used' %}disabled{% endif %}>
                             Picked up
                         </label>
                         <div class="supplierItemPhotoBlocks">
@@ -63,6 +69,10 @@
                                 <textarea name="supplier_item_attachment_0_comment" rows="3"></textarea>
                                 <label>Take a picture</label>
                                 <input name="supplier_item_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                                <div class="supplierPhotoPreview" style="display:none;">
+                                    <img class="photo" alt="Selected material picture preview">
+                                    <button type="button" class="btn-secondary clearSupplierSelectedPhoto">Delete Selected Picture</button>
+                                </div>
                             </div>
                         </div>
                         <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
@@ -98,6 +108,10 @@ if(!window.supplierItemPhotoControlsReady){
             <textarea name="supplier_item_attachment_${index}_comment" rows="3"></textarea>
             <label>Take a picture</label>
             <input name="supplier_item_attachment_${index}_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+            <div class="supplierPhotoPreview" style="display:none;">
+                <img class="photo" alt="Selected material picture preview">
+                <button type="button" class="btn-secondary clearSupplierSelectedPhoto">Delete Selected Picture</button>
+            </div>
             <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>`;
         blocks.appendChild(block);
     });
@@ -106,6 +120,32 @@ if(!window.supplierItemPhotoControlsReady){
         if(!removeButton)return;
         const block=removeButton.closest(".supplierItemPhotoBlock");
         if(block)block.remove();
+    });
+    document.addEventListener("change",event=>{
+        const input=event.target;
+        if(!input||!input.matches('input[name^="supplier_item_attachment_"][type="file"]'))return;
+        const block=input.closest(".supplierItemPhotoBlock");
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(!preview||!img)return;
+        if(!input.files||!input.files[0]){
+            preview.style.display="none";
+            img.removeAttribute("src");
+            return;
+        }
+        img.src=URL.createObjectURL(input.files[0]);
+        preview.style.display="block";
+    });
+    document.addEventListener("click",event=>{
+        const clearButton=event.target.closest(".clearSupplierSelectedPhoto");
+        if(!clearButton)return;
+        const block=clearButton.closest(".supplierItemPhotoBlock");
+        const input=block?block.querySelector('input[type="file"]'):null;
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(input)input.value="";
+        if(img)img.removeAttribute("src");
+        if(preview)preview.style.display="none";
     });
 }
 </script>

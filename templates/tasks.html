@@ -156,6 +156,8 @@
                                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                                     <button type="submit">Received</button>
                                 </form>
+                            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                                <button type="button" class="btn-secondary" disabled>Received</button>
                             {% endif %}
                             {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                 {% include "_mobile_room_completion_form.html" %}
@@ -190,12 +192,14 @@
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     <button type="submit">Received</button>
                 </form>
+            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                <button type="button" class="btn-secondary" disabled>Received</button>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                    {% if t.require_picture or t.allow_picture_upload or t.allow_audio %}
+                    {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                         <div class="completionBlocks">
                             <div class="completionBlock">
                                 <input type="hidden" name="completion_attachment_indexes" value="0">

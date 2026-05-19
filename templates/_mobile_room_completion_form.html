@@ -3,6 +3,7 @@
     <input type="hidden" name="completion_room_id" value="{{ r.id }}">
     <label>Completion Comment</label>
     <textarea name="completion_comment" rows="3"></textarea>
+    {% if not t.supplier_id %}
     <div class="completionBlocks">
         <div class="completionBlock">
             <input type="hidden" name="completion_attachment_indexes" value="0">
@@ -15,5 +16,6 @@
         </div>
     </div>
     <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+    {% endif %}
     <button type="submit">Mark This Room Done</button>
 </form>
