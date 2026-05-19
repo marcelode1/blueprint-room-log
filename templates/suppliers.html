@@ -50,6 +50,24 @@
                 {% endif %}
                 <button type="submit">Update Supplier</button>
             </form>
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('send_supplier_account_info', supplier_id=s.id) }}" class="vendorInfoForm">
+                <h4>Send Company Info</h4>
+                {% if s.email %}
+                    <p class="muted">Send your saved account information to {{ s.email }}.</p>
+                    <label class="vendorAttachOption">
+                        <input type="checkbox" name="attach_document" value="1" class="vendorAttachToggle">
+                        Attach a document
+                    </label>
+                    <div class="vendorDocumentField" style="display:none;">
+                        <label>Document</label>
+                        <input type="file" name="vendor_document" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,image/*">
+                    </div>
+                    <button type="submit">Send our Info to Vendor</button>
+                {% else %}
+                    <p class="muted">Add an email address before sending company information to this supplier.</p>
+                    <button type="button" class="btn-secondary" disabled>Send our Info to Vendor</button>
+                {% endif %}
+            </form>
             <form method="post" action="{{ url_for('delete_supplier', supplier_id=s.id) }}" onsubmit="return confirm('Delete this supplier? Existing inventory and tasks will keep their records without the supplier link.');">
                 <button type="submit" class="btn-danger">Delete Supplier</button>
             </form>
@@ -62,5 +80,18 @@
 <style>
 .supplierItem{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
 .supplierItem summary{cursor:pointer;min-height:42px;display:flex;align-items:center;gap:8px}
+.vendorInfoForm{border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0;background:rgba(14,165,233,.06)}
+.vendorInfoForm h4{margin:0 0 6px}
+.vendorAttachOption{display:flex;gap:8px;align-items:center;font-weight:800}
+.vendorAttachOption input{width:auto;min-height:auto}
 </style>
+<script>
+document.addEventListener("change",event=>{
+    const toggle=event.target.closest(".vendorAttachToggle");
+    if(!toggle)return;
+    const form=toggle.closest(".vendorInfoForm");
+    const field=form?form.querySelector(".vendorDocumentField"):null;
+    if(field)field.style.display=toggle.checked?"block":"none";
+});
+</script>
 {% endblock %}

@@ -57,6 +57,7 @@ ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
+ALLOWED_VENDOR_DOCUMENTS = {"pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "png", "jpg", "jpeg", "webp"}
 CONTENT_TYPES_BY_EXT = {
     "heic": "image/heic",
     "heif": "image/heif",
@@ -81,6 +82,10 @@ def allowed_audio(filename):
 
 def allowed_logo(filename):
     return file_ext(filename) in ALLOWED_LOGOS
+
+
+def allowed_vendor_document(filename):
+    return file_ext(filename) in ALLOWED_VENDOR_DOCUMENTS
 
 
 def upload_content_type(filename, fallback="application/octet-stream"):
@@ -1475,6 +1480,48 @@ def set_app_setting(key, value):
 def setting_enabled(key, default=True):
     default_value = "1" if default else "0"
     return get_app_setting(key, default_value) == "1"
+
+
+def account_info():
+    return {
+        "company_name": get_app_setting("company_name", "ProjectONus").strip(),
+        "company_address": get_app_setting("company_address", "").strip(),
+        "company_contact_name": get_app_setting("company_contact_name", "").strip(),
+        "company_phone": get_app_setting("company_phone", "").strip(),
+        "company_email": get_app_setting("company_email", "").strip(),
+    }
+
+
+def vendor_account_email_body(supplier, info, attachment_name=""):
+    company_name = info.get("company_name") or "our company"
+    greeting_name = supplier.get("contact_name") or supplier.get("name") or "Vendor Team"
+    lines = [
+        f"Dear {greeting_name},",
+        "",
+        f"We at {company_name} are very happy to be part of your vendor team. We look forward to doing many projects and building a strong, long-term business relationship together.",
+        "",
+        "For your records, please find our company account information below:",
+        "",
+        f"Company Name: {company_name}",
+        f"Address: {info.get('company_address') or '-'}",
+        f"Contact Name: {info.get('company_contact_name') or '-'}",
+        f"Phone Number: {info.get('company_phone') or '-'}",
+        f"Email: {info.get('company_email') or '-'}",
+        "",
+    ]
+    if attachment_name:
+        lines.extend([
+            f"We have also attached {attachment_name} for your records.",
+            "",
+        ])
+    lines.extend([
+        "Please let us know if your team needs any additional information to keep our account updated.",
+        "",
+        "Thank you,",
+        info.get("company_contact_name") or company_name,
+        company_name,
+    ])
+    return "\n".join(lines)
 
 
 def admin_unread_count():
@@ -4177,6 +4224,49 @@ def delete_supplier(supplier_id):
     return redirect(url_for("suppliers"))
 
 
+@app.route("/suppliers/<int:supplier_id>/send-info", methods=["POST"])
+@admin_required
+def send_supplier_account_info(supplier_id):
+    conn = db()
+    supplier = conn.execute("SELECT * FROM suppliers WHERE id = %s", (supplier_id,)).fetchone()
+    conn.close()
+    if not supplier:
+        flash("Supplier not found.")
+        return redirect(url_for("suppliers"))
+    if not (supplier.get("email") or "").strip():
+        flash("Add an email address for this supplier before sending account information.")
+        return redirect(url_for("suppliers"))
+
+    attachment = None
+    attachment_name = ""
+    wants_attachment = request.form.get("attach_document") == "1"
+    uploaded = request.files.get("vendor_document")
+    if wants_attachment:
+        if not uploaded or not uploaded.filename:
+            flash("Choose a document to attach, or uncheck the attachment option.")
+            return redirect(url_for("suppliers"))
+        if not allowed_vendor_document(uploaded.filename):
+            flash("Please attach a PDF, Word, Excel, CSV, text, or image file.")
+            return redirect(url_for("suppliers"))
+        attachment_name = secure_filename(uploaded.filename) or "company-document"
+        attachment = (
+            attachment_name,
+            uploaded.read(),
+            upload_content_type(attachment_name, uploaded.content_type or mimetypes.guess_type(attachment_name)[0])
+        )
+
+    info = account_info()
+    subject_company = info.get("company_name") or "Our Company"
+    subject = f"{subject_company} Account Information"
+    body = vendor_account_email_body(supplier, info, attachment_name)
+    sent = send_email(supplier["email"], subject, body, attachments=[attachment] if attachment else None)
+    if sent:
+        flash(f"Account information sent to {supplier.get('name') or supplier.get('email')}.")
+    else:
+        flash("Email could not be sent. Check SMTP email settings and the supplier email address.")
+    return redirect(url_for("suppliers"))
+
+
 @app.route("/inventory", methods=["GET", "POST"])
 @login_required
 def inventory():
@@ -4800,22 +4890,223 @@ def project_timeline(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    selected_date = request.args.get("date", "")
-    query = """
+
+    period = request.args.get("period", "day")
+    if period not in ["day", "week", "month", "all"]:
+        period = "day"
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    start = end = None
+    if period != "all":
+        period, start, end = attendance_range(period, selected_date)
+
+    def parse_timeline_date(date_value, time_value=""):
+        date_text = str(date_value or "").strip()
+        if not date_text:
+            return None
+        time_text = str(time_value or "").strip() or "00:00"
+        for time_fmt in ["%H:%M", "%H:%M:%S"]:
+            try:
+                return datetime.strptime(f"{date_text} {time_text}", f"%Y-%m-%d {time_fmt}").replace(tzinfo=app_timezone())
+            except Exception:
+                pass
+        return None
+
+    def include_dt(dt):
+        if not dt:
+            return False
+        if period == "all":
+            return True
+        return start <= dt < end
+
+    def range_label():
+        if period == "all":
+            return "All Project History"
+        if period == "month":
+            return start.strftime("%B %Y")
+        if period == "week":
+            last_day = end - timedelta(days=1)
+            return f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
+        return start.strftime("%m/%d/%Y")
+
+    records = []
+
+    note_rows = conn.execute(
+        """
         SELECT notes.*, rooms.name AS room_name, rooms.category AS room_category, users.name AS user_name
         FROM notes
         JOIN rooms ON notes.room_id = rooms.id
         LEFT JOIN users ON notes.user_id = users.id
         WHERE rooms.project_id = %s
-    """
-    params = [project_id]
-    if selected_date:
-        query += " AND notes.note_date = %s"
-        params.append(selected_date)
-    query += " ORDER BY notes.note_date DESC, notes.created_at DESC"
-    notes = conn.execute(query, tuple(params)).fetchall()
+        """,
+        (project_id,)
+    ).fetchall()
+    for note in note_rows:
+        sort_dt = local_datetime(note.get("created_at")) or parse_timeline_date(note.get("note_date"))
+        if include_dt(sort_dt):
+            records.append({
+                "sort_dt": sort_dt,
+                "when": format_datetime(sort_dt),
+                "type": "Room Update",
+                "title": note.get("room_name") or "Room update",
+                "subtitle": note.get("user_name") or "Unknown user",
+                "body": note.get("comment") or "",
+                "photo_file": note.get("photo_file"),
+                "audio_file": note.get("audio_file"),
+                "url": url_for("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]) if note.get("room_id") else "",
+            })
+
+    task_rows = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, users.name AS assigned_user_name, creators.name AS created_by_name, suppliers.name AS supplier_name
+        FROM tasks
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        LEFT JOIN users AS creators ON tasks.created_by = creators.id
+        LEFT JOIN suppliers ON tasks.supplier_id = suppliers.id
+        WHERE tasks.project_id = %s
+        """,
+        (project_id,)
+    ).fetchall()
+    for task in task_rows:
+        scheduled_dt = parse_timeline_date(task.get("task_start_date") or task.get("task_date"), task.get("task_start_time"))
+        task_url = url_for("my_tasks", task_id=task["id"]) + f"#task-{task['id']}"
+        if include_dt(scheduled_dt):
+            details = []
+            if task.get("assigned_user_name"):
+                details.append(f"Assigned to {task['assigned_user_name']}")
+            if task.get("room_name"):
+                details.append(f"Room: {task['room_name']}")
+            if task.get("supplier_name"):
+                details.append(f"Supplier: {task['supplier_name']}")
+            details.append(f"Status: {task.get('status') or 'open'}")
+            task_info = task_instruction_text(task)
+            records.append({
+                "sort_dt": scheduled_dt,
+                "when": format_datetime(scheduled_dt),
+                "type": "Task Scheduled",
+                "title": task_display_name(task),
+                "subtitle": " - ".join(details),
+                "body": task_info,
+                "photo_file": task.get("task_photo_file"),
+                "audio_file": task.get("task_audio_file"),
+                "url": task_url,
+            })
+        accepted_dt = local_datetime(task.get("accepted_at"))
+        if include_dt(accepted_dt):
+            records.append({
+                "sort_dt": accepted_dt,
+                "when": format_datetime(accepted_dt),
+                "type": "Task Received",
+                "title": task_display_name(task),
+                "subtitle": task.get("assigned_user_name") or "",
+                "body": "",
+                "url": task_url,
+            })
+        completed_dt = local_datetime(task.get("completed_at"))
+        if include_dt(completed_dt):
+            records.append({
+                "sort_dt": completed_dt,
+                "when": format_datetime(completed_dt),
+                "type": "Task Completed",
+                "title": task_display_name(task),
+                "subtitle": task.get("assigned_user_name") or "",
+                "body": task.get("completion_comment") or "",
+                "photo_file": task.get("completion_photo_file"),
+                "audio_file": task.get("completion_audio_file"),
+                "url": task_url,
+            })
+
+    attachment_rows = conn.execute(
+        """
+        SELECT task_attachments.*, tasks.title AS task_title, tasks.task_number, rooms.name AS room_name, users.name AS user_name
+        FROM task_attachments
+        JOIN tasks ON task_attachments.task_id = tasks.id
+        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+        LEFT JOIN users ON task_attachments.created_by = users.id
+        WHERE tasks.project_id = %s
+        """,
+        (project_id,)
+    ).fetchall()
+    for attachment in attachment_rows:
+        sort_dt = local_datetime(attachment.get("created_at"))
+        if include_dt(sort_dt):
+            title = "Task Picture Added" if attachment.get("file_type") == "photo" else "Task Audio Added"
+            records.append({
+                "sort_dt": sort_dt,
+                "when": format_datetime(sort_dt),
+                "type": title,
+                "title": attachment.get("task_number") or attachment.get("task_title") or "Task attachment",
+                "subtitle": " - ".join(part for part in [attachment.get("room_name"), attachment.get("user_name")] if part),
+                "body": attachment.get("comment") or "",
+                "photo_file": attachment.get("storage_path") if attachment.get("file_type") == "photo" else "",
+                "audio_file": attachment.get("storage_path") if attachment.get("file_type") == "audio" else "",
+                "url": url_for("my_tasks", task_id=attachment["task_id"]) + f"#task-{attachment['task_id']}",
+            })
+
+    inventory_rows = conn.execute(
+        """
+        SELECT inventory_items.*, rooms.name AS room_name, suppliers.name AS supplier_name
+        FROM inventory_items
+        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+        LEFT JOIN suppliers ON inventory_items.supplier_id = suppliers.id
+        WHERE inventory_items.project_id = %s
+        """,
+        (project_id,)
+    ).fetchall()
+    for item in inventory_rows:
+        sort_dt = local_datetime(item.get("updated_at") or item.get("created_at"))
+        if include_dt(sort_dt):
+            details = [
+                f"QTY: {item.get('quantity')}",
+                f"Status: {inventory_status_label(item.get('status'))}",
+            ]
+            if item.get("room_name"):
+                details.append(f"Room: {item['room_name']}")
+            if item.get("supplier_name"):
+                details.append(f"Supplier: {item['supplier_name']}")
+            records.append({
+                "sort_dt": sort_dt,
+                "when": format_datetime(sort_dt),
+                "type": "Inventory",
+                "title": item.get("item_name") or "Inventory item",
+                "subtitle": " - ".join(details),
+                "body": item.get("used_note") or item.get("pickup_comment") or "",
+                "photo_file": item.get("picture_file"),
+                "url": url_for("mobile_project_materials" if is_mobile_request() else "project_materials", project_id=project_id),
+            })
+
+    attendance_rows = conn.execute(
+        """
+        SELECT attendance_events.*, users.name AS user_name
+        FROM attendance_events
+        LEFT JOIN users ON attendance_events.user_id = users.id
+        WHERE attendance_events.project_id = %s
+        """,
+        (project_id,)
+    ).fetchall()
+    for event in attendance_rows:
+        sort_dt = local_datetime(event.get("created_at"), event_timezone_name(event))
+        if include_dt(sort_dt):
+            records.append({
+                "sort_dt": sort_dt,
+                "when": format_datetime(sort_dt),
+                "type": "Clock In" if event.get("event_type") == "check_in" else "Clock Out",
+                "title": event.get("user_name") or "Unknown user",
+                "subtitle": event.get("address") or "",
+                "body": "",
+                "map_url": f"https://www.google.com/maps?q={event.get('latitude')},{event.get('longitude')}" if event.get("latitude") and event.get("longitude") else "",
+            })
+
+    records.sort(key=lambda row: row["sort_dt"], reverse=True)
     conn.close()
-    return render_template("timeline.html", project=project, notes=notes, selected_date=selected_date)
+    return render_template(
+        "timeline.html",
+        project=project,
+        records=records,
+        selected_date=selected_date,
+        period=period,
+        range_label=range_label()
+    )
 
 
 
@@ -6600,6 +6891,11 @@ def settings():
             set_app_setting("email_note_pictures", "1" if "email_note_pictures" in request.form else "0")
             set_app_setting("email_note_audio", "1" if "email_note_audio" in request.form else "0")
             flash("Email notification preferences updated.")
+        elif action == "account_info":
+            redirect_tab = "account_info"
+            for key in ["company_name", "company_address", "company_contact_name", "company_phone", "company_email"]:
+                set_app_setting(key, request.form.get(key, "").strip())
+            flash("Account information saved.")
         elif action == "dtools_cloud":
             set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
             set_app_setting("dtools_cloud_auth_header", request.form.get("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH)
@@ -6678,7 +6974,7 @@ def settings():
         return redirect(url_for("settings"))
 
     active_tab = request.args.get("tab", "permissions")
-    if active_tab not in ["permissions", "project_access"]:
+    if active_tab not in ["permissions", "project_access", "account_info"]:
         active_tab = "permissions"
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     projects = conn.execute("SELECT id, name, customer_name, customer_address FROM projects ORDER BY name").fetchall()

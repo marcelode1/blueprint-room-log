@@ -16,7 +16,37 @@
     <div class="settingsTabs desktop-only">
         <button type="button" class="{% if active_tab != 'permissions' %}btn-secondary{% endif %}" data-settings-tab="permissions">User Permissions</button>
         <button type="button" class="{% if active_tab != 'project_access' %}btn-secondary{% endif %}" data-settings-tab="projectAccess">Project Access</button>
+        <button type="button" class="{% if active_tab != 'account_info' %}btn-secondary{% endif %}" data-settings-tab="accountInfo">Account Info</button>
     </div>
+</div>
+
+<div class="card settingsPanel desktop-only {% if active_tab == 'account_info' %}active{% endif %}" id="accountInfoPanel">
+    <h3>Account Info</h3>
+    <p class="muted">This information is used when sending company account details to suppliers.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="account_info">
+        <div class="grid">
+            <div>
+                <label>Company Name</label>
+                <input name="company_name" value="{{ get_app_setting('company_name', 'ProjectONus') }}" required>
+            </div>
+            <div>
+                <label>Contact Name</label>
+                <input name="company_contact_name" value="{{ get_app_setting('company_contact_name') }}">
+            </div>
+            <div>
+                <label>Phone Number</label>
+                <input name="company_phone" type="tel" value="{{ get_app_setting('company_phone') }}">
+            </div>
+            <div>
+                <label>Email</label>
+                <input name="company_email" type="email" value="{{ get_app_setting('company_email') }}">
+            </div>
+        </div>
+        <label>Company Address</label>
+        <textarea name="company_address" rows="3">{{ get_app_setting('company_address') }}</textarea>
+        <button type="submit">Save Account Info</button>
+    </form>
 </div>
 
 <div class="card">
@@ -142,13 +172,17 @@
 
 <script>
 const tabButtons=document.querySelectorAll("[data-settings-tab]");
-const permissionsPanel=document.getElementById("permissionsPanel");
-const projectAccessPanel=document.getElementById("projectAccessPanel");
+const settingsPanels={
+    permissions:document.getElementById("permissionsPanel"),
+    projectAccess:document.getElementById("projectAccessPanel"),
+    accountInfo:document.getElementById("accountInfoPanel")
+};
 tabButtons.forEach(button=>{
     button.addEventListener("click",()=>{
-        const showProjects=button.dataset.settingsTab==="projectAccess";
-        permissionsPanel.classList.toggle("active",!showProjects);
-        projectAccessPanel.classList.toggle("active",showProjects);
+        const activeTab=button.dataset.settingsTab;
+        Object.entries(settingsPanels).forEach(([key,panel])=>{
+            if(panel)panel.classList.toggle("active",key===activeTab);
+        });
         tabButtons.forEach(tab=>tab.classList.add("btn-secondary"));
         button.classList.remove("btn-secondary");
     });
