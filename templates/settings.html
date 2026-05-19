@@ -43,8 +43,24 @@
                 <input name="company_email" type="email" value="{{ get_app_setting('company_email') }}">
             </div>
         </div>
-        <label>Company Address</label>
-        <textarea name="company_address" rows="3">{{ get_app_setting('company_address') }}</textarea>
+        <div class="grid">
+            <div>
+                <label>Street Name and Number</label>
+                <input name="company_street_address" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
+            </div>
+            <div>
+                <label>City</label>
+                <input name="company_city" value="{{ get_app_setting('company_city') }}">
+            </div>
+            <div>
+                <label>State</label>
+                <input name="company_state" value="{{ get_app_setting('company_state') }}">
+            </div>
+            <div>
+                <label>Zip Code</label>
+                <input name="company_zip_code" value="{{ get_app_setting('company_zip_code') }}">
+            </div>
+        </div>
         <button type="submit">Save Account Info</button>
     </form>
 </div>

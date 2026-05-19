@@ -1482,10 +1482,30 @@ def setting_enabled(key, default=True):
     return get_app_setting(key, default_value) == "1"
 
 
+def format_company_address(street="", city="", state="", zip_code="", fallback=""):
+    street = (street or "").strip()
+    city = (city or "").strip()
+    state = (state or "").strip()
+    zip_code = (zip_code or "").strip()
+    city_state_zip = " ".join(part for part in [state, zip_code] if part).strip()
+    locality = ", ".join(part for part in [city, city_state_zip] if part).strip()
+    address = ", ".join(part for part in [street, locality] if part).strip()
+    return address or (fallback or "").strip()
+
+
 def account_info():
+    street = get_app_setting("company_street_address", "").strip()
+    city = get_app_setting("company_city", "").strip()
+    state = get_app_setting("company_state", "").strip()
+    zip_code = get_app_setting("company_zip_code", "").strip()
+    legacy_address = get_app_setting("company_address", "").strip()
     return {
         "company_name": get_app_setting("company_name", "ProjectONus").strip(),
-        "company_address": get_app_setting("company_address", "").strip(),
+        "company_street_address": street,
+        "company_city": city,
+        "company_state": state,
+        "company_zip_code": zip_code,
+        "company_address": format_company_address(street, city, state, zip_code, legacy_address),
         "company_contact_name": get_app_setting("company_contact_name", "").strip(),
         "company_phone": get_app_setting("company_phone", "").strip(),
         "company_email": get_app_setting("company_email", "").strip(),
@@ -6893,8 +6913,17 @@ def settings():
             flash("Email notification preferences updated.")
         elif action == "account_info":
             redirect_tab = "account_info"
-            for key in ["company_name", "company_address", "company_contact_name", "company_phone", "company_email"]:
+            for key in ["company_name", "company_street_address", "company_city", "company_state", "company_zip_code", "company_contact_name", "company_phone", "company_email"]:
                 set_app_setting(key, request.form.get(key, "").strip())
+            set_app_setting(
+                "company_address",
+                format_company_address(
+                    request.form.get("company_street_address", ""),
+                    request.form.get("company_city", ""),
+                    request.form.get("company_state", ""),
+                    request.form.get("company_zip_code", "")
+                )
+            )
             flash("Account information saved.")
         elif action == "dtools_cloud":
             set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
