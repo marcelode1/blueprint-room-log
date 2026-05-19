@@ -3033,11 +3033,69 @@ def desktop_home():
 @app.route("/mobile")
 @login_required
 def mobile_home():
-    q = request.args.get("q", "").strip()
     conn = db()
-    projects = fetch_visible_projects(conn, q)
+    project_count = len(fetch_visible_projects(conn))
     conn.close()
-    return render_template("mobile_home.html", projects=projects, q=q)
+    return render_template("mobile_home.html", project_count=project_count)
+
+
+@app.route("/mobile/projects")
+@login_required
+def mobile_projects():
+    conn = db()
+    projects = fetch_visible_projects(conn)
+    conn.close()
+    return render_template("mobile_projects.html", projects=projects)
+
+
+@app.route("/mobile/projects/search")
+@login_required
+def mobile_project_search():
+    q = request.args.get("q", "").strip()
+    projects = []
+    if q:
+        conn = db()
+        projects = fetch_visible_projects(conn, q)
+        conn.close()
+    return render_template("mobile_project_search.html", projects=projects, q=q)
+
+
+@app.route("/mobile/inventory")
+@login_required
+def mobile_inventory():
+    if not can_view_inventory():
+        flash("You do not have permission to view inventory.")
+        return redirect(url_for("mobile_home"))
+    conn = db()
+    selected_project_id = request.args.get("project_id", type=int)
+    if selected_project_id and not user_can_access_project(conn, selected_project_id):
+        selected_project_id = None
+        flash("You do not have access to that project.")
+    selected_room_id = request.args.get("room_id", type=int)
+    selected_status = request.args.get("status", "")
+    if selected_status not in INVENTORY_STATUS_LABELS:
+        selected_status = ""
+    q = request.args.get("q", "").strip()
+    items = fetch_inventory_items(conn, {
+        "q": q,
+        "status": selected_status,
+        "project_id": selected_project_id,
+        "room_id": selected_room_id
+    })
+    projects = fetch_inventory_projects(conn)
+    rooms = fetch_inventory_rooms(conn)
+    conn.close()
+    return render_template(
+        "mobile_inventory.html",
+        items=items,
+        projects=projects,
+        rooms=rooms,
+        q=q,
+        selected_status=selected_status,
+        selected_project_id=selected_project_id,
+        selected_room_id=selected_room_id,
+        status_options=INVENTORY_STATUS_LABELS,
+    )
 
 
 @app.route("/mobile/time-clock", methods=["GET", "POST"])

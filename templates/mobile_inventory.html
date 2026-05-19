@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Inventory</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_home') }}">Back to Mobile Home</a>
+    <form method="get" action="{{ url_for('mobile_inventory') }}">
+        <label>Search Inventory</label>
+        <input name="q" value="{{ q or '' }}" placeholder="Item, model, brand, project, room, supplier">
+        <label>Project</label>
+        <select name="project_id">
+            <option value="">All Projects</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+        <label>Room</label>
+        <select name="room_id">
+            <option value="">All Rooms</option>
+            {% for r in rooms %}
+                <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+            {% endfor %}
+        </select>
+        <label>Status</label>
+        <select name="status">
+            <option value="">All Statuses</option>
+            {% for value, label in status_options.items() %}
+                <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Show Inventory</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Items</h3>
+    {% for item in items %}
+        <div class="card inventoryCard inventory-{{ item.status }}">
+            <strong>{{ item.item_name }}</strong>
+            <p><strong>Qty:</strong> {{ item.quantity }}<br><strong>Model #:</strong> {{ item.item_model or '-' }}<br><strong>Brand:</strong> {{ item.brand or '-' }}</p>
+            <p><strong>Project:</strong> {{ item.project_name or '-' }}<br><strong>Room:</strong> {{ item.room_name or 'Project general' }}</p>
+            {% if item.supplier_name %}
+                <p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>
+            {% endif %}
+            <span class="statusBadge">{{ inventory_status_label(item.status) }}</span>
+            {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
+            {% if item.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
+        </div>
+    {% else %}
+        <p>No inventory found.</p>
+    {% endfor %}
+</div>
+<style>
+.inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
+.inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
+</style>
+{% endblock %}

@@ -1,40 +1,23 @@
-
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
+<div class="card mobileHomeMenu">
     <h1>ProjectONus Mobile</h1>
-    <p>Field version for projects, rooms, pictures, comments, and audio.</p>
-    {% set mobile_unread_count = unread_notification_count() %}
     {% if is_main_admin() %}
-        <a class="btn-link" href="#projects">Projects</a>
-        <a class="btn-link" href="{{ url_for('new_project') }}">Create Project</a>
-        <a class="btn-link" href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
-        <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
+        <a class="btn-link" href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a class="btn-link" href="{{ url_for('my_tasks') }}">Tasks</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% else %}
-        <a class="btn-link" href="#projects">Projects</a>
-        <a class="btn-link" href="{{ url_for('my_tasks', mode='search') }}">My Tasks</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not mobile_unread_count %}display:none;{% endif %}">({{ mobile_unread_count }})</span></a>
+        <a class="btn-link" href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a class="btn-link" href="{{ url_for('my_tasks') }}">Tasks</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% endif %}
 </div>
-<div class="card" id="search">
-    <h2>Search Projects</h2>
-    <form method="get" action="{{ url_for('mobile_home') }}">
-        <input name="q" value="{{ q or '' }}" placeholder="Search project, customer, or address">
-        <button type="submit">Search</button>
-    </form>
-</div>
-<div class="card" id="projects">
-    <h2>Projects</h2>
-    {% for p in projects %}
-        <div class="card">
-            <h3>{{ p.name }}</h3>
-            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
-            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
-            <a class="btn-link" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Project</a>
-        </div>
-    {% else %}
-        <p>No projects found.</p>
-    {% endfor %}
-</div>
+<style>
+.mobileHomeMenu{display:grid;gap:10px}
+.mobileHomeMenu .btn-link{margin:0}
+</style>
 {% endblock %}

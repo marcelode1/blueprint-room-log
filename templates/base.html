@@ -71,13 +71,19 @@
 </header>
 {% if session.get("user_id") %}
 <div class="mobileMenuPanel" id="mobileMenuPanel">
-    <a href="{{ url_for('index') }}">Home</a>
-    <a href="{{ url_for('index') }}#projects">Projects</a>
-    <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
-    {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
-    {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
-    <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
-    {% if is_main_admin() %}
+    {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a href="{{ url_for('my_tasks') }}">Tasks</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+        <a href="{{ url_for('index') }}">Home</a>
+        <a href="{{ url_for('index') }}#projects">Projects</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+        {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+        <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('users') }}">Users</a>
         <a href="{{ url_for('suppliers') }}">Suppliers</a>
         <a href="{{ url_for('settings') }}">Settings</a>
@@ -90,10 +96,10 @@
         {% else %}
             <a href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
         {% endif %}
+        <a href="{{ url_for('privacy') }}">Privacy</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+        <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
     {% endif %}
-    <a href="{{ url_for('privacy') }}">Privacy</a>
-    <a href="{{ url_for('logout') }}">Logout</a>
-    <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
 </div>
 {% endif %}
 <main>
@@ -235,14 +241,21 @@
 {% endif %}
 {% if session.get("user_id") %}
 <nav class="bottom-nav">
-    <a href="{{ url_for('index') }}">Projects</a>
-    <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
-    {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
-    {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time</a>{% endif %}
-    <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
-    {% if is_main_admin() %}<a href="{{ url_for('new_project') }}">New</a>{% endif %}
-    {% if is_main_admin() %}<a href="{{ url_for('team_map') }}">Team</a>{% endif %}
-    <a href="{{ url_for('logout') }}">Logout</a>
+    {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a href="{{ url_for('my_tasks') }}">Tasks</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+    {% else %}
+        <a href="{{ url_for('index') }}">Projects</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+        {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+        <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+        <a href="{{ url_for('new_project') }}">New</a>
+        <a href="{{ url_for('team_map') }}">Team</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    {% endif %}
 </nav>
 {% endif %}
 <script>
