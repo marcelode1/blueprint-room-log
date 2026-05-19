@@ -2852,6 +2852,34 @@ def task_scheduled_in_range(task, period, selected_date):
     return start <= scheduled < end
 
 
+def task_scheduled_date_value(task):
+    raw = str((task or {}).get("task_start_date") or (task or {}).get("task_date") or "").strip()
+    if not raw:
+        return None
+    for fmt in ["%Y-%m-%d", "%m/%d/%Y"]:
+        try:
+            return datetime.strptime(raw[:10] if fmt == "%Y-%m-%d" else raw, fmt).date()
+        except Exception:
+            pass
+    dt = parse_iso_datetime(raw)
+    if dt:
+        return dt.astimezone(app_timezone()).date()
+    return None
+
+
+def task_active_sort_key(task):
+    scheduled_date = task_scheduled_date_value(task) or local_now().date()
+    start_time = str((task or {}).get("task_start_time") or "").strip()
+    parsed_time = "23:59"
+    for fmt in ["%H:%M", "%H:%M:%S"]:
+        try:
+            parsed_time = datetime.strptime(start_time, fmt).strftime("%H:%M")
+            break
+        except Exception:
+            pass
+    return (scheduled_date, parsed_time, (task or {}).get("created_at") or "", (task or {}).get("id") or 0)
+
+
 def current_clock_in_event(conn, user_id=None):
     uid = user_id or session.get("user_id")
     if not uid:
@@ -5601,10 +5629,16 @@ def my_tasks():
                 LEFT JOIN users ON tasks.assigned_user_id = users.id
                 JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
                 WHERE tasks.assigned_user_id = %s AND tasks.status <> 'done'
-                ORDER BY CASE WHEN tasks.status = 'open' THEN 0 ELSE 1 END, tasks.task_date DESC, tasks.created_at DESC
+                ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
                 """,
                 (session.get("user_id"), session.get("user_id"))
             ).fetchall()
+            today = local_now().date()
+            tasks = [
+                t for t in tasks
+                if (task_scheduled_date_value(t) or today) <= today
+            ]
+            tasks = sorted(tasks, key=task_active_sort_key)
     tasks = load_task_details(conn, tasks, selected_room_id)
     tasks_by_room = {}
     if task_mode == "search" and selected_project_id:

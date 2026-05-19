@@ -8,7 +8,7 @@
             <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         </div>
     {% else %}
-        <h2>My Tasks</h2>
+        <h2>{% if task_mode == "search" %}My Tasks{% else %}Today's Tasks{% endif %}</h2>
         <div class="grid">
             <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search My Tasks</a>
         </div>
@@ -227,7 +227,7 @@
         {% elif not is_main_admin() and task_mode == "search" and not selected_project_id and not selected_supplier_id and not task_date_filter %}
             <p>Choose a project, supplier, or task date to search your tasks.</p>
         {% elif not is_main_admin() and task_mode != "search" %}
-            <p>No active tasks. Use Search My Tasks to view completed or older tasks.</p>
+            <p>No tasks due today or overdue. Use Search My Tasks to view other tasks.</p>
         {% else %}
             <p>No tasks found.</p>
         {% endif %}
