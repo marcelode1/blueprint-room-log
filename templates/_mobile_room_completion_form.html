@@ -1,8 +1,7 @@
 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
     <input type="hidden" name="next" value="{{ request.full_path }}">
     <input type="hidden" name="completion_room_id" value="{{ r.id }}">
-    <h4>Room Task Status</h4>
-    <label>Comment</label>
+    <label>Completion Comment</label>
     <textarea name="completion_comment" rows="3"></textarea>
     <div class="completionBlocks">
         <div class="completionBlock">

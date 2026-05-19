@@ -123,28 +123,24 @@
                             <p class="muted">{{ task_schedule_text(t) }} - {{ 'Done for this room' if room_state.done or t.status == 'done' else 'Open for this room' }}</p>
                             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
                             {% set task_info = task_instruction_text(t) %}
-                            {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
+                            {% if task_info %}<p><strong>Task Given / Comment:</strong><br>{{ task_info }}</p>{% endif %}
                             {% include "_supplier_task_info.html" %}
                             <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or t.status == 'done' %}done{% endif %}">{{ 'Done' if room_state.done or t.status == 'done' else 'Open' }}</span></p>
                             {% set room_media = task_room_attachments(t, r.id) %}
-                            {% set media_state = namespace(has_photo=false) %}
                             {% if room_media %}
                                 <div class="taskMediaList">
                                     {% for attachment in room_media %}
                                         <div class="taskMediaItem">
                                             {% if attachment.comment %}
-                                                <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
+                                                <div class="taskMediaComment"><strong>Task Given / Comment:</strong> {{ attachment.comment }}</div>
                                             {% endif %}
                                             <p class="muted">
                                                 {{ attachment.original_filename or 'Task file' }}
                                                 {% if attachment.created_by_name %} - Added by {{ attachment.created_by_name }}{% endif %}
                                             </p>
                                             {% if attachment.file_type == 'photo' %}
-                                                {% set media_state.has_photo = true %}
+                                                <p><strong>Picture</strong></p>
                                                 <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                                                {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
-                                                    {% include "_mobile_room_completion_form.html" %}
-                                                {% endif %}
                                             {% else %}
                                                 <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
                                             {% endif %}
@@ -152,14 +148,14 @@
                                     {% endfor %}
                                 </div>
                             {% else %}
-                                <p class="muted">No room picture, upload, or audio from admin yet.</p>
+                                <p class="muted"><strong>Picture:</strong> No picture, upload, or audio from admin yet.</p>
                             {% endif %}
                             {% if t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                                     <button type="submit">Received</button>
                                 </form>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and not media_state.has_photo and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                            {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                 {% include "_mobile_room_completion_form.html" %}
                             {% endif %}
                         </div>
