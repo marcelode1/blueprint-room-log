@@ -167,6 +167,39 @@ def safe_next_url(default_endpoint="index", **values):
     return url_for(default_endpoint, **values)
 
 
+def mobile_time_clock_return_url(project_id):
+    fallback = url_for("mobile_project", project_id=project_id)
+    clock_paths = {
+        url_for("mobile_time_clock", project_id=project_id),
+        url_for("mobile_time_clock_legacy"),
+    }
+
+    def local_target(value):
+        value = (value or "").strip()
+        if not value:
+            return ""
+        if value.startswith(request.host_url):
+            parsed = urllib.parse.urlparse(value)
+            value = urllib.parse.urlunparse(("", "", parsed.path, "", parsed.query, parsed.fragment))
+        if value.startswith("/") and not value.startswith("//"):
+            return value
+        return ""
+
+    for value in [request.form.get("next"), request.args.get("next"), request.referrer]:
+        target = local_target(value)
+        if not target:
+            continue
+        parsed = urllib.parse.urlparse(target)
+        if parsed.path in clock_paths:
+            nested_next = urllib.parse.parse_qs(parsed.query).get("next", [""])[0]
+            nested_target = local_target(nested_next)
+            if nested_target and urllib.parse.urlparse(nested_target).path not in clock_paths:
+                return nested_target
+            continue
+        return target
+    return fallback
+
+
 def build_full_address(street, city, state, zip_code):
     city_state = ", ".join(part for part in [city, state] if part)
     if zip_code:
@@ -3200,19 +3233,21 @@ def mobile_time_clock(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
 
+    next_url = mobile_time_clock_return_url(project_id)
+
     if request.method == "POST":
         event_type = request.form.get("event_type")
         if event_type not in ["check_in", "check_out"]:
             conn.close()
             flash("Choose clock in or clock out.")
-            return redirect(url_for("mobile_time_clock", project_id=project_id))
+            return redirect(url_for("mobile_time_clock", project_id=project_id, next=next_url))
         try:
             latitude = float(request.form.get("latitude", ""))
             longitude = float(request.form.get("longitude", ""))
         except Exception:
             conn.close()
             flash("GPS location is required. Turn on Location Services/GPS and try again.")
-            return redirect(url_for("mobile_time_clock", project_id=project_id))
+            return redirect(url_for("mobile_time_clock", project_id=project_id, next=next_url))
         address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
         event_timezone = timezone_from_location(
             latitude,
@@ -3227,7 +3262,7 @@ def mobile_time_clock(project_id):
         notify_admins_of_attendance(conn, project, event_type, latitude, longitude, address, created_at, event_timezone)
         conn.close()
         flash(("Clock in" if event_type == "check_in" else "Clock out") + " recorded.")
-        return redirect(url_for("mobile_time_clock", project_id=project_id))
+        return redirect(next_url)
 
     events = conn.execute(
         """
@@ -3241,7 +3276,7 @@ def mobile_time_clock(project_id):
         (session.get("user_id"), project_id)
     ).fetchall()
     conn.close()
-    return render_template("mobile_time_clock.html", project=project, events=events)
+    return render_template("mobile_time_clock.html", project=project, events=events, next_url=next_url)
 
 
 @app.route("/mobile/location/status")
@@ -5315,6 +5350,73 @@ def update_task_room_status(task_id, room_id):
     return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
 
 
+@app.route("/tasks/<int:task_id>/supplier-items/<int:item_id>/picked-up", methods=["POST"])
+@login_required
+def pickup_task_supplier_item(task_id, item_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(next_url)
+
+    item = conn.execute(
+        """
+        SELECT *
+        FROM inventory_items
+        WHERE id = %s
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM task_supplier_items
+                  WHERE task_supplier_items.task_id = %s
+                    AND task_supplier_items.inventory_item_id = inventory_items.id
+              )
+              OR inventory_items.id = (
+                  SELECT supplier_inventory_item_id
+                  FROM tasks
+                  WHERE tasks.id = %s
+                    AND supplier_inventory_item_id IS NOT NULL
+              )
+          )
+        """,
+        (item_id, task_id, task_id)
+    ).fetchone()
+    if not item:
+        conn.close()
+        flash("Supplier material was not found for this task.")
+        return redirect(next_url)
+    if item.get("status") == "needs_purchase":
+        now = utc_now_iso()
+        conn.execute(
+            """
+            UPDATE inventory_items
+            SET status = 'available',
+                location_type = 'job_site',
+                purchased_by = COALESCE(purchased_by, %s),
+                purchased_at = COALESCE(purchased_at, %s),
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (session.get("user_id"), now, now, item_id)
+        )
+        conn.commit()
+        flash("Material marked picked up and available.")
+    else:
+        flash("Material is already marked picked up.")
+    conn.close()
+    return redirect(next_url)
+
+
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
 @login_required
 def complete_task(task_id):
@@ -5401,23 +5503,6 @@ def complete_task(task_id):
         f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
         tuple(params)
     )
-    if task.get("supplier_id") and mark_entire_task_done:
-        conn.execute(
-            """
-            UPDATE inventory_items
-            SET status = 'available',
-                purchased_by = COALESCE(purchased_by, %s),
-                purchased_at = COALESCE(purchased_at, %s),
-                updated_at = %s
-            WHERE id IN (
-                SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
-                UNION
-                SELECT supplier_inventory_item_id FROM tasks WHERE id = %s AND supplier_inventory_item_id IS NOT NULL
-            )
-              AND status = 'needs_purchase'
-            """,
-            (session.get("user_id"), utc_now_iso(), utc_now_iso(), task_id, task_id)
-        )
     conn.commit()
     notification_ok = True
     try:

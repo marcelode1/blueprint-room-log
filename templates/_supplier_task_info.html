@@ -1,6 +1,8 @@
 {% set supplier = t.get('_supplier') %}
 {% set supplier_item = t.get('_supplier_inventory_item') %}
 {% set supplier_items = t.get('_supplier_inventory_items', []) %}
+{% set can_pickup_supplier_item = is_main_admin() or t.assigned_user_id == session.get("user_id") %}
+{% set supplier_task_return_url = url_for('my_tasks', task_id=t.id) ~ '#task-' ~ t.id %}
 {% if supplier %}
     <div class="supplierTaskInfo">
         <h4>Supplier</h4>
@@ -19,6 +21,14 @@
                     Pickup: {{ item.item_date or '-' }}{% if item.supplier_pickup_time %} {{ item.supplier_pickup_time }}{% endif %}<br>
                     Project: {{ item.project_name or '-' }}{% if item.room_name %}<br>Room: {{ item.room_name }}{% endif %}<br>
                     Status: {{ inventory_status_label(item.status) }}
+                    {% if can_pickup_supplier_item and item.status == 'needs_purchase' %}
+                        <form method="post" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                            <label class="supplierPickupCheck"><input type="checkbox" onchange="this.form.submit()"> Picked up</label>
+                        </form>
+                    {% else %}
+                        <label class="supplierPickupCheck supplierPickupCheckReadOnly"><input type="checkbox" disabled {% if item.status in ['available', 'used'] %}checked{% endif %}> Picked up</label>
+                    {% endif %}
                 </div>
             {% endfor %}
             </div>
@@ -26,12 +36,20 @@
             <p><strong>Material:</strong> {{ supplier_item.item_name }}<br>
             <strong>Qty:</strong> {{ supplier_item.quantity }}{% if supplier_item.brand %}<br><strong>Brand:</strong> {{ supplier_item.brand }}{% endif %}{% if supplier_item.item_model %}<br><strong>Model #:</strong> {{ supplier_item.item_model }}{% endif %}<br>
             <strong>Status:</strong> {{ inventory_status_label(supplier_item.status) }}</p>
+            {% if can_pickup_supplier_item and supplier_item.status == 'needs_purchase' %}
+                <form method="post" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=supplier_item.id) }}">
+                    <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                    <label class="supplierPickupCheck"><input type="checkbox" onchange="this.form.submit()"> Picked up</label>
+                </form>
+            {% else %}
+                <label class="supplierPickupCheck supplierPickupCheckReadOnly"><input type="checkbox" disabled {% if supplier_item.status in ['available', 'used'] %}checked{% endif %}> Picked up</label>
+            {% endif %}
         {% endif %}
         {% if supplier.address %}
             <p><strong>Supplier Address:</strong> {{ supplier.address }}</p>
             <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(supplier.address) }}">Open Supplier Route</a>
         {% endif %}
-        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id) }}">Clock In / Clock Out</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=supplier_task_return_url) }}">Clock In / Clock Out</a>
     </div>
 {% endif %}
 
@@ -40,4 +58,7 @@
 .supplierTaskInfo h4{margin:0 0 8px}
 .supplierMaterialList{display:grid;gap:8px;margin:10px 0}
 .supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.25)}
+.supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0 0;font-weight:800;background:rgba(255,255,255,.18)}
+.supplierPickupCheck input{width:auto;min-height:auto}
+.supplierPickupCheckReadOnly{opacity:.8}
 </style>

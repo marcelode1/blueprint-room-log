@@ -192,14 +192,22 @@
                 </form>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
-                <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
+                <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                    {% if t.require_picture or t.allow_picture_upload %}
-                        <label>Take Picture</label><input name="completion_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-                        {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
+                    {% if t.require_picture or t.allow_picture_upload or t.allow_audio %}
+                        <div class="completionBlocks">
+                            <div class="completionBlock">
+                                <input type="hidden" name="completion_attachment_indexes" value="0">
+                                {% if t.require_picture or t.allow_picture_upload %}
+                                    <label>Take Picture</label><input name="completion_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_attachment_0_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
+                                {% endif %}
+                                {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_attachment_0_audio" type="file" accept="audio/*">{% endif %}
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
                     {% endif %}
-                    {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
                     <button type="submit">Mark Task Done</button>
                 </form>
             {% endif %}
