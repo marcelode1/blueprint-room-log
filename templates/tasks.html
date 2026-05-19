@@ -111,7 +111,6 @@
             {% if room_tasks and (not selected_room_id or selected_room_id == r.id) %}
                 <div class="card mobileRoomTaskGroup">
                     <h3>{{ r.name }}</h3>
-                    <h4>Room Checklist</h4>
                     {% for t in room_tasks %}
                         {% set room_state = namespace(done=false) %}
                         {% for status in t.get('_room_statuses', []) %}
@@ -143,7 +142,7 @@
                                             {% if attachment.file_type == 'photo' %}
                                                 {% set media_state.has_photo = true %}
                                                 <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                                                {% if t.status != 'done' and not room_state.done and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                                                {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                                     {% include "_mobile_room_completion_form.html" %}
                                                 {% endif %}
                                             {% else %}
@@ -160,7 +159,7 @@
                                     <button type="submit">Received</button>
                                 </form>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and not media_state.has_photo and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                            {% if t.status != 'done' and not room_state.done and not media_state.has_photo and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                 {% include "_mobile_room_completion_form.html" %}
                             {% endif %}
                         </div>

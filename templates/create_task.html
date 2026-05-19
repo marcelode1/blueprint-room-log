@@ -152,7 +152,8 @@
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
 .modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-@media(max-width:760px){.modalActions{grid-template-columns:1fr}.mainRoomField[data-supplier-mode="0"]{display:none}}
+.mainRoomField[data-supplier-mode="0"]{display:none}
+@media(max-width:760px){.modalActions{grid-template-columns:1fr}}
 </style>
 <script>
 (function(){

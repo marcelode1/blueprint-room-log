@@ -27,12 +27,47 @@
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% set task_info = task_instruction_text(t) %}
-            {% if task_info %}<p>{{ task_info }}</p>{% endif %}
+            {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
-            {% include "_task_media.html" %}
+            {% set room_state = namespace(done=false) %}
+            {% for status in t.get('_room_statuses', []) %}
+                {% if status.room_id == room.id and status.is_done %}
+                    {% set room_state.done = true %}
+                {% endif %}
+            {% endfor %}
+            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or t.status == 'done' %}done{% endif %}">{{ 'Done' if room_state.done or t.status == 'done' else 'Open' }}</span></p>
+            {% set room_media = task_room_attachments(t, room.id) %}
+            {% set media_state = namespace(has_photo=false) %}
+            {% if room_media %}
+                <div class="taskMediaList">
+                    {% for attachment in room_media %}
+                        <div class="taskMediaItem">
+                            {% if attachment.comment %}
+                                <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
+                            {% endif %}
+                            <p class="muted">
+                                {{ attachment.original_filename or 'Task file' }}
+                                {% if attachment.created_by_name %} - Added by {{ attachment.created_by_name }}{% endif %}
+                            </p>
+                            {% if attachment.file_type == 'photo' %}
+                                {% set media_state.has_photo = true %}
+                                <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                                {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                                    {% set r = room %}
+                                    {% include "_mobile_room_completion_form.html" %}
+                                {% endif %}
+                            {% else %}
+                                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p class="muted">No room picture, upload, or audio from admin yet.</p>
+            {% endif %}
             {% if is_main_admin() %}
             <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
-            <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
+            <form class="desktop-only" method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
                 <button type="submit" class="btn-danger">Delete Task</button>
             </form>
@@ -45,27 +80,9 @@
                 <button type="submit">Received</button>
             </form>
             {% endif %}
-            {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
-            <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
-                {% if t.allow_comment %}
-                    <label>Completion Comment</label>
-                    <textarea name="completion_comment" id="taskComment{{ t.id }}" rows="3"></textarea>
-                    <button type="button" class="btn-secondary voiceTaskBtn" data-target="taskComment{{ t.id }}">Voice Comment</button>
-                {% endif %}
-                {% if t.require_picture or t.allow_picture_upload %}
-                    <label>Take Picture</label>
-                    <input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-                    {% if t.allow_picture_upload %}
-                    <label>Upload Picture</label>
-                    <input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-                    {% endif %}
-                {% endif %}
-                {% if t.allow_audio %}
-                    <label>Voice / Audio</label>
-                    <input name="completion_audio" type="file" accept="audio/*">
-                {% endif %}
-                <button type="submit">Mark Task Done</button>
-            </form>
+            {% if t.status != 'done' and not room_state.done and not media_state.has_photo and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                {% set r = room %}
+                {% include "_mobile_room_completion_form.html" %}
             {% endif %}
             {% if t.completion_comment %}<p>{{ t.completion_comment }}</p>{% endif %}
             {% if t.completion_photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">{% endif %}
@@ -137,8 +154,20 @@
     {% endfor %}
 </div>
 <style>
-.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
+<template id="completionBlockTemplate">
+    <div class="completionBlock">
+        <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
+        <label>Take Picture</label>
+        <input name="completion_attachment___INDEX___camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+        <label>Upload Picture</label>
+        <input name="completion_attachment___INDEX___photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
+        <label>Voice / Audio</label>
+        <input name="completion_attachment___INDEX___audio" type="file" accept="audio/*">
+        <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
+    </div>
+</template>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
     <div class="drawActions">
@@ -148,10 +177,29 @@
     </div>
 </div>
 <script>
+document.addEventListener("click",event=>{
+    const addButton=event.target.closest(".addCompletionBlock");
+    if(addButton){
+        const form=addButton.closest(".mobileRoomCompletionForm");
+        const blocks=form&&form.querySelector(".completionBlocks");
+        const template=document.getElementById("completionBlockTemplate");
+        if(!form||!blocks||!template)return;
+        const nextIndex=parseInt(form.dataset.nextIndex||"1",10);
+        form.dataset.nextIndex=String(nextIndex+1);
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(nextIndex)).trim();
+        blocks.appendChild(wrapper.firstElementChild);
+    }
+    const removeButton=event.target.closest(".removeCompletionBlock");
+    if(removeButton){
+        const block=removeButton.closest(".completionBlock");
+        if(block)block.remove();
+    }
+});
 function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
-document.querySelectorAll(".annotatablePhoto").forEach(el=>el.addEventListener("change",async()=>{await replaceWithCompressed(el);openDrawModal(el)}));
+document.addEventListener("change",async event=>{if(event.target&&event.target.classList&&event.target.classList.contains("annotatablePhoto")){await replaceWithCompressed(event.target);openDrawModal(event.target)}});
 let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
 function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}
 function drawMove(e){if(!isDrawing)return;e.preventDefault();const p=canvasPoint(e);drawCtx.strokeStyle="#ef4444";drawCtx.lineWidth=Math.max(6,drawCanvas.width/180);drawCtx.lineCap="round";drawCtx.beginPath();drawCtx.moveTo(lastPoint.x,lastPoint.y);drawCtx.lineTo(p.x,p.y);drawCtx.stroke();lastPoint=p}
