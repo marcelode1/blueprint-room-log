@@ -1518,7 +1518,7 @@ def vendor_account_email_body(supplier, info, attachment_name=""):
     lines = [
         f"Dear {greeting_name},",
         "",
-        f"We at {company_name} are very happy to be part of your vendor team. We look forward to doing many projects and building a strong, long-term business relationship together.",
+        f"We at {company_name} are very happy to be part of your dealer/reseller group. We look forward to doing many projects and building a strong, long-term business relationship together.",
         "",
         "For your records, please find our company account information below:",
         "",
