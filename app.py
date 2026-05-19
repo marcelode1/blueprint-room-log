@@ -493,6 +493,8 @@ def init_db():
         used_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         used_at TEXT,
         used_note TEXT,
+        pickup_comment TEXT,
+        supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE,
         picture_file TEXT,
         supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
         purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -622,6 +624,7 @@ def init_db():
         id SERIAL PRIMARY KEY,
         task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
         file_type TEXT NOT NULL,
         storage_path TEXT NOT NULL,
         original_filename TEXT,
@@ -792,6 +795,8 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS used_note TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pickup_comment TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS picture_file TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
@@ -802,6 +807,7 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS dtools_cloud_project_ref TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
+        "ALTER TABLE task_attachments ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
         INSERT INTO inventory_items
@@ -1089,6 +1095,42 @@ def collect_completion_uploads(conn, project_id, default_room_id=None):
     return None, uploads
 
 
+def collect_supplier_item_photo_uploads(item):
+    uploads = []
+    indexes = [idx for idx in request.form.getlist("supplier_item_attachment_indexes") if str(idx).strip()]
+    if not indexes:
+        indexes = ["0"]
+
+    def add_upload(field_name):
+        uploaded = request.files.get(field_name)
+        if not uploaded or not uploaded.filename:
+            return None
+        if not allowed_photo(uploaded.filename):
+            return "Please upload a valid supplier material picture."
+        data = uploaded.read()
+        if not data:
+            return None
+        display_name = task_attachment_display_filename(uploaded, field_name, "photo")
+        idx = field_name.replace("supplier_item_attachment_", "").replace("_camera", "")
+        comment = request.form.get(f"supplier_item_attachment_{idx}_comment", "").strip()
+        uploads.append({
+            "room_id": item.get("room_id"),
+            "inventory_item_id": item.get("id"),
+            "file_type": "photo",
+            "data": data,
+            "filename": display_name,
+            "content_type": upload_content_type(display_name, uploaded.content_type or "image/jpeg"),
+            "comment": comment,
+        })
+        return None
+
+    for idx in indexes:
+        error = add_upload(f"supplier_item_attachment_{idx}_camera")
+        if error:
+            return error, []
+    return None, uploads
+
+
 def insert_task_attachments(conn, task_id, uploads):
     inserted = []
     first_photo = None
@@ -1099,13 +1141,14 @@ def insert_task_attachments(conn, task_id, uploads):
         attachment = conn.execute(
             """
             INSERT INTO task_attachments
-            (task_id, room_id, file_type, storage_path, original_filename, comment, created_by, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (task_id, room_id, inventory_item_id, file_type, storage_path, original_filename, comment, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
                 task_id,
                 item.get("room_id"),
+                item.get("inventory_item_id"),
                 item["file_type"],
                 storage_path,
                 item["filename"],
@@ -1165,10 +1208,18 @@ def load_task_details(conn, tasks, room_id=None):
     for task_row in tasks:
         task = dict(task_row)
         attachments = load_task_attachments(conn, task["id"], room_id)
-        task["_attachments"] = attachments
+        supplier_item_attachments = {}
+        non_item_attachments = []
+        for attachment in attachments:
+            if attachment.get("inventory_item_id"):
+                supplier_item_attachments.setdefault(attachment["inventory_item_id"], []).append(attachment)
+            else:
+                non_item_attachments.append(attachment)
+        task["_attachments"] = non_item_attachments
+        task["_supplier_item_attachments"] = supplier_item_attachments
         attachments_by_room = {}
         global_attachments = []
-        for attachment in attachments:
+        for attachment in non_item_attachments:
             if attachment.get("room_id"):
                 attachments_by_room.setdefault(attachment["room_id"], []).append(attachment)
             else:
@@ -1203,7 +1254,7 @@ def load_task_details(conn, tasks, room_id=None):
             room_ids.add(room_id)
         elif task.get("room_id"):
             room_ids.add(task["room_id"])
-        for attachment in attachments:
+        for attachment in non_item_attachments:
             if attachment.get("room_id"):
                 room_ids.add(attachment["room_id"])
         room_statuses = []
@@ -2321,6 +2372,25 @@ def inventory_item_access_allowed(conn, item):
     if not item.get("project_id"):
         return can_view_inventory()
     return user_can_access_project(conn, item.get("project_id"))
+
+
+def delete_inventory_item_record(conn, item_id, project_id=None):
+    params = [item_id]
+    where = "id = %s"
+    if project_id:
+        where += " AND project_id = %s"
+        params.append(project_id)
+    item = conn.execute(
+        f"SELECT id, legacy_material_id FROM inventory_items WHERE {where}",
+        tuple(params)
+    ).fetchone()
+    if not item:
+        return False
+    legacy_material_id = item.get("legacy_material_id")
+    conn.execute("DELETE FROM inventory_items WHERE id = %s", (item["id"],))
+    if legacy_material_id:
+        conn.execute("DELETE FROM material_inventory WHERE id = %s", (legacy_material_id,))
+    return True
 
 
 def validate_inventory_allocation(conn, project_id, room_id):
@@ -4224,10 +4294,10 @@ def update_inventory_status(item_id):
 @admin_required
 def delete_inventory_item(item_id):
     conn = db()
-    conn.execute("DELETE FROM inventory_items WHERE id = %s", (item_id,))
+    deleted = delete_inventory_item_record(conn, item_id)
     conn.commit()
     conn.close()
-    flash("Inventory item deleted.")
+    flash("Inventory item deleted." if deleted else "Inventory item not found.")
     return redirect(safe_next_url("inventory"))
 
 
@@ -4374,10 +4444,10 @@ def delete_material(project_id, material_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    conn.execute("DELETE FROM inventory_items WHERE id = %s AND project_id = %s", (material_id, project_id))
+    deleted = delete_inventory_item_record(conn, material_id, project_id)
     conn.commit()
     conn.close()
-    flash("Inventory item deleted.")
+    flash("Inventory item deleted." if deleted else "Inventory item not found.")
     return redirect(url_for("project_materials", project_id=project_id))
 
 
@@ -5395,24 +5465,52 @@ def pickup_task_supplier_item(task_id, item_id):
         conn.close()
         flash("Supplier material was not found for this task.")
         return redirect(next_url)
-    if item.get("status") == "needs_purchase":
-        now = utc_now_iso()
-        conn.execute(
-            """
-            UPDATE inventory_items
-            SET status = 'available',
-                location_type = 'job_site',
-                purchased_by = COALESCE(purchased_by, %s),
-                purchased_at = COALESCE(purchased_at, %s),
-                updated_at = %s
-            WHERE id = %s
-            """,
-            (session.get("user_id"), now, now, item_id)
-        )
-        conn.commit()
-        flash("Material marked picked up and available.")
+
+    upload_error, supplier_uploads = collect_supplier_item_photo_uploads(item)
+    if upload_error:
+        conn.close()
+        flash(upload_error)
+        return redirect(next_url)
+
+    picked_up = True if item.get("status") == "used" else request.form.get("picked_up") == "1"
+    now = utc_now_iso()
+    conn.execute(
+        "UPDATE inventory_items SET supplier_picked_up = %s, updated_at = %s WHERE id = %s",
+        (picked_up, now, item_id)
+    )
+    if supplier_uploads:
+        insert_task_attachments(conn, task_id, supplier_uploads)
+
+    if task.get("status") == "done" and item.get("status") != "used":
+        if picked_up:
+            conn.execute(
+                """
+                UPDATE inventory_items
+                SET status = 'available',
+                    location_type = 'job_site',
+                    purchased_by = COALESCE(purchased_by, %s),
+                    purchased_at = COALESCE(purchased_at, %s),
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (session.get("user_id"), now, now, item_id)
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE inventory_items
+                SET status = 'needs_purchase',
+                    purchased_by = NULL,
+                    purchased_at = NULL,
+                    updated_at = %s
+                WHERE id = %s AND status = 'available'
+                """,
+                (now, item_id)
+            )
+        flash("Material saved and inventory status updated.")
     else:
-        flash("Material is already marked picked up.")
+        flash("Material saved. Inventory status will update when the task is completed.")
+    conn.commit()
     conn.close()
     return redirect(next_url)
 
@@ -5503,6 +5601,26 @@ def complete_task(task_id):
         f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
         tuple(params)
     )
+    if task.get("supplier_id") and mark_entire_task_done:
+        now = utc_now_iso()
+        conn.execute(
+            """
+            UPDATE inventory_items
+            SET status = 'available',
+                location_type = 'job_site',
+                purchased_by = COALESCE(purchased_by, %s),
+                purchased_at = COALESCE(purchased_at, %s),
+                updated_at = %s
+            WHERE status = 'needs_purchase'
+              AND COALESCE(supplier_picked_up, FALSE) = TRUE
+              AND id IN (
+                  SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
+                  UNION
+                  SELECT supplier_inventory_item_id FROM tasks WHERE id = %s AND supplier_inventory_item_id IS NOT NULL
+              )
+            """,
+            (session.get("user_id"), now, now, task_id, task_id)
+        )
     conn.commit()
     notification_ok = True
     try:

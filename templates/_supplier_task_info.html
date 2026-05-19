@@ -1,64 +1,127 @@
 {% set supplier = t.get('_supplier') %}
 {% set supplier_item = t.get('_supplier_inventory_item') %}
 {% set supplier_items = t.get('_supplier_inventory_items', []) %}
+{% set supplier_item_attachments = t.get('_supplier_item_attachments', {}) %}
 {% set can_pickup_supplier_item = is_main_admin() or t.assigned_user_id == session.get("user_id") %}
 {% set supplier_task_return_url = url_for('my_tasks', task_id=t.id) ~ '#task-' ~ t.id %}
 {% if supplier %}
+    {% if supplier_items %}
+        {% set display_supplier_items = supplier_items %}
+    {% elif supplier_item %}
+        {% set display_supplier_items = [supplier_item] %}
+    {% else %}
+        {% set display_supplier_items = [] %}
+    {% endif %}
     <div class="supplierTaskInfo">
         <h4>Supplier</h4>
-        <p>
-            <strong>{{ supplier.name }}</strong>
-            {% if supplier.contact_name %}<br>Contact: {{ supplier.contact_name }}{% endif %}
-            {% if supplier.phone %}<br>Phone: <a href="tel:{{ supplier.phone }}">{{ supplier.phone }}</a>{% endif %}
-            {% if supplier.email %}<br>Email: <a href="mailto:{{ supplier.email }}">{{ supplier.email }}</a>{% endif %}
-        </p>
-        {% if supplier_items %}
-            <div class="supplierMaterialList">
-            {% for item in supplier_items %}
-                <div class="supplierMaterialItem">
-                    <strong>{{ item.item_name }}</strong><br>
-                    Qty: {{ item.quantity }}{% if item.brand %}<br>Brand: {{ item.brand }}{% endif %}{% if item.item_model %}<br>Model #: {{ item.item_model }}{% endif %}<br>
-                    Pickup: {{ item.item_date or '-' }}{% if item.supplier_pickup_time %} {{ item.supplier_pickup_time }}{% endif %}<br>
-                    Project: {{ item.project_name or '-' }}{% if item.room_name %}<br>Room: {{ item.room_name }}{% endif %}<br>
-                    Status: {{ inventory_status_label(item.status) }}
-                    {% if can_pickup_supplier_item and item.status == 'needs_purchase' %}
-                        <form method="post" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}">
-                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
-                            <label class="supplierPickupCheck"><input type="checkbox" onchange="this.form.submit()"> Picked up</label>
-                        </form>
-                    {% else %}
-                        <label class="supplierPickupCheck supplierPickupCheckReadOnly"><input type="checkbox" disabled {% if item.status in ['available', 'used'] %}checked{% endif %}> Picked up</label>
-                    {% endif %}
-                </div>
-            {% endfor %}
-            </div>
-        {% elif supplier_item %}
-            <p><strong>Material:</strong> {{ supplier_item.item_name }}<br>
-            <strong>Qty:</strong> {{ supplier_item.quantity }}{% if supplier_item.brand %}<br><strong>Brand:</strong> {{ supplier_item.brand }}{% endif %}{% if supplier_item.item_model %}<br><strong>Model #:</strong> {{ supplier_item.item_model }}{% endif %}<br>
-            <strong>Status:</strong> {{ inventory_status_label(supplier_item.status) }}</p>
-            {% if can_pickup_supplier_item and supplier_item.status == 'needs_purchase' %}
-                <form method="post" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=supplier_item.id) }}">
-                    <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
-                    <label class="supplierPickupCheck"><input type="checkbox" onchange="this.form.submit()"> Picked up</label>
-                </form>
-            {% else %}
-                <label class="supplierPickupCheck supplierPickupCheckReadOnly"><input type="checkbox" disabled {% if supplier_item.status in ['available', 'used'] %}checked{% endif %}> Picked up</label>
-            {% endif %}
-        {% endif %}
+        <p class="supplierName">{{ supplier.name }}</p>
         {% if supplier.address %}
-            <p><strong>Supplier Address:</strong> {{ supplier.address }}</p>
             <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(supplier.address) }}">Open Supplier Route</a>
         {% endif %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=supplier_task_return_url) }}">Clock In / Clock Out</a>
+
+        <div class="supplierMaterialList">
+        {% for item in display_supplier_items %}
+            {% set item_photos = supplier_item_attachments.get(item.id, []) %}
+            <div class="supplierMaterialItem">
+                <p><strong>Material / Item:</strong> {{ item.item_name }}</p>
+                <p><strong>QTY:</strong> {{ item.quantity }}</p>
+                <p><strong>Brand:</strong> {{ item.brand or '-' }}</p>
+                <p><strong>Model:</strong> {{ item.item_model or '-' }}</p>
+                <p><strong>Project:</strong> {{ item.project_name or '-' }}</p>
+                <p><strong>Room:</strong> {{ item.room_name or '-' }}</p>
+                <p><strong>Status:</strong> {{ inventory_status_label(item.status) }}</p>
+                {% if item.pickup_comment %}
+                    <p><strong>Comment:</strong><br>{{ item.pickup_comment }}</p>
+                {% endif %}
+                {% if item_photos %}
+                    <div class="supplierItemPhotoList">
+                        {% for attachment in item_photos %}
+                            {% if attachment.file_type == 'photo' %}
+                                <div class="supplierItemPhoto">
+                                    {% if attachment.comment %}
+                                        <div class="supplierPictureComment">{{ attachment.comment }}</div>
+                                    {% endif %}
+                                    <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                                    <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if can_pickup_supplier_item %}
+                    <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
+                        <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                        <label class="supplierPickupCheck">
+                            <input type="checkbox" name="picked_up" value="1" {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %} {% if item.status == 'used' %}disabled{% endif %}>
+                            Picked up
+                        </label>
+                        <div class="supplierItemPhotoBlocks">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="0">
+                                <label>Comment Box</label>
+                                <textarea name="supplier_item_attachment_0_comment" rows="3"></textarea>
+                                <label>Take a picture</label>
+                                <input name="supplier_item_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
+                        <button type="submit">Save Item</button>
+                    </form>
+                {% else %}
+                    <label class="supplierPickupCheck supplierPickupCheckReadOnly">
+                        <input type="checkbox" disabled {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %}>
+                        Picked up
+                    </label>
+                {% endif %}
+            </div>
+        {% endfor %}
+        </div>
     </div>
 {% endif %}
 
+<script>
+if(!window.supplierItemPhotoControlsReady){
+    window.supplierItemPhotoControlsReady=true;
+    document.addEventListener("click",event=>{
+        const addButton=event.target.closest(".addSupplierItemPhoto");
+        if(!addButton)return;
+        const form=addButton.closest(".supplierItemPickupForm");
+        const blocks=form?form.querySelector(".supplierItemPhotoBlocks"):null;
+        if(!form||!blocks)return;
+        const index=Number(form.dataset.nextPhotoIndex||"1");
+        form.dataset.nextPhotoIndex=String(index+1);
+        const block=document.createElement("div");
+        block.className="supplierItemPhotoBlock";
+        block.innerHTML=`<input type="hidden" name="supplier_item_attachment_indexes" value="${index}">
+            <label>Comment Box</label>
+            <textarea name="supplier_item_attachment_${index}_comment" rows="3"></textarea>
+            <label>Take a picture</label>
+            <input name="supplier_item_attachment_${index}_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+            <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>`;
+        blocks.appendChild(block);
+    });
+    document.addEventListener("click",event=>{
+        const removeButton=event.target.closest(".removeSupplierItemPhoto");
+        if(!removeButton)return;
+        const block=removeButton.closest(".supplierItemPhotoBlock");
+        if(block)block.remove();
+    });
+}
+</script>
 <style>
 .supplierTaskInfo{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(245,158,11,.09)}
-.supplierTaskInfo h4{margin:0 0 8px}
-.supplierMaterialList{display:grid;gap:8px;margin:10px 0}
-.supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.25)}
-.supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:8px 0 0;font-weight:800;background:rgba(255,255,255,.18)}
+.supplierTaskInfo h4{margin:0 0 4px}
+.supplierName{font-size:18px;font-weight:800;margin:0 0 10px}
+.supplierMaterialList{display:grid;gap:12px;margin:12px 0}
+.supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:12px;background:rgba(255,255,255,.25)}
+.supplierMaterialItem p{margin:6px 0}
+.supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;font-weight:800;background:rgba(255,255,255,.18)}
 .supplierPickupCheck input{width:auto;min-height:auto}
 .supplierPickupCheckReadOnly{opacity:.8}
+.supplierItemPhotoBlocks{display:grid;gap:10px}
+.supplierItemPhotoBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;background:rgba(255,255,255,.18)}
+.supplierItemPhotoList{display:grid;gap:10px;margin:10px 0}
+.supplierItemPhoto{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.18)}
+.supplierPictureComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.1);font-weight:700}
 </style>
