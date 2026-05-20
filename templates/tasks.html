@@ -23,6 +23,7 @@
     <h2>{% if is_main_admin() %}Search Task{% else %}Search My Tasks{% endif %}</h2>
     <form method="get">
         <input type="hidden" name="mode" value="search">
+        {% if open_only %}<input type="hidden" name="open_only" value="1">{% endif %}
         <div class="grid">
             <div>
                 <label>Project</label>
@@ -63,20 +64,22 @@
                 </select>
             </div>
             {% endif %}
-            <div>
-                <label>Show By</label>
-                <select name="period">
-                    <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
-                    <option value="week" {% if task_period == "week" %}selected{% endif %}>Week</option>
-                    <option value="month" {% if task_period == "month" %}selected{% endif %}>Month</option>
-                </select>
-            </div>
-            <div>
-                <label>Task Date</label>
-                <input type="date" name="date" value="{{ task_date }}" required>
-            </div>
+            {% if not open_only %}
+                <div>
+                    <label>Show By</label>
+                    <select name="period">
+                        <option value="day" {% if task_period == "day" %}selected{% endif %}>Day</option>
+                        <option value="week" {% if task_period == "week" %}selected{% endif %}>Week</option>
+                        <option value="month" {% if task_period == "month" %}selected{% endif %}>Month</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Task Date</label>
+                    <input type="date" name="date" value="{{ task_date }}" required>
+                </div>
+            {% endif %}
         </div>
-        <button type="submit">Show Tasks</button>
+        <button type="submit">{% if open_only %}Show Open Tasks{% else %}Show Tasks{% endif %}</button>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Clear Search</a>
     </form>
     {% if not selected_project_id and not selected_supplier_id and not selected_user_id and not task_date_filter %}
@@ -89,7 +92,7 @@
 <div class="card">
     {% if task_mode == "search" and (selected_project_id or selected_supplier_id or selected_user_id or task_date_filter) %}
         <p class="muted taskScopeSummary">
-            Showing {{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} for
+            Showing {{ tasks|length }} {% if open_only %}open {% endif %}task{{ '' if tasks|length == 1 else 's' }} for
             {% if selected_supplier_id %}
                 {% for s in suppliers %}{% if s.id == selected_supplier_id %}{{ s.name }}{% endif %}{% endfor %}
             {% elif selected_room_id %}
@@ -167,6 +170,61 @@
                 </div>
             {% endif %}
         {% endfor %}
+        {% set project_level_tasks = tasks_by_room.get(0, []) %}
+        {% if project_level_tasks and not selected_room_id %}
+            <div class="card mobileRoomTaskGroup">
+                <h3>Full Project</h3>
+                {% for t in project_level_tasks %}
+                    {% if selected_task_id == t.id %}<span id="task-{{ t.id }}"></span>{% endif %}
+                    <div id="task-{{ t.id }}-project" class="card {% if t.status == 'done' %}taskDone{% endif %}">
+                        <strong>{{ task_display_name(t) }}</strong>
+                        <p class="muted">{{ task_schedule_text(t) }} - {{ t.status }}</p>
+                        {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
+                        {% set task_info = task_instruction_text(t) %}
+                        {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
+                        {% include "_supplier_task_info.html" %}
+                        {% include "_task_media.html" %}
+                        {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                            <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
+                                <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+                                <button type="submit">Received</button>
+                            </form>
+                        {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                            <button type="button" class="btn-secondary" disabled>Received</button>
+                        {% endif %}
+                        {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                            <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
+                                <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+                                {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
+                                    <div class="completionBlocks">
+                                        <div class="completionBlock">
+                                            <input type="hidden" name="completion_attachment_indexes" value="0">
+                                            {% if t.require_picture or t.allow_picture_upload %}
+                                                <label>Take Picture</label><input name="completion_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                                                {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_attachment_0_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
+                                            {% endif %}
+                                            {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_attachment_0_audio" type="file" accept="audio/*">{% endif %}
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+                                {% endif %}
+                                <button type="submit">Mark Task Done</button>
+                            </form>
+                        {% endif %}
+                        {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
+                        {% if t.completion_photo_file %}
+                            <p><strong>Completion Picture</strong></p>
+                            <img class="photo" src="{{ url_for('storage_file', storage_path=t.completion_photo_file) }}">
+                        {% endif %}
+                        {% if t.completion_audio_file %}
+                            <p><strong>Completion Audio</strong></p>
+                            <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
         {% if not tasks %}
             <p>No tasks found.</p>
         {% endif %}

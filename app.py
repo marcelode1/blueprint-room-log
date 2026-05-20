@@ -1259,6 +1259,9 @@ def load_task_details(conn, tasks, room_id=None):
             room_ids.add(room_id)
         elif task.get("room_id"):
             room_ids.add(task["room_id"])
+        for item in task["_supplier_inventory_items"]:
+            if item.get("room_id"):
+                room_ids.add(item["room_id"])
         for attachment in non_item_attachments:
             if attachment.get("room_id"):
                 room_ids.add(attachment["room_id"])
@@ -6126,7 +6129,10 @@ def my_tasks():
     selected_room_id = request.args.get("room_id", type=int)
     selected_supplier_id = request.args.get("supplier_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
+    open_only = request.args.get("open_only") == "1"
     task_mode = request.args.get("mode", "")
+    if open_only and not task_mode:
+        task_mode = "search"
     if selected_task_id and not task_mode:
         task_mode = "task"
     if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id) and not task_mode:
@@ -6137,7 +6143,7 @@ def my_tasks():
         task_period = "day"
     task_date_arg = request.args.get("date")
     task_date = task_date_arg or local_now().date().isoformat()
-    task_date_filter = bool(task_date_arg) or (task_mode == "search" and has_filter_selection)
+    task_date_filter = False if open_only else (bool(task_date_arg) or (task_mode == "search" and has_filter_selection))
     projects = []
     project_rooms = []
     suppliers = []
@@ -6151,7 +6157,7 @@ def my_tasks():
         suppliers = fetch_suppliers(conn)
         task_users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
         should_show_search = selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or task_date_filter
-        apply_task_date_filter = task_mode == "search" and should_show_search
+        apply_task_date_filter = (not open_only) and task_mode == "search" and should_show_search
         if selected_task_id:
             tasks = conn.execute(
                 """
@@ -6182,6 +6188,9 @@ def my_tasks():
             if selected_user_id:
                 where.append("tasks.assigned_user_id = %s")
                 params.append(selected_user_id)
+            if open_only:
+                where.append("tasks.status <> %s")
+                params.append("done")
             where_sql = " AND ".join(where) if where else "1=1"
             tasks = conn.execute(
                 f"""
@@ -6221,7 +6230,7 @@ def my_tasks():
             (session.get("user_id"), session.get("user_id"))
         ).fetchall()
         should_show_search = selected_project_id or selected_supplier_id or task_date_filter
-        apply_task_date_filter = task_mode == "search" and should_show_search
+        apply_task_date_filter = (not open_only) and task_mode == "search" and should_show_search
         if selected_task_id:
             tasks = conn.execute(
                 """
@@ -6250,6 +6259,9 @@ def my_tasks():
             if selected_room_id:
                 where.append("(tasks.room_id = %s OR EXISTS (SELECT 1 FROM task_attachments WHERE task_attachments.task_id = tasks.id AND task_attachments.room_id = %s))")
                 params.extend([selected_room_id, selected_room_id])
+            if open_only:
+                where.append("tasks.status <> %s")
+                params.append("done")
             tasks = conn.execute(
                 """
                 SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
@@ -6293,13 +6305,23 @@ def my_tasks():
         project_rooms = []
     tasks_by_room = {}
     if task_mode in ["search", "task"] and selected_project_id:
+        project_level_tasks = []
         for room in project_rooms:
             room_tasks = []
             for task in tasks:
                 status_rooms = [status.get("room_id") for status in task.get("_room_statuses", [])]
+                room_done = any(status.get("room_id") == room["id"] and status.get("is_done") for status in task.get("_room_statuses", []))
                 if task.get("room_id") == room["id"] or room["id"] in status_rooms:
+                    if open_only and (task.get("status") == "done" or room_done):
+                        continue
                     room_tasks.append(task)
             tasks_by_room[room["id"]] = room_tasks
+        for task in tasks:
+            status_rooms = [status.get("room_id") for status in task.get("_room_statuses", [])]
+            if not task.get("room_id") and not status_rooms:
+                if not open_only or task.get("status") != "done":
+                    project_level_tasks.append(task)
+        tasks_by_room[0] = project_level_tasks
     conn.close()
     return render_template(
         "tasks.html",
@@ -6317,7 +6339,8 @@ def my_tasks():
         task_mode=task_mode,
         task_period=task_period,
         task_date=task_date,
-        task_date_filter=task_date_filter
+        task_date_filter=task_date_filter,
+        open_only=open_only
     )
 
 
