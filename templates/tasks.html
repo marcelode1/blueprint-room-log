@@ -148,6 +148,7 @@
                                             {% else %}
                                                 <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
                                             {% endif %}
+                                            {% include "_attachment_comment_editor.html" %}
                                         </div>
                                     {% endfor %}
                                 </div>
@@ -200,11 +201,14 @@
                                     <div class="completionBlocks">
                                         <div class="completionBlock">
                                             <input type="hidden" name="completion_attachment_indexes" value="0">
-                                            {% if t.require_picture or t.allow_picture_upload %}
-                                                <label>Take Picture</label><input name="completion_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-                                                {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_attachment_0_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
-                                            {% endif %}
-                                            {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_attachment_0_audio" type="file" accept="audio/*">{% endif %}
+                                            {% set media_id = 'task_' ~ t.id ~ '_project_media_0' %}
+                                            {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
+                                            {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
+                                            {% set media_audio_name = 'completion_attachment_0_audio' if t.allow_audio else '' %}
+                                            {% set media_comment_name = 'completion_attachment_0_comment' %}
+                                            {% set media_comment_label = 'Picture / Audio Comment' %}
+                                            {% set media_save_label = 'Save' %}
+                                            {% include "_mobile_media_bar.html" %}
                                         </div>
                                     </div>
                                     <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
@@ -261,11 +265,14 @@
                         <div class="completionBlocks">
                             <div class="completionBlock">
                                 <input type="hidden" name="completion_attachment_indexes" value="0">
-                                {% if t.require_picture or t.allow_picture_upload %}
-                                    <label>Take Picture</label><input name="completion_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-                                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_attachment_0_photo" type="file" accept="image/*,.heic,.heif">{% endif %}
-                                {% endif %}
-                                {% if t.allow_audio %}<label>Voice / Audio</label><input name="completion_attachment_0_audio" type="file" accept="audio/*">{% endif %}
+                                {% set media_id = 'task_' ~ t.id ~ '_media_0' %}
+                                {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
+                                {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
+                                {% set media_audio_name = 'completion_attachment_0_audio' if t.allow_audio else '' %}
+                                {% set media_comment_name = 'completion_attachment_0_comment' %}
+                                {% set media_comment_label = 'Picture / Audio Comment' %}
+                                {% set media_save_label = 'Save' %}
+                                {% include "_mobile_media_bar.html" %}
                             </div>
                         </div>
                         <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
@@ -312,12 +319,14 @@
 <template id="completionBlockTemplate">
     <div class="completionBlock">
         <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
-        <label>Take Picture</label>
-        <input name="completion_attachment___INDEX___camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-        <label>Upload Picture</label>
-        <input name="completion_attachment___INDEX___photo" type="file" accept="image/*,.heic,.heif">
-        <label>Voice / Audio</label>
-        <input name="completion_attachment___INDEX___audio" type="file" accept="audio/*">
+        {% set media_id = 'completion___INDEX__' %}
+        {% set media_camera_name = 'completion_attachment___INDEX___camera' %}
+        {% set media_upload_name = 'completion_attachment___INDEX___photo' %}
+        {% set media_audio_name = 'completion_attachment___INDEX___audio' %}
+        {% set media_comment_name = 'completion_attachment___INDEX___comment' %}
+        {% set media_comment_label = 'Picture / Audio Comment' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
     </div>
 </template>

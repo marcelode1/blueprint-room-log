@@ -948,11 +948,20 @@ GENERIC_PHOTO_FILENAMES = {
     "picture.jpg", "picture.jpeg", "picture.png",
     "marked_picture.jpg", "blob", "file.jpg",
 }
+GENERIC_AUDIO_FILENAMES = {
+    "audio.webm", "audio.mp3", "audio.m4a", "audio.wav", "recording.webm",
+    "voice.webm", "blob", "file.webm", "sound.m4a",
+}
 
 
 def phone_style_photo_filename(extension="jpg"):
     safe_ext = extension if extension in ALLOWED_PHOTOS else "jpg"
     return f"IMG_{local_now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6].upper()}.{safe_ext}"
+
+
+def phone_style_audio_filename(extension="webm"):
+    safe_ext = extension if extension in ALLOWED_AUDIO else "webm"
+    return f"AUD_{local_now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6].upper()}.{safe_ext}"
 
 
 def task_attachment_display_filename(file_storage, field_name, file_type):
@@ -962,6 +971,8 @@ def task_attachment_display_filename(file_storage, field_name, file_type):
     original_ext = file_ext(safe_original)
     if file_type == "photo" and ("camera" in (field_name or "").lower() or lower_name in GENERIC_PHOTO_FILENAMES):
         return phone_style_photo_filename(original_ext)
+    if file_type == "audio" and ("audio" in (field_name or "").lower() or lower_name in GENERIC_AUDIO_FILENAMES):
+        return phone_style_audio_filename(original_ext)
     if original:
         return original
     extension = "webm" if file_type == "audio" else "jpg"
@@ -1116,7 +1127,7 @@ def collect_supplier_item_photo_uploads(item):
         if not data:
             return None
         display_name = task_attachment_display_filename(uploaded, field_name, "photo")
-        idx = field_name.replace("supplier_item_attachment_", "").replace("_camera", "")
+        idx = field_name.replace("supplier_item_attachment_", "").rsplit("_", 1)[0]
         comment = request.form.get(f"supplier_item_attachment_{idx}_comment", "").strip()
         uploads.append({
             "room_id": item.get("room_id"),
@@ -1131,6 +1142,9 @@ def collect_supplier_item_photo_uploads(item):
 
     for idx in indexes:
         error = add_upload(f"supplier_item_attachment_{idx}_camera")
+        if error:
+            return error, []
+        error = add_upload(f"supplier_item_attachment_{idx}_photo")
         if error:
             return error, []
     return None, uploads
@@ -3674,17 +3688,25 @@ def mobile_room(room_id):
         audio = request.files.get("audio")
         photo_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
         audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
+        note_date = request.form.get("note_date") or local_now().date().isoformat()
+        note_comment = request.form.get("comment", "").strip()
+        if not note_comment and not photo_file and not audio_file:
+            conn.close()
+            flash("Add a comment, picture, or audio before saving.")
+            return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
         conn.execute(
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
+            (room_id, session.get("user_id"), note_date, note_comment, photo_file, audio_file, datetime.now().isoformat())
         )
         conn.commit()
-        notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
+        notified = notify_admins_of_field_note(conn, project, room, note_comment, photo_file, audio_file, note_date)
         if notified:
             flash("Comment/photo/audio added.")
         else:
             flash("Comment/photo/audio added. Admin notification or email could not be sent.")
+        conn.close()
+        return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
     selected_date = request.args.get("date", "")
     query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
@@ -3695,7 +3717,7 @@ def mobile_room(room_id):
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, selected_date=selected_date)
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, selected_date=selected_date, today=local_now().date().isoformat())
 
 
 @app.route("/routes-check")
@@ -5877,6 +5899,38 @@ def delete_task_attachment(task_id, attachment_id):
     return redirect(next_url)
 
 
+@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/comment", methods=["POST"])
+@login_required
+def update_task_attachment_comment(task_id, attachment_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    attachment = conn.execute(
+        "SELECT * FROM task_attachments WHERE id = %s AND task_id = %s",
+        (attachment_id, task_id)
+    ).fetchone()
+    if not task or not attachment:
+        conn.close()
+        flash("Picture or audio not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or has_perm("edit_comments") or attachment.get("created_by") == session.get("user_id")):
+        conn.close()
+        flash("You do not have permission to edit this comment.")
+        return redirect(next_url)
+    conn.execute(
+        "UPDATE task_attachments SET comment = %s WHERE id = %s AND task_id = %s",
+        (request.form.get("comment", "").strip(), attachment_id, task_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Comment updated.")
+    return redirect(next_url)
+
+
 @app.route("/tasks/<int:task_id>/complete", methods=["POST"])
 @login_required
 def complete_task(task_id):
@@ -7179,15 +7233,16 @@ def notifications_live():
 @app.route("/note/<int:note_id>/edit", methods=["GET", "POST"])
 @login_required
 def edit_note(note_id):
-    if not (is_main_admin() or has_perm("edit_comments")):
-        flash("You do not have permission to edit comments.")
-        return redirect(url_for("index"))
     conn = db()
     note = conn.execute("SELECT notes.*, rooms.name AS room_name, rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s", (note_id,)).fetchone()
     if not note:
         conn.close()
         flash("Comment not found.")
         return redirect(url_for("index"))
+    if not (is_main_admin() or has_perm("edit_comments") or note.get("user_id") == session.get("user_id")):
+        conn.close()
+        flash("You do not have permission to edit this comment.")
+        return redirect(url_for("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
     if not user_can_access_project(conn, note["project_id"]):
         conn.close()
         flash("You do not have access to this project.")
@@ -7198,9 +7253,9 @@ def edit_note(note_id):
         room_id = note["room_id"]
         conn.close()
         flash("Comment updated.")
-        return redirect(url_for("room", room_id=room_id))
+        return redirect(safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=room_id))
     conn.close()
-    return render_template("edit_note.html", note=note)
+    return render_template("edit_note.html", note=note, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
 
 
 @app.route("/backup")

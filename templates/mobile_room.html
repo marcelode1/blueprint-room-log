@@ -54,6 +54,7 @@
                             {% else %}
                                 <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
                             {% endif %}
+                            {% include "_attachment_comment_editor.html" %}
                         </div>
                     {% endfor %}
                 </div>
@@ -125,15 +126,16 @@
     <h3>Add Field Note</h3>
     <form method="post" enctype="multipart/form-data">
         <label>Date</label>
-        <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
-        <label>Comment</label>
-        <textarea name="comment" rows="5" required></textarea>
-        <label>Take Picture</label>
-        <input name="photo_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-        <label>Upload Picture</label>
-        <input name="photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-        <label>Audio Recording</label>
-        <input name="audio" type="file" accept="audio/*">
+        <input name="note_date" type="date" value="{{ selected_date or today }}" required>
+        {% set media_id = 'room_' ~ room.id ~ '_field_note' %}
+        {% set media_camera_name = 'photo_camera' %}
+        {% set media_upload_name = 'photo' %}
+        {% set media_audio_name = 'audio' %}
+        {% set media_comment_name = 'comment' %}
+        {% set media_comment_label = 'Comment' %}
+        {% set media_comment_placeholder = 'Comment about this picture or audio' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Note</button>
     </form>
 </div>
@@ -146,6 +148,9 @@
             <p>{{ n.comment }}</p>
             {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
             {% if n.audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
+            {% if is_main_admin() or has_perm("edit_comments") or n.user_id == session.get("user_id") %}
+                <a class="btn-link btn-secondary" href="{{ url_for('edit_note', note_id=n.id, next=request.full_path) }}">Edit Comment</a>
+            {% endif %}
         </div>
     {% else %}
         <p>No history for this room.</p>
@@ -157,19 +162,21 @@
 <template id="completionBlockTemplate">
     <div class="completionBlock">
         <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
-        <label>Take Picture</label>
-        <input name="completion_attachment___INDEX___camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-        <label>Upload Picture</label>
-        <input name="completion_attachment___INDEX___photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-        <label>Voice / Audio</label>
-        <input name="completion_attachment___INDEX___audio" type="file" accept="audio/*">
+        {% set media_id = 'completion___INDEX__' %}
+        {% set media_camera_name = 'completion_attachment___INDEX___camera' %}
+        {% set media_upload_name = 'completion_attachment___INDEX___photo' %}
+        {% set media_audio_name = 'completion_attachment___INDEX___audio' %}
+        {% set media_comment_name = 'completion_attachment___INDEX___comment' %}
+        {% set media_comment_label = 'Picture / Audio Comment' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
     </div>
 </template>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
     <div class="drawActions">
-        <button type="button" id="saveDrawingBtn">Use Marked Picture</button>
+        <button type="button" id="saveDrawingBtn">Save Picture</button>
         <button type="button" class="btn-secondary" id="clearDrawingBtn">Clear Drawing</button>
         <button type="button" class="btn-danger" id="cancelDrawingBtn">Skip Drawing</button>
     </div>

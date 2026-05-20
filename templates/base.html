@@ -294,21 +294,106 @@ if(mobileMenuButton&&mobileMenuPanel){
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 </script>
 <style>
+.mobileMediaPicker{margin:12px 0}.mobileMediaNativeInputs{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mobileMediaCommentLabel{margin-top:10px}.mobileMediaPicker textarea{border-radius:18px;min-height:74px}.mobileMediaBar{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--card);box-shadow:0 8px 22px rgba(15,23,42,.12);max-width:360px;margin:10px 0 0 auto}.mobileMediaIconButton{width:50px!important;height:50px!important;min-width:50px!important;min-height:50px!important;border-radius:50%!important;padding:0!important;margin:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--text)!important;border:0!important;box-shadow:none!important}.mobileMediaIconButton svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.mobileMediaCameraButton{background:var(--primary)!important;color:#fff!important}.mobileMediaPreview{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:rgba(14,165,233,.07)}.mobileMediaPreviewBody{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}.mobileMediaPreview p{margin:2px 0 0;word-break:break-word}.mobileMediaThumb{width:64px;height:64px;border-radius:10px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#334155;font-weight:900}.mobileMediaThumb img{width:100%;height:100%;object-fit:cover}.mobileMediaThumb audio{width:58px}.mobileMediaPreviewSave{width:auto!important;min-width:92px!important;margin:10px 0 0 auto!important;display:flex!important}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}.globalPictureMarkActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.globalPictureMarkActions button{margin:0!important;width:auto!important}.globalPictureMarkActions #globalPictureMarkSave{margin-left:auto!important}
 #globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
 #globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
-.globalPictureMarkActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:10px}
-.globalPictureMarkActions button{margin:0}
 </style>
 <div id="globalPictureMarkModal">
     <canvas id="globalPictureMarkCanvas"></canvas>
     <div class="globalPictureMarkActions">
-        <button type="button" id="globalPictureMarkSave">Use Marked Picture</button>
+        <button type="button" id="globalPictureMarkSave">Save Picture</button>
         <button type="button" class="btn-secondary" id="globalPictureMarkClear">Clear Drawing</button>
         <button type="button" class="btn-secondary" id="globalPictureMarkUseOriginal">Use Picture Without Drawing</button>
         <button type="button" class="btn-danger" id="globalPictureMarkCancel">Cancel Picture</button>
     </div>
 </div>
 <script>
+(function(){
+    if(!window.File||!window.DataTransfer)return;
+
+    function pad2(value){return String(value).padStart(2,"0");}
+    function generatedName(prefix, file){
+        const now=new Date();
+        const ext=(file&&file.name&&file.name.includes("."))?file.name.split(".").pop().toLowerCase():(file&&file.type&&file.type.includes("/")?file.type.split("/").pop().replace("mpeg","mp3"):"dat");
+        return prefix+"_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+"_"+Math.random().toString(36).slice(2,8).toUpperCase()+"."+ext;
+    }
+    function renameFile(file,name){
+        if(!file||!name)return file;
+        return new File([file],name,{type:file.type||"application/octet-stream",lastModified:file.lastModified||Date.now()});
+    }
+    function setOneFile(input,file){
+        const dt=new DataTransfer();
+        dt.items.add(file);
+        input.files=dt.files;
+    }
+    function mediaLabel(action){
+        if(action==="camera")return "Picture ready";
+        if(action==="audio")return "Audio ready";
+        return "Attachment ready";
+    }
+    function clearOtherInputs(picker,activeInput){
+        picker.querySelectorAll("[data-media-input]").forEach(input=>{
+            if(input!==activeInput)input.value="";
+        });
+    }
+    function updatePreview(input){
+        const picker=input.closest("[data-media-picker]");
+        const preview=picker&&picker.querySelector("[data-media-preview]");
+        if(!picker||!preview||!input.files||!input.files[0])return;
+        clearOtherInputs(picker,input);
+        const file=input.files[0];
+        const kind=preview.querySelector("[data-media-kind]");
+        const filename=preview.querySelector("[data-media-filename]");
+        const thumb=preview.querySelector("[data-media-thumb]");
+        if(kind)kind.textContent=mediaLabel(input.dataset.mediaInput||"attach");
+        if(filename)filename.textContent=file.name||"Selected file";
+        if(thumb){
+            thumb.innerHTML="";
+            if(file.type&&file.type.startsWith("image/")){
+                const img=document.createElement("img");
+                img.alt="";
+                img.src=URL.createObjectURL(file);
+                img.onload=()=>URL.revokeObjectURL(img.src);
+                thumb.appendChild(img);
+            }else if(file.type&&file.type.startsWith("audio/")){
+                thumb.textContent="AUD";
+            }else{
+                thumb.textContent="FILE";
+            }
+        }
+        preview.hidden=false;
+        const comment=picker.querySelector("[data-media-comment]");
+        if(comment&&input.dataset.mediaInput!=="audio")comment.focus();
+    }
+
+    document.addEventListener("click",event=>{
+        const actionButton=event.target.closest("[data-media-action]");
+        if(actionButton){
+            const picker=actionButton.closest("[data-media-picker]");
+            const input=picker&&picker.querySelector('[data-media-input="'+actionButton.dataset.mediaAction+'"]');
+            if(input)input.click();
+            return;
+        }
+        const saveButton=event.target.closest("[data-media-save]");
+        if(saveButton){
+            const form=saveButton.closest("form");
+            if(!form)return;
+            if(form.requestSubmit)form.requestSubmit();
+            else form.submit();
+        }
+    });
+
+    document.addEventListener("change",event=>{
+        const input=event.target.closest&&event.target.closest("[data-media-input]");
+        if(!input||!input.files||!input.files[0])return;
+        const prefix=input.dataset.generatedPrefix;
+        if(prefix){
+            setOneFile(input,renameFile(input.files[0],generatedName(prefix,input.files[0])));
+        }
+        updatePreview(input);
+    });
+})();
+
 (function(){
     const modal=document.getElementById("globalPictureMarkModal");
     const canvas=document.getElementById("globalPictureMarkCanvas");

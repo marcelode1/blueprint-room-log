@@ -3,7 +3,7 @@
 {% set supplier_items = t.get('_supplier_inventory_items', []) %}
 {% set supplier_item_attachments = t.get('_supplier_item_attachments', {}) %}
 {% set can_pickup_supplier_item = is_main_admin() or t.assigned_user_id == session.get("user_id") %}
-{% set supplier_task_return_url = url_for('my_tasks', task_id=t.id) ~ '#task-' ~ t.id %}
+{% set supplier_task_return_url = request.full_path ~ '#task-' ~ t.id %}
 {% if supplier %}
     {% if supplier_items %}
         {% set display_supplier_items = supplier_items %}
@@ -44,7 +44,8 @@
                                     {% endif %}
                                     <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
                                     <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
-                                    {% if can_pickup_supplier_item %}
+                                    {% include "_attachment_comment_editor.html" %}
+                                    {% if is_main_admin() and not is_mobile_request() %}
                                         <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this picture?');">
                                             <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
                                             <button type="submit" class="btn-danger">Delete Picture</button>
@@ -65,16 +66,30 @@
                         <div class="supplierItemPhotoBlocks">
                             <div class="supplierItemPhotoBlock">
                                 <input type="hidden" name="supplier_item_attachment_indexes" value="0">
-                                <label>Comment Box</label>
-                                <textarea name="supplier_item_attachment_0_comment" rows="3"></textarea>
-                                <label>Take a picture</label>
-                                <input name="supplier_item_attachment_0_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-                                <div class="supplierPhotoPreview" style="display:none;">
-                                    <img class="photo" alt="Selected material picture preview">
-                                    <button type="button" class="btn-secondary clearSupplierSelectedPhoto">Delete Selected Picture</button>
-                                </div>
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media_0' %}
+                                {% set media_camera_name = 'supplier_item_attachment_0_camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment_0_photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment_0_comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Save Item' %}
+                                {% include "_mobile_media_bar.html" %}
                             </div>
                         </div>
+                        <template class="supplierItemPhotoBlockTemplate">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="__INDEX__">
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media___INDEX__' %}
+                                {% set media_camera_name = 'supplier_item_attachment___INDEX___camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment___INDEX___photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment___INDEX___comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Save Item' %}
+                                {% include "_mobile_media_bar.html" %}
+                                <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>
+                            </div>
+                        </template>
                         <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
                         <button type="submit">Save Item</button>
                     </form>
@@ -98,22 +113,13 @@ if(!window.supplierItemPhotoControlsReady){
         if(!addButton)return;
         const form=addButton.closest(".supplierItemPickupForm");
         const blocks=form?form.querySelector(".supplierItemPhotoBlocks"):null;
-        if(!form||!blocks)return;
+        const template=form?form.querySelector(".supplierItemPhotoBlockTemplate"):null;
+        if(!form||!blocks||!template)return;
         const index=Number(form.dataset.nextPhotoIndex||"1");
         form.dataset.nextPhotoIndex=String(index+1);
-        const block=document.createElement("div");
-        block.className="supplierItemPhotoBlock";
-        block.innerHTML=`<input type="hidden" name="supplier_item_attachment_indexes" value="${index}">
-            <label>Comment Box</label>
-            <textarea name="supplier_item_attachment_${index}_comment" rows="3"></textarea>
-            <label>Take a picture</label>
-            <input name="supplier_item_attachment_${index}_camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-            <div class="supplierPhotoPreview" style="display:none;">
-                <img class="photo" alt="Selected material picture preview">
-                <button type="button" class="btn-secondary clearSupplierSelectedPhoto">Delete Selected Picture</button>
-            </div>
-            <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>`;
-        blocks.appendChild(block);
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(index)).trim();
+        blocks.appendChild(wrapper.firstElementChild);
     });
     document.addEventListener("click",event=>{
         const removeButton=event.target.closest(".removeSupplierItemPhoto");
