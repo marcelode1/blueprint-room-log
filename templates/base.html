@@ -55,6 +55,7 @@
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
                 <a href="{{ url_for('task_report') }}">Task Report</a>
+                <a href="{{ url_for('comment_report') }}">Comment Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
                 {% if session.get("ui_theme") == "pro_test" %}
@@ -91,6 +92,7 @@
         <a href="{{ url_for('settings') }}">Settings</a>
         <a href="{{ url_for('attendance_report') }}">Time Report</a>
         <a href="{{ url_for('task_report') }}">Task Report</a>
+        <a href="{{ url_for('comment_report') }}">Comment Report</a>
         <a href="{{ url_for('team_map') }}">Where Is My Team</a>
         <a href="{{ url_for('backup') }}">Backup</a>
         {% if session.get("ui_theme") == "pro_test" %}

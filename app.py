@@ -6650,6 +6650,274 @@ def task_report_export():
     )
 
 
+def comment_report_source_label(source_type):
+    labels = {
+        "room_note": "Room Comment",
+        "task_attachment": "Task Picture / Audio Comment",
+        "task_completion": "Task Completion Comment",
+    }
+    return labels.get(source_type, source_type or "Comment")
+
+
+def comment_record_date(record):
+    date_value = str(record.get("record_date") or "").strip()
+    if date_value:
+        try:
+            return datetime.strptime(date_value[:10], "%Y-%m-%d").date()
+        except Exception:
+            pass
+    dt = local_datetime(record.get("created_at"))
+    return dt.date() if dt else None
+
+
+def comment_record_in_range(record, period, selected_date):
+    period, start, end = attendance_range(period, selected_date)
+    record_date = comment_record_date(record)
+    if not record_date:
+        return False
+    return start.date() <= record_date < end.date()
+
+
+def comment_record_sort_value(record):
+    dt = local_datetime(record.get("created_at"))
+    if dt:
+        return dt
+    record_date = comment_record_date(record)
+    if record_date:
+        return datetime.combine(record_date, datetime.min.time()).replace(tzinfo=app_timezone())
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def comment_report_context_url(record):
+    if record.get("task_id"):
+        return url_for("my_tasks", task_id=record["task_id"]) + f"#task-{record['task_id']}"
+    if record.get("room_id"):
+        return url_for("room", room_id=record["room_id"])
+    if record.get("project_id"):
+        return url_for("project", project_id=record["project_id"])
+    return ""
+
+
+def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None):
+    if period not in ["day", "week", "month", "year"]:
+        period = "day"
+    period, start, end = attendance_range(period, selected_date)
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    room_params = []
+    room_where = ""
+    if selected_project_id:
+        room_where = "WHERE rooms.project_id = %s"
+        room_params.append(selected_project_id)
+    rooms = conn.execute(
+        f"""
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        JOIN projects ON rooms.project_id = projects.id
+        {room_where}
+        ORDER BY projects.name, rooms.name
+        """,
+        tuple(room_params)
+    ).fetchall()
+
+    note_where = ["1=1"]
+    note_params = []
+    attachment_where = ["1=1"]
+    attachment_params = []
+    completion_where = ["(COALESCE(tasks.completion_comment, '') <> '' OR tasks.completion_photo_file IS NOT NULL OR tasks.completion_audio_file IS NOT NULL)"]
+    completion_params = []
+    if selected_project_id:
+        note_where.append("projects.id = %s")
+        note_params.append(selected_project_id)
+        attachment_where.append("projects.id = %s")
+        attachment_params.append(selected_project_id)
+        completion_where.append("projects.id = %s")
+        completion_params.append(selected_project_id)
+    if selected_room_id:
+        note_where.append("rooms.id = %s")
+        note_params.append(selected_room_id)
+        attachment_where.append("COALESCE(task_attachments.room_id, tasks.room_id) = %s")
+        attachment_params.append(selected_room_id)
+        completion_where.append("tasks.room_id = %s")
+        completion_params.append(selected_room_id)
+
+    records = []
+    note_rows = conn.execute(
+        """
+        SELECT
+            'room_note' AS source_type,
+            notes.id AS source_id,
+            notes.note_date AS record_date,
+            notes.created_at,
+            notes.comment,
+            notes.photo_file,
+            notes.audio_file,
+            NULL::TEXT AS media_file_type,
+            NULL::TEXT AS media_path,
+            NULL::TEXT AS media_filename,
+            notes.user_id AS created_by,
+            users.name AS created_by_name,
+            users.email AS created_by_email,
+            projects.id AS project_id,
+            projects.name AS project_name,
+            rooms.id AS room_id,
+            rooms.name AS room_name,
+            NULL::INTEGER AS task_id,
+            NULL::TEXT AS task_number,
+            NULL::TEXT AS task_title
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        JOIN projects ON rooms.project_id = projects.id
+        LEFT JOIN users ON notes.user_id = users.id
+        WHERE """ + " AND ".join(note_where) + """
+          AND (COALESCE(notes.comment, '') <> '' OR notes.photo_file IS NOT NULL OR notes.audio_file IS NOT NULL)
+        """,
+        tuple(note_params)
+    ).fetchall()
+    attachment_rows = conn.execute(
+        """
+        SELECT
+            'task_attachment' AS source_type,
+            task_attachments.id AS source_id,
+            task_attachments.created_at AS record_date,
+            task_attachments.created_at,
+            task_attachments.comment,
+            CASE WHEN task_attachments.file_type = 'photo' THEN task_attachments.storage_path ELSE NULL END AS photo_file,
+            CASE WHEN task_attachments.file_type = 'audio' THEN task_attachments.storage_path ELSE NULL END AS audio_file,
+            task_attachments.file_type AS media_file_type,
+            task_attachments.storage_path AS media_path,
+            task_attachments.original_filename AS media_filename,
+            task_attachments.created_by,
+            users.name AS created_by_name,
+            users.email AS created_by_email,
+            projects.id AS project_id,
+            projects.name AS project_name,
+            rooms.id AS room_id,
+            rooms.name AS room_name,
+            tasks.id AS task_id,
+            tasks.task_number,
+            tasks.title AS task_title
+        FROM task_attachments
+        JOIN tasks ON task_attachments.task_id = tasks.id
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN rooms ON rooms.id = COALESCE(task_attachments.room_id, tasks.room_id)
+        LEFT JOIN users ON task_attachments.created_by = users.id
+        WHERE """ + " AND ".join(attachment_where) + """
+          AND (COALESCE(task_attachments.comment, '') <> '' OR task_attachments.storage_path IS NOT NULL)
+        """,
+        tuple(attachment_params)
+    ).fetchall()
+    completion_rows = conn.execute(
+        """
+        SELECT
+            'task_completion' AS source_type,
+            tasks.id AS source_id,
+            COALESCE(tasks.completed_at, tasks.task_start_date, tasks.task_date) AS record_date,
+            COALESCE(tasks.completed_at, tasks.created_at) AS created_at,
+            tasks.completion_comment AS comment,
+            tasks.completion_photo_file AS photo_file,
+            tasks.completion_audio_file AS audio_file,
+            NULL::TEXT AS media_file_type,
+            NULL::TEXT AS media_path,
+            NULL::TEXT AS media_filename,
+            tasks.assigned_user_id AS created_by,
+            users.name AS created_by_name,
+            users.email AS created_by_email,
+            projects.id AS project_id,
+            projects.name AS project_name,
+            rooms.id AS room_id,
+            rooms.name AS room_name,
+            tasks.id AS task_id,
+            tasks.task_number,
+            tasks.title AS task_title
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE """ + " AND ".join(completion_where) + """
+        """,
+        tuple(completion_params)
+    ).fetchall()
+    conn.close()
+
+    for row in list(note_rows) + list(attachment_rows) + list(completion_rows):
+        record = dict(row)
+        if not comment_record_in_range(record, period, selected_date):
+            continue
+        record["source_label"] = comment_report_source_label(record.get("source_type"))
+        record["context_url"] = comment_report_context_url(record)
+        record["sort_dt"] = comment_record_sort_value(record)
+        records.append(record)
+    records.sort(key=lambda record: record["sort_dt"], reverse=True)
+    return {
+        "period": period,
+        "start": start,
+        "end": end,
+        "projects": projects,
+        "rooms": rooms,
+        "records": records,
+    }
+
+
+@app.route("/comments/report")
+@admin_required
+def comment_report():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_room_id = request.args.get("room_id", type=int)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    return render_template(
+        "comment_report.html",
+        report=report,
+        period=report["period"],
+        selected_date=selected_date,
+        selected_project_id=selected_project_id,
+        selected_room_id=selected_room_id
+    )
+
+
+@app.route("/comments/report/export")
+@admin_required
+def comment_report_export():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_room_id = request.args.get("room_id", type=int)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date", "Created At", "Project", "Room", "Type", "Comment", "Created By",
+        "Created By Email", "Task #", "Task", "Picture URL", "Audio URL", "Context URL"
+    ])
+    for record in report["records"]:
+        photo_url = external_url("storage_file", storage_path=record["photo_file"]) if record.get("photo_file") else ""
+        audio_url = external_url("storage_file", storage_path=record["audio_file"]) if record.get("audio_file") else ""
+        context_url = request.host_url.rstrip("/") + record["context_url"] if record.get("context_url") else ""
+        writer.writerow([
+            format_date(record.get("record_date")),
+            format_datetime(record.get("created_at")),
+            record.get("project_name") or "",
+            record.get("room_name") or "",
+            record.get("source_label") or "",
+            record.get("comment") or "",
+            record.get("created_by_name") or "",
+            record.get("created_by_email") or "",
+            record.get("task_number") or "",
+            record.get("task_title") or "",
+            photo_url,
+            audio_url,
+            context_url,
+        ])
+    filename = f"projectonus_comment_report_{report['period']}_{selected_date}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 @app.route("/team-map")
 @admin_required
 def team_map():
