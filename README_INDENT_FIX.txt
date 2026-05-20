@@ -1,1 +1,1 @@
-Fixed duplicate /desktop endpoint conflict. Verify after deploy at /routes-check.
+Fixed Python IndentationError by removing orphan legacy blueprint update code and adding clean route.

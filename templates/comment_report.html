@@ -54,7 +54,8 @@
         .commentLinkList{display:flex;gap:8px;flex-wrap:wrap}
         .commentLinkList a{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border-radius:8px;background:#e0f2fe;color:#075985;text-decoration:none;font-weight:800}
         .commentType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
-        @media print{header,.bottom-nav,.noPrint,.backButton{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.commentReportTable{min-width:0}.commentReportTable th,.commentReportTable td{font-size:11px;padding:5px}.commentLinkList a{border:1px solid #999;background:white;color:#111}}
+        @page{size:letter portrait;margin:.35in}
+        @media print{header,.bottom-nav,.noPrint,.backButton,.linkedColumn{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.commentReportWrap{overflow:visible}.commentReportTable{width:100%;min-width:0;table-layout:fixed}.commentReportTable th,.commentReportTable td{font-size:9px;line-height:1.2;padding:4px;word-break:break-word}.commentReportTable th:nth-child(1){width:13%}.commentReportTable th:nth-child(2){width:15%}.commentReportTable th:nth-child(3){width:12%}.commentReportTable th:nth-child(4){width:17%}.commentReportTable th:nth-child(5){width:30%}.commentReportTable th:nth-child(6){width:13%}.commentType{font-size:8px;padding:2px 5px}.muted{color:#444}}
     </style>
     <div class="commentReportWrap">
         <table class="commentReportTable">
@@ -66,7 +67,7 @@
                     <th>Type</th>
                     <th>Comment</th>
                     <th>Created By</th>
-                    <th>Linked To</th>
+                    <th class="linkedColumn">Linked To</th>
                 </tr>
             </thead>
             <tbody>
@@ -90,16 +91,10 @@
                         {{ record.created_by_name or "Unknown user" }}
                         {% if record.created_by_email %}<br><span class="muted">{{ record.created_by_email }}</span>{% endif %}
                     </td>
-                    <td>
+                    <td class="linkedColumn">
                         <div class="commentLinkList">
-                            {% if record.photo_file %}
-                                <a target="_blank" href="{{ url_for('storage_file', storage_path=record.photo_file) }}">Open Picture</a>
-                            {% endif %}
-                            {% if record.audio_file %}
-                                <a target="_blank" href="{{ url_for('storage_file', storage_path=record.audio_file) }}">Open Audio</a>
-                            {% endif %}
-                            {% if record.context_url %}
-                                <a href="{{ record.context_url }}">{{ 'Open Task' if record.task_id else 'Open Room' }}</a>
+                            {% if record.comment_url %}
+                                <a href="{{ record.comment_url }}">Open Comment</a>
                             {% endif %}
                         </div>
                     </td>

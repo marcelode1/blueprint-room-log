@@ -1,7 +1,6 @@
-Clean multi-blueprint fix:
-- Rebuilt project page around active_blueprint.
-- Uses project_blueprints table.
-- Add blueprint/floor.
-- Switch blueprint/floor loads correct file.
-- Delete has Yes/No confirmation and keeps rooms.
-- New rooms save against selected blueprint.
+Added Privacy Policy page.
+
+After deploying, visit:
+https://projectonus.com/privacy
+
+Use that as the Google Play Store Privacy Policy URL.

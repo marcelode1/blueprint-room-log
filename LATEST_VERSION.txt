@@ -1,37 +1,7 @@
-{% set attachments = t.get('_attachments', []) %}
-{% if attachments %}
-    <div class="taskMediaList">
-        {% for attachment in attachments %}
-            <div class="taskMediaItem">
-                {% if attachment.comment %}
-                    <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
-                {% endif %}
-                <p class="muted">
-                    {{ attachment.original_filename or 'Task file' }}
-                    {% if attachment.room_name %} - Room: {{ attachment.room_name }}{% endif %}
-                </p>
-                {% if attachment.file_type == 'photo' %}
-                    <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                {% else %}
-                    <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
-                {% endif %}
-                {% include "_attachment_comment_editor.html" %}
-            </div>
-        {% endfor %}
-    </div>
-{% else %}
-    {% if t.task_photo_file %}
-        <p><strong>Task Picture</strong></p>
-        <img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">
-    {% endif %}
-    {% if t.task_audio_file %}
-        <p><strong>Task Audio</strong></p>
-        <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>
-    {% endif %}
-{% endif %}
-
-<style>
-.taskMediaList{display:grid;gap:12px;margin:12px 0}
-.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}
-.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}
-</style>
+ProjectONus Latest Version
+Includes:
+- Admin settings and permissions
+- Company logo support
+- Notification bell
+- Comment/photo/audio permissions
+- Mobile beta improvements

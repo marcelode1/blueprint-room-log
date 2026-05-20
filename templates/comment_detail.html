@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Comment</h2>
+    <a class="btn-link btn-secondary" href="{{ next_url }}">Back to Comment Report</a>
+    <div class="commentDetailMeta">
+        <p><strong>Project:</strong> {{ record.project_name or '-' }}</p>
+        <p><strong>Room:</strong> {{ record.room_name or '-' }}</p>
+        <p><strong>Type:</strong> {{ record.source_label }}</p>
+        <p><strong>Date:</strong> {{ format_date(record.record_date) }}</p>
+        <p><strong>Created:</strong> {{ format_datetime(record.created_at) }}</p>
+        <p><strong>Created By:</strong> {{ record.created_by_name or 'Unknown user' }}{% if record.created_by_email %} - {{ record.created_by_email }}{% endif %}</p>
+        {% if record.task_id %}
+            <p><strong>Task:</strong> #{{ record.task_number or record.task_id }}{% if record.task_title %} - {{ record.task_title }}{% endif %}</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <h3>Linked Media</h3>
+    {% if record.photo_file %}
+        <img class="photo commentDetailMedia" src="{{ url_for('storage_file', storage_path=record.photo_file) }}">
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=record.photo_file) }}">Open Picture Full Size</a>
+    {% endif %}
+    {% if record.audio_file %}
+        <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=record.audio_file) }}"></audio>
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=record.audio_file) }}">Open Audio</a>
+    {% endif %}
+    {% if not record.photo_file and not record.audio_file %}
+        <p>No picture or audio is linked to this comment.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Edit Comment</h3>
+    <form method="post">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <input type="hidden" name="action" value="save">
+        <label>Comment</label>
+        <textarea name="comment" rows="6">{{ record.comment or '' }}</textarea>
+        <button type="submit">Save Comment</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Delete</h3>
+    <p class="muted">This removes the linked comment/media record from this report. It does not delete the project or room.</p>
+    <form method="post" onsubmit="return confirm('Delete this comment/media?');">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <input type="hidden" name="action" value="delete">
+        <button type="submit" class="btn-danger">Delete Comment / Media</button>
+    </form>
+</div>
+
+<style>
+.commentDetailMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 16px}.commentDetailMeta p{margin:4px 0}.commentDetailMedia{display:block;margin-bottom:10px}
+</style>
+{% endblock %}

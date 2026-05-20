@@ -294,12 +294,287 @@ if(mobileMenuButton&&mobileMenuPanel){
     document.addEventListener("keydown",event=>{if(event.key==="Escape")closeMobileMenu();});
 }
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
+
+(function(){
+    const isMobile=/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent||"");
+    if(!isMobile||!document.body)return;
+    const permissionKey="projectonus_mobile_permissions_v3";
+    const modalId="projectonusPermissionPrompt";
+
+    function showPermissionPrompt(){
+        if(localStorage.getItem(permissionKey)==="done")return;
+        const modal=document.getElementById(modalId);
+        if(modal)modal.hidden=false;
+    }
+
+    function stopTracks(stream){
+        if(stream&&stream.getTracks)stream.getTracks().forEach(track=>track.stop());
+    }
+
+    async function requestProjectONusPermissions(){
+        const status=document.getElementById("projectonusPermissionStatus");
+        if(status)status.textContent="Requesting phone permissions...";
+        const results=[];
+        if(navigator.geolocation){
+            await new Promise(resolve=>{
+                navigator.geolocation.getCurrentPosition(
+                    ()=>{results.push("Location allowed");resolve();},
+                    ()=>{results.push("Location not allowed yet");resolve();},
+                    {enableHighAccuracy:true,timeout:9000,maximumAge:0}
+                );
+            });
+        }
+        if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){
+            try{
+                const camera=await navigator.mediaDevices.getUserMedia({video:true});
+                stopTracks(camera);
+                results.push("Camera allowed");
+            }catch(e){results.push("Camera not allowed yet");}
+            try{
+                const mic=await navigator.mediaDevices.getUserMedia({audio:true});
+                stopTracks(mic);
+                results.push("Microphone allowed");
+            }catch(e){results.push("Microphone not allowed yet");}
+        }
+        if(navigator.storage&&navigator.storage.persist){
+            try{await navigator.storage.persist();}catch(e){}
+        }
+        localStorage.setItem(permissionKey,"done");
+        if(status)status.textContent=results.join(" • ")||"Permissions saved.";
+        if(status)status.textContent=results.length?results.join(" | "):"Permissions saved.";
+        setTimeout(()=>{const modal=document.getElementById(modalId);if(modal)modal.hidden=true;},900);
+    }
+
+    document.addEventListener("click",event=>{
+        const allow=event.target.closest("[data-projectonus-permission-allow]");
+        const later=event.target.closest("[data-projectonus-permission-later]");
+        if(allow){requestProjectONusPermissions();}
+        if(later){
+            localStorage.setItem(permissionKey,"done");
+            const modal=document.getElementById(modalId);
+            if(modal)modal.hidden=true;
+        }
+    });
+    window.addEventListener("load",()=>setTimeout(showPermissionPrompt,500));
+})();
+
+(function(){
+    if(!window.indexedDB||!window.FormData||!window.File)return;
+    const DB_NAME="ProjectONusPendingUploads";
+    const STORE_NAME="uploads";
+    const DB_VERSION=1;
+    let processing=false;
+
+    function openUploadDb(){
+        return new Promise((resolve,reject)=>{
+            const request=indexedDB.open(DB_NAME,DB_VERSION);
+            request.onupgradeneeded=()=>{
+                if(!request.result.objectStoreNames.contains(STORE_NAME)){
+                    request.result.createObjectStore(STORE_NAME,{keyPath:"id"});
+                }
+            };
+            request.onsuccess=()=>resolve(request.result);
+            request.onerror=()=>reject(request.error);
+        });
+    }
+
+    async function storeUpload(entry){
+        const db=await openUploadDb();
+        return new Promise((resolve,reject)=>{
+            const tx=db.transaction(STORE_NAME,"readwrite");
+            tx.objectStore(STORE_NAME).put(entry);
+            tx.oncomplete=()=>resolve();
+            tx.onerror=()=>reject(tx.error);
+        });
+    }
+
+    async function deleteUpload(id){
+        const db=await openUploadDb();
+        return new Promise((resolve,reject)=>{
+            const tx=db.transaction(STORE_NAME,"readwrite");
+            tx.objectStore(STORE_NAME).delete(id);
+            tx.oncomplete=()=>resolve();
+            tx.onerror=()=>reject(tx.error);
+        });
+    }
+
+    async function listUploads(){
+        const db=await openUploadDb();
+        return new Promise((resolve,reject)=>{
+            const tx=db.transaction(STORE_NAME,"readonly");
+            const request=tx.objectStore(STORE_NAME).getAll();
+            request.onsuccess=()=>resolve(request.result||[]);
+            request.onerror=()=>reject(request.error);
+        });
+    }
+
+    function uploadSignalIsWeak(){
+        if(!navigator.onLine)return true;
+        const connection=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+        if(!connection)return false;
+        const type=String(connection.effectiveType||"").toLowerCase();
+        if(type==="slow-2g"||type==="2g")return true;
+        if(typeof connection.downlink==="number"&&connection.downlink>0&&connection.downlink<0.35)return true;
+        return false;
+    }
+
+    function hasSelectedFile(form){
+        return Array.from(form.querySelectorAll('input[type="file"]')).some(input=>input.files&&input.files.length&&input.files[0].name);
+    }
+
+    function entryFromForm(form){
+        const formData=new FormData(form);
+        const entries=[];
+        for(const [name,value] of formData.entries()){
+            if(value instanceof File){
+                if(!value.name)continue;
+                entries.push({kind:"file",name,file:value,filename:value.name});
+            }else{
+                entries.push({kind:"field",name,value:String(value)});
+            }
+        }
+        return {
+            id:"upload_"+Date.now()+"_"+Math.random().toString(36).slice(2,10),
+            url:new URL(form.getAttribute("action")||window.location.href,window.location.href).toString(),
+            method:(form.getAttribute("method")||"POST").toUpperCase(),
+            createdAt:new Date().toISOString(),
+            pageUrl:window.location.href,
+            entries
+        };
+    }
+
+    function formDataFromEntry(entry){
+        const formData=new FormData();
+        (entry.entries||[]).forEach(item=>{
+            if(item.kind==="file"){
+                formData.append(item.name,item.file,item.filename||item.file.name);
+            }else{
+                formData.append(item.name,item.value||"");
+            }
+        });
+        return formData;
+    }
+
+    function showUploadStatus(message){
+        let status=document.getElementById("projectonusUploadStatus");
+        if(!status)return;
+        status.textContent=message;
+        status.hidden=false;
+        clearTimeout(showUploadStatus.timer);
+        showUploadStatus.timer=setTimeout(()=>{status.hidden=true;},7000);
+    }
+
+    async function queueForm(form, reason){
+        const entry=entryFromForm(form);
+        await storeUpload(entry);
+        registerBackgroundUploadSync();
+        showUploadStatus((reason||"Upload saved locally.")+" It will send automatically when the phone has a better connection.");
+        processUploadQueue();
+    }
+
+    async function registerBackgroundUploadSync(){
+        if(!("serviceWorker" in navigator))return;
+        try{
+            const registration=await navigator.serviceWorker.ready;
+            if("SyncManager" in window&&registration.sync){
+                await registration.sync.register("projectonus-pending-uploads");
+            }
+            if(navigator.serviceWorker.controller){
+                navigator.serviceWorker.controller.postMessage({type:"PROJECTONUS_PROCESS_UPLOADS"});
+            }
+        }catch(e){}
+    }
+
+    async function sendEntry(entry){
+        const response=await fetch(entry.url,{
+            method:entry.method||"POST",
+            body:formDataFromEntry(entry),
+            credentials:"same-origin",
+            redirect:"follow"
+        });
+        if(!response.ok)throw new Error("Upload failed");
+        return response;
+    }
+
+    async function processUploadQueue(){
+        if(processing||uploadSignalIsWeak())return;
+        processing=true;
+        try{
+            const uploads=await listUploads();
+            if(!uploads.length)return;
+            showUploadStatus("Sending "+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+"...");
+            let sent=0;
+            for(const entry of uploads){
+                if(uploadSignalIsWeak())break;
+                try{
+                    await sendEntry(entry);
+                    await deleteUpload(entry.id);
+                    sent++;
+                }catch(e){
+                    break;
+                }
+            }
+            if(sent)showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
+        }finally{
+            processing=false;
+        }
+    }
+
+    document.addEventListener("submit",async event=>{
+        const form=event.target;
+        if(!form||!form.matches||!form.matches('form[method="post"],form[method="POST"]'))return;
+        if(!form.enctype||!form.enctype.includes("multipart/form-data"))return;
+        if(!hasSelectedFile(form))return;
+        event.preventDefault();
+        const submitter=event.submitter;
+        if(submitter)submitter.disabled=true;
+        try{
+            if(uploadSignalIsWeak()){
+                await queueForm(form,navigator.onLine?"Signal is too weak for upload right now.":"No signal right now.");
+                form.reset();
+                return;
+            }
+            try{
+                const entry=entryFromForm(form);
+                const response=await sendEntry(entry);
+                window.location.href=response.url||form.action||window.location.href;
+            }catch(e){
+                await queueForm(form,"Upload could not reach the cloud right now.");
+                form.reset();
+            }
+        }finally{
+            if(submitter)submitter.disabled=false;
+        }
+    },true);
+
+    window.addEventListener("online",()=>setTimeout(processUploadQueue,1000));
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)processUploadQueue();});
+    window.addEventListener("focus",processUploadQueue);
+    const connection=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+    if(connection&&connection.addEventListener)connection.addEventListener("change",processUploadQueue);
+    setInterval(processUploadQueue,30000);
+    window.addEventListener("load",()=>setTimeout(processUploadQueue,1200));
+})();
 </script>
 <style>
+.projectonusPermissionPrompt{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPermissionPrompt[hidden]{display:none}.projectonusPermissionCard{width:min(440px,100%);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPermissionCard h3{margin:0 0 8px}.projectonusPermissionCard p{line-height:1.4}.projectonusPermissionActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.projectonusPermissionActions button{margin:0}.projectonusPermissionStatus{min-height:20px;margin:10px 0 0;color:var(--muted);font-size:14px}.projectonusUploadStatus{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1850;max-width:min(520px,calc(100% - 24px));background:#0f172a;color:white;border:1px solid #334155;border-radius:999px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 16px;text-align:center;font-weight:800}.projectonusUploadStatus[hidden]{display:none}
 .mobileMediaPicker{margin:12px 0}.mobileMediaNativeInputs{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mobileMediaCommentLabel{margin-top:10px}.mobileMediaPicker textarea{border-radius:18px;min-height:74px}.mobileMediaBar{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--card);box-shadow:0 8px 22px rgba(15,23,42,.12);max-width:360px;margin:10px 0 0 auto}.mobileMediaIconButton{width:50px!important;height:50px!important;min-width:50px!important;min-height:50px!important;border-radius:50%!important;padding:0!important;margin:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--text)!important;border:0!important;box-shadow:none!important}.mobileMediaIconButton svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.mobileMediaCameraButton{background:var(--primary)!important;color:#fff!important}.mobileMediaPreview{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:rgba(14,165,233,.07)}.mobileMediaPreviewBody{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}.mobileMediaPreview p{margin:2px 0 0;word-break:break-word}.mobileMediaThumb{width:64px;height:64px;border-radius:10px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#334155;font-weight:900}.mobileMediaThumb img{width:100%;height:100%;object-fit:cover}.mobileMediaThumb audio{width:58px}.mobileMediaPreviewSave{width:auto!important;min-width:92px!important;margin:10px 0 0 auto!important;display:flex!important}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}.globalPictureMarkActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.globalPictureMarkActions button{margin:0!important;width:auto!important}.globalPictureMarkActions #globalPictureMarkSave{margin-left:auto!important}
 #globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
 #globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
+@media(max-width:760px){.projectonusPermissionActions{grid-template-columns:1fr}.projectonusUploadStatus{bottom:104px;border-radius:14px}}
 </style>
+<div id="projectonusPermissionPrompt" class="projectonusPermissionPrompt" hidden>
+    <div class="projectonusPermissionCard">
+        <h3>Allow ProjectONus Access</h3>
+        <p>ProjectONus uses the camera for job pictures, the microphone for audio notes, and location for clock in and clock out. Phone photo/file access is requested by your phone when you attach or upload a file.</p>
+        <div class="projectonusPermissionActions">
+            <button type="button" data-projectonus-permission-allow>Allow Access</button>
+            <button type="button" class="btn-secondary" data-projectonus-permission-later>Later</button>
+        </div>
+        <p class="projectonusPermissionStatus" id="projectonusPermissionStatus"></p>
+    </div>
+</div>
+<div id="projectonusUploadStatus" class="projectonusUploadStatus" hidden></div>
 <div id="globalPictureMarkModal">
     <canvas id="globalPictureMarkCanvas"></canvas>
     <div class="globalPictureMarkActions">
@@ -317,7 +592,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
     function generatedName(prefix, file){
         const now=new Date();
         const ext=(file&&file.name&&file.name.includes("."))?file.name.split(".").pop().toLowerCase():(file&&file.type&&file.type.includes("/")?file.type.split("/").pop().replace("mpeg","mp3"):"dat");
-        return prefix+"_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+"_"+Math.random().toString(36).slice(2,8).toUpperCase()+"."+ext;
+        return "ProjectONus_"+prefix+"_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+"_"+Math.random().toString(36).slice(2,8).toUpperCase()+"."+ext;
     }
     function renameFile(file,name){
         if(!file||!name)return file;
@@ -422,7 +697,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
 
     function phoneStyleFilename(){
         const now=new Date();
-        return "IMG_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+".jpg";
+        return "ProjectONus_IMG_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+".jpg";
     }
 
     function jpegFilename(name){
