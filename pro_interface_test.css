@@ -1,0 +1,17 @@
+{
+  "name": "ProjectONus",
+  "short_name": "ProjectONus",
+  "start_url": "/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1120",
+  "theme_color": "#0f172a",
+  "description": "Project, field, room, photo, comment, audio, and client collaboration platform.",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

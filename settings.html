@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:auto;">
+    <h2>Create New Password</h2>
+    <p class="muted">{{ user.email }}</p>
+    <form method="post">
+        <label>New Password</label>
+        <input name="password" type="password" minlength="8" required>
+        <label>Confirm Password</label>
+        <input name="confirm_password" type="password" minlength="8" required>
+        <button type="submit">Save Password</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:520px;margin:auto;">
+    <h2>Create Admin Login</h2>
+    <p class="muted">{{ user.email }}</p>
+    <form method="post">
+        <label>Admin Name</label>
+        <input name="name" value="{{ user.name or 'Admin' }}" required>
+        <label>Username</label>
+        <input name="username" required>
+        <label>Password</label>
+        <input name="password" type="password" minlength="8" required>
+        <label>Confirm Password</label>
+        <input name="confirm_password" type="password" minlength="8" required>
+        <button type="submit">Create Login</button>
+    </form>
+</div>
+{% endblock %}

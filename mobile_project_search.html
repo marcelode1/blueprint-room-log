@@ -1,0 +1,115 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{{ project.name }}</h2>
+    <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
+    <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    {% if is_main_admin() %}
+        <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+    {% endif %}
+    <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id, next=request.full_path) }}">Clock In / Clock Out</a>
+    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    {% if can_view_inventory() %}
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
+    {% endif %}
+    <a class="btn-link" href="{{ url_for('my_tasks', mode='search', project_id=project.id, open_only=1) }}">Open Tasks</a>
+    {% if is_main_admin() %}
+        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <button type="submit" class="btn-danger">Delete Project</button>
+        </form>
+    {% endif %}
+</div>
+{% if blueprints %}
+<div class="card">
+    <h3>Blueprint Sheets</h3>
+    <div class="mobileBlueprintTabs">
+        {% for bp in blueprints %}
+            <a class="btn-link {% if active_blueprint and active_blueprint.id == bp.id %}btn-secondary{% endif %}" href="{{ url_for('mobile_project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+        {% endfor %}
+    </div>
+    {% if active_blueprint %}
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Hide Blueprint</a>
+        {% set blueprint_path = active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
+        {% if blueprint_path %}
+            {% if active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
+                <iframe title="{{ active_blueprint.name }}" src="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:12px;background:white;"></iframe>
+            {% else %}
+                <img class="photo" src="{{ url_for('storage_file', storage_path=blueprint_path, bp=active_blueprint.id) }}" alt="{{ active_blueprint.name }}">
+            {% endif %}
+        {% endif %}
+    {% else %}
+        <p class="muted">Tap a blueprint sheet to view it.</p>
+    {% endif %}
+</div>
+{% endif %}
+<div class="card">
+    <h3>Rooms</h3>
+    <div class="mobileRoomList">
+    {% for r in rooms %}
+        <div class="mobileRoomRow">
+            <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
+            {% if is_main_admin() %}
+                <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-danger mobileRoomDeleteButton" aria-label="Delete {{ r.name }}">Delete</button>
+                </form>
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No rooms created yet.</p>
+    {% endfor %}
+    </div>
+    {% if is_main_admin() or has_perm("create_rooms") %}
+        <div class="mobileCreateRoomArea">
+            <button type="button" id="showCreateRoomBtn">Create Room</button>
+            <form method="post" action="{{ url_for('mobile_add_room', project_id=project.id) }}" id="mobileRoomForm" style="display:none;margin-top:12px;">
+                <label>Room Name</label>
+                <input name="name" placeholder="Kitchen, Master Bedroom, Patio" required>
+                <label>Room Type</label>
+                <select name="category">
+                    <option value="general">General</option>
+                    <option value="electrical">Electrical</option>
+                    <option value="av">AV / Low Voltage</option>
+                    <option value="lighting">Lighting</option>
+                </select>
+                <label>Highlight Color</label>
+                <select name="room_color">
+                    <option value="blue">Blue</option>
+                    <option value="red">Red</option>
+                    <option value="green">Green</option>
+                    <option value="yellow">Yellow</option>
+                    <option value="purple">Purple</option>
+                    <option value="orange">Orange</option>
+                    <option value="gray">Gray</option>
+                </select>
+                <button type="submit">Create Room</button>
+                <button type="button" class="btn-secondary" id="cancelCreateRoomBtn">Cancel</button>
+            </form>
+        </div>
+    {% endif %}
+</div>
+<script>
+const showCreateRoomBtn=document.getElementById("showCreateRoomBtn");
+const mobileRoomForm=document.getElementById("mobileRoomForm");
+const cancelCreateRoomBtn=document.getElementById("cancelCreateRoomBtn");
+if(showCreateRoomBtn&&mobileRoomForm){
+    showCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.style.display="block";
+        showCreateRoomBtn.style.display="none";
+        const firstInput=mobileRoomForm.querySelector("input");
+        if(firstInput)firstInput.focus();
+    });
+}
+if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
+    cancelCreateRoomBtn.addEventListener("click",()=>{
+        mobileRoomForm.reset();
+        mobileRoomForm.style.display="none";
+        showCreateRoomBtn.style.display="inline-flex";
+    });
+}
+</script>
+<style>
+.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}.mobileRoomRow .btn-link,.mobileRoomRow button{margin:0}.mobileRoomRow form{margin:0}.mobileRoomDeleteButton{width:auto!important;min-width:88px!important;padding:12px!important;border-radius:14px!important}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+</style>
+{% endblock %}

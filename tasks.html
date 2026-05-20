@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Admin Settings</h2>
+    <p class="muted">Only the main admin can access this page.</p>
+    <style>
+        .settingsTabs{display:flex;gap:10px;flex-wrap:wrap}
+        .settingsTabs button{width:auto;min-width:180px}
+        .settingsPanel{display:none}
+        .settingsPanel.active{display:block}
+        .settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
+        .projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+        .projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+        @media(max-width:760px){.settingsTabs{display:none}}
+    </style>
+    <div class="settingsTabs desktop-only">
+        <button type="button" class="{% if active_tab != 'permissions' %}btn-secondary{% endif %}" data-settings-tab="permissions">User Permissions</button>
+        <button type="button" class="{% if active_tab != 'project_access' %}btn-secondary{% endif %}" data-settings-tab="projectAccess">Project Access</button>
+        <button type="button" class="{% if active_tab != 'account_info' %}btn-secondary{% endif %}" data-settings-tab="accountInfo">Account Info</button>
+    </div>
+</div>
+
+<div class="card settingsPanel desktop-only {% if active_tab == 'account_info' %}active{% endif %}" id="accountInfoPanel">
+    <h3>Account Info</h3>
+    <p class="muted">This information is used when sending company account details to suppliers.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="account_info">
+        <div class="grid">
+            <div>
+                <label>Company Name</label>
+                <input name="company_name" value="{{ get_app_setting('company_name', 'ProjectONus') }}" required>
+            </div>
+            <div>
+                <label>Contact Name</label>
+                <input name="company_contact_name" value="{{ get_app_setting('company_contact_name') }}">
+            </div>
+            <div>
+                <label>Phone Number</label>
+                <input name="company_phone" type="tel" value="{{ get_app_setting('company_phone') }}">
+            </div>
+            <div>
+                <label>Email</label>
+                <input name="company_email" type="email" value="{{ get_app_setting('company_email') }}">
+            </div>
+        </div>
+        <div class="grid">
+            <div>
+                <label>Street Name and Number</label>
+                <input name="company_street_address" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
+            </div>
+            <div>
+                <label>City</label>
+                <input name="company_city" value="{{ get_app_setting('company_city') }}">
+            </div>
+            <div>
+                <label>State</label>
+                <input name="company_state" value="{{ get_app_setting('company_state') }}">
+            </div>
+            <div>
+                <label>Zip Code</label>
+                <input name="company_zip_code" value="{{ get_app_setting('company_zip_code') }}">
+            </div>
+        </div>
+        <button type="submit">Save Account Info</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Company Logo</h3>
+    {% set logo = get_app_setting("company_logo") %}
+    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" style="max-height:120px;max-width:320px;background:white;padding:10px;border-radius:12px;">{% endif %}
+    <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="logo">
+        <label>Upload Company Logo</label>
+        <input type="file" name="company_logo" accept="image/*,.svg" required>
+        <button type="submit">Save Logo</button>
+    </form>
+    <p class="muted">This logo will show on the first page with "Powered by ProjectONus."</p>
+</div>
+
+<div class="card">
+    <h3>Admin Email Notifications</h3>
+    <p class="muted">Choose which field updates are sent to admin email. In-app admin notifications are always created.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="email_notifications">
+        <div class="grid">
+            <label><input type="checkbox" name="email_note_comments" {% if get_app_setting("email_note_comments", "1") == "1" %}checked{% endif %}> Email comments</label>
+            <label><input type="checkbox" name="email_note_pictures" {% if get_app_setting("email_note_pictures", "1") == "1" %}checked{% endif %}> Email pictures</label>
+            <label><input type="checkbox" name="email_note_audio" {% if get_app_setting("email_note_audio", "1") == "1" %}checked{% endif %}> Email audio</label>
+        </div>
+        <button type="submit">Save Email Notification Settings</button>
+    </form>
+</div>
+
+<div class="card">
+    {% set dtools = dtools_cloud_config() %}
+    <h3>D-Tools Cloud Integration</h3>
+    <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="dtools_cloud">
+        <div class="grid">
+            <div>
+                <label>D-Tools Cloud API Key</label>
+                <input name="dtools_cloud_api_key" type="password" placeholder="{% if dtools.api_key %}API key is saved{% else %}Paste API key from D-Tools Cloud{% endif %}">
+            </div>
+            <div>
+                <label>Base API URL</label>
+                <input name="dtools_cloud_base_url" value="{{ dtools.base_url or 'https://dtcloudapi.d-tools.cloud/api/v1' }}">
+            </div>
+            <div>
+                <label>Material Endpoint Path</label>
+                <input name="dtools_cloud_material_path" value="{{ dtools.material_path or 'Projects/GetProject' }}" placeholder="Projects/GetProject or Quotes/GetQuote">
+            </div>
+            <div>
+                <label>ID Parameter Name</label>
+                <input name="dtools_cloud_id_param" value="{{ dtools.id_param or 'Id' }}">
+            </div>
+        </div>
+        <label>Authorization Header</label>
+        <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or 'Basic RFRDbG91ZEFQSVVzZXI6MyNRdVkrMkR1QCV3Kk15JTU8Yi1aZzlV' }}">
+        <label><input type="checkbox" name="dtools_cloud_clear_key"> Clear saved API key</label>
+        <button type="submit">Save D-Tools Cloud Settings</button>
+    </form>
+    <p class="muted">Default authentication follows D-Tools Cloud API documentation: API key plus the required Basic Authorization header.</p>
+</div>
+
+<div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">
+    <h3>User Permissions</h3>
+    <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
+    {% for u in users %}
+        {% set p = perm_map.get(u.id) %}
+        <div class="card">
+            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+            <form method="post">
+                <input type="hidden" name="action" value="permissions">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <div class="grid">
+                    <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
+                    <label><input type="checkbox" name="write_comments" {% if p and p.write_comments %}checked{% endif %}> Write comments</label>
+                    <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>
+                    <label><input type="checkbox" name="delete_comments" {% if p and p.delete_comments %}checked{% endif %}> Delete comments</label>
+                    <label><input type="checkbox" name="see_pictures" {% if not p or p.see_pictures %}checked{% endif %}> See pictures</label>
+                    <label><input type="checkbox" name="add_pictures" {% if p and p.add_pictures %}checked{% endif %}> Add pictures</label>
+                    <label><input type="checkbox" name="delete_pictures" {% if p and p.delete_pictures %}checked{% endif %}> Delete pictures</label>
+                    <label><input type="checkbox" name="see_audio" {% if not p or p.see_audio %}checked{% endif %}> See audio</label>
+                    <label><input type="checkbox" name="add_audio" {% if p and p.add_audio %}checked{% endif %}> Add audio</label>
+                    <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
+                    <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
+                    <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
+                    <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
+                </div>
+                <button type="submit">Save Permissions for {{ u.name }}</button>
+            </form>
+        </div>
+    {% endfor %}
+</div>
+
+<div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" id="projectAccessPanel">
+    <h3>Project Access</h3>
+    <p class="muted">Choose which projects each user can see. Workers assigned to a task keep project access until it is revoked here. Admin accounts can see every project automatically.</p>
+    {% for u in users %}
+        {% set selected_projects = project_access_map.get(u.id, []) %}
+        <div class="card">
+            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+            {% if u.role == "admin" %}
+                <p class="muted">Admin accounts have access to all projects.</p>
+            {% else %}
+                <form method="post">
+                    <input type="hidden" name="action" value="project_access">
+                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                    <div class="projectAccessList">
+                        {% for p in projects %}
+                            <label>
+                                <input type="checkbox" name="project_ids" value="{{ p.id }}" {% if p.id in selected_projects %}checked{% endif %}>
+                                <strong>{{ p.name }}</strong><br>
+                                <span class="muted">{{ p.customer_name or "No customer" }}{% if p.customer_address %} - {{ p.customer_address }}{% endif %}</span>
+                            </label>
+                        {% else %}
+                            <p>No projects created yet.</p>
+                        {% endfor %}
+                    </div>
+                    <button type="submit">Save Project Access for {{ u.name }}</button>
+                </form>
+            {% endif %}
+        </div>
+    {% endfor %}
+</div>
+
+<script>
+const tabButtons=document.querySelectorAll("[data-settings-tab]");
+const settingsPanels={
+    permissions:document.getElementById("permissionsPanel"),
+    projectAccess:document.getElementById("projectAccessPanel"),
+    accountInfo:document.getElementById("accountInfoPanel")
+};
+tabButtons.forEach(button=>{
+    button.addEventListener("click",()=>{
+        const activeTab=button.dataset.settingsTab;
+        Object.entries(settingsPanels).forEach(([key,panel])=>{
+            if(panel)panel.classList.toggle("active",key===activeTab);
+        });
+        tabButtons.forEach(tab=>tab.classList.add("btn-secondary"));
+        button.classList.remove("btn-secondary");
+    });
+});
+</script>
+{% endblock %}

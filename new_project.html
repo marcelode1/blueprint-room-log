@@ -1,0 +1,105 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{{ room.name }}</h2>
+    <p>{{ project.name }}</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Rooms</a>
+</div>
+{% if can_add_notes() %}
+<div class="card">
+    <h3>Add Field Note</h3>
+    <form method="post" enctype="multipart/form-data">
+        <label>Date</label>
+        <input name="note_date" type="date" value="{{ selected_date or today }}" required>
+        {% set media_id = 'room_' ~ room.id ~ '_field_note' %}
+        {% set media_camera_name = 'photo_camera' %}
+        {% set media_upload_name = 'photo' %}
+        {% set media_audio_name = 'audio' %}
+        {% set media_comment_name = 'comment' %}
+        {% set media_comment_label = 'Comment' %}
+        {% set media_comment_placeholder = 'Comment about this picture or audio' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
+        <button type="submit">Save Note</button>
+    </form>
+</div>
+{% endif %}
+<div class="card">
+    <h3>History</h3>
+    {% for n in notes %}
+        <div class="card">
+            <strong>{{ n.note_date }}</strong> — {{ n.user_name or 'Unknown user' }}
+            <p>{{ n.comment }}</p>
+            {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
+            {% if n.audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
+            {% if is_main_admin() or has_perm("edit_comments") or n.user_id == session.get("user_id") %}
+                <a class="btn-link btn-secondary" href="{{ url_for('edit_note', note_id=n.id, next=request.full_path) }}">Edit Comment</a>
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No history for this room.</p>
+    {% endfor %}
+</div>
+<style>
+.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+</style>
+<template id="completionBlockTemplate">
+    <div class="completionBlock">
+        <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
+        {% set media_id = 'completion___INDEX__' %}
+        {% set media_camera_name = 'completion_attachment___INDEX___camera' %}
+        {% set media_upload_name = 'completion_attachment___INDEX___photo' %}
+        {% set media_audio_name = 'completion_attachment___INDEX___audio' %}
+        {% set media_comment_name = 'completion_attachment___INDEX___comment' %}
+        {% set media_comment_label = 'Picture / Audio Comment' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
+        <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
+    </div>
+</template>
+<div id="drawModal">
+    <canvas id="drawCanvas"></canvas>
+    <div class="drawActions">
+        <button type="button" id="saveDrawingBtn">Save Picture</button>
+        <button type="button" class="btn-secondary" id="clearDrawingBtn">Clear Drawing</button>
+        <button type="button" class="btn-danger" id="cancelDrawingBtn">Skip Drawing</button>
+    </div>
+</div>
+<script>
+document.addEventListener("click",event=>{
+    const addButton=event.target.closest(".addCompletionBlock");
+    if(addButton){
+        const form=addButton.closest(".mobileRoomCompletionForm");
+        const blocks=form&&form.querySelector(".completionBlocks");
+        const template=document.getElementById("completionBlockTemplate");
+        if(!form||!blocks||!template)return;
+        const nextIndex=parseInt(form.dataset.nextIndex||"1",10);
+        form.dataset.nextIndex=String(nextIndex+1);
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(nextIndex)).trim();
+        blocks.appendChild(wrapper.firstElementChild);
+    }
+    const removeButton=event.target.closest(".removeCompletionBlock");
+    if(removeButton){
+        const block=removeButton.closest(".completionBlock");
+        if(block)block.remove();
+    }
+});
+function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
+async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
+async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
+document.addEventListener("change",async event=>{if(event.target&&event.target.classList&&event.target.classList.contains("annotatablePhoto")){await replaceWithCompressed(event.target);openDrawModal(event.target)}});
+let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
+function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}
+function drawMove(e){if(!isDrawing)return;e.preventDefault();const p=canvasPoint(e);drawCtx.strokeStyle="#ef4444";drawCtx.lineWidth=Math.max(6,drawCanvas.width/180);drawCtx.lineCap="round";drawCtx.beginPath();drawCtx.moveTo(lastPoint.x,lastPoint.y);drawCtx.lineTo(p.x,p.y);drawCtx.stroke();lastPoint=p}
+async function openDrawModal(input){if(!input.files||!input.files[0]||isHeicFile(input.files[0])||!input.files[0].type.startsWith("image/"))return;activePhotoInput=input;const img=new Image();img.onload=()=>{drawCanvas.width=img.width;drawCanvas.height=img.height;drawCtx.drawImage(img,0,0);drawModal.style.display="block"};img.src=URL.createObjectURL(input.files[0])}
+["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
+["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
+["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
+document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
+document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
+document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
+document.querySelectorAll(".voiceTaskBtn").forEach(btn=>btn.addEventListener("click",()=>{const box=document.getElementById(btn.dataset.target);const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!box||!SR)return;const recog=new SR();recog.lang="en-US";recog.onresult=e=>box.value+=(box.value?" ":"")+e.results[0][0].transcript;recog.start()}));
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Confirm Delete Project</h2>
+    <p><strong>{{ project.name }}</strong></p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this project.</p>
+    <form method="post">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Project</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

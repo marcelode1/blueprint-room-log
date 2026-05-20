@@ -1,0 +1,52 @@
+{% set media_id = media_id|default('mobileMedia') %}
+{% set media_camera_name = media_camera_name|default('') %}
+{% set media_upload_name = media_upload_name|default('') %}
+{% set media_audio_name = media_audio_name|default('') %}
+{% set media_comment_name = media_comment_name|default('') %}
+{% set media_comment_label = media_comment_label|default('Comment') %}
+{% set media_comment_placeholder = media_comment_placeholder|default('Comment about this picture or audio') %}
+{% set media_save_label = media_save_label|default('Save') %}
+<div class="mobileMediaPicker" data-media-picker>
+    <div class="mobileMediaNativeInputs">
+        {% if media_upload_name %}
+            <input id="{{ media_id }}_upload" name="{{ media_upload_name }}" type="file" accept="image/*,.heic,.heif" data-media-input="attach">
+        {% endif %}
+        {% if media_audio_name %}
+            <input id="{{ media_id }}_audio" name="{{ media_audio_name }}" type="file" accept="audio/*" capture data-media-input="audio" data-generated-prefix="AUD">
+        {% endif %}
+        {% if media_camera_name %}
+            <input id="{{ media_id }}_camera" name="{{ media_camera_name }}" type="file" accept="image/*,.heic,.heif" capture="environment" data-media-input="camera" data-generated-prefix="IMG">
+        {% endif %}
+    </div>
+    {% if media_comment_name %}
+        <label class="mobileMediaCommentLabel" for="{{ media_id }}_comment">{{ media_comment_label }}</label>
+        <textarea id="{{ media_id }}_comment" name="{{ media_comment_name }}" rows="3" placeholder="{{ media_comment_placeholder }}" data-media-comment></textarea>
+    {% endif %}
+    <div class="mobileMediaPreview" data-media-preview hidden>
+        <div class="mobileMediaPreviewBody">
+            <div class="mobileMediaThumb" data-media-thumb></div>
+            <div>
+                <strong data-media-kind>Attachment ready</strong>
+                <p class="muted" data-media-filename></p>
+            </div>
+        </div>
+        <button type="button" class="mobileMediaPreviewSave" data-media-save>{{ media_save_label }}</button>
+    </div>
+    <div class="mobileMediaBar" aria-label="Add picture, attachment, or audio">
+        {% if media_upload_name %}
+            <button type="button" class="mobileMediaIconButton" data-media-action="attach" aria-label="Attach picture" title="Attach picture">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.7-9.7a4.2 4.2 0 0 1 5.9 5.9l-9.4 9.4a2.4 2.4 0 0 1-3.4-3.4l8.8-8.8"/></svg>
+            </button>
+        {% endif %}
+        {% if media_audio_name %}
+            <button type="button" class="mobileMediaIconButton" data-media-action="audio" aria-label="Record or attach audio" title="Record or attach audio">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg>
+            </button>
+        {% endif %}
+        {% if media_camera_name %}
+            <button type="button" class="mobileMediaIconButton mobileMediaCameraButton" data-media-action="camera" aria-label="Take picture" title="Take picture">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l2-3h6l2 3h3v13H4Z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
+        {% endif %}
+    </div>
+</div>

@@ -1,0 +1,619 @@
+<!doctype html>
+<html>
+<head>
+    <title>ProjectONus</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <style>
+        :root{--bg:#f6f8fb;--card:#fff;--text:#172033;--muted:#64748b;--primary:#2563eb;--primary-dark:#1d4ed8;--danger:#dc2626;--border:#d7dee9;--shadow:0 6px 22px rgba(15,23,42,.08)}
+        body.dark{--bg:#0b1120;--card:#111827;--text:#e5e7eb;--muted:#94a3b8;--primary:#60a5fa;--primary-dark:#3b82f6;--danger:#f87171;--border:#263244;--shadow:0 8px 28px rgba(0,0,0,.35)}
+        *{box-sizing:border-box}
+        body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
+        header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandText{display:flex;flex-direction:column;line-height:1.15}.brandUser{display:none;color:#cbd5e1;font-size:12px;font-weight:700;margin-top:2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
+        main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
+        input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
+        button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
+        button:hover,.btn-link:hover{background:var(--primary-dark)}.btn-secondary{background:#475569!important}.btn-danger{background:var(--danger)!important}
+        .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.photo,img.photo{max-width:100%;border-radius:14px;border:1px solid var(--border)}
+        .flash{background:#fff3cd;color:#1f2937;padding:12px;border-radius:12px;margin-bottom:14px}.desktop-only{display:block}.muted{color:var(--muted)}
+        .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}.backButton{width:auto;min-height:42px;padding:9px 14px;margin:0 0 12px;background:#475569!important;border-radius:10px;font-size:14px}
+        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:10px 12px;flex-wrap:nowrap;z-index:1600}header a{margin-left:0}.topNav{display:none}.mobileMenuButton{display:inline-flex!important;width:48px!important;min-height:48px!important;margin:0!important;padding:0!important;border-radius:12px!important;background:#1e293b!important;align-items:center!important;justify-content:center!important;flex-direction:column;gap:5px}.mobileMenuButton span{display:block;width:24px;height:3px;background:white;border-radius:999px}.brandWrap{min-width:0}.brandText{min-width:0}.brandLogo{width:40px;height:40px}.brand{white-space:nowrap}.brandUser{display:block}.mobileMenuPanel{position:fixed;top:60px;left:0;right:0;bottom:0;z-index:1500;background:#0f172a;border-top:1px solid #334155;padding:14px;overflow-y:auto}.mobileMenuPanel.open{display:block}.mobileMenuPanel a,.mobileMenuPanel button{width:100%;min-height:50px;margin:5px 0;border-radius:12px;justify-content:center}.mobileMenuPanel a{display:flex;align-items:center;background:#1e293b;color:white;text-decoration:none;font-weight:800;padding:12px}.mobileMenuPanel .dark-toggle{margin:5px 0!important;background:#334155!important}body.mobile-menu-open{overflow:hidden}body.mobile-menu-open main,body.mobile-menu-open .bottom-nav{display:none!important}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
+    </style>
+    {% if session.get("ui_theme") == "pro_test" %}<link rel="stylesheet" href="{{ url_for('static', filename='pro_interface_test.css') }}">{% endif %}
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="{% if session.get('ui_theme') == 'pro_test' %}proTestTheme{% endif %}">
+{% set live_unread_count = unread_notification_count() if session.get("user_id") else 0 %}
+{% set app_logo = get_app_setting("company_logo") %}
+<header>
+    <div class="brandWrap">
+        {% if app_logo %}<img class="brandLogo" src="{{ url_for('storage_file', storage_path=app_logo) }}" alt="Business Logo">{% endif %}
+        <div class="brandText">
+            <div class="brand">ProjectONus</div>
+            {% if session.get("user_id") %}<div class="brandUser">{{ session.get("name") }}</div>{% endif %}
+        </div>
+    </div>
+    {% if session.get("user_id") %}
+    <button type="button" class="mobileMenuButton" id="mobileMenuButton" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenuPanel">
+        <span></span><span></span><span></span>
+    </button>
+    {% endif %}
+    <div class="topNav">
+        {% if session.get("user_id") %}
+            <span class="desktop-only">{{ session.get("name") }}</span>
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('index') }}#projects">Projects</a>
+            <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+            {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
+            <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
+            {% if is_main_admin() %}
+                <a href="{{ url_for('users') }}">Users</a>
+                <a href="{{ url_for('suppliers') }}">Suppliers</a>
+                <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
+                <a href="{{ url_for('attendance_report') }}">Time Report</a>
+                <a href="{{ url_for('task_report') }}">Task Report</a>
+                <a href="{{ url_for('comment_report') }}">Comment Report</a>
+                <a href="{{ url_for('team_map') }}">Where Is My Team</a>
+                <a href="{{ url_for('backup') }}">Backup</a>
+                {% if session.get("ui_theme") == "pro_test" %}
+                    <a class="desktop-only ui-theme-link" href="{{ url_for('classic_ui') }}">Classic UI</a>
+                {% else %}
+                    <a class="desktop-only ui-theme-link" href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
+                {% endif %}
+            {% endif %}
+            <a href="{{ url_for('privacy') }}">Privacy</a>
+            <a href="{{ url_for('logout') }}">Logout</a>
+            <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
+        {% endif %}
+    </div>
+</header>
+{% if session.get("user_id") %}
+<div class="mobileMenuPanel" id="mobileMenuPanel">
+    {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_home') }}">Home</a>
+        <a href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+        <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+        <a href="{{ url_for('index') }}">Home</a>
+        <a href="{{ url_for('index') }}#projects">Projects</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+        {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+        <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+        <a href="{{ url_for('users') }}">Users</a>
+        <a href="{{ url_for('suppliers') }}">Suppliers</a>
+        <a href="{{ url_for('settings') }}">Settings</a>
+        <a href="{{ url_for('attendance_report') }}">Time Report</a>
+        <a href="{{ url_for('task_report') }}">Task Report</a>
+        <a href="{{ url_for('comment_report') }}">Comment Report</a>
+        <a href="{{ url_for('team_map') }}">Where Is My Team</a>
+        <a href="{{ url_for('backup') }}">Backup</a>
+        {% if session.get("ui_theme") == "pro_test" %}
+            <a href="{{ url_for('classic_ui') }}">Classic UI</a>
+        {% else %}
+            <a href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
+        {% endif %}
+        <a href="{{ url_for('privacy') }}">Privacy</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+        <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
+    {% endif %}
+</div>
+{% endif %}
+<main>
+    {% if session.get("user_id") %}
+        <button type="button" class="backButton" onclick="goBackOnePage()">Back</button>
+    {% endif %}
+    {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
+    {% block content %}{% endblock %}
+</main>
+{% set calendar_task_id = request.args.get("calendar_task") %}
+{% if calendar_task_id and session.get("user_id") and not is_main_admin() %}
+<div class="calendarPromptOverlay" id="calendarPromptOverlay">
+    <div class="calendarPrompt">
+        <h3>Add Task to Calendar?</h3>
+        <p>The task was received. Add it to this phone calendar using the be-there date and time?</p>
+        <div class="calendarPromptActions">
+            <a class="btn-link" id="calendarYesBtn" target="_blank" href="{{ url_for('task_calendar_file', task_id=calendar_task_id) }}">Yes, Add to Calendar</a>
+            <button type="button" class="btn-secondary" id="calendarNoBtn">No</button>
+        </div>
+    </div>
+</div>
+<style>
+.calendarPromptOverlay{position:fixed;inset:0;background:rgba(15,23,42,.58);z-index:500;display:flex;align-items:center;justify-content:center;padding:18px}
+.calendarPrompt{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.3);max-width:420px;width:100%;padding:20px}
+.calendarPrompt h3{margin-top:0}.calendarPromptActions{display:grid;gap:10px}
+</style>
+<script>
+(function(){
+    const overlay=document.getElementById("calendarPromptOverlay");
+    function closeCalendarPrompt(){
+        if(overlay) overlay.style.display="none";
+        const url=new URL(window.location.href);
+        url.searchParams.delete("calendar_task");
+        window.history.replaceState({}, "", url.toString());
+    }
+    const noBtn=document.getElementById("calendarNoBtn");
+    const yesBtn=document.getElementById("calendarYesBtn");
+    if(noBtn) noBtn.addEventListener("click", closeCalendarPrompt);
+    if(yesBtn) yesBtn.addEventListener("click", function(){setTimeout(closeCalendarPrompt, 300);});
+})();
+</script>
+{% endif %}
+{% if session.get("user_id") %}
+<div class="liveNotificationToast" id="liveNotificationToast" hidden>
+    <div>
+        <strong id="liveNotificationTitle">New Notification</strong>
+        <p id="liveNotificationMessage"></p>
+    </div>
+    <div class="liveNotificationActions">
+        <a class="btn-link" id="liveNotificationOpen" href="{{ url_for('notifications') }}">Open</a>
+        <button type="button" class="btn-secondary" id="liveNotificationClose">Close</button>
+    </div>
+</div>
+<style>
+.liveNotificationToast{position:fixed;right:18px;bottom:92px;z-index:480;background:var(--card);color:var(--text);border:1px solid var(--border);border-left:6px solid var(--danger);border-radius:14px;box-shadow:0 14px 44px rgba(15,23,42,.24);padding:14px;max-width:380px;width:calc(100% - 36px)}
+.liveNotificationToast[hidden]{display:none}.liveNotificationToast p{margin:6px 0 0}.liveNotificationActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.liveNotificationActions .btn-link,.liveNotificationActions button{min-height:44px;margin:0;padding:9px 12px}
+@media(max-width:760px){.liveNotificationToast{left:12px;right:12px;bottom:92px;width:auto}.liveNotificationActions{grid-template-columns:1fr}}
+</style>
+<script>
+(function(){
+    const pollUrl="{{ url_for('notifications_live') }}";
+    const stateKey="projectonus_last_notification_{{ session.get('user_id') }}";
+    const toast=document.getElementById("liveNotificationToast");
+    const titleEl=document.getElementById("liveNotificationTitle");
+    const messageEl=document.getElementById("liveNotificationMessage");
+    const openEl=document.getElementById("liveNotificationOpen");
+    const closeEl=document.getElementById("liveNotificationClose");
+    let lastSeen=parseInt(localStorage.getItem(stateKey)||"0",10)||0;
+    let lastCount={{ live_unread_count or 0 }};
+    let checking=false;
+
+    function setBadges(count){
+        document.querySelectorAll("[data-notification-badge]").forEach(el=>{
+            el.textContent=String(count);
+            el.style.display=count>0?"inline-block":"none";
+        });
+        document.querySelectorAll("[data-notification-inline-count]").forEach(el=>{
+            el.textContent="("+count+")";
+            el.style.display=count>0?"inline":"none";
+        });
+    }
+
+    function hideToast(){
+        if(toast) toast.hidden=true;
+    }
+
+    function showToast(latest){
+        if(!toast||!latest)return;
+        const isTask=latest.event_type==="task_assigned";
+        const title=isTask?"New Task Assigned":"New Notification";
+        const parts=[];
+        if(latest.task_title)parts.push(latest.task_title);
+        if(latest.project_name)parts.push(latest.project_name);
+        const message=parts.length?parts.join(" - "):(latest.message||"Open notifications to review it.");
+        if(titleEl)titleEl.textContent=title;
+        if(messageEl)messageEl.textContent=message;
+        if(openEl)openEl.href=latest.url||"{{ url_for('notifications') }}";
+        toast.hidden=false;
+        if(navigator.vibrate)navigator.vibrate([140,70,140]);
+        if("Notification" in window&&Notification.permission==="granted"&&document.hidden){
+            try{new Notification(title,{body:message});}catch(e){}
+        }
+    }
+
+    async function checkLiveNotifications(){
+        if(checking)return;
+        checking=true;
+        try{
+            const res=await fetch(pollUrl,{cache:"no-store",credentials:"same-origin",headers:{"Accept":"application/json"}});
+            if(!res.ok)return;
+            const data=await res.json();
+            const count=parseInt(data.unread_count||0,10)||0;
+            setBadges(count);
+            const latest=data.latest;
+            if(latest&&latest.id){
+                const latestId=parseInt(latest.id,10)||0;
+                if(latestId>lastSeen||count>lastCount){
+                    showToast(latest);
+                }
+                if(latestId>lastSeen){
+                    lastSeen=latestId;
+                    localStorage.setItem(stateKey,String(latestId));
+                }
+            }
+            lastCount=count;
+        }catch(e){
+        }finally{
+            checking=false;
+        }
+    }
+
+    if(closeEl)closeEl.addEventListener("click",hideToast);
+    checkLiveNotifications();
+    setInterval(checkLiveNotifications,5000);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)checkLiveNotifications();});
+    window.addEventListener("focus",checkLiveNotifications);
+})();
+</script>
+{% endif %}
+{% if session.get("user_id") %}
+<nav class="bottom-nav">
+    {% if not is_main_admin() %}
+        <a href="{{ url_for('mobile_home') }}">Home</a>
+        <a href="{{ url_for('mobile_projects') }}">Projects</a>
+        <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
+        <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+        <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
+        <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+    {% else %}
+        <a href="{{ url_for('index') }}">Home</a>
+        <a href="{{ url_for('index') }}#projects">Projects</a>
+        <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+        {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+        <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+        <a href="{{ url_for('new_project') }}">New</a>
+        <a href="{{ url_for('team_map') }}">Team</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    {% endif %}
+</nav>
+{% endif %}
+<script>
+function goBackOnePage(){if(window.history.length>1){window.history.back()}else{window.location.href="{{ url_for('index') }}"}}
+function applyDarkMode(){if(localStorage.getItem("projectonus_dark")==="1")document.body.classList.add("dark")}
+function toggleDarkMode(){document.body.classList.toggle("dark");localStorage.setItem("projectonus_dark",document.body.classList.contains("dark")?"1":"0")}
+applyDarkMode();
+const mobileMenuButton=document.getElementById("mobileMenuButton");
+const mobileMenuPanel=document.getElementById("mobileMenuPanel");
+function closeMobileMenu(){
+    if(!mobileMenuPanel||!mobileMenuButton)return;
+    mobileMenuPanel.classList.remove("open");
+    document.body.classList.remove("mobile-menu-open");
+    mobileMenuButton.setAttribute("aria-expanded","false");
+}
+if(mobileMenuButton&&mobileMenuPanel){
+    mobileMenuButton.addEventListener("click",event=>{
+        event.stopPropagation();
+        const isOpen=mobileMenuPanel.classList.toggle("open");
+        document.body.classList.toggle("mobile-menu-open",isOpen);
+        mobileMenuButton.setAttribute("aria-expanded",isOpen?"true":"false");
+    });
+    mobileMenuPanel.querySelectorAll("a").forEach(link=>link.addEventListener("click",closeMobileMenu));
+    document.addEventListener("click",event=>{
+        if(!mobileMenuPanel.classList.contains("open"))return;
+        if(mobileMenuPanel.contains(event.target)||mobileMenuButton.contains(event.target))return;
+        closeMobileMenu();
+    });
+    document.addEventListener("keydown",event=>{if(event.key==="Escape")closeMobileMenu();});
+}
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
+</script>
+<style>
+.mobileMediaPicker{margin:12px 0}.mobileMediaNativeInputs{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mobileMediaCommentLabel{margin-top:10px}.mobileMediaPicker textarea{border-radius:18px;min-height:74px}.mobileMediaBar{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--card);box-shadow:0 8px 22px rgba(15,23,42,.12);max-width:360px;margin:10px 0 0 auto}.mobileMediaIconButton{width:50px!important;height:50px!important;min-width:50px!important;min-height:50px!important;border-radius:50%!important;padding:0!important;margin:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--text)!important;border:0!important;box-shadow:none!important}.mobileMediaIconButton svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.mobileMediaCameraButton{background:var(--primary)!important;color:#fff!important}.mobileMediaPreview{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:rgba(14,165,233,.07)}.mobileMediaPreviewBody{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}.mobileMediaPreview p{margin:2px 0 0;word-break:break-word}.mobileMediaThumb{width:64px;height:64px;border-radius:10px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#334155;font-weight:900}.mobileMediaThumb img{width:100%;height:100%;object-fit:cover}.mobileMediaThumb audio{width:58px}.mobileMediaPreviewSave{width:auto!important;min-width:92px!important;margin:10px 0 0 auto!important;display:flex!important}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}.globalPictureMarkActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.globalPictureMarkActions button{margin:0!important;width:auto!important}.globalPictureMarkActions #globalPictureMarkSave{margin-left:auto!important}
+#globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
+#globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
+</style>
+<div id="globalPictureMarkModal">
+    <canvas id="globalPictureMarkCanvas"></canvas>
+    <div class="globalPictureMarkActions">
+        <button type="button" id="globalPictureMarkSave">Save Picture</button>
+        <button type="button" class="btn-secondary" id="globalPictureMarkClear">Clear Drawing</button>
+        <button type="button" class="btn-secondary" id="globalPictureMarkUseOriginal">Use Picture Without Drawing</button>
+        <button type="button" class="btn-danger" id="globalPictureMarkCancel">Cancel Picture</button>
+    </div>
+</div>
+<script>
+(function(){
+    if(!window.File||!window.DataTransfer)return;
+
+    function pad2(value){return String(value).padStart(2,"0");}
+    function generatedName(prefix, file){
+        const now=new Date();
+        const ext=(file&&file.name&&file.name.includes("."))?file.name.split(".").pop().toLowerCase():(file&&file.type&&file.type.includes("/")?file.type.split("/").pop().replace("mpeg","mp3"):"dat");
+        return prefix+"_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+"_"+Math.random().toString(36).slice(2,8).toUpperCase()+"."+ext;
+    }
+    function renameFile(file,name){
+        if(!file||!name)return file;
+        return new File([file],name,{type:file.type||"application/octet-stream",lastModified:file.lastModified||Date.now()});
+    }
+    function setOneFile(input,file){
+        const dt=new DataTransfer();
+        dt.items.add(file);
+        input.files=dt.files;
+    }
+    function mediaLabel(action){
+        if(action==="camera")return "Picture ready";
+        if(action==="audio")return "Audio ready";
+        return "Attachment ready";
+    }
+    function clearOtherInputs(picker,activeInput){
+        picker.querySelectorAll("[data-media-input]").forEach(input=>{
+            if(input!==activeInput)input.value="";
+        });
+    }
+    function updatePreview(input){
+        const picker=input.closest("[data-media-picker]");
+        const preview=picker&&picker.querySelector("[data-media-preview]");
+        if(!picker||!preview||!input.files||!input.files[0])return;
+        clearOtherInputs(picker,input);
+        const file=input.files[0];
+        const kind=preview.querySelector("[data-media-kind]");
+        const filename=preview.querySelector("[data-media-filename]");
+        const thumb=preview.querySelector("[data-media-thumb]");
+        if(kind)kind.textContent=mediaLabel(input.dataset.mediaInput||"attach");
+        if(filename)filename.textContent=file.name||"Selected file";
+        if(thumb){
+            thumb.innerHTML="";
+            if(file.type&&file.type.startsWith("image/")){
+                const img=document.createElement("img");
+                img.alt="";
+                img.src=URL.createObjectURL(file);
+                img.onload=()=>URL.revokeObjectURL(img.src);
+                thumb.appendChild(img);
+            }else if(file.type&&file.type.startsWith("audio/")){
+                thumb.textContent="AUD";
+            }else{
+                thumb.textContent="FILE";
+            }
+        }
+        preview.hidden=false;
+        const comment=picker.querySelector("[data-media-comment]");
+        if(comment&&input.dataset.mediaInput!=="audio")comment.focus();
+    }
+
+    document.addEventListener("click",event=>{
+        const actionButton=event.target.closest("[data-media-action]");
+        if(actionButton){
+            const picker=actionButton.closest("[data-media-picker]");
+            const input=picker&&picker.querySelector('[data-media-input="'+actionButton.dataset.mediaAction+'"]');
+            if(input)input.click();
+            return;
+        }
+        const saveButton=event.target.closest("[data-media-save]");
+        if(saveButton){
+            const form=saveButton.closest("form");
+            if(!form)return;
+            if(form.requestSubmit)form.requestSubmit();
+            else form.submit();
+        }
+    });
+
+    document.addEventListener("change",event=>{
+        const input=event.target.closest&&event.target.closest("[data-media-input]");
+        if(!input||!input.files||!input.files[0])return;
+        const prefix=input.dataset.generatedPrefix;
+        if(prefix){
+            setOneFile(input,renameFile(input.files[0],generatedName(prefix,input.files[0])));
+        }
+        updatePreview(input);
+    });
+})();
+
+(function(){
+    const modal=document.getElementById("globalPictureMarkModal");
+    const canvas=document.getElementById("globalPictureMarkCanvas");
+    if(!modal||!canvas||!window.File||!window.DataTransfer)return;
+    const ctx=canvas.getContext("2d");
+    const saveBtn=document.getElementById("globalPictureMarkSave");
+    const clearBtn=document.getElementById("globalPictureMarkClear");
+    const useOriginalBtn=document.getElementById("globalPictureMarkUseOriginal");
+    const cancelBtn=document.getElementById("globalPictureMarkCancel");
+    let activeInput=null;
+    let originalFile=null;
+    let activeFilename="";
+    let imageObjectUrl="";
+    let drawing=false;
+    let lastPoint=null;
+
+    function isMarkableInput(input){
+        return input&&input.matches&&input.matches('input[type="file"][accept*="image"]:not(.annotatablePhoto):not([name="blueprint"]):not([name="company_logo"])');
+    }
+
+    function pad2(value){
+        return String(value).padStart(2,"0");
+    }
+
+    function phoneStyleFilename(){
+        const now=new Date();
+        return "IMG_"+now.getFullYear()+pad2(now.getMonth()+1)+pad2(now.getDate())+"_"+pad2(now.getHours())+pad2(now.getMinutes())+pad2(now.getSeconds())+".jpg";
+    }
+
+    function jpegFilename(name){
+        const clean=name||phoneStyleFilename();
+        return clean.match(/\.[A-Za-z0-9]+$/)?clean.replace(/\.[A-Za-z0-9]+$/,".jpg"):clean+".jpg";
+    }
+
+    function displayFilename(file,input){
+        const name=file&&file.name?file.name:"";
+        const lower=name.toLowerCase();
+        const generic=["image.jpg","image.jpeg","image.png","photo.jpg","photo.jpeg","photo.png","picture.jpg","picture.jpeg","picture.png","marked_picture.jpg","blob"];
+        if((input&&input.hasAttribute("capture"))||generic.includes(lower))return phoneStyleFilename();
+        return name||phoneStyleFilename();
+    }
+
+    function isHeicFile(file){
+        const type=(file&&file.type?file.type:"").toLowerCase();
+        const name=(file&&file.name?file.name:"").toLowerCase();
+        return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif");
+    }
+
+    function canvasPoint(event){
+        const rect=canvas.getBoundingClientRect();
+        const pointer=event.touches?event.touches[0]:event;
+        return {
+            x:(pointer.clientX-rect.left)*(canvas.width/rect.width),
+            y:(pointer.clientY-rect.top)*(canvas.height/rect.height)
+        };
+    }
+
+    function drawMove(event){
+        if(!drawing)return;
+        event.preventDefault();
+        const point=canvasPoint(event);
+        ctx.strokeStyle="#ef4444";
+        ctx.lineWidth=Math.max(6,canvas.width/180);
+        ctx.lineCap="round";
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x,lastPoint.y);
+        ctx.lineTo(point.x,point.y);
+        ctx.stroke();
+        lastPoint=point;
+    }
+
+    function closeModal(){
+        modal.style.display="none";
+        if(imageObjectUrl){
+            URL.revokeObjectURL(imageObjectUrl);
+            imageObjectUrl="";
+        }
+    }
+
+    function setInputFile(input, blob, filename){
+        const file=new File([blob], filename, {type:"image/jpeg"});
+        const dt=new DataTransfer();
+        dt.items.add(file);
+        input.files=dt.files;
+    }
+
+    function setInputOriginal(){
+        if(!activeInput||!originalFile)return;
+        const dt=new DataTransfer();
+        dt.items.add(originalFile);
+        activeInput.files=dt.files;
+        closeModal();
+    }
+
+    function saveCanvasToInput(){
+        if(!activeInput)return;
+        canvas.toBlob(blob=>{
+            if(blob)setInputFile(activeInput, blob, jpegFilename(activeFilename));
+            closeModal();
+        },"image/jpeg",.86);
+    }
+
+    function loadPicture(file){
+        if(imageObjectUrl){
+            URL.revokeObjectURL(imageObjectUrl);
+            imageObjectUrl="";
+        }
+        const image=new Image();
+        image.onload=function(){
+            const maxSize=1600;
+            const ratio=Math.min(1,maxSize/Math.max(image.width,image.height));
+            canvas.width=Math.max(1,Math.round(image.width*ratio));
+            canvas.height=Math.max(1,Math.round(image.height*ratio));
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.drawImage(image,0,0,canvas.width,canvas.height);
+            modal.style.display="block";
+        };
+        image.onerror=function(){
+            closeModal();
+            alert("This picture type could not be opened for drawing. It will still be attached without marking.");
+        };
+        imageObjectUrl=URL.createObjectURL(file);
+        image.src=imageObjectUrl;
+    }
+
+    document.addEventListener("change",event=>{
+        const input=event.target;
+        if(!isMarkableInput(input))return;
+        if(!input.files||!input.files[0])return;
+        const file=input.files[0];
+        if(!file.type||!file.type.startsWith("image/"))return;
+        if(isHeicFile(file))return;
+        activeInput=input;
+        originalFile=file;
+        activeFilename=displayFilename(file,input);
+        loadPicture(file);
+    });
+
+    ["mousedown","touchstart"].forEach(eventName=>canvas.addEventListener(eventName,event=>{
+        drawing=true;
+        lastPoint=canvasPoint(event);
+        event.preventDefault();
+    },{passive:false}));
+    ["mousemove","touchmove"].forEach(eventName=>canvas.addEventListener(eventName,drawMove,{passive:false}));
+    ["mouseup","mouseleave","touchend"].forEach(eventName=>canvas.addEventListener(eventName,()=>{drawing=false;}));
+    if(saveBtn)saveBtn.addEventListener("click",saveCanvasToInput);
+    if(clearBtn)clearBtn.addEventListener("click",()=>{if(originalFile)loadPicture(originalFile);});
+    if(useOriginalBtn)useOriginalBtn.addEventListener("click",setInputOriginal);
+    if(cancelBtn)cancelBtn.addEventListener("click",()=>{
+        if(activeInput)activeInput.value="";
+        closeModal();
+    });
+})();
+</script>
+{% if session.get("user_id") and not is_main_admin() %}
+<script>
+(function(){
+    if(!navigator.geolocation)return;
+    let watchId=null;
+    let lastSent=0;
+    let intervalMs=60000;
+
+    function timezoneName(){
+        try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"";}catch(e){return "";}
+    }
+
+    function stopTracking(){
+        if(watchId!==null){
+            navigator.geolocation.clearWatch(watchId);
+            watchId=null;
+        }
+    }
+
+    function sendPosition(pos){
+        const now=Date.now();
+        if(now-lastSent<intervalMs)return;
+        lastSent=now;
+        fetch("{{ url_for('mobile_location_ping') }}",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+                latitude:pos.coords.latitude,
+                longitude:pos.coords.longitude,
+                accuracy:pos.coords.accuracy,
+                event_timezone:timezoneName()
+            })
+        }).then(r=>r.json()).then(data=>{
+            if(data && data.active===false)stopTracking();
+        }).catch(()=>{});
+    }
+
+    function startTracking(){
+        if(watchId!==null)return;
+        watchId=navigator.geolocation.watchPosition(
+            sendPosition,
+            ()=>{},
+            {enableHighAccuracy:true,timeout:20000,maximumAge:30000}
+        );
+    }
+
+    async function refreshClockStatus(){
+        try{
+            const res=await fetch("{{ url_for('mobile_location_status') }}",{cache:"no-store"});
+            const data=await res.json();
+            intervalMs=data.interval_ms||60000;
+            if(data.active)startTracking();
+            else stopTracking();
+        }catch(e){}
+    }
+
+    refreshClockStatus();
+    setInterval(refreshClockStatus,60000);
+    document.addEventListener("visibilitychange",()=>{if(!document.hidden)refreshClockStatus();});
+})();
+</script>
+{% endif %}
+<div style="text-align:center;padding:20px;color:#64748b;font-size:13px">
+    <a href="{{ url_for('privacy') }}" style="color:inherit;text-decoration:none">Privacy Policy</a>
+</div>
+</body>
+</html>

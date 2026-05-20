@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>{% if my_report %}My Time Report{% else %}Time Report{% endif %}</h2>
+    <form method="get">
+        <div class="grid">
+            {% if not my_report %}
+            <div>
+                <label>User</label>
+                <select name="user_id">
+                    <option value="">All Users</option>
+                    {% for u in users %}
+                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div>
+                <label>Period</label>
+                <select name="period">
+                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
+                    {% if not my_report %}<option value="year" {% if period == "year" %}selected{% endif %}>Year</option>{% endif %}
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input type="date" name="date" value="{{ selected_date }}" required>
+            </div>
+        </div>
+        <button type="submit">Show Report</button>
+        {% if not my_report %}
+        <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('task_report') }}">Task Report</a>
+        <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
+        {% endif %}
+    </form>
+    <p class="muted">Showing {{ start.date() }} through {{ end.date() }}.</p>
+    {% if my_report %}<p class="muted">This report only shows your own clock in and clock out records.</p>{% endif %}
+</div>
+
+<div class="card">
+    <h3>Total Hours</h3>
+    {% for row in summary %}
+        <p><strong>{{ row.name }}</strong> <span class="muted">{{ row.email }}</span>: {{ minutes_text(row.minutes) }}</p>
+    {% else %}
+        <p>No completed clock-in/clock-out pairs for this period.</p>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h3>Hours</h3>
+    <style>
+        .timeTable{width:100%;border-collapse:collapse}
+        .timeTable th,.timeTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
+        .timeTable th{background:#f3f4f6}
+        .editClock{font-size:12px;margin-top:6px;display:inline-block}
+        @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1320px}}
+        @media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.timeTable th,.timeTable td{font-size:11px;padding:5px}}
+    </style>
+    <div class="timeWrap">
+        <table class="timeTable">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Project</th>
+                    <th>Date</th>
+                    <th>Time Zone</th>
+                    <th>Clock In</th>
+                    <th>Clock In Location</th>
+                    <th>Clock Out</th>
+                    <th>Clock Out Location</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for p in pairs %}
+                {% set ci = p.check_in %}
+                {% set co = p.check_out %}
+                {% set u = p.user %}
+                {% set event = ci if ci else co %}
+                <tr>
+                    <td>{{ u.user_name or "Unknown user" }}<br><span class="muted">{{ u.user_email or "" }}</span></td>
+                    <td>{{ event.project_name or "No project" }}</td>
+                    <td>{{ format_event_date(event) }}</td>
+                    <td>{{ event_timezone_name(event) }}</td>
+                    <td>
+                        {% if ci %}
+                            {{ format_event_time(ci) }}
+                            {% if not my_report %}
+                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=request.full_path) }}">Edit</a>
+                            {% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if ci %}
+                            {{ ci.address or "-" }}
+                            {% if ci.latitude and ci.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ ci.latitude }},{{ ci.longitude }}">Map</a>{% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if co %}
+                            {{ format_event_time(co) }}
+                            {% if not my_report %}
+                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=request.full_path) }}">Edit</a>
+                            {% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if co %}
+                            {{ co.address or "-" }}
+                            {% if co.latitude and co.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ co.latitude }},{{ co.longitude }}">Map</a>{% endif %}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td>{{ duration_text(ci.created_at, co.created_at) if ci and co else "-" }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="9">No time clock records for this period.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

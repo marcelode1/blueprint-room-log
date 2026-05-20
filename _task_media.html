@@ -1,0 +1,173 @@
+{% set supplier = t.get('_supplier') %}
+{% set supplier_item = t.get('_supplier_inventory_item') %}
+{% set supplier_items = t.get('_supplier_inventory_items', []) %}
+{% set supplier_item_attachments = t.get('_supplier_item_attachments', {}) %}
+{% set can_pickup_supplier_item = is_main_admin() or t.assigned_user_id == session.get("user_id") %}
+{% set supplier_task_return_url = request.full_path ~ '#task-' ~ t.id %}
+{% if supplier %}
+    {% if supplier_items %}
+        {% set display_supplier_items = supplier_items %}
+    {% elif supplier_item %}
+        {% set display_supplier_items = [supplier_item] %}
+    {% else %}
+        {% set display_supplier_items = [] %}
+    {% endif %}
+    <div class="supplierTaskInfo">
+        <h4>Supplier</h4>
+        <p class="supplierName">{{ supplier.name }}</p>
+        {% if supplier.address %}
+            <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(supplier.address) }}">Open Supplier Route</a>
+        {% endif %}
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=supplier_task_return_url) }}">Clock In / Clock Out</a>
+
+        <div class="supplierMaterialList">
+        {% for item in display_supplier_items %}
+            {% set item_photos = supplier_item_attachments.get(item.id, []) %}
+            <div class="supplierMaterialItem">
+                <p><strong>Material / Item:</strong> {{ item.item_name }}</p>
+                <p><strong>QTY:</strong> {{ item.quantity }}</p>
+                <p><strong>Brand:</strong> {{ item.brand or '-' }}</p>
+                <p><strong>Model:</strong> {{ item.item_model or '-' }}</p>
+                <p><strong>Project:</strong> {{ item.project_name or '-' }}</p>
+                <p><strong>Room:</strong> {{ item.room_name or '-' }}</p>
+                <p><strong>Status:</strong> {{ inventory_status_label(item.status) }}</p>
+                {% if item.pickup_comment %}
+                    <p><strong>Comment:</strong><br>{{ item.pickup_comment }}</p>
+                {% endif %}
+                {% if item_photos %}
+                    <div class="supplierItemPhotoList">
+                        {% for attachment in item_photos %}
+                            {% if attachment.file_type == 'photo' %}
+                                <div class="supplierItemPhoto">
+                                    {% if attachment.comment %}
+                                        <div class="supplierPictureComment">{{ attachment.comment }}</div>
+                                    {% endif %}
+                                    <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                                    <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
+                                    {% include "_attachment_comment_editor.html" %}
+                                    {% if is_main_admin() and not is_mobile_request() %}
+                                        <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this picture?');">
+                                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                                            <button type="submit" class="btn-danger">Delete Picture</button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if can_pickup_supplier_item %}
+                    <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
+                        <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                        <label class="supplierPickupCheck">
+                            <input type="checkbox" name="picked_up" value="1" onchange="this.form.submit()" {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %} {% if item.status == 'used' %}disabled{% endif %}>
+                            Picked up
+                        </label>
+                        <div class="supplierItemPhotoBlocks">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="0">
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media_0' %}
+                                {% set media_camera_name = 'supplier_item_attachment_0_camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment_0_photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment_0_comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Save Item' %}
+                                {% include "_mobile_media_bar.html" %}
+                            </div>
+                        </div>
+                        <template class="supplierItemPhotoBlockTemplate">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="__INDEX__">
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media___INDEX__' %}
+                                {% set media_camera_name = 'supplier_item_attachment___INDEX___camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment___INDEX___photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment___INDEX___comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Save Item' %}
+                                {% include "_mobile_media_bar.html" %}
+                                <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>
+                            </div>
+                        </template>
+                        <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
+                        <button type="submit">Save Item</button>
+                    </form>
+                {% else %}
+                    <label class="supplierPickupCheck supplierPickupCheckReadOnly">
+                        <input type="checkbox" disabled {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %}>
+                        Picked up
+                    </label>
+                {% endif %}
+            </div>
+        {% endfor %}
+        </div>
+    </div>
+{% endif %}
+
+<script>
+if(!window.supplierItemPhotoControlsReady){
+    window.supplierItemPhotoControlsReady=true;
+    document.addEventListener("click",event=>{
+        const addButton=event.target.closest(".addSupplierItemPhoto");
+        if(!addButton)return;
+        const form=addButton.closest(".supplierItemPickupForm");
+        const blocks=form?form.querySelector(".supplierItemPhotoBlocks"):null;
+        const template=form?form.querySelector(".supplierItemPhotoBlockTemplate"):null;
+        if(!form||!blocks||!template)return;
+        const index=Number(form.dataset.nextPhotoIndex||"1");
+        form.dataset.nextPhotoIndex=String(index+1);
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(index)).trim();
+        blocks.appendChild(wrapper.firstElementChild);
+    });
+    document.addEventListener("click",event=>{
+        const removeButton=event.target.closest(".removeSupplierItemPhoto");
+        if(!removeButton)return;
+        const block=removeButton.closest(".supplierItemPhotoBlock");
+        if(block)block.remove();
+    });
+    document.addEventListener("change",event=>{
+        const input=event.target;
+        if(!input||!input.matches('input[name^="supplier_item_attachment_"][type="file"]'))return;
+        const block=input.closest(".supplierItemPhotoBlock");
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(!preview||!img)return;
+        if(!input.files||!input.files[0]){
+            preview.style.display="none";
+            img.removeAttribute("src");
+            return;
+        }
+        img.src=URL.createObjectURL(input.files[0]);
+        preview.style.display="block";
+    });
+    document.addEventListener("click",event=>{
+        const clearButton=event.target.closest(".clearSupplierSelectedPhoto");
+        if(!clearButton)return;
+        const block=clearButton.closest(".supplierItemPhotoBlock");
+        const input=block?block.querySelector('input[type="file"]'):null;
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(input)input.value="";
+        if(img)img.removeAttribute("src");
+        if(preview)preview.style.display="none";
+    });
+}
+</script>
+<style>
+.supplierTaskInfo{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(245,158,11,.09)}
+.supplierTaskInfo h4{margin:0 0 4px}
+.supplierName{font-size:18px;font-weight:800;margin:0 0 10px}
+.supplierMaterialList{display:grid;gap:12px;margin:12px 0}
+.supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:12px;background:rgba(255,255,255,.25)}
+.supplierMaterialItem p{margin:6px 0}
+.supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;font-weight:800;background:rgba(255,255,255,.18)}
+.supplierPickupCheck input{width:auto;min-height:auto}
+.supplierPickupCheckReadOnly{opacity:.8}
+.supplierItemPhotoBlocks{display:grid;gap:10px}
+.supplierItemPhotoBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;background:rgba(255,255,255,.18)}
+.supplierItemPhotoList{display:grid;gap:10px;margin:10px 0}
+.supplierItemPhoto{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.18)}
+.supplierPictureComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.1);font-weight:700}
+</style>

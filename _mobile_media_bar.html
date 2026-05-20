@@ -1,0 +1,217 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Invite Mobile User</h2>
+    <form method="post">
+        <label>Name</label>
+        <input name="name" required>
+
+        <label>Email</label>
+        <input name="email" type="email" required>
+
+        <label>Cellphone Number</label>
+        <input name="phone_number" type="tel" placeholder="+15551234567">
+        <label><input type="checkbox" name="sms_enabled"> Allow text messages for this user</label>
+
+        <label>PIN Number</label>
+        <input name="pin" inputmode="numeric" minlength="4" required>
+
+        <label>Role</label>
+        <select name="role">
+            <option value="customer">Customer</option>
+            <option value="worker">Worker</option>
+        </select>
+
+        <button type="submit">Send Mobile Invitation</button>
+    </form>
+    <p class="muted">The invitation email sends the mobile link. Share the PIN with the user separately.</p>
+    <p class="muted">Text messages require Twilio settings on Render: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.</p>
+</div>
+
+<div class="card">
+    <h2>Users</h2>
+    <button type="button" class="btn-secondary" id="showUserSearchBtn">Search Users</button>
+    <div id="userSearchPanel" class="userSearchPanel" style="display:none;">
+        <label>Type User Name</label>
+        <input id="userSearchInput" placeholder="Start typing the first letters">
+        <label>Go Directly to User</label>
+        <select id="userJumpSelect">
+            <option value="">Choose user</option>
+            {% for u in users %}
+                <option value="userRow{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
+            {% endfor %}
+        </select>
+        <p id="userSearchCount" class="muted"></p>
+    </div>
+
+    <style>
+        .userSearchPanel {
+            margin: 12px 0 18px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background: #f8fafc;
+        }
+        .userRow {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: white;
+        }
+        .deleteConfirm {
+            display: none;
+            margin-top: 8px;
+            padding: 10px;
+            border-radius: 8px;
+            background: #fff3cd;
+        }
+        .confirmButtons {
+            display: flex;
+            gap: 8px;
+        }
+        .confirmButtons button {
+            width: auto;
+            min-width: 90px;
+        }
+        .smsBox {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+        .smsBox input[type="checkbox"] {
+            width: auto;
+            min-height: auto;
+            margin-right: 8px;
+        }
+        input[type="checkbox"] {
+            width: auto;
+            min-height: auto;
+            margin-right: 8px;
+        }
+        @media(max-width:700px){
+            .userRow { grid-template-columns: 1fr; }
+            .confirmButtons { flex-direction: column; }
+            .confirmButtons button { width: 100%; }
+        }
+    </style>
+
+    {% for u in users %}
+        <div class="userRow" id="userRow{{ u.id }}" data-user-name="{{ u.name|lower }}" data-user-email="{{ u.email|lower }}">
+            <div>
+                <strong>{{ u.name }}</strong><br>
+                <span>{{ u.email }}</span><br>
+                <small>Role: {{ u.role }}</small>
+                <p class="muted">Cellphone: {{ u.phone_number or "Not set" }}{% if u.sms_enabled %} - Text enabled{% else %} - Text disabled{% endif %}</p>
+                {% if u.role != "admin" %}
+                <form method="post" action="{{ url_for('update_user_pin', user_id=u.id) }}" style="margin-top:10px;">
+                    <label>New PIN / Resend Invite</label>
+                    <input name="pin" inputmode="numeric" minlength="4" required>
+                    <button type="submit" class="btn-secondary">Update PIN & Send Invite</button>
+                </form>
+                {% endif %}
+                <div class="smsBox">
+                    <form method="post" action="{{ url_for('update_user_phone', user_id=u.id) }}">
+                        <label>Cellphone Number</label>
+                        <input name="phone_number" type="tel" value="{{ u.phone_number or '' }}" placeholder="+15551234567">
+                        <label><input type="checkbox" name="sms_enabled" {% if u.sms_enabled %}checked{% endif %}> Allow text messages</label>
+                        <button type="submit" class="btn-secondary">Save Text Settings</button>
+                    </form>
+                    <form method="post" action="{{ url_for('send_user_sms', user_id=u.id) }}">
+                        <label>Send Text Message</label>
+                        <textarea name="message" rows="2" placeholder="Message to send to this worker"></textarea>
+                        <button type="submit">Send Text</button>
+                    </form>
+                </div>
+            </div>
+
+            <div>
+                {% if u.id != session.get("user_id") %}
+                    <button type="button" class="btn-danger" onclick="showDeleteConfirm('{{ u.id }}')">
+                        Delete
+                    </button>
+
+                    <div class="deleteConfirm" id="deleteConfirm{{ u.id }}">
+                        <strong>Delete this user?</strong>
+                        <p>This cannot be undone.</p>
+
+                        <div class="confirmButtons">
+                            <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}">
+                                <button type="submit" class="btn-danger">Yes</button>
+                            </form>
+
+                            <button type="button" class="btn-secondary" onclick="hideDeleteConfirm('{{ u.id }}')">
+                                No
+                            </button>
+                        </div>
+                    </div>
+                {% else %}
+                    <small>You are logged in with this account</small>
+                {% endif %}
+            </div>
+        </div>
+    {% else %}
+        <p>No users found.</p>
+    {% endfor %}
+</div>
+
+<script>
+const showUserSearchBtn = document.getElementById("showUserSearchBtn");
+const userSearchPanel = document.getElementById("userSearchPanel");
+const userSearchInput = document.getElementById("userSearchInput");
+const userJumpSelect = document.getElementById("userJumpSelect");
+const userSearchCount = document.getElementById("userSearchCount");
+const userRows = Array.from(document.querySelectorAll(".userRow"));
+
+function updateUserSearch() {
+    const term = (userSearchInput.value || "").trim().toLowerCase();
+    let shown = 0;
+    userRows.forEach(row => {
+        const name = row.dataset.userName || "";
+        const email = row.dataset.userEmail || "";
+        const match = !term || name.startsWith(term) || email.startsWith(term) || name.includes(term) || email.includes(term);
+        row.style.display = match ? "grid" : "none";
+        if (match) shown += 1;
+    });
+    userSearchCount.textContent = shown + " user" + (shown === 1 ? "" : "s") + " shown";
+}
+
+if (showUserSearchBtn && userSearchPanel) {
+    showUserSearchBtn.addEventListener("click", () => {
+        const opening = userSearchPanel.style.display === "none";
+        userSearchPanel.style.display = opening ? "block" : "none";
+        if (opening && userSearchInput) userSearchInput.focus();
+        updateUserSearch();
+    });
+}
+if (userSearchInput) userSearchInput.addEventListener("input", updateUserSearch);
+if (userJumpSelect) {
+    userJumpSelect.addEventListener("change", () => {
+        const row = document.getElementById(userJumpSelect.value);
+        if (!row) return;
+        if (userSearchInput) {
+            userSearchInput.value = "";
+            updateUserSearch();
+        }
+        row.scrollIntoView({behavior: "smooth", block: "center"});
+        row.style.outline = "3px solid #2563eb";
+        setTimeout(() => { row.style.outline = ""; }, 1800);
+    });
+}
+
+function showDeleteConfirm(userId) {
+    const box = document.getElementById("deleteConfirm" + userId);
+    if (box) box.style.display = "block";
+}
+
+function hideDeleteConfirm(userId) {
+    const box = document.getElementById("deleteConfirm" + userId);
+    if (box) box.style.display = "none";
+}
+</script>
+{% endblock %}

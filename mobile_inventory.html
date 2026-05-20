@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Project Inventory</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+    <a class="btn-link" href="{{ url_for('inventory', project_id=project.id) }}">Open Main Inventory</a>
+</div>
+
+{% if can_edit_inventory() %}
+<div class="card">
+    <h3>Add Item to This Project</h3>
+    <form method="post" enctype="multipart/form-data">
+        <div class="grid">
+            <div><label>Date</label><input type="date" name="item_date" value="{{ today }}" required></div>
+            <div><label>Quantity</label><input type="number" name="quantity" step="0.01" min="0" required></div>
+            <div><label>Item Name</label><input name="item_name" required></div>
+            <div><label>Item Model #</label><input name="item_model"></div>
+            <div><label>Brand</label><input name="brand"></div>
+            <div>
+                <label>New or Used</label>
+                <select name="item_condition">{% for value, label in condition_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+            </div>
+            <div>
+                <label>Room Allocation</label>
+                <select name="room_id">
+                    <option value="">Project general</option>
+                    {% for r in rooms %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Where Located</label>
+                <select name="location_type">{% for value, label in location_options.items() %}<option value="{{ value }}" {% if value == "job_site" %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+            </div>
+            <div><label>Location Detail</label><input name="location_detail" placeholder="Room, truck, shelf, bin"></div>
+            <div>
+                <label>Status</label>
+                <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+            </div>
+            <div><label>Picture</label><input type="file" name="picture" accept="image/*,.heic,.heif"></div>
+            <div><label>Take Picture</label><input type="file" name="picture_camera" accept="image/*,.heic,.heif" capture="environment"></div>
+        </div>
+        <label>Used / Purchase Note</label>
+        <textarea name="used_note" rows="2"></textarea>
+        <button type="submit">Add Inventory Item</button>
+    </form>
+</div>
+{% endif %}
+
+{% if is_main_admin() %}
+<div class="card">
+    <h3>Import from D-Tools Cloud</h3>
+    {% if dtools_cloud_configured() %}
+        {% set dtools = dtools_cloud_config() %}
+        <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
+            <div class="grid">
+                <div>
+                    <label>D-Tools Project or Quote ID</label>
+                    <input name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="Paste the D-Tools Cloud ID" required>
+                </div>
+                <div>
+                    <label>Endpoint Path</label>
+                    <input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}">
+                </div>
+            </div>
+            <button type="submit">Import D-Tools Material List</button>
+        </form>
+        <p class="muted">Imported products are added to this project inventory as Needs Purchase. If a D-Tools location matches a ProjectONus room name, the item is assigned to that room.</p>
+    {% else %}
+        <p class="muted">Add your D-Tools Cloud API key in Settings before importing materials.</p>
+        <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">Open Settings</a>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Project Inventory List</h3>
+    <div class="inventoryWrap">
+        <table class="inventoryTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Qty</th>
+                    <th>Item</th>
+                    <th>Model #</th>
+                    <th>Brand</th>
+                    <th>Supplier</th>
+                    <th>Condition</th>
+                    <th>Room / Location</th>
+                    <th>Status</th>
+                    <th>Picture</th>
+                    {% if can_edit_inventory() %}<th>Action</th>{% endif %}
+                    {% if is_main_admin() %}<th>Delete</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for m in materials %}
+                <tr class="inventoryStatus inventory-{{ m.status }}">
+                    <td>{{ m.item_date }}</td>
+                    <td>{{ m.quantity }}</td>
+                    <td><strong>{{ m.item_name }}</strong>{% if m.used_note %}<p class="muted">{{ m.used_note }}</p>{% endif %}</td>
+                    <td>{{ m.item_model or '-' }}</td>
+                    <td>{{ m.brand or '-' }}</td>
+                    <td>{{ m.supplier_name or '-' }}{% if m.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Map</a>{% endif %}</td>
+                    <td>{{ inventory_condition_label(m.item_condition) }}</td>
+                    <td>{{ m.room_name or 'Project general' }}<br><span class="muted">{{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</span></td>
+                    <td><span class="statusBadge">{{ inventory_status_label(m.status) }}</span>{% if m.used_by_name %}<br><span class="muted">By {{ m.used_by_name }}</span>{% endif %}</td>
+                    <td>{% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% else %}-{% endif %}</td>
+                    {% if can_edit_inventory() %}
+                    <td>
+                        {% if m.status == "needs_purchase" %}
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="project_id" value="{{ project.id }}">
+                            <input type="hidden" name="room_id" value="{{ m.room_id or '' }}">
+                            <input type="hidden" name="status" value="available">
+                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased</label>
+                        </form>
+                        {% elif m.status == "available" %}
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="project_id" value="{{ project.id }}">
+                            <input type="hidden" name="room_id" value="{{ m.room_id or '' }}">
+                            <input type="hidden" name="status" value="used">
+                            <input name="used_note" value="{{ m.used_note or '' }}" placeholder="Used note">
+                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Used</label>
+                        </form>
+                        {% endif %}
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="project_id" value="{{ project.id }}">
+                            <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                            <select name="room_id">
+                                <option value="">Project general</option>
+                                {% for r in rooms %}<option value="{{ r.id }}" {% if m.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
+                            </select>
+                            <input name="used_note" value="{{ m.used_note or '' }}" placeholder="Used or purchase note">
+                            <button type="submit">Save</button>
+                        </form>
+                    </td>
+                    {% endif %}
+                    {% if is_main_admin() %}
+                    <td>
+                        <form method="post" action="{{ url_for('delete_inventory_item', item_id=m.id) }}" onsubmit="return confirm('Delete this inventory item?');">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <button type="submit" class="btn-danger">Delete</button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+            {% else %}
+                <tr><td colspan="12">No project inventory yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+.inventoryWrap{overflow-x:auto}.inventoryTable{width:100%;min-width:1050px;border-collapse:collapse}
+.inventoryTable th,.inventoryTable td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}.inventoryTable th{background:#eef2f7}
+.inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
+.inventoryPic{max-width:110px;border-radius:8px;border:1px solid var(--border)}
+.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
+</style>
+{% endblock %}

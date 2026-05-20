@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Edit Clock Record</h2>
+    <p class="muted">{{ event.user_name or "Unknown user" }} - {{ event.project_name or "No project" }}</p>
+</div>
+
+<div class="card">
+    <form method="post">
+        <input type="hidden" name="return_url" value="{{ return_url }}">
+        <div class="grid">
+            <div>
+                <label>User</label>
+                <select name="user_id" required>
+                    {% for u in users %}
+                        <option value="{{ u.id }}" {% if event.user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Project</label>
+                <select name="project_id" required>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}" {% if event.project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Type</label>
+                <select name="event_type" required>
+                    <option value="check_in" {% if event.event_type == "check_in" %}selected{% endif %}>Clock In</option>
+                    <option value="check_out" {% if event.event_type == "check_out" %}selected{% endif %}>Clock Out</option>
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input type="date" name="event_date" value="{{ event_date }}" required>
+            </div>
+            <div>
+                <label>Time</label>
+                <input type="time" name="event_time" value="{{ event_time }}" required>
+            </div>
+            <div>
+                <label>Time Zone</label>
+                <input name="event_timezone" value="{{ selected_timezone }}" list="timezones" required>
+                <datalist id="timezones">
+                    {% for tz in common_timezones %}
+                        <option value="{{ tz }}"></option>
+                    {% endfor %}
+                </datalist>
+            </div>
+        </div>
+
+        <label>Location Address</label>
+        <textarea name="address" rows="3">{{ event.address or "" }}</textarea>
+
+        <div class="grid">
+            <div>
+                <label>Latitude</label>
+                <input name="latitude" value="{{ event.latitude or '' }}" inputmode="decimal">
+            </div>
+            <div>
+                <label>Longitude</label>
+                <input name="longitude" value="{{ event.longitude or '' }}" inputmode="decimal">
+            </div>
+        </div>
+
+        <button type="submit">Save Clock Record</button>
+        <a class="btn-link btn-secondary" href="{{ return_url }}">Back to Time Report</a>
+    </form>
+</div>
+{% endblock %}

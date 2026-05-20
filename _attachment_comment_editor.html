@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Timeline - {{ project.name }}</h2>
+    <p class="muted">{{ range_label }}</p>
+    <a class="btn-link" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
+</div>
+
+<div class="card">
+    <form method="get" class="timelineFilter">
+        <div class="grid">
+            <div>
+                <label>Show By</label>
+                <select name="period">
+                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
+                    <option value="all" {% if period == "all" %}selected{% endif %}>All History</option>
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input name="date" type="date" value="{{ selected_date }}">
+            </div>
+        </div>
+        <button type="submit">Show Timeline</button>
+    </form>
+</div>
+
+<div class="timelineList">
+    {% for record in records %}
+        <div class="card timelineItem timelineType-{{ record.type|lower|replace(' ', '-') }}">
+            <div class="timelineMeta">
+                <span class="timelineType">{{ record.type }}</span>
+                <span class="muted">{{ record.when }}</span>
+            </div>
+            <h3>{{ record.title }}</h3>
+            {% if record.subtitle %}<p class="muted">{{ record.subtitle }}</p>{% endif %}
+            {% if record.body %}<p>{{ record.body }}</p>{% endif %}
+            {% if record.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=record.photo_file) }}">{% endif %}
+            {% if record.audio_file %}
+                <audio controls style="width:100%; margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=record.audio_file) }}"></audio>
+            {% endif %}
+            {% if record.map_url %}<a class="btn-link btn-secondary" target="_blank" href="{{ record.map_url }}">Open Map</a>{% endif %}
+            {% if record.url %}<a class="btn-link btn-secondary" href="{{ record.url }}">Open</a>{% endif %}
+        </div>
+    {% else %}
+        <div class="card">
+            <p>No timeline records found for this period.</p>
+        </div>
+    {% endfor %}
+</div>
+
+<style>
+.timelineFilter button{max-width:260px}
+.timelineList{display:grid;gap:12px}
+.timelineItem{border-left:8px solid #2563eb}
+.timelineMeta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.timelineType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
+.timelineItem h3{margin:4px 0 8px}
+.timelineType-task-completed{border-left-color:#16a34a}
+.timelineType-task-received{border-left-color:#0ea5e9}
+.timelineType-clock-in,.timelineType-clock-out{border-left-color:#7c3aed}
+.timelineType-inventory{border-left-color:#f59e0b}
+@media(max-width:760px){.timelineFilter button{max-width:none}.timelineMeta{display:block}.timelineType{margin-bottom:6px}}
+</style>
+{% endblock %}

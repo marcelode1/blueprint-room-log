@@ -1,0 +1,10 @@
+{% if is_main_admin() or has_perm("edit_comments") or attachment.created_by == session.get("user_id") %}
+    <details class="attachmentCommentEditor">
+        <summary>Edit Comment</summary>
+        <form method="post" action="{{ url_for('update_task_attachment_comment', task_id=t.id, attachment_id=attachment.id) }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+            <textarea name="comment" rows="2">{{ attachment.comment or '' }}</textarea>
+            <button type="submit">Save Comment</button>
+        </form>
+    </details>
+{% endif %}

@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Comment Report</h2>
+    <form method="get">
+        <div class="grid">
+            <div>
+                <label>Project</label>
+                <select name="project_id">
+                    <option value="">All Projects</option>
+                    {% for p in report.projects %}
+                        <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Room</label>
+                <select name="room_id">
+                    <option value="">All Rooms</option>
+                    {% for r in report.rooms %}
+                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Period</label>
+                <select name="period">
+                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
+                    <option value="year" {% if period == "year" %}selected{% endif %}>Year</option>
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input type="date" name="date" value="{{ selected_date }}" required>
+            </div>
+        </div>
+        <button type="submit">Show Comment Report</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
+    </form>
+    <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
+</div>
+
+<div class="card">
+    <h3>Comments</h3>
+    <style>
+        .commentReportWrap{overflow-x:auto}
+        .commentReportTable{width:100%;border-collapse:collapse;min-width:980px}
+        .commentReportTable th,.commentReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
+        .commentReportTable th{background:#f3f4f6}
+        .commentText{white-space:pre-wrap;min-width:260px}
+        .commentLinkList{display:flex;gap:8px;flex-wrap:wrap}
+        .commentLinkList a{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border-radius:8px;background:#e0f2fe;color:#075985;text-decoration:none;font-weight:800}
+        .commentType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
+        @page{size:letter portrait;margin:.35in}
+        @media print{header,.bottom-nav,.noPrint,.backButton,.linkedColumn{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.commentReportWrap{overflow:visible}.commentReportTable{width:100%;min-width:0;table-layout:fixed}.commentReportTable th,.commentReportTable td{font-size:9px;line-height:1.2;padding:4px;word-break:break-word}.commentReportTable th:nth-child(1){width:13%}.commentReportTable th:nth-child(2){width:15%}.commentReportTable th:nth-child(3){width:12%}.commentReportTable th:nth-child(4){width:17%}.commentReportTable th:nth-child(5){width:30%}.commentReportTable th:nth-child(6){width:13%}.commentType{font-size:8px;padding:2px 5px}.muted{color:#444}}
+    </style>
+    <div class="commentReportWrap">
+        <table class="commentReportTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Project</th>
+                    <th>Room</th>
+                    <th>Type</th>
+                    <th>Comment</th>
+                    <th>Created By</th>
+                    <th class="linkedColumn">Linked To</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for record in report.records %}
+                <tr>
+                    <td>
+                        {{ format_date(record.record_date) }}<br>
+                        <span class="muted">{{ format_datetime(record.created_at) }}</span>
+                    </td>
+                    <td>{{ record.project_name or "-" }}</td>
+                    <td>{{ record.room_name or "-" }}</td>
+                    <td>
+                        <span class="commentType">{{ record.source_label }}</span>
+                        {% if record.task_id %}
+                            <br><span class="muted">Task #{{ record.task_number or record.task_id }}</span>
+                            {% if record.task_title %}<br><span class="muted">{{ record.task_title }}</span>{% endif %}
+                        {% endif %}
+                    </td>
+                    <td class="commentText">{{ record.comment or "-" }}</td>
+                    <td>
+                        {{ record.created_by_name or "Unknown user" }}
+                        {% if record.created_by_email %}<br><span class="muted">{{ record.created_by_email }}</span>{% endif %}
+                    </td>
+                    <td class="linkedColumn">
+                        <div class="commentLinkList">
+                            {% if record.comment_url %}
+                                <a href="{{ record.comment_url }}">Open Comment</a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7">No comments for this report.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

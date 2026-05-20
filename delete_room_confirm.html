@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Create a Task</h2>
+    <p class="muted">Choose a project, select one or more workers, and send task details to their app and email.</p>
+</div>
+
+<div class="card">
+    <form method="post" enctype="multipart/form-data">
+        <label>Create Task For</label>
+        <select id="taskTypeSelect" name="task_type">
+            <option value="project">Project</option>
+            <option value="supplier">Supplier</option>
+        </select>
+
+        <input type="hidden" name="supplier_enabled" id="supplierEnabled" value="0">
+        <div id="supplierTaskPanel" class="supplierTaskPanel" style="display:none;">
+            <h3>Supplier</h3>
+            <div class="grid">
+                <div>
+                    <label>Supplier</label>
+                    <select name="supplier_id" id="supplierSelect">
+                        <option value="">Choose supplier</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                        {% endfor %}
+                        <option value="__new__">Add new supplier...</option>
+                    </select>
+                </div>
+                <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name" placeholder="Cable, keypad, speakers"></div>
+                <div><label>Brand</label><input name="supplier_brand"></div>
+                <div><label>Model Number</label><input name="supplier_model"></div>
+            </div>
+            <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
+            <input type="hidden" name="new_supplier_name" id="newSupplierName">
+            <input type="hidden" name="new_supplier_contact_name" id="newSupplierContactName">
+            <input type="hidden" name="new_supplier_phone" id="newSupplierPhone">
+            <input type="hidden" name="new_supplier_email" id="newSupplierEmail">
+            <input type="hidden" name="new_supplier_address" id="newSupplierAddress">
+            <input type="hidden" name="new_supplier_city" id="newSupplierCity">
+            <input type="hidden" name="new_supplier_state" id="newSupplierState">
+            <input type="hidden" name="new_supplier_zip" id="newSupplierZip">
+            <input type="hidden" name="new_supplier_website" id="newSupplierWebsite">
+            <input type="hidden" name="new_supplier_notes" id="newSupplierNotes">
+        </div>
+
+        <label id="projectSelectLabel">Project</label>
+        <select name="project_id" id="taskProjectSelect" required>
+            <option value="">Choose project</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <div id="mainRoomField" class="mainRoomField" data-supplier-mode="0">
+            <label id="roomSelectLabel">Main Room</label>
+            <select name="room_id" id="taskMainRoomSelect">
+                <option value="">No room</option>
+                {% for r in rooms %}
+                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="supplierItemActions" class="supplierItemActions" style="display:none;">
+            <button type="button" id="addSupplierItemBtn">Add to List</button>
+            <div id="supplierItemList" class="supplierItemList"></div>
+            <label>Purchase Note</label>
+            <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
+        </div>
+
+        <h3>Workers</h3>
+        <div class="workerList">
+            {% for u in users %}
+                <label><input type="checkbox" name="user_ids" value="{{ u.id }}"> {{ u.name }} - {{ u.email }}</label>
+            {% else %}
+                <p>No workers found. Create users first.</p>
+            {% endfor %}
+        </div>
+
+        <div class="grid" id="taskScheduleFields">
+            <div>
+                <label>Start Date</label>
+                <input name="task_start_date" type="date" required>
+            </div>
+            <div>
+                <label>Be There Time</label>
+                <input name="task_start_time" type="time" required>
+            </div>
+            <div>
+                <label>End Date Optional</label>
+                <input name="task_end_date" type="date">
+            </div>
+        </div>
+
+        <div id="taskTextFields">
+            <label>Task</label>
+            <input name="title" placeholder="Task title" required>
+            <label>Task Information / Instructions</label>
+            <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+        </div>
+
+        {% set attachment_project_select_id = "taskProjectSelect" %}
+        {% include "_task_attachments_form.html" %}
+
+        <div class="grid taskOptions">
+            <label><input type="checkbox" name="require_picture"> Worker must take picture</label>
+            <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
+            <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
+            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
+        </div>
+        <button type="submit">Save Task</button>
+    </form>
+</div>
+
+<div id="newSupplierModal" class="newSupplierModal" aria-hidden="true">
+    <div class="newSupplierDialog">
+        <h3>Add New Supplier</h3>
+        <div class="grid">
+            <div><label>Supplier Name</label><input id="modalSupplierName"></div>
+            <div><label>Contact Name</label><input id="modalSupplierContactName"></div>
+            <div><label>Phone</label><input id="modalSupplierPhone" type="tel"></div>
+            <div><label>Email</label><input id="modalSupplierEmail" type="email"></div>
+            <div><label>Street Address</label><input id="modalSupplierAddress"></div>
+            <div><label>City</label><input id="modalSupplierCity"></div>
+            <div><label>State</label><input id="modalSupplierState" maxlength="2"></div>
+            <div><label>ZIP</label><input id="modalSupplierZip"></div>
+            <div><label>Website</label><input id="modalSupplierWebsite" type="url"></div>
+        </div>
+        <label>Supplier Notes</label>
+        <textarea id="modalSupplierNotes" rows="2"></textarea>
+        <div class="modalActions">
+            <button type="button" id="saveNewSupplierBtn">Save Supplier</button>
+            <button type="button" class="btn-secondary" id="cancelNewSupplierBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
+.workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+.workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
+.supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
+.supplierItemActions{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(245,158,11,.08)}
+.supplierItemList{display:grid;gap:8px;margin-top:8px}
+.supplierItemRow{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.supplierItemRow button{width:auto;min-height:40px;padding:8px 12px;margin:0}
+.newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
+.newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
+.newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
+.modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mainRoomField[data-supplier-mode="0"]{display:none}
+@media(max-width:760px){.modalActions{grid-template-columns:1fr}}
+</style>
+<script>
+(function(){
+    const projectSelect=document.getElementById("taskProjectSelect");
+    const roomSelect=document.getElementById("taskMainRoomSelect");
+    function filterMainRooms(){
+        if(!projectSelect||!roomSelect)return;
+        const projectId=projectSelect.value;
+        Array.from(roomSelect.options).forEach(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            option.hidden=Boolean(optionProject)&&Boolean(projectId)&&optionProject!==projectId;
+            if(optionProject&&!projectId)option.hidden=true;
+        });
+        const selectedOption=roomSelect.options[roomSelect.selectedIndex];
+        if(selectedOption&&selectedOption.hidden)roomSelect.value="";
+    }
+    if(projectSelect)projectSelect.addEventListener("change",filterMainRooms);
+    filterMainRooms();
+    const taskTypeSelect=document.getElementById("taskTypeSelect");
+    const supplierPanel=document.getElementById("supplierTaskPanel");
+    const supplierEnabled=document.getElementById("supplierEnabled");
+    const supplierSelect=document.getElementById("supplierSelect");
+    const supplierItemsJson=document.getElementById("supplierItemsJson");
+    const supplierItemActions=document.getElementById("supplierItemActions");
+    const addSupplierItemBtn=document.getElementById("addSupplierItemBtn");
+    const supplierItemList=document.getElementById("supplierItemList");
+    const taskForm=supplierEnabled?supplierEnabled.closest("form"):null;
+    const newSupplierModal=document.getElementById("newSupplierModal");
+    const saveNewSupplierBtn=document.getElementById("saveNewSupplierBtn");
+    const cancelNewSupplierBtn=document.getElementById("cancelNewSupplierBtn");
+    const projectLabel=document.getElementById("projectSelectLabel");
+    const roomLabel=document.getElementById("roomSelectLabel");
+    const scheduleFields=document.getElementById("taskScheduleFields");
+    const taskTextFields=document.getElementById("taskTextFields");
+    const supplierItemFields={
+        pickupDate:document.querySelector('[name="supplier_item_date"]'),
+        pickupTime:document.querySelector('[name="supplier_pickup_time"]'),
+        quantity:document.querySelector('[name="supplier_quantity"]'),
+        itemName:document.querySelector('[name="supplier_item_name"]'),
+        brand:document.querySelector('[name="supplier_brand"]'),
+        model:document.querySelector('[name="supplier_model"]'),
+        note:document.querySelector('[name="supplier_purchase_note"]')
+    };
+    let supplierItems=[];
+    const hiddenSupplierFields={
+        name:document.getElementById("newSupplierName"),
+        contact:document.getElementById("newSupplierContactName"),
+        phone:document.getElementById("newSupplierPhone"),
+        email:document.getElementById("newSupplierEmail"),
+        address:document.getElementById("newSupplierAddress"),
+        city:document.getElementById("newSupplierCity"),
+        state:document.getElementById("newSupplierState"),
+        zip:document.getElementById("newSupplierZip"),
+        website:document.getElementById("newSupplierWebsite"),
+        notes:document.getElementById("newSupplierNotes")
+    };
+    const modalSupplierFields={
+        name:document.getElementById("modalSupplierName"),
+        contact:document.getElementById("modalSupplierContactName"),
+        phone:document.getElementById("modalSupplierPhone"),
+        email:document.getElementById("modalSupplierEmail"),
+        address:document.getElementById("modalSupplierAddress"),
+        city:document.getElementById("modalSupplierCity"),
+        state:document.getElementById("modalSupplierState"),
+        zip:document.getElementById("modalSupplierZip"),
+        website:document.getElementById("modalSupplierWebsite"),
+        notes:document.getElementById("modalSupplierNotes")
+    };
+    function updateTaskType(){
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(supplierPanel)supplierPanel.style.display=supplierMode?"block":"none";
+        if(supplierItemActions)supplierItemActions.style.display=supplierMode?"block":"none";
+        if(supplierEnabled)supplierEnabled.value=supplierMode?"1":"0";
+        if(projectLabel)projectLabel.textContent=supplierMode?"Project Where Material Will Go":"Project";
+        if(roomLabel)roomLabel.textContent=supplierMode?"Room Where Material Will Go":"Main Room";
+        const mainRoomField=document.getElementById("mainRoomField");
+        if(mainRoomField)mainRoomField.dataset.supplierMode=supplierMode?"1":"0";
+        if(roomSelect&&!supplierMode)roomSelect.value="";
+        if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
+        if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
+        const titleInput=document.querySelector('[name="title"]');
+        const startDateInput=document.querySelector('[name="task_start_date"]');
+        const startTimeInput=document.querySelector('[name="task_start_time"]');
+        if(titleInput)titleInput.required=!supplierMode;
+        if(startDateInput)startDateInput.required=!supplierMode;
+        if(startTimeInput)startTimeInput.required=!supplierMode;
+    }
+    if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
+    updateTaskType();
+    function optionText(select){
+        if(!select||select.selectedIndex<0)return "";
+        return select.options[select.selectedIndex].textContent.trim();
+    }
+    function renderSupplierItems(){
+        if(supplierItemsJson)supplierItemsJson.value=JSON.stringify(supplierItems);
+        if(!supplierItemList)return;
+        supplierItemList.innerHTML="";
+        supplierItems.forEach((item,index)=>{
+            const row=document.createElement("div");
+            row.className="supplierItemRow";
+            const text=document.createElement("div");
+            text.innerHTML="<strong>"+(index+1)+". "+item.item_name+"</strong><br>Qty: "+item.quantity+
+                (item.brand?" | Brand: "+item.brand:"")+
+                (item.model?" | Model #: "+item.model:"")+
+                "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"");
+            const remove=document.createElement("button");
+            remove.type="button";
+            remove.className="btn-danger";
+            remove.textContent="Remove";
+            remove.addEventListener("click",()=>{
+                supplierItems.splice(index,1);
+                renderSupplierItems();
+            });
+            row.appendChild(text);
+            row.appendChild(remove);
+            supplierItemList.appendChild(row);
+        });
+    }
+    function addSupplierItem(showAlert=true){
+        const projectId=projectSelect?projectSelect.value:"";
+        const roomId=roomSelect?roomSelect.value:"";
+        const item={
+            pickup_date:supplierItemFields.pickupDate?supplierItemFields.pickupDate.value:"",
+            pickup_time:supplierItemFields.pickupTime?supplierItemFields.pickupTime.value:"",
+            quantity:supplierItemFields.quantity?supplierItemFields.quantity.value:"",
+            item_name:supplierItemFields.itemName?supplierItemFields.itemName.value.trim():"",
+            brand:supplierItemFields.brand?supplierItemFields.brand.value.trim():"",
+            model:supplierItemFields.model?supplierItemFields.model.value.trim():"",
+            project_id:projectId,
+            project_name:optionText(projectSelect),
+            room_id:roomId,
+            room_name:roomId?optionText(roomSelect):"Project general"
+        };
+        if(!item.project_id||!item.item_name||!item.quantity){
+            if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
+            return false;
+        }
+        supplierItems.push(item);
+        renderSupplierItems();
+        if(supplierItemFields.quantity)supplierItemFields.quantity.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.value="";
+        if(supplierItemFields.brand)supplierItemFields.brand.value="";
+        if(supplierItemFields.model)supplierItemFields.model.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.focus();
+        return true;
+    }
+    if(addSupplierItemBtn)addSupplierItemBtn.addEventListener("click",()=>addSupplierItem(true));
+    if(taskForm)taskForm.addEventListener("submit",event=>{
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(!supplierMode)return;
+        const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
+        if(hasDraft||!supplierItems.length){
+            addSupplierItem(false);
+        }
+        if(!supplierItems.length){
+            event.preventDefault();
+            alert("Add at least one supplier material item before saving the task.");
+        }
+    });
+    function openNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.add("open");
+        newSupplierModal.setAttribute("aria-hidden","false");
+        if(modalSupplierFields.name)modalSupplierFields.name.focus();
+    }
+    function closeNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.remove("open");
+        newSupplierModal.setAttribute("aria-hidden","true");
+    }
+    if(supplierSelect){
+        supplierSelect.addEventListener("change",()=>{
+            if(supplierSelect.value==="__new__")openNewSupplierModal();
+            else Object.values(hiddenSupplierFields).forEach(field=>{if(field)field.value="";});
+        });
+    }
+    if(cancelNewSupplierBtn)cancelNewSupplierBtn.addEventListener("click",()=>{
+        closeNewSupplierModal();
+        if(supplierSelect)supplierSelect.value="";
+    });
+    if(saveNewSupplierBtn)saveNewSupplierBtn.addEventListener("click",()=>{
+        const name=(modalSupplierFields.name&&modalSupplierFields.name.value.trim())||"";
+        if(!name){
+            alert("Supplier name is required.");
+            if(modalSupplierFields.name)modalSupplierFields.name.focus();
+            return;
+        }
+        Object.keys(hiddenSupplierFields).forEach(key=>{
+            if(hiddenSupplierFields[key]&&modalSupplierFields[key])hiddenSupplierFields[key].value=modalSupplierFields[key].value.trim();
+        });
+        if(supplierSelect){
+            let newOption=Array.from(supplierSelect.options).find(option=>option.dataset.newSupplier==="1");
+            if(!newOption){
+                newOption=document.createElement("option");
+                newOption.value="";
+                newOption.dataset.newSupplier="1";
+                supplierSelect.insertBefore(newOption,supplierSelect.querySelector('option[value="__new__"]'));
+            }
+            newOption.textContent=name+" (new)";
+            newOption.selected=true;
+        }
+        closeNewSupplierModal();
+    });
+    if(newSupplierModal)newSupplierModal.addEventListener("click",event=>{
+        if(event.target===newSupplierModal){
+            closeNewSupplierModal();
+            if(supplierSelect&&supplierSelect.value==="__new__")supplierSelect.value="";
+        }
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Where Is My Team</h2>
+    <p class="muted" id="teamStatus">Loading team locations...</p>
+    <button type="button" onclick="loadTeam(true)">Refresh</button>
+</div>
+
+<div class="card" id="teamMapPage" data-team-url="{{ url_for('team_map_data') }}">
+    <div id="teamMap"></div>
+    <div class="teamList" id="teamList"></div>
+</div>
+
+<style>
+#teamMap{width:100%;height:620px;border:1px solid var(--border);border-radius:12px;background:white}
+.teamList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:14px}
+.teamPerson{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)}
+@media(max-width:760px){ #teamMap{height:520px} }
+</style>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="{{ url_for('static', filename='team_map.js') }}"></script>
+{% endblock %}

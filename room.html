@@ -1,0 +1,441 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{{ project.name }}</h2>
+    <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
+    <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    <div class="desktop-only">
+        <p><strong>Phone:</strong> {{ project.customer_phone or '-' }}</p>
+        <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
+        {% if is_main_admin() %}
+            <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+        {% endif %}
+    </div>
+
+    <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id, next=request.full_path) }}">Clock In / Clock Out</a>
+    <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    {% if can_view_inventory() %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Inventory</a>
+    {% endif %}
+
+    {% if active_blueprint %}
+        <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}">Open Current Blueprint File</a>
+    {% endif %}
+
+    {% if is_main_admin() %}
+    <div class="desktop-only projectAdminActions">
+        <a class="btn-link btn-secondary projectSmallButton" href="{{ url_for('edit_project', project_id=project.id) }}">Edit Project</a>
+        <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <button type="submit" class="btn-danger projectSmallButton">Delete Project</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card mobileBlueprintNotice">
+    <h3>Mobile View</h3>
+    <p>The blueprint editor is available on the computer version only. On phone, choose a room from the room list.</p>
+</div>
+
+{% if is_main_admin() %}
+<div class="card blueprintDesktopOnly">
+    <h3>Add Blueprint / Floor Sheet</h3>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('add_project_blueprint', project_id=project.id) }}">
+        <label>Blueprint Name / Floor</label>
+        <input name="name" placeholder="Example: First Floor, Second Floor, Pavilion, Lighting Plan" required>
+        <label>Upload Blueprint PDF or Image</label>
+        <input name="blueprint" type="file" accept=".pdf,image/*" required>
+        <button type="submit">Add Blueprint</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card blueprintDesktopOnly">
+    <h3>Blueprint Sheets / Floors</h3>
+    {% if blueprints %}
+        <div class="blueprintTabs">
+            {% for bp in blueprints %}
+            <div class="blueprintTab {% if active_blueprint and bp.id == active_blueprint.id %}activeBlueprint{% endif %}">
+                <a class="bpOpen" href="{{ url_for('project', project_id=project.id, blueprint_id=bp.id) }}">{{ bp.name }}</a>
+                <span class="muted">Sheet {{ bp.id }}</span>
+                {% if is_main_admin() %}
+                <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
+                <div class="deleteBox" id="bpDelete{{ bp.id }}">
+                    <strong>Delete this blueprint?</strong>
+                    <p>Rooms will NOT be deleted. They will stay in the project.</p>
+                    <div class="confirmRow">
+                        <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
+                            <button type="submit" class="btn-danger">Yes</button>
+                        </form>
+                        <button type="button" class="btn-secondary" onclick="hideBlueprintDelete('{{ bp.id }}')">No</button>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p>No blueprint sheets yet. Add one above.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Rooms {% if active_blueprint %}for {{ active_blueprint.name }}{% endif %}</h3>
+    {% if is_main_admin() or has_perm("create_rooms") %}
+        <button type="button" id="showDesktopCreateRoomBtn">Create Room</button>
+    {% endif %}
+    <div class="roomScroller">
+        {% for r in rooms %}
+            <div class="roomChipWrap">
+                <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+                {% if is_main_admin() %}
+                    <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <button type="submit" class="roomDeleteButton btn-danger" aria-label="Delete {{ r.name }}">Delete</button>
+                    </form>
+                {% endif %}
+            </div>
+        {% else %}
+            <p>No rooms created yet.</p>
+        {% endfor %}
+    </div>
+</div>
+
+{% if is_main_admin() or has_perm("create_rooms") %}
+<div class="card" id="desktopCreateRoomPanel" style="display:none;">
+    <form id="roomForm" method="post" action="{{ url_for('add_room', project_id=project.id) }}">
+        <div class="grid">
+            <div>
+                <label>Room Action</label>
+                <select name="room_action" id="roomActionSelect">
+                    <option value="create">Create a Room</option>
+                    <option value="link">Link to Existing Room</option>
+                </select>
+            </div>
+            <div id="newRoomNameWrap"><label>Room Name</label><input id="roomName" name="name" placeholder="Master Bedroom" required></div>
+            <div id="existingRoomWrap" style="display:none;">
+                <label>Existing Room</label>
+                <select name="existing_room_id" id="existingRoomSelect">
+                    <option value="">Choose room</option>
+                    {% for r in rooms %}
+                        <option value="{{ r.id }}" data-category="{{ r.category or 'general' }}" data-color="{{ r.room_color or 'blue' }}">{{ r.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Room Type</label>
+                <select name="category" id="roomCategorySelect">
+                    <option value="general">General</option>
+                    <option value="electrical">Electrical</option>
+                    <option value="av">AV / Low Voltage</option>
+                    <option value="lighting">Lighting</option>
+                </select>
+            </div>
+            <div>
+                <label>Highlight Color</label>
+                <select name="room_color" id="roomColorSelect">
+                    <option value="blue">Blue</option><option value="red">Red</option><option value="green">Green</option>
+                    <option value="yellow">Yellow</option><option value="purple">Purple</option><option value="orange">Orange</option><option value="gray">Gray</option>
+                </select>
+            </div>
+        </div>
+        <input type="hidden" id="polygon_points" name="polygon_points">
+        <input type="hidden" name="blueprint_id" value="{{ active_blueprint.id if active_blueprint else '' }}">
+        <input type="hidden" id="x" name="x" value="0"><input type="hidden" id="y" name="y" value="0">
+        <input type="hidden" id="w" name="w" value="0"><input type="hidden" id="h" name="h" value="0">
+        <p class="muted">Create a new room or link this trace to an existing room without losing its tasks, notes, or inventory.</p>
+        {% if active_blueprint %}
+        <div class="blueprintDesktopOnly">
+            <button type="button" class="btn-secondary" id="showBlueprintTraceBtn">Use Blueprint Trace</button>
+            <div id="blueprintTraceActions" style="display:none;">
+                <button type="button" onclick="finishTrace()">Finish Room Trace</button>
+                <button type="button" class="btn-secondary" onclick="clearTrace()">Clear Current Trace</button>
+            </div>
+        </div>
+        {% endif %}
+        <button type="submit" id="roomSubmitBtn">Create a Room or Link to Existing Room</button>
+        {% if not active_blueprint %}<p class="muted">No blueprint selected. The room will still be created and usable.</p>{% endif %}
+    </form>
+</div>
+
+<div class="card blueprintDesktopOnly" id="desktopDrawTools" style="display:none;">
+    <div class="grid">
+        <div><label><input type="checkbox" id="drawingMode"> Drawing Mode</label><div id="drawStatus"><strong>Drawing mode is off</strong></div></div>
+        <div><label><input type="checkbox" id="snapToggle" checked> Snap/Grid</label><input type="range" min="5" max="40" value="15" id="snapSize"></div>
+        <div>
+            <p><strong>Zoom:</strong> scroll over blueprint. <strong>Pan:</strong> click and drag. <strong>Undo:</strong> right-click.</p>
+            <label>PDF Quality</label>
+            <select id="pdfQuality">
+                <option value="2" selected>Safe</option>
+                <option value="2.5">Sharper</option>
+                <option value="3">Sharpest Safe</option>
+            </select>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card blueprintDesktopOnly">
+    <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
+        <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
+            {% if not active_blueprint %}
+                <div id="blueprint" style="width:1100px; height:800px; background:white; display:flex; align-items:center; justify-content:center; border:1px dashed #aaa;">
+                    <div style="text-align:center; color:#555;">
+                        <h3>No blueprint selected</h3>
+                        <p>Add or select a blueprint/floor sheet above.</p>
+                    </div>
+                </div>
+            {% elif active_blueprint.blueprint_file and active_blueprint.blueprint_file.lower().endswith('.pdf') %}
+                <canvas id="blueprint"
+                        data-pdf-url="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}"
+                        style="display:block; pointer-events:none; background:white;"></canvas>
+                <div id="pdfStatus" style="padding:8px; background:#eef2ff; border-radius:6px; margin-top:8px;">
+                    Loading PDF blueprint...
+                </div>
+            {% elif active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file %}
+                <img id="blueprint" src="{{ url_for('storage_file', storage_path=(active_blueprint.blueprint_preview_file or active_blueprint.blueprint_file), bp=active_blueprint.id) }}" style="max-width:none; display:block; pointer-events:none;">
+            {% endif %}
+
+            <svg id="roomSvg" style="position:absolute; left:0; top:0; width:100%; height:100%; min-width:1100px; min-height:800px; z-index:10;">
+                {% for r in rooms %}
+                    {% if r.polygon_points %}
+                        <a href="{{ url_for('room', room_id=r.id) }}">
+                            <polygon points="{{ r.polygon_points }}" class="savedRoom {{ r.room_color or 'blue' }}" data-room-id="{{ r.id }}" data-room-name="{{ r.name }}" data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"></polygon>
+                        </a>
+                        <text x="{{ (r.x or 0) + 6 }}" y="{{ (r.y or 0) + 18 }}" class="roomText">{{ r.name }}</text>
+                    {% endif %}
+                {% endfor %}
+                <polyline id="currentLine" points="" class="currentLine"></polyline>
+                <polygon id="currentPolygon" points="" class="currentPolygon"></polygon>
+                <g id="pointGroup"></g>
+            </svg>
+            {% if is_main_admin() %}
+            <div id="roomContextMenu" class="roomContextMenu" hidden>
+                <div class="roomContextTitle" id="roomContextTitle"></div>
+                <form method="post" id="roomContextDeleteForm" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-danger roomContextDeleteButton">Delete Room</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.savedRoom{stroke-width:2;cursor:pointer}.savedRoom:hover{fill-opacity:.35;stroke-width:4}
+.blue{fill:rgba(59,130,246,.22);stroke:#2563eb}.red{fill:rgba(239,68,68,.22);stroke:#dc2626}
+.green{fill:rgba(34,197,94,.22);stroke:#16a34a}.yellow{fill:rgba(234,179,8,.28);stroke:#ca8a04}
+.purple{fill:rgba(168,85,247,.22);stroke:#9333ea}.orange{fill:rgba(249,115,22,.24);stroke:#ea580c}.gray{fill:rgba(107,114,128,.20);stroke:#4b5563}
+.roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
+.currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
+.tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
+.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChipWrap{flex:0 0 auto;scroll-snap-align:start;display:flex;align-items:stretch;gap:6px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.roomChipWrap form{margin:0}.roomDeleteButton{width:auto!important;min-width:74px!important;min-height:48px!important;padding:10px 12px!important;border-radius:999px!important;font-size:13px!important;margin:0!important}
+.roomContextMenu{position:absolute;z-index:60;width:190px;background:white;border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.28);padding:10px}.roomContextTitle{font-weight:800;margin-bottom:8px;color:#0f172a;word-break:break-word}.roomContextMenu form{margin:0}.roomContextDeleteButton{width:100%!important;min-height:42px!important;border-radius:8px!important;margin:0!important;padding:8px 10px!important}
+.blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
+.blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:190px}
+.blueprintTab a{font-weight:bold;text-decoration:none;display:block;margin-bottom:6px}
+.activeBlueprint{outline:3px solid #2563eb;background:#dbeafe}
+.miniDelete{background:#dc2626;color:white;border:0;border-radius:6px;padding:7px 10px;width:auto;min-height:auto}
+.deleteBox{display:none;background:#fff3cd;padding:10px;border-radius:8px;margin-top:8px}
+.confirmRow{display:flex;gap:8px;align-items:center}.confirmRow form{margin:0}
+.projectAdminActions{display:flex!important;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.projectAdminActions form{margin:0}
+.projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
+.mobileBlueprintNotice{display:none}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}.roomScroller{display:block;max-height:420px;overflow-y:auto;overflow-x:hidden}.roomChipWrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:8px 0}.roomChip{display:flex;width:100%;border-radius:14px;justify-content:center}.roomDeleteButton{border-radius:14px!important;min-height:58px!important}}
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+window.pdfjsLib = pdfjsLib;
+</script>
+<script>
+const viewport=document.getElementById("viewport"),wrap=document.getElementById("blueprintWrap"),svg=document.getElementById("roomSvg");
+const currentLine=document.getElementById("currentLine"),currentPolygon=document.getElementById("currentPolygon"),pointGroup=document.getElementById("pointGroup");
+const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
+const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitle=document.getElementById("roomContextTitle"),roomContextDeleteForm=document.getElementById("roomContextDeleteForm");
+let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
+
+let pdfDocCached = null;
+let pdfPageCached = null;
+let isRenderingPdf = false;
+
+async function waitForPdfJs(){
+    let tries=0;
+    while(!window.pdfjsLib && tries<80){
+        await new Promise(r=>setTimeout(r,100));
+        tries++;
+    }
+    return !!window.pdfjsLib;
+}
+
+async function renderPdfBlueprint(){
+    const canvas=document.getElementById("blueprint");
+    const status=document.getElementById("pdfStatus");
+    if(!canvas || !canvas.dataset || !canvas.dataset.pdfUrl) return;
+    if(isRenderingPdf) return;
+    isRenderingPdf = true;
+
+    try{
+        if(status) status.textContent="Loading PDF viewer...";
+        const ok = await waitForPdfJs();
+        if(!ok){
+            if(status) status.textContent="Could not load PDF viewer. Use Open Current Blueprint File.";
+            isRenderingPdf = false;
+            return;
+        }
+
+        pdfDocCached = await window.pdfjsLib.getDocument(canvas.dataset.pdfUrl).promise;
+        pdfPageCached = await pdfDocCached.getPage(1);
+
+        const q = document.getElementById("pdfQuality");
+        let quality = q ? parseFloat(q.value || "2") : 2;
+
+        const baseViewport = pdfPageCached.getViewport({scale:1});
+        const maxPixels = window.innerWidth < 800 ? 9000000 : 16000000;
+        const requestedPixels = baseViewport.width * quality * baseViewport.height * quality;
+        if(requestedPixels > maxPixels){
+            quality = Math.sqrt(maxPixels / (baseViewport.width * baseViewport.height));
+        }
+
+        const viewportPdf = pdfPageCached.getViewport({scale:quality});
+        canvas.width = Math.floor(viewportPdf.width);
+        canvas.height = Math.floor(viewportPdf.height);
+        canvas.style.width = canvas.width + "px";
+        canvas.style.height = canvas.height + "px";
+
+        const ctx = canvas.getContext("2d", { alpha:false });
+        ctx.fillStyle = "white";
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        await pdfPageCached.render({canvasContext:ctx, viewport:viewportPdf}).promise;
+        if(status) status.textContent = "PDF preview loaded.";
+        resizeSvg();
+        applyTransform();
+    }catch(err){
+        console.error(err);
+        if(status) status.textContent="PDF preview failed. Open the original blueprint file.";
+    }finally{
+        isRenderingPdf = false;
+    }
+}
+
+function applyTransform(){if(wrap)wrap.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;}
+function hideRoomContextMenu(){if(roomContextMenu)roomContextMenu.hidden=true;}
+function showRoomContextMenu(e,roomShape){
+    if(!roomContextMenu||!roomContextDeleteForm)return;
+    e.preventDefault();
+    e.stopPropagation();
+    const roomName=roomShape.dataset.roomName||"Room";
+    if(roomContextTitle)roomContextTitle.textContent=roomName;
+    roomContextDeleteForm.action=roomShape.dataset.deleteUrl||"";
+    const wrapRect=wrap.getBoundingClientRect();
+    const menuWidth=190;
+    roomContextMenu.style.left=Math.max(8,Math.min(e.clientX-wrapRect.left,wrapRect.width-menuWidth-8))+"px";
+    roomContextMenu.style.top=Math.max(8,e.clientY-wrapRect.top)+"px";
+    roomContextMenu.hidden=false;
+}
+function resizeSvg(){
+    if(!svg)return;
+    const b=document.getElementById("blueprint");
+    let w=1100,h=800;
+    if(b){
+        if(b.tagName && b.tagName.toLowerCase()==="canvas" && b.width && b.height){w=b.width;h=b.height;}
+        else if(b.naturalWidth){w=b.naturalWidth;h=b.naturalHeight;}
+    }
+    svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
+    svg.style.width=w+"px";
+    svg.style.height=h+"px";
+}
+function screenToSvg(e){const rect=viewport.getBoundingClientRect();return{x:(e.clientX-rect.left-panX)/scale,y:(e.clientY-rect.top-panY)/scale};}
+function snapValue(v){if(!snapToggle||!snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
+function redrawTrace(){
+    const pts=points.map(p=>`${p.x},${p.y}`).join(" ");
+    if(currentLine)currentLine.setAttribute("points",pts);
+    if(currentPolygon)currentPolygon.setAttribute("points",pts);
+    if(pointGroup){
+        pointGroup.innerHTML="";
+        points.forEach(p=>{const c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r","5");c.setAttribute("class","tracePoint");pointGroup.appendChild(c);});
+    }
+}
+function updateStatus(){if(!drawingMode||!drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
+if(drawingMode){drawingMode.addEventListener("change",updateStatus);}
+if(viewport){
+    viewport.addEventListener("wheel",e=>{hideRoomContextMenu();e.preventDefault();const delta=e.deltaY<0?1.1:.9;scale=Math.max(.15,Math.min(6,scale*delta));applyTransform();});
+    viewport.addEventListener("mousedown",e=>{if(roomContextMenu&&roomContextMenu.contains(e.target))return;if(e.target&&e.target.classList&&e.target.classList.contains("savedRoom"))return;hideRoomContextMenu();if(e.button===2){e.preventDefault();points.pop();redrawTrace();updateStatus();return;}isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
+    window.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>3||Math.abs(dy)>3)didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();});
+    window.addEventListener("mouseup",()=>{isDragging=false;});
+    viewport.addEventListener("click",e=>{if(roomContextMenu&&roomContextMenu.contains(e.target))return;hideRoomContextMenu();if(!drawingMode||!drawingMode.checked||didDrag)return;const p=screenToSvg(e);points.push({x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))});redrawTrace();updateStatus();});
+    viewport.addEventListener("contextmenu",e=>e.preventDefault());
+}
+document.querySelectorAll(".savedRoom").forEach(shape=>{
+    shape.addEventListener("mousedown",e=>{if(e.button===2)e.stopPropagation();});
+    shape.addEventListener("contextmenu",e=>showRoomContextMenu(e,shape));
+});
+if(roomContextMenu){
+    roomContextMenu.addEventListener("mousedown",e=>e.stopPropagation());
+    roomContextMenu.addEventListener("click",e=>e.stopPropagation());
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")hideRoomContextMenu();});
+function finishTrace(){
+    if(!drawingMode)return;
+    if(points.length<3){alert("Trace at least 3 points around the room.");return;}
+    const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+    document.getElementById("polygon_points").value=points.map(p=>`${p.x},${p.y}`).join(" ");
+    document.getElementById("x").value=Math.min(...xs);
+    document.getElementById("y").value=Math.min(...ys);
+    document.getElementById("w").value=Math.max(...xs)-Math.min(...xs);
+    document.getElementById("h").value=Math.max(...ys)-Math.min(...ys);
+    alert("Room trace finished. Now create a room or choose an existing room to link.");
+}
+function clearTrace(){points=[];redrawTrace();updateStatus();}
+function showBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="block";}
+function hideBlueprintDelete(id){const box=document.getElementById("bpDelete"+id);if(box)box.style.display="none";}
+document.addEventListener("change",function(e){if(e.target&&e.target.id==="pdfQuality"){renderPdfBlueprint();}});
+const showDesktopCreateRoomBtn=document.getElementById("showDesktopCreateRoomBtn");
+const desktopCreateRoomPanel=document.getElementById("desktopCreateRoomPanel");
+const desktopDrawTools=document.getElementById("desktopDrawTools");
+const showBlueprintTraceBtn=document.getElementById("showBlueprintTraceBtn");
+const blueprintTraceActions=document.getElementById("blueprintTraceActions");
+const roomActionSelect=document.getElementById("roomActionSelect");
+const newRoomNameWrap=document.getElementById("newRoomNameWrap");
+const existingRoomWrap=document.getElementById("existingRoomWrap");
+const roomNameInput=document.getElementById("roomName");
+const existingRoomSelect=document.getElementById("existingRoomSelect");
+const roomCategorySelect=document.getElementById("roomCategorySelect");
+const roomColorSelect=document.getElementById("roomColorSelect");
+function updateRoomAction(){
+    const linking=roomActionSelect&&roomActionSelect.value==="link";
+    if(newRoomNameWrap)newRoomNameWrap.style.display=linking?"none":"block";
+    if(existingRoomWrap)existingRoomWrap.style.display=linking?"block":"none";
+    if(roomNameInput)roomNameInput.required=!linking;
+    if(existingRoomSelect)existingRoomSelect.required=linking;
+    const selected=existingRoomSelect&&existingRoomSelect.options[existingRoomSelect.selectedIndex];
+    if(linking&&selected){
+        if(roomCategorySelect&&selected.dataset.category)roomCategorySelect.value=selected.dataset.category;
+        if(roomColorSelect&&selected.dataset.color)roomColorSelect.value=selected.dataset.color;
+    }
+}
+if(roomActionSelect)roomActionSelect.addEventListener("change",updateRoomAction);
+if(existingRoomSelect)existingRoomSelect.addEventListener("change",updateRoomAction);
+updateRoomAction();
+if(showDesktopCreateRoomBtn){
+    showDesktopCreateRoomBtn.addEventListener("click",()=>{
+        if(desktopCreateRoomPanel)desktopCreateRoomPanel.style.display="block";
+        showDesktopCreateRoomBtn.style.display="none";
+    });
+}
+if(showBlueprintTraceBtn){
+    showBlueprintTraceBtn.addEventListener("click",()=>{
+        if(desktopDrawTools)desktopDrawTools.style.display="block";
+        if(blueprintTraceActions)blueprintTraceActions.style.display="block";
+        showBlueprintTraceBtn.style.display="none";
+    });
+}
+window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
+</script>
+{% endblock %}
