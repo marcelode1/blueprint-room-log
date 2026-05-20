@@ -2306,6 +2306,59 @@ def user_can_access_project(conn, project_id, user_id=None):
     return bool(row)
 
 
+def expire_completed_task_project_access(conn):
+    threshold = (datetime.now(timezone.utc) - timedelta(hours=24)).replace(tzinfo=None).isoformat()
+    conn.execute(
+        """
+        DELETE FROM project_permissions AS pp
+        USING users
+        WHERE users.id = pp.user_id
+          AND users.role <> 'admin'
+          AND EXISTS (
+              SELECT 1
+              FROM tasks AS done_tasks
+              WHERE done_tasks.project_id = pp.project_id
+                AND done_tasks.assigned_user_id = pp.user_id
+                AND done_tasks.status = 'done'
+                AND done_tasks.completed_at IS NOT NULL
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tasks AS open_tasks
+              WHERE open_tasks.project_id = pp.project_id
+                AND open_tasks.assigned_user_id = pp.user_id
+                AND COALESCE(open_tasks.status, 'open') <> 'done'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tasks AS recent_done_tasks
+              WHERE recent_done_tasks.project_id = pp.project_id
+                AND recent_done_tasks.assigned_user_id = pp.user_id
+                AND recent_done_tasks.status = 'done'
+                AND COALESCE(recent_done_tasks.completed_at, '') >= %s
+          )
+        """,
+        (threshold,)
+    )
+
+
+@app.before_request
+def expire_project_access_before_request():
+    if request.endpoint == "static":
+        return
+    if "user_id" not in session:
+        return
+    conn = db()
+    try:
+        expire_completed_task_project_access(conn)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Project access expiration skipped:", e)
+    finally:
+        conn.close()
+
+
 def grant_project_access(conn, user_id, project_id, role=None):
     if not user_id or not project_id or role == "admin":
         return
