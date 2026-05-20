@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card desktop-only">
+    <h2>Confirm Delete Activity</h2>
+    <p><strong>{{ activity_label|title }}</strong></p>
+    {% if activity.project_name %}<p class="muted">Project: {{ activity.project_name }}</p>{% endif %}
+    {% if activity.room_name %}<p class="muted">Room: {{ activity.room_name }}</p>{% endif %}
+    {% if activity.task_name %}<p class="muted">Task: {{ activity.task_name }}</p>{% endif %}
+    {% if activity.comment %}<p>{{ activity.comment }}</p>{% endif %}
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this timeline activity.</p>
+    <form method="post">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Activity</button>
+        <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
+    </form>
+</div>
+<div class="card mobileDeleteNotice">
+    <p class="muted">Timeline activities can only be deleted from the desktop version with an email PIN.</p>
+</div>
+<style>
+.mobileDeleteNotice{display:none}
+@media(max-width:760px){.mobileDeleteNotice{display:block}}
+</style>
+{% endblock %}
