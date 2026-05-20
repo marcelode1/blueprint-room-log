@@ -1754,7 +1754,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
         if not notification_types:
             notification_types.append("field_note_added")
             note_parts.append("field note")
-        message = f"{actor_name or 'User'} added {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
+        message = f"{actor_name or 'User'} saved one note with {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
         project_id = project.get("id") if project else None
         room_id = room.get("id") if room else None
         for event_type in notification_types:
@@ -1783,7 +1783,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
                 attachments.append(attachment)
 
         lines = [
-            "A field update was added in ProjectONus.",
+            "A field note was saved in ProjectONus.",
             "",
             f"Project: {project.get('name') if project else '-'}",
             f"Room: {room.get('name') if room else '-'}",
@@ -1799,7 +1799,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
         if audio_file and send_audio:
             lines.append("Audio attached.")
         body = "\n".join(lines)
-        subject = f"ProjectONus field update - {room.get('name') if room else 'Room'}"
+        subject = f"ProjectONus field note - {room.get('name') if room else 'Room'}"
         email_ok = True
         for admin in admins:
             if admin.get("email"):
@@ -3702,9 +3702,9 @@ def mobile_room(room_id):
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, note_comment, photo_file, audio_file, note_date)
         if notified:
-            flash("Comment/photo/audio added.")
+            flash("Field note saved.")
         else:
-            flash("Comment/photo/audio added. Admin notification or email could not be sent.")
+            flash("Field note saved. Admin notification or email could not be sent.")
         conn.close()
         return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
@@ -4906,9 +4906,9 @@ def room(room_id):
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         if notified:
-            flash("Comment/photo added.")
+            flash("Field note saved.")
         else:
-            flash("Comment/photo added. Admin notification or email could not be sent.")
+            flash("Field note saved. Admin notification or email could not be sent.")
 
     selected_date = request.args.get("date", "")
     query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"

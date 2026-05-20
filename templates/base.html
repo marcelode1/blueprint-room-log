@@ -639,6 +639,11 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
             }
         }
         preview.hidden=false;
+        const saveButton=picker.querySelector("[data-media-save]");
+        if(saveButton){
+            saveButton.disabled=false;
+            saveButton.textContent=saveButton.dataset.mediaSaveLabel||"Attach";
+        }
         const comment=picker.querySelector("[data-media-comment]");
         if(comment&&input.dataset.mediaInput!=="audio")comment.focus();
     }
@@ -653,10 +658,12 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         }
         const saveButton=event.target.closest("[data-media-save]");
         if(saveButton){
-            const form=saveButton.closest("form");
-            if(!form)return;
-            if(form.requestSubmit)form.requestSubmit();
-            else form.submit();
+            const picker=saveButton.closest("[data-media-picker]");
+            const preview=picker&&picker.querySelector("[data-media-preview]");
+            const kind=preview&&preview.querySelector("[data-media-kind]");
+            if(kind)kind.textContent="Ready for the main save button";
+            saveButton.textContent="Attached";
+            saveButton.disabled=true;
         }
     });
 
