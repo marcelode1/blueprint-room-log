@@ -4961,6 +4961,15 @@ def project_timeline(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
 
+    project_rooms = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
+        (project_id,)
+    ).fetchall()
+    selected_room_id = request.args.get("room_id", type=int) or 0
+    if selected_room_id and not any(room["id"] == selected_room_id for room in project_rooms):
+        selected_room_id = 0
+    selected_room = next((room for room in project_rooms if room["id"] == selected_room_id), None)
+
     period = request.args.get("period", "day")
     if period not in ["day", "week", "month", "all", "room"]:
         period = "day"
@@ -4989,16 +4998,17 @@ def project_timeline(project_id):
         return start <= dt < end
 
     def range_label():
+        room_prefix = f"{selected_room['name']} - " if selected_room else ""
         if period == "room":
-            return "All Project History by Room"
+            return room_prefix + "Project History by Room"
         if period == "all":
-            return "All Project History"
+            return room_prefix + "All Project History"
         if period == "month":
-            return start.strftime("%B %Y")
+            return room_prefix + start.strftime("%B %Y")
         if period == "week":
             last_day = end - timedelta(days=1)
-            return f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
-        return start.strftime("%m/%d/%Y")
+            return room_prefix + f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
+        return room_prefix + start.strftime("%m/%d/%Y")
 
     records = []
 
@@ -5184,6 +5194,9 @@ def project_timeline(project_id):
                 "map_url": f"https://www.google.com/maps?q={event.get('latitude')},{event.get('longitude')}" if event.get("latitude") and event.get("longitude") else "",
             })
 
+    if selected_room_id:
+        records = [record for record in records if record.get("room_id") == selected_room_id]
+
     records.sort(key=lambda row: row["sort_dt"], reverse=True)
     for record in records:
         sort_dt = record.get("sort_dt")
@@ -5212,9 +5225,11 @@ def project_timeline(project_id):
     return render_template(
         "timeline.html",
         project=project,
+        project_rooms=project_rooms,
         records=records,
         timeline_groups=timeline_groups,
         selected_date=selected_date,
+        selected_room_id=selected_room_id,
         period=period,
         range_label=range_label()
     )

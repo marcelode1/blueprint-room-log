@@ -31,6 +31,15 @@
     <form method="get" class="timelineFilter">
         <div class="grid">
             <div>
+                <label>Rooms</label>
+                <select name="room_id">
+                    <option value="0" {% if not selected_room_id %}selected{% endif %}>All Rooms</option>
+                    {% for room in project_rooms %}
+                        <option value="{{ room.id }}" {% if selected_room_id == room.id %}selected{% endif %}>{{ room.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>Show By</label>
                 <select name="period">
                     <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
