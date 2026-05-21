@@ -129,6 +129,9 @@
                             {% set task_info = task_instruction_text(t) %}
                             {% if task_info %}<p><strong>Task Given / Comment:</strong><br>{{ task_info }}</p>{% endif %}
                             {% include "_supplier_task_info.html" %}
+                            {% if not is_main_admin() %}
+                                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
+                            {% endif %}
                             <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or t.status == 'done' %}done{% endif %}">{{ 'Done' if room_state.done or t.status == 'done' else 'Open' }}</span></p>
                             {% set room_media = task_room_attachments(t, r.id) %}
                             {% if room_media %}
@@ -139,13 +142,13 @@
                                                 <div class="taskMediaComment"><strong>Task Given / Comment:</strong> {{ attachment.comment }}</div>
                                             {% endif %}
                                             <p class="muted">
-                                                {{ attachment.original_filename or 'Task file' }}
+                                                {{ attachment.original_filename or 'Field note' }}
                                                 {% if attachment.created_by_name %} - Added by {{ attachment.created_by_name }}{% endif %}
                                             </p>
-                                            {% if attachment.file_type == 'photo' %}
+                                            {% if attachment.file_type == 'photo' and attachment.storage_path %}
                                                 <p><strong>Picture</strong></p>
                                                 <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                                            {% else %}
+                                            {% elif attachment.file_type == 'audio' and attachment.storage_path %}
                                                 <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
                                             {% endif %}
                                             {% include "_attachment_comment_editor.html" %}
@@ -164,6 +167,8 @@
                                 <button type="button" class="btn-secondary" disabled>Received</button>
                             {% endif %}
                             {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                                {% set field_note_room_id = r.id %}
+                                {% include "_task_field_note_form.html" %}
                                 {% include "_mobile_room_completion_form.html" %}
                             {% endif %}
                         </div>
@@ -185,6 +190,9 @@
                         {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
                         {% include "_supplier_task_info.html" %}
                         {% include "_task_media.html" %}
+                        {% if not is_main_admin() %}
+                            <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
+                        {% endif %}
                         {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                             <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                                 <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
@@ -194,25 +202,11 @@
                             <button type="button" class="btn-secondary" disabled>Received</button>
                         {% endif %}
                         {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                            {% set field_note_room_id = '' %}
+                            {% include "_task_field_note_form.html" %}
                             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                                 <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
                                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
-                                    <div class="completionBlocks">
-                                        <div class="completionBlock">
-                                            <input type="hidden" name="completion_attachment_indexes" value="0">
-                                            {% set media_id = 'task_' ~ t.id ~ '_project_media_0' %}
-                                            {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
-                                            {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
-                                            {% set media_audio_name = 'completion_attachment_0_audio' if t.allow_audio else '' %}
-                                            {% set media_comment_name = 'completion_attachment_0_comment' %}
-                                            {% set media_comment_label = 'Picture / Audio Comment' %}
-                                            {% set media_save_label = 'Save' %}
-                                            {% include "_mobile_media_bar.html" %}
-                                        </div>
-                                    </div>
-                                    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
-                                {% endif %}
                                 <button type="submit">Mark Task Done</button>
                             </form>
                         {% endif %}
@@ -249,6 +243,9 @@
             {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
+            {% if not is_main_admin() %}
+                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
+            {% endif %}
             {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
@@ -258,25 +255,11 @@
                 <button type="button" class="btn-secondary" disabled>Received</button>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                {% set field_note_room_id = t.room_id or '' %}
+                {% include "_task_field_note_form.html" %}
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                    {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
-                        <div class="completionBlocks">
-                            <div class="completionBlock">
-                                <input type="hidden" name="completion_attachment_indexes" value="0">
-                                {% set media_id = 'task_' ~ t.id ~ '_media_0' %}
-                                {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
-                                {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
-                                {% set media_audio_name = 'completion_attachment_0_audio' if t.allow_audio else '' %}
-                                {% set media_comment_name = 'completion_attachment_0_comment' %}
-                                {% set media_comment_label = 'Picture / Audio Comment' %}
-                                {% set media_save_label = 'Save' %}
-                                {% include "_mobile_media_bar.html" %}
-                            </div>
-                        </div>
-                        <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
-                    {% endif %}
                     <button type="submit">Mark Task Done</button>
                 </form>
             {% endif %}
@@ -316,36 +299,5 @@
     {% endif %}
 </div>
 {% endif %}
-<template id="completionBlockTemplate">
-    <div class="completionBlock">
-        <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
-        {% set media_id = 'completion___INDEX__' %}
-        {% set media_camera_name = 'completion_attachment___INDEX___camera' %}
-        {% set media_upload_name = 'completion_attachment___INDEX___photo' %}
-        {% set media_audio_name = 'completion_attachment___INDEX___audio' %}
-        {% set media_comment_name = 'completion_attachment___INDEX___comment' %}
-        {% set media_comment_label = 'Picture / Audio Comment' %}
-        {% set media_save_label = 'Save' %}
-        {% include "_mobile_media_bar.html" %}
-        <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
-    </div>
-</template>
-<script>
-document.querySelectorAll(".mobileRoomCompletionForm").forEach(form=>{
-    let nextIndex=1;
-    const blocks=form.querySelector(".completionBlocks");
-    const add=form.querySelector(".addCompletionBlock");
-    const template=document.getElementById("completionBlockTemplate");
-    if(!blocks||!add||!template)return;
-    add.addEventListener("click",()=>{
-        const wrapper=document.createElement("div");
-        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(nextIndex++)).trim();
-        const block=wrapper.firstElementChild;
-        const remove=block.querySelector(".removeCompletionBlock");
-        if(remove)remove.addEventListener("click",()=>block.remove());
-        blocks.appendChild(block);
-    });
-});
-</script>
 <style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}

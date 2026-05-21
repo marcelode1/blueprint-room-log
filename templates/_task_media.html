@@ -6,13 +6,15 @@
                 {% if attachment.comment %}
                     <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
                 {% endif %}
-                <p class="muted">
-                    {{ attachment.original_filename or 'Task file' }}
-                    {% if attachment.room_name %} - Room: {{ attachment.room_name }}{% endif %}
-                </p>
-                {% if attachment.file_type == 'photo' %}
+                {% if attachment.original_filename or attachment.room_name %}
+                    <p class="muted">
+                        {{ attachment.original_filename or 'Field note' }}
+                        {% if attachment.room_name %} - Room: {{ attachment.room_name }}{% endif %}
+                    </p>
+                {% endif %}
+                {% if attachment.file_type == 'photo' and attachment.storage_path %}
                     <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                {% else %}
+                {% elif attachment.file_type == 'audio' and attachment.storage_path %}
                     <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
                 {% endif %}
                 {% include "_attachment_comment_editor.html" %}

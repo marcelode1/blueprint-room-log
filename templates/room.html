@@ -110,6 +110,9 @@
             {% if task_info %}<p>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
+            {% if not is_main_admin() %}
+                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
+            {% endif %}
             {% if is_main_admin() %}
             <a class="btn-link btn-secondary" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
             <form {% if t.accepted_at %}class="desktop-only"{% endif %} method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('{% if t.accepted_at %}This task was already received. Send a 6-digit delete PIN to your admin email?{% else %}Delete this task now? The worker has not received it yet.{% endif %}');">
@@ -128,13 +131,10 @@
             <button type="button" class="btn-secondary" disabled>Received</button>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+            {% set field_note_room_id = room.id %}
+            {% include "_task_field_note_form.html" %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload) %}
-                    <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">{% endif %}
-                {% endif %}
-                {% if not t.supplier_id and t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
                 <button type="submit">Mark Task Done</button>
             </form>
             {% endif %}

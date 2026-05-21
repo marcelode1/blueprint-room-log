@@ -1,0 +1,21 @@
+{% set field_note_room_value = field_note_room_id if field_note_room_id is defined else (t.room_id or '') %}
+{% set task_return_url = request.full_path ~ '#task-' ~ t.id %}
+<div class="taskFieldNote">
+    <h4>Add Field Note</h4>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('add_task_field_note', task_id=t.id) }}">
+        <input type="hidden" name="next" value="{{ task_return_url }}">
+        <input type="hidden" name="field_note_room_id" value="{{ field_note_room_value }}">
+        <label>Date</label>
+        <input name="field_note_date" type="date" value="{{ today if today is defined else '' }}">
+        {% set media_id = 'task_' ~ t.id ~ '_field_note_' ~ (field_note_room_value|string if field_note_room_value else 'project') %}
+        {% set media_camera_name = 'field_note_camera' %}
+        {% set media_upload_name = 'field_note_photo' %}
+        {% set media_audio_name = 'field_note_audio' %}
+        {% set media_comment_name = 'field_note_comment' %}
+        {% set media_comment_label = 'Comment' %}
+        {% set media_comment_placeholder = 'Comment about this task, picture, or audio' %}
+        {% set media_save_label = 'Save Note' %}
+        {% include "_mobile_media_bar.html" %}
+        <button type="submit">Save Note</button>
+    </form>
+</div>
