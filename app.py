@@ -707,6 +707,29 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS note_delete_codes (
+        id SERIAL PRIMARY KEY,
+        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS task_attachment_delete_codes (
+        id SERIAL PRIMARY KEY,
+        attachment_id INTEGER NOT NULL REFERENCES task_attachments(id) ON DELETE CASCADE,
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -782,6 +805,8 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS note_delete_codes (id SERIAL PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_attachment_delete_codes (id SERIAL PRIMARY KEY, attachment_id INTEGER NOT NULL REFERENCES task_attachments(id) ON DELETE CASCADE, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
@@ -4936,12 +4961,21 @@ def project_timeline(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
 
+    project_rooms = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
+        (project_id,)
+    ).fetchall()
+    selected_room_id = request.args.get("room_id", type=int) or 0
+    if selected_room_id and not any(room["id"] == selected_room_id for room in project_rooms):
+        selected_room_id = 0
+    selected_room = next((room for room in project_rooms if room["id"] == selected_room_id), None)
+
     period = request.args.get("period", "day")
-    if period not in ["day", "week", "month", "all"]:
+    if period not in ["day", "week", "month", "all", "room"]:
         period = "day"
     selected_date = request.args.get("date") or local_now().date().isoformat()
     start = end = None
-    if period != "all":
+    if period not in ["all", "room"]:
         period, start, end = attendance_range(period, selected_date)
 
     def parse_timeline_date(date_value, time_value=""):
@@ -4959,19 +4993,22 @@ def project_timeline(project_id):
     def include_dt(dt):
         if not dt:
             return False
-        if period == "all":
+        if period in ["all", "room"]:
             return True
         return start <= dt < end
 
     def range_label():
+        room_prefix = f"{selected_room['name']} - " if selected_room else ""
+        if period == "room":
+            return room_prefix + "Project History by Room"
         if period == "all":
-            return "All Project History"
+            return room_prefix + "All Project History"
         if period == "month":
-            return start.strftime("%B %Y")
+            return room_prefix + start.strftime("%B %Y")
         if period == "week":
             last_day = end - timedelta(days=1)
-            return f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
-        return start.strftime("%m/%d/%Y")
+            return room_prefix + f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
+        return room_prefix + start.strftime("%m/%d/%Y")
 
     records = []
 
@@ -4997,6 +5034,9 @@ def project_timeline(project_id):
                 "body": note.get("comment") or "",
                 "photo_file": note.get("photo_file"),
                 "audio_file": note.get("audio_file"),
+                "room_id": note.get("room_id"),
+                "room_name": note.get("room_name") or "Project Activity",
+                "delete_url": url_for("request_delete_note", note_id=note["id"], next=request.full_path) if is_main_admin() and not is_mobile_request() else "",
                 "url": url_for("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]) if note.get("room_id") else "",
             })
 
@@ -5034,6 +5074,8 @@ def project_timeline(project_id):
                 "body": task_info,
                 "photo_file": task.get("task_photo_file"),
                 "audio_file": task.get("task_audio_file"),
+                "room_id": task.get("room_id"),
+                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
         accepted_dt = local_datetime(task.get("accepted_at"))
@@ -5045,6 +5087,8 @@ def project_timeline(project_id):
                 "title": task_display_name(task),
                 "subtitle": task.get("assigned_user_name") or "",
                 "body": "",
+                "room_id": task.get("room_id"),
+                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
         completed_dt = local_datetime(task.get("completed_at"))
@@ -5058,6 +5102,8 @@ def project_timeline(project_id):
                 "body": task.get("completion_comment") or "",
                 "photo_file": task.get("completion_photo_file"),
                 "audio_file": task.get("completion_audio_file"),
+                "room_id": task.get("room_id"),
+                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
 
@@ -5085,6 +5131,9 @@ def project_timeline(project_id):
                 "body": attachment.get("comment") or "",
                 "photo_file": attachment.get("storage_path") if attachment.get("file_type") == "photo" else "",
                 "audio_file": attachment.get("storage_path") if attachment.get("file_type") == "audio" else "",
+                "room_id": attachment.get("room_id"),
+                "room_name": attachment.get("room_name") or "Project Activity",
+                "delete_url": url_for("request_delete_task_attachment", task_id=attachment["task_id"], attachment_id=attachment["id"], next=request.full_path) if is_main_admin() and not is_mobile_request() else "",
                 "url": url_for("my_tasks", task_id=attachment["task_id"]) + f"#task-{attachment['task_id']}",
             })
 
@@ -5117,6 +5166,8 @@ def project_timeline(project_id):
                 "subtitle": " - ".join(details),
                 "body": item.get("used_note") or item.get("pickup_comment") or "",
                 "photo_file": item.get("picture_file"),
+                "room_id": item.get("room_id"),
+                "room_name": item.get("room_name") or "Project Activity",
                 "url": url_for("mobile_project_materials" if is_mobile_request() else "project_materials", project_id=project_id),
             })
 
@@ -5139,16 +5190,46 @@ def project_timeline(project_id):
                 "title": event.get("user_name") or "Unknown user",
                 "subtitle": event.get("address") or "",
                 "body": "",
+                "room_name": "Project Activity",
                 "map_url": f"https://www.google.com/maps?q={event.get('latitude')},{event.get('longitude')}" if event.get("latitude") and event.get("longitude") else "",
             })
 
+    if selected_room_id:
+        records = [record for record in records if record.get("room_id") == selected_room_id]
+
     records.sort(key=lambda row: row["sort_dt"], reverse=True)
+    for record in records:
+        sort_dt = record.get("sort_dt")
+        record["date_key"] = sort_dt.strftime("%Y-%m-%d") if sort_dt else ""
+        record["date_label"] = sort_dt.strftime("%m/%d/%Y") if sort_dt else "No date"
+        record["room_name"] = record.get("room_name") or "Project Activity"
+
+    timeline_groups = []
+    if period == "room":
+        group_map = {}
+        for record in records:
+            key = (record.get("room_name") or "Project Activity", record.get("date_key") or "")
+            if key not in group_map:
+                group_map[key] = {
+                    "room_name": key[0],
+                    "date_label": record.get("date_label") or "No date",
+                    "sort_dt": record.get("sort_dt"),
+                    "records": []
+                }
+            group_map[key]["records"].append(record)
+            if record.get("sort_dt") and (not group_map[key].get("sort_dt") or record["sort_dt"] > group_map[key]["sort_dt"]):
+                group_map[key]["sort_dt"] = record["sort_dt"]
+        timeline_groups = list(group_map.values())
+        timeline_groups.sort(key=lambda group: ((group.get("room_name") or "").lower(), -(group.get("sort_dt").timestamp() if group.get("sort_dt") else 0)))
     conn.close()
     return render_template(
         "timeline.html",
         project=project,
+        project_rooms=project_rooms,
         records=records,
+        timeline_groups=timeline_groups,
         selected_date=selected_date,
+        selected_room_id=selected_room_id,
         period=period,
         range_label=range_label()
     )
@@ -5379,6 +5460,128 @@ def delete_note(note_id):
     conn.close()
     flash("Comment/photo deleted.")
     return redirect(url_for("room", room_id=room_id))
+
+
+@app.route("/note/<int:note_id>/delete/request", methods=["POST"])
+@admin_required
+def request_delete_note(note_id):
+    next_url = safe_next_url("index")
+    conn = db()
+    note = conn.execute(
+        """
+        SELECT notes.*, rooms.name AS room_name, rooms.project_id, projects.name AS project_name
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        JOIN projects ON rooms.project_id = projects.id
+        WHERE notes.id = %s
+        """,
+        (note_id,)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not note:
+        conn.close()
+        flash("Activity not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, note["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(next_url)
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s AND admin_id = %s", (note_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO note_delete_codes (note_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (note_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete activity PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this timeline activity is:",
+            "",
+            pin,
+            "",
+            f"Project: {note.get('project_name') or '-'}",
+            f"Room: {note.get('room_name') or '-'}",
+            f"Date: {note.get('note_date') or '-'}",
+            "",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s AND admin_id = %s", (note_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(next_url)
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_note", note_id=note_id, next=next_url))
+
+
+@app.route("/note/<int:note_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_note(note_id):
+    next_url = safe_next_url("index")
+    conn = db()
+    note = conn.execute(
+        """
+        SELECT notes.*, rooms.name AS room_name, rooms.project_id, projects.name AS project_name
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        JOIN projects ON rooms.project_id = projects.id
+        WHERE notes.id = %s
+        """,
+        (note_id,)
+    ).fetchone()
+    if not note:
+        conn.close()
+        flash("Activity not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, note["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM note_delete_codes
+            WHERE note_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (note_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Activity again to get a new PIN.")
+            return redirect(next_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_note", note_id=note_id, next=next_url))
+
+        conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s", (note_id,))
+        conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+        conn.commit()
+        conn.close()
+        flash("Timeline activity deleted.")
+        return redirect(next_url)
+
+    conn.close()
+    return render_template("delete_activity_confirm.html", activity=note, activity_label="room note", next_url=next_url)
 
 
 @app.route("/room/<int:room_id>/tasks", methods=["POST"])
@@ -5897,6 +6100,157 @@ def delete_task_attachment(task_id, attachment_id):
     conn.close()
     flash("Picture deleted.")
     return redirect(next_url)
+
+
+@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/delete/request", methods=["POST"])
+@admin_required
+def request_delete_task_attachment(task_id, attachment_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, projects.name AS project_name
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    attachment = conn.execute(
+        """
+        SELECT task_attachments.*, rooms.name AS room_name
+        FROM task_attachments
+        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
+        """,
+        (attachment_id, task_id)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not task or not attachment:
+        conn.close()
+        flash("Activity not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(next_url)
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute(
+        "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s AND admin_id = %s",
+        (attachment_id, task_id, admin["id"])
+    )
+    conn.execute(
+        """
+        INSERT INTO task_attachment_delete_codes (attachment_id, task_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (attachment_id, task_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete activity PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this timeline activity is:",
+            "",
+            pin,
+            "",
+            f"Project: {task.get('project_name') or '-'}",
+            f"Task: {task_display_name(task)}",
+            f"Room: {attachment.get('room_name') or '-'}",
+            f"Type: {attachment.get('file_type') or 'media'}",
+            "",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute(
+            "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s AND admin_id = %s",
+            (attachment_id, task_id, admin["id"])
+        )
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(next_url)
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_task_attachment", task_id=task_id, attachment_id=attachment_id, next=next_url))
+
+
+@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_task_attachment(task_id, attachment_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute(
+        """
+        SELECT tasks.*, projects.name AS project_name
+        FROM tasks
+        JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    attachment = conn.execute(
+        """
+        SELECT task_attachments.*, rooms.name AS room_name
+        FROM task_attachments
+        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
+        """,
+        (attachment_id, task_id)
+    ).fetchone()
+    if not task or not attachment:
+        conn.close()
+        flash("Activity not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM task_attachment_delete_codes
+            WHERE attachment_id = %s AND task_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (attachment_id, task_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Activity again to get a new PIN.")
+            return redirect(next_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_task_attachment", task_id=task_id, attachment_id=attachment_id, next=next_url))
+
+        conn.execute(
+            "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s",
+            (attachment_id, task_id)
+        )
+        conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
+        conn.commit()
+        conn.close()
+        flash("Timeline activity deleted.")
+        return redirect(next_url)
+
+    activity = dict(attachment)
+    activity["project_name"] = task.get("project_name")
+    activity["task_name"] = task_display_name(task)
+    conn.close()
+    return render_template("delete_activity_confirm.html", activity=activity, activity_label="task media", next_url=next_url)
 
 
 @app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/comment", methods=["POST"])

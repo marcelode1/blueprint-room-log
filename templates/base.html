@@ -303,6 +303,7 @@ function addDesktopPhotoOpenButtons(){
         if(img.dataset.desktopOpenReady==="1")return;
         img.dataset.desktopOpenReady="1";
         if(img.classList.contains("commentDetailMedia"))return;
+        if(img.closest(".timelineList"))return;
         const next=img.nextElementSibling;
         if(next&&next.matches&&next.matches("a[href]"))return;
         const link=document.createElement("a");
