@@ -126,12 +126,13 @@
                             <strong>{{ task_display_name(t) }}</strong>
                             <p class="muted">{{ task_schedule_text(t) }} - {{ 'Done for this room' if room_state.done or t.status == 'done' else 'Open for this room' }}</p>
                             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
+                            {% set task_actions_allow_receive = not room_state.done %}
+                            {% include "_task_route_actions.html" %}
                             {% set task_info = task_instruction_text(t) %}
                             {% if task_info %}<p><strong>Task Given / Comment:</strong><br>{{ task_info }}</p>{% endif %}
+                            {% set hide_supplier_task_route = true %}
+                            {% set hide_supplier_task_clock = true %}
                             {% include "_supplier_task_info.html" %}
-                            {% if not is_main_admin() %}
-                                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
-                            {% endif %}
                             <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or t.status == 'done' %}done{% endif %}">{{ 'Done' if room_state.done or t.status == 'done' else 'Open' }}</span></p>
                             {% set room_media = task_room_attachments(t, r.id) %}
                             {% if room_media %}
@@ -158,14 +159,6 @@
                             {% else %}
                                 <p class="muted"><strong>Picture:</strong> No picture, upload, or audio from admin yet.</p>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                                <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
-                                    <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
-                                    <button type="submit">Received</button>
-                                </form>
-                            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                                <button type="button" class="btn-secondary" disabled>Received</button>
-                            {% endif %}
                             {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                 {% set field_note_room_id = r.id %}
                                 {% include "_task_field_note_form.html" %}
@@ -186,21 +179,14 @@
                         <strong>{{ task_display_name(t) }}</strong>
                         <p class="muted">{{ task_schedule_text(t) }} - {{ t.status }}</p>
                         {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
+                        {% set task_actions_allow_receive = true %}
+                        {% include "_task_route_actions.html" %}
                         {% set task_info = task_instruction_text(t) %}
                         {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
+                        {% set hide_supplier_task_route = true %}
+                        {% set hide_supplier_task_clock = true %}
                         {% include "_supplier_task_info.html" %}
                         {% include "_task_media.html" %}
-                        {% if not is_main_admin() %}
-                            <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
-                        {% endif %}
-                        {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                            <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
-                                <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-                                <button type="submit">Received</button>
-                            </form>
-                        {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                            <button type="button" class="btn-secondary" disabled>Received</button>
-                        {% endif %}
                         {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                             {% set field_note_room_id = '' %}
                             {% include "_task_field_note_form.html" %}
@@ -232,28 +218,16 @@
             <strong>{{ task_display_name(t) }}</strong>
             <p class="muted">{{ t.project_name }}{% if t.room_name %} - {{ t.room_name }}{% endif %} - {{ task_schedule_text(t) }} - {{ t.status }}</p>
             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
-            {% set address = task_project_address(t) %}
-            {% if address %}
-                <p><strong>Address:</strong> {{ address }}</p>
-                <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
-            {% endif %}
+            {% set task_actions_allow_receive = true %}
+            {% include "_task_route_actions.html" %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
             {% set task_info = task_instruction_text(t) %}
             {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
+            {% set hide_supplier_task_route = true %}
+            {% set hide_supplier_task_clock = true %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
-            {% if not is_main_admin() %}
-                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path ~ '#task-' ~ t.id) }}">Clock In / Clock Out</a>
-            {% endif %}
-            {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
-                    <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
-                    <button type="submit">Received</button>
-                </form>
-            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-                <button type="button" class="btn-secondary" disabled>Received</button>
-            {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                 {% set field_note_room_id = t.room_id or '' %}
                 {% include "_task_field_note_form.html" %}
@@ -299,5 +273,5 @@
     {% endif %}
 </div>
 {% endif %}
-<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
+<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskRouteActions{display:grid;gap:8px;align-items:start;margin:10px 0}.taskRouteActions p{margin:0}.taskRouteButtonRow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.taskRouteActions .inlineTaskActionForm{display:inline-block;margin:0}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}

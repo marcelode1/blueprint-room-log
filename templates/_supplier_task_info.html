@@ -15,10 +15,12 @@
     <div class="supplierTaskInfo">
         <h4>Supplier</h4>
         <p class="supplierName">{{ supplier.name }}</p>
-        {% if supplier.address %}
+        {% if supplier.address and not hide_supplier_task_route|default(false) %}
             <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(supplier.address) }}">Open Supplier Route</a>
         {% endif %}
-        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=supplier_task_return_url) }}">Clock In / Clock Out</a>
+        {% if not hide_supplier_task_clock|default(false) %}
+            <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=supplier_task_return_url) }}">Clock In / Clock Out</a>
+        {% endif %}
 
         <div class="supplierMaterialList">
         {% for item in display_supplier_items %}

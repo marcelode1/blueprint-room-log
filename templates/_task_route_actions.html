@@ -1,0 +1,25 @@
+{% set route_supplier = t.get('_supplier') %}
+{% set route_address = route_supplier.address if route_supplier and route_supplier.address else task_project_address(t) %}
+{% set task_return_url = url_for('my_tasks', task_id=t.id) ~ '#task-' ~ t.id %}
+{% set can_show_receive_action = task_actions_allow_receive|default(true) %}
+{% if route_address or not is_main_admin() %}
+    <div class="taskRouteActions">
+        {% if route_address %}
+            <p><strong>Address:</strong> {{ route_address }}</p>
+            <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(route_address) }}">Open Route in Google Maps</a>
+        {% endif %}
+        {% if not is_main_admin() %}
+            <div class="taskRouteButtonRow">
+                <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=task_return_url) }}">Clock In / Clock Out</a>
+                {% if can_show_receive_action and t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                    <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}" class="inlineTaskActionForm">
+                        <input type="hidden" name="next" value="{{ task_return_url }}">
+                        <button type="submit">Received</button>
+                    </form>
+                {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                    <button type="button" class="btn-secondary" disabled>Received</button>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+{% endif %}
