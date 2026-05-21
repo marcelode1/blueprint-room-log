@@ -501,6 +501,8 @@ def init_db():
         pickup_comment TEXT,
         supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE,
         picture_file TEXT,
+        audio_file TEXT,
+        media_comment TEXT,
         supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
         purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         purchased_at TEXT,
@@ -730,6 +732,17 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS inventory_delete_codes (
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -807,6 +820,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS note_delete_codes (id SERIAL PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_attachment_delete_codes (id SERIAL PRIMARY KEY, attachment_id INTEGER NOT NULL REFERENCES task_attachments(id) ON DELETE CASCADE, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS inventory_delete_codes (id SERIAL PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
@@ -828,6 +842,8 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pickup_comment TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS picture_file TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS audio_file TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS media_comment TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchased_at TEXT",
@@ -2319,6 +2335,62 @@ def grant_project_access(conn, user_id, project_id, role=None):
     )
 
 
+def expire_completed_task_project_access(conn, user_id=None):
+    uid = user_id or session.get("user_id")
+    if not uid or is_main_admin():
+        return 0
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    result = conn.execute(
+        """
+        DELETE FROM project_permissions AS pp
+        WHERE pp.user_id = %s
+          AND EXISTS (
+              SELECT 1
+              FROM tasks
+              WHERE tasks.project_id = pp.project_id
+                AND tasks.assigned_user_id = pp.user_id
+                AND tasks.status = 'done'
+                AND COALESCE(tasks.completed_at, tasks.created_at) <= %s
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tasks
+              WHERE tasks.project_id = pp.project_id
+                AND tasks.assigned_user_id = pp.user_id
+                AND tasks.status <> 'done'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tasks
+              WHERE tasks.project_id = pp.project_id
+                AND tasks.assigned_user_id = pp.user_id
+                AND tasks.status = 'done'
+                AND COALESCE(tasks.completed_at, tasks.created_at) > %s
+          )
+        """,
+        (uid, cutoff, cutoff)
+    )
+    return result.rowcount or 0
+
+
+@app.before_request
+def expire_project_access_before_request():
+    if not session.get("user_id") or is_main_admin():
+        return
+    conn = None
+    try:
+        conn = db()
+        expire_completed_task_project_access(conn)
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        app.logger.exception("Could not expire completed task project access.")
+    finally:
+        if conn:
+            conn.close()
+
+
 def fetch_visible_projects(conn, q=""):
     params = []
     join_sql = ""
@@ -2542,6 +2614,8 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
         return error
     file = request.files.get("picture") or request.files.get("picture_camera")
     picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
+    audio = request.files.get("audio")
+    audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
     status = clean_inventory_status(request.form.get("status"))
     used_by = session.get("user_id") if status == "used" else None
     used_at = utc_now_iso() if status == "used" else None
@@ -2551,8 +2625,8 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
     conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, audio_file, media_comment, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             request.form.get("item_date") or local_now().date().isoformat(),
@@ -2571,6 +2645,8 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
             used_at,
             request.form.get("used_note", "").strip(),
             picture_file,
+            audio_file,
+            request.form.get("media_comment", "").strip(),
             utc_now_iso(),
             utc_now_iso()
         )
@@ -3372,13 +3448,24 @@ def mobile_project_search():
     return render_template("mobile_project_search.html", projects=projects, q=q)
 
 
-@app.route("/mobile/inventory")
+@app.route("/mobile/inventory", methods=["GET", "POST"])
 @login_required
 def mobile_inventory():
     if not can_view_inventory():
         flash("You do not have permission to view inventory.")
         return redirect(url_for("mobile_home"))
     conn = db()
+    if request.method == "POST":
+        error = insert_inventory_item(conn)
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("mobile_inventory"))
+        conn.commit()
+        conn.close()
+        flash("Inventory item added.")
+        return redirect(url_for("mobile_inventory"))
+
     selected_project_id = request.args.get("project_id", type=int)
     if selected_project_id and not user_can_access_project(conn, selected_project_id):
         selected_project_id = None
@@ -3407,6 +3494,9 @@ def mobile_inventory():
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
         status_options=INVENTORY_STATUS_LABELS,
+        today=local_now().date().isoformat(),
+        location_options=INVENTORY_LOCATION_LABELS,
+        condition_options=INVENTORY_CONDITION_LABELS,
     )
 
 
@@ -3570,11 +3660,6 @@ def mobile_project_materials(project_id):
         return redirect(url_for("mobile_project", project_id=project_id))
 
     if request.method == "POST":
-        if not can_edit_inventory():
-            conn.close()
-            flash("You do not have permission to add material inventory.")
-            return redirect(url_for("mobile_project_materials", project_id=project_id))
-
         error = insert_inventory_item(conn, fixed_project_id=project_id)
         if error:
             conn.close()
@@ -4346,10 +4431,6 @@ def inventory():
 
     conn = db()
     if request.method == "POST":
-        if not can_edit_inventory():
-            conn.close()
-            flash("You do not have permission to add inventory.")
-            return redirect(url_for("inventory"))
         error = insert_inventory_item(conn)
         if error:
             conn.close()
@@ -4472,12 +4553,129 @@ def update_inventory_status(item_id):
 @app.route("/inventory/<int:item_id>/delete", methods=["POST"])
 @admin_required
 def delete_inventory_item(item_id):
+    next_url = safe_next_url("inventory")
+    if is_mobile_request():
+        flash("Inventory can only be deleted from the desktop version with an email PIN.")
+        return redirect(next_url)
     conn = db()
-    deleted = delete_inventory_item_record(conn, item_id)
+    item = conn.execute(
+        """
+        SELECT inventory_items.*, projects.name AS project_name, rooms.name AS room_name
+        FROM inventory_items
+        LEFT JOIN projects ON inventory_items.project_id = projects.id
+        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+        WHERE inventory_items.id = %s
+        """,
+        (item_id,)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(next_url)
+    if item.get("project_id") and not user_can_access_project(conn, item["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(next_url)
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s AND admin_id = %s", (item_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO inventory_delete_codes (item_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (item_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
     conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete inventory PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this inventory item is:",
+            "",
+            pin,
+            "",
+            f"Item: {item.get('item_name') or '-'}",
+            f"Project: {item.get('project_name') or '-'}",
+            f"Room: {item.get('room_name') or '-'}",
+            "",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s AND admin_id = %s", (item_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(next_url)
     conn.close()
-    flash("Inventory item deleted." if deleted else "Inventory item not found.")
-    return redirect(safe_next_url("inventory"))
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_inventory_item", item_id=item_id, next=next_url))
+
+
+@app.route("/inventory/<int:item_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_inventory_item(item_id):
+    next_url = safe_next_url("inventory")
+    if is_mobile_request():
+        flash("Inventory can only be deleted from the desktop version with an email PIN.")
+        return redirect(next_url)
+    conn = db()
+    item = conn.execute(
+        """
+        SELECT inventory_items.*, projects.name AS project_name, rooms.name AS room_name
+        FROM inventory_items
+        LEFT JOIN projects ON inventory_items.project_id = projects.id
+        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+        WHERE inventory_items.id = %s
+        """,
+        (item_id,)
+    ).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(next_url)
+    if item.get("project_id") and not user_can_access_project(conn, item["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM inventory_delete_codes
+            WHERE item_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (item_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete Inventory again to get a new PIN.")
+            return redirect(next_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_inventory_item", item_id=item_id, next=next_url))
+
+        conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s", (item_id,))
+        deleted = delete_inventory_item_record(conn, item_id)
+        conn.commit()
+        conn.close()
+        flash("Inventory item deleted." if deleted else "Inventory item not found.")
+        return redirect(next_url)
+
+    conn.close()
+    return render_template("delete_inventory_confirm.html", item=item, next_url=next_url)
 
 
 
@@ -4501,11 +4699,6 @@ def project_materials(project_id):
         return redirect(url_for("index"))
 
     if request.method == "POST":
-        if not can_edit_inventory():
-            conn.close()
-            flash("You do not have permission to add material inventory.")
-            return redirect(url_for("project_materials", project_id=project_id))
-
         error = insert_inventory_item(conn, fixed_project_id=project_id)
         if error:
             conn.close()
@@ -4623,11 +4816,8 @@ def delete_material(project_id, material_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    deleted = delete_inventory_item_record(conn, material_id, project_id)
-    conn.commit()
     conn.close()
-    flash("Inventory item deleted." if deleted else "Inventory item not found.")
-    return redirect(url_for("project_materials", project_id=project_id))
+    return delete_inventory_item(material_id)
 
 
 
@@ -8075,6 +8265,7 @@ def backup():
         ("login_events", "id"),
         ("task_number_counters", "month_key"),
         ("task_delete_codes", "id"),
+        ("inventory_delete_codes", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
         ("app_settings", "key"),
@@ -8113,7 +8304,7 @@ def backup():
         material_pictures = []
         backup_warnings.append(f"Material pictures could not be listed: {e}")
     try:
-        inventory_pictures = conn.execute("SELECT picture_file FROM inventory_items WHERE picture_file IS NOT NULL").fetchall()
+        inventory_pictures = conn.execute("SELECT picture_file, audio_file FROM inventory_items WHERE picture_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
     except Exception as e:
         conn.rollback()
         inventory_pictures = []
@@ -8170,6 +8361,7 @@ def backup():
             add_storage_file(m.get("picture_file"), "material_pictures")
         for item in inventory_pictures:
             add_storage_file(item.get("picture_file"), "inventory_pictures")
+            add_storage_file(item.get("audio_file"), "inventory_audio")
         for task in task_files:
             add_storage_file(task.get("task_photo_file"), "task_files")
             add_storage_file(task.get("task_audio_file"), "task_files")
@@ -8203,7 +8395,7 @@ def storage_file(storage_path):
         UNION
         SELECT project_id FROM material_inventory WHERE picture_file = %s
         UNION
-        SELECT project_id FROM inventory_items WHERE picture_file = %s
+        SELECT project_id FROM inventory_items WHERE picture_file = %s OR audio_file = %s
         UNION
         SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
         UNION
@@ -8211,6 +8403,7 @@ def storage_file(storage_path):
         LIMIT 1
         """,
         (
+            storage_path,
             storage_path,
             storage_path,
             storage_path,

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card desktop-only">
+    <h2>Confirm Delete Inventory</h2>
+    <p><strong>{{ item.item_name }}</strong></p>
+    <p class="muted">
+        Qty: {{ item.quantity }}
+        {% if item.project_name %}<br>Project: {{ item.project_name }}{% endif %}
+        {% if item.room_name %}<br>Room: {{ item.room_name }}{% endif %}
+    </p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this inventory item.</p>
+    <form method="post">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Inventory</button>
+        <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
+    </form>
+</div>
+<div class="card mobileDeleteNotice">
+    <p class="muted">Inventory can only be deleted from the desktop version with an email PIN.</p>
+</div>
+<style>
+.mobileDeleteNotice{display:none}
+@media(max-width:760px){.mobileDeleteNotice{display:block}}
+</style>
+{% endblock %}

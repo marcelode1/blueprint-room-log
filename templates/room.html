@@ -158,7 +158,9 @@
             {% if item.supplier_name %}<p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Status:</strong> {{ inventory_status_label(item.status) }} | <strong>Located:</strong> {{ inventory_location_label(item.location_type) }}{% if item.location_detail %} - {{ item.location_detail }}{% endif %}</p>
             {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
+            {% if item.media_comment %}<p class="muted">{{ item.media_comment }}</p>{% endif %}
             {% if item.picture_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
+            {% if item.audio_file %}<audio controls src="{{ url_for('storage_file', storage_path=item.audio_file) }}"></audio>{% endif %}
             {% if can_edit_inventory() and item.status != 'used' %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
