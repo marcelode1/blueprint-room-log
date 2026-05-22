@@ -1,15 +1,45 @@
-
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Edit Comment — {{ note.room_name }}</h2>
-    <form method="post">
+    <h2>Edit Comment - {{ note.room_name }}</h2>
+    {% if note.photo_file or note.audio_file %}
+        <div class="editCommentMedia">
+            {% if note.photo_file %}
+                <img class="photo" src="{{ url_for('storage_file', storage_path=note.photo_file) }}">
+            {% endif %}
+            {% if note.audio_file %}
+                <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=note.audio_file) }}"></audio>
+            {% endif %}
+        </div>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="next" value="{{ next_url }}">
+        <input type="hidden" name="action" value="save">
         <label>Date</label>
         <input type="date" name="note_date" value="{{ note.note_date }}" required>
         <label>Comment</label>
-        <textarea name="comment" rows="6" required>{{ note.comment }}</textarea>
+        <textarea name="comment" rows="6">{{ note.comment or '' }}</textarea>
+        {% set media_id = 'edit_note_' ~ note.id %}
+        {% set media_camera_name = 'extra_photo_camera' %}
+        {% set media_upload_name = 'extra_photo' %}
+        {% set media_audio_name = 'extra_audio' %}
+        {% set media_comment_name = 'extra_media_comment' %}
+        {% set media_comment_label = 'New Media Comment' %}
+        {% set media_comment_placeholder = 'Comment for the new picture or audio' %}
+        {% set media_save_label = 'Save Changes' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Changes</button>
     </form>
 </div>
+
+{% if is_main_admin() or has_perm("delete_comments") or (note.photo_file and has_perm("delete_pictures")) or (note.audio_file and has_perm("delete_audio")) or note.user_id == session.get("user_id") %}
+<div class="card">
+    <h3>Delete</h3>
+    <form method="post" onsubmit="return confirm('Delete this comment/media?');">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <input type="hidden" name="action" value="delete">
+        <button type="submit" class="btn-danger">Delete Comment / Media</button>
+    </form>
+</div>
+{% endif %}
 {% endblock %}

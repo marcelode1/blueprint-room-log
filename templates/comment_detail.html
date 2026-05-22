@@ -33,11 +33,20 @@
 
 <div class="card">
     <h3>Edit Comment</h3>
-    <form method="post">
+    <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="next" value="{{ next_url }}">
         <input type="hidden" name="action" value="save">
         <label>Comment</label>
         <textarea name="comment" rows="6">{{ record.comment or '' }}</textarea>
+        {% set media_id = 'comment_detail_' ~ record.source_type ~ '_' ~ record.source_id %}
+        {% set media_camera_name = 'extra_photo_camera' %}
+        {% set media_upload_name = 'extra_photo' %}
+        {% set media_audio_name = 'extra_audio' %}
+        {% set media_comment_name = 'extra_media_comment' %}
+        {% set media_comment_label = 'New Media Comment' %}
+        {% set media_comment_placeholder = 'Comment for the new picture or audio' %}
+        {% set media_save_label = 'Save Comment' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Comment</button>
     </form>
 </div>

@@ -1,10 +1,28 @@
 {% if is_main_admin() or has_perm("edit_comments") or attachment.created_by == session.get("user_id") %}
     <details class="attachmentCommentEditor">
         <summary>Edit Comment</summary>
-        <form method="post" action="{{ url_for('update_task_attachment_comment', task_id=t.id, attachment_id=attachment.id) }}">
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('update_task_attachment_comment', task_id=t.id, attachment_id=attachment.id) }}">
             <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-            <textarea name="comment" rows="2">{{ attachment.comment or '' }}</textarea>
+            <input type="hidden" name="action" value="save">
+            <label>Comment</label>
+            <textarea name="comment" rows="3">{{ attachment.comment or '' }}</textarea>
+            {% set media_id = 'edit_attachment_' ~ attachment.id %}
+            {% set media_camera_name = 'extra_photo_camera' %}
+            {% set media_upload_name = 'extra_photo' %}
+            {% set media_audio_name = 'extra_audio' %}
+            {% set media_comment_name = 'extra_media_comment' %}
+            {% set media_comment_label = 'New Media Comment' %}
+            {% set media_comment_placeholder = 'Comment for the new picture or audio' %}
+            {% set media_save_label = 'Save Comment' %}
+            {% include "_mobile_media_bar.html" %}
             <button type="submit">Save Comment</button>
         </form>
+        {% if is_main_admin() or has_perm("delete_comments") or (attachment.file_type == "photo" and has_perm("delete_pictures")) or (attachment.file_type == "audio" and has_perm("delete_audio")) or attachment.created_by == session.get("user_id") %}
+        <form method="post" action="{{ url_for('update_task_attachment_comment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this comment/media?');">
+            <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+            <input type="hidden" name="action" value="delete">
+            <button type="submit" class="btn-danger">Delete Comment / Media</button>
+        </form>
+        {% endif %}
     </details>
 {% endif %}

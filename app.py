@@ -2033,6 +2033,89 @@ def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
 
 
+def can_delete_task_attachment_item(task, attachment):
+    if is_main_admin():
+        return True
+    if not task or not attachment:
+        return False
+    if task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id"):
+        return True
+    file_type = attachment.get("file_type")
+    return (
+        has_perm("delete_comments")
+        or (file_type == "photo" and has_perm("delete_pictures"))
+        or (file_type == "audio" and has_perm("delete_audio"))
+    )
+
+
+def comment_media_uploads(photo_names, audio_names):
+    photo = first_uploaded_file(*photo_names)
+    audio = first_uploaded_file(*audio_names)
+    if photo and not allowed_photo(photo.filename):
+        return "Please upload a valid picture.", None, None
+    if audio and not allowed_audio(audio.filename):
+        return "Please upload a valid audio file.", None, None
+    return "", photo, audio
+
+
+def insert_extra_task_media(conn, task_id, room_id, inventory_item_id, photo, audio, comment):
+    inserted = 0
+    for uploaded, field_name, file_type in [
+        (photo, "extra_photo", "photo"),
+        (audio, "extra_audio", "audio"),
+    ]:
+        if not uploaded or not uploaded.filename:
+            continue
+        data = uploaded.read()
+        if not data:
+            continue
+        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
+        storage_path = upload_bytes_to_storage(
+            data,
+            display_name,
+            upload_content_type(display_name, uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg"))
+        )
+        conn.execute(
+            """
+            INSERT INTO task_attachments
+            (task_id, room_id, inventory_item_id, file_type, storage_path, original_filename, comment, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (task_id, room_id, inventory_item_id, file_type, storage_path, display_name, comment, session.get("user_id"), utc_now_iso())
+        )
+        inserted += 1
+    return inserted
+
+
+def add_note_edit_media(conn, note, note_date, comment, photo, audio):
+    photo_file = upload_file_to_storage(photo) if photo and photo.filename else None
+    audio_file = upload_file_to_storage(audio) if audio and audio.filename else None
+    updates = []
+    params = []
+    if photo_file and not note.get("photo_file"):
+        updates.append("photo_file = %s")
+        params.append(photo_file)
+        photo_file = None
+    if audio_file and not note.get("audio_file"):
+        updates.append("audio_file = %s")
+        params.append(audio_file)
+        audio_file = None
+    if updates:
+        conn.execute(
+            f"UPDATE notes SET {', '.join(updates)} WHERE id = %s",
+            tuple(params + [note["id"]])
+        )
+    if photo_file or audio_file:
+        conn.execute(
+            """
+            INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (note["room_id"], session.get("user_id"), note_date, comment, photo_file, audio_file, utc_now_iso())
+        )
+    return bool(updates or photo_file or audio_file)
+
+
 INVENTORY_STATUS_LABELS = {
     "available": "Available",
     "used": "Used",
@@ -6294,7 +6377,7 @@ def delete_task_attachment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id")):
+    if not can_delete_task_attachment_item(task, attachment):
         conn.close()
         flash("You do not have permission to delete this picture.")
         return redirect(next_url)
@@ -6474,17 +6557,47 @@ def update_task_attachment_comment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if request.form.get("action") == "delete":
+        if not can_delete_task_attachment_item(task, attachment):
+            conn.close()
+            flash("You do not have permission to delete this item.")
+            return redirect(next_url)
+        conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
+        conn.commit()
+        conn.close()
+        flash("Comment/media deleted.")
+        return redirect(next_url)
     if not (is_main_admin() or has_perm("edit_comments") or attachment.get("created_by") == session.get("user_id")):
         conn.close()
         flash("You do not have permission to edit this comment.")
         return redirect(next_url)
+
+    error, photo, audio = comment_media_uploads(
+        ["extra_photo", "extra_photo_camera"],
+        ["extra_audio"]
+    )
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(next_url)
+    comment = request.form.get("comment", "").strip()
     conn.execute(
         "UPDATE task_attachments SET comment = %s WHERE id = %s AND task_id = %s",
-        (request.form.get("comment", "").strip(), attachment_id, task_id)
+        (comment, attachment_id, task_id)
+    )
+    extra_comment = request.form.get("extra_media_comment", "").strip() or comment
+    added_media = insert_extra_task_media(
+        conn,
+        task_id,
+        attachment.get("room_id"),
+        attachment.get("inventory_item_id"),
+        photo,
+        audio,
+        extra_comment
     )
     conn.commit()
     conn.close()
-    flash("Comment updated.")
+    flash("Comment updated." if not added_media else "Comment updated and media added.")
     return redirect(next_url)
 
 
@@ -7403,6 +7516,10 @@ def load_comment_detail_record(conn, source_type, source_id):
                 notes.comment,
                 notes.photo_file,
                 notes.audio_file,
+                NULL::TEXT AS media_file_type,
+                NULL::TEXT AS media_path,
+                NULL::TEXT AS media_filename,
+                NULL::INTEGER AS inventory_item_id,
                 notes.user_id AS created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7432,6 +7549,10 @@ def load_comment_detail_record(conn, source_type, source_id):
                 task_attachments.comment,
                 CASE WHEN task_attachments.file_type = 'photo' THEN task_attachments.storage_path ELSE NULL END AS photo_file,
                 CASE WHEN task_attachments.file_type = 'audio' THEN task_attachments.storage_path ELSE NULL END AS audio_file,
+                task_attachments.file_type AS media_file_type,
+                task_attachments.storage_path AS media_path,
+                task_attachments.original_filename AS media_filename,
+                task_attachments.inventory_item_id,
                 task_attachments.created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7462,6 +7583,10 @@ def load_comment_detail_record(conn, source_type, source_id):
                 tasks.completion_comment AS comment,
                 tasks.completion_photo_file AS photo_file,
                 tasks.completion_audio_file AS audio_file,
+                NULL::TEXT AS media_file_type,
+                NULL::TEXT AS media_path,
+                NULL::TEXT AS media_filename,
+                NULL::INTEGER AS inventory_item_id,
                 tasks.assigned_user_id AS created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7752,10 +7877,46 @@ def comment_detail(source_type, source_id):
             conn.close()
             flash("Comment/media deleted.")
             return redirect(next_url)
-        update_comment_detail_record(conn, source_type, source_id, request.form.get("comment", "").strip())
+        error, photo, audio = comment_media_uploads(
+            ["extra_photo", "extra_photo_camera"],
+            ["extra_audio"]
+        )
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
+        comment = request.form.get("comment", "").strip()
+        update_comment_detail_record(conn, source_type, source_id, comment)
+        media_comment = request.form.get("extra_media_comment", "").strip() or comment
+        added_media = 0
+        if photo or audio:
+            if source_type == "room_note":
+                added_media = add_note_edit_media(
+                    conn,
+                    {
+                        "id": source_id,
+                        "room_id": record.get("room_id"),
+                        "photo_file": record.get("photo_file"),
+                        "audio_file": record.get("audio_file"),
+                    },
+                    record.get("record_date") or local_now().date().isoformat(),
+                    media_comment,
+                    photo,
+                    audio
+                )
+            elif source_type in ["task_attachment", "task_completion"] and record.get("task_id"):
+                added_media = insert_extra_task_media(
+                    conn,
+                    record.get("task_id"),
+                    record.get("room_id"),
+                    record.get("inventory_item_id"),
+                    photo,
+                    audio,
+                    media_comment
+                )
         conn.commit()
         conn.close()
-        flash("Comment updated.")
+        flash("Comment updated." if not added_media else "Comment updated and media added.")
         return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
 
     conn.close()
@@ -8360,12 +8521,46 @@ def edit_note(note_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
     if request.method == "POST":
-        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (request.form["comment"].strip(), request.form["note_date"], note_id))
+        next_url = safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"])
+        if request.form.get("action") == "delete":
+            can_delete_note = (
+                is_main_admin()
+                or has_perm("delete_comments")
+                or (note.get("photo_file") and has_perm("delete_pictures"))
+                or (note.get("audio_file") and has_perm("delete_audio"))
+                or note.get("user_id") == session.get("user_id")
+            )
+            if not can_delete_note:
+                conn.close()
+                flash("You do not have permission to delete this item.")
+                return redirect(next_url)
+            conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+            conn.commit()
+            conn.close()
+            flash("Comment/media deleted.")
+            return redirect(next_url)
+
+        error, photo, audio = comment_media_uploads(
+            ["extra_photo", "extra_photo_camera"],
+            ["extra_audio"]
+        )
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(next_url)
+        note_date = request.form.get("note_date") or note.get("note_date") or local_now().date().isoformat()
+        comment = request.form.get("comment", "").strip()
+        if not comment and not note.get("photo_file") and not note.get("audio_file") and not photo and not audio:
+            conn.close()
+            flash("Add a comment, picture, or audio before saving.")
+            return redirect(next_url)
+        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (comment, note_date, note_id))
+        media_comment = request.form.get("extra_media_comment", "").strip() or comment
+        added_media = add_note_edit_media(conn, note, note_date, media_comment, photo, audio)
         conn.commit()
-        room_id = note["room_id"]
         conn.close()
-        flash("Comment updated.")
-        return redirect(safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=room_id))
+        flash("Comment updated." if not added_media else "Comment updated and media added.")
+        return redirect(next_url)
     conn.close()
     return render_template("edit_note.html", note=note, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
 
