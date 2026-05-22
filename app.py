@@ -1785,6 +1785,58 @@ def admin_email_rows(conn):
     return conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
 
 
+def record_application_open(conn, source_label):
+    user_id = session.get("user_id")
+    if not user_id:
+        return
+    now = datetime.now(timezone.utc)
+    last_logged = parse_iso_datetime(session.get("last_app_open_logged_at"))
+    if last_logged and (now - last_logged) < timedelta(minutes=30):
+        return
+
+    user = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (user_id,)).fetchone()
+    if not user:
+        return
+    opened_at = utc_now_iso()
+    session["last_app_open_logged_at"] = opened_at
+    session.modified = True
+    name = user.get("name") or session.get("name") or "Unknown user"
+    email = user.get("email") or ""
+    role = user.get("role") or session.get("role") or ""
+    message = f"{name} opened ProjectONus from the {source_label}."
+    conn.execute(
+        """
+        INSERT INTO login_events
+        (user_id, user_name, user_email, role, event_type, message, is_read, created_at)
+        VALUES (%s, %s, %s, %s, 'login', %s, TRUE, %s)
+        """,
+        (user.get("id"), name, email, role, message, opened_at)
+    )
+    admins = admin_email_rows(conn)
+    conn.commit()
+
+    ip_address = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",", 1)[0].strip()
+    device = (request.headers.get("User-Agent") or "").strip()
+    if len(device) > 220:
+        device = device[:220] + "..."
+    body = "\n".join([
+        "A user opened ProjectONus.",
+        "",
+        f"User: {name}",
+        f"Email: {email or '-'}",
+        f"Role: {role or '-'}",
+        f"Opened From: {source_label}",
+        f"Date/Time: {format_datetime(opened_at)}",
+        f"IP Address: {ip_address or '-'}",
+        f"Device: {device or '-'}",
+        "",
+        f"Login Report: {external_url('login_report')}",
+    ])
+    for admin in admins:
+        if admin.get("email"):
+            send_email(admin["email"], f"ProjectONus app opened - {name}", body)
+
+
 def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
     try:
         actor = conn.execute(
@@ -3500,6 +3552,7 @@ def index():
         return redirect(url_for("login"))
     q = request.args.get("q", "").strip()
     conn = db()
+    record_application_open(conn, "desktop version")
     projects = fetch_visible_projects(conn, q)
     conn.close()
     return render_template("index.html", projects=projects, q=q)
@@ -3518,6 +3571,7 @@ def desktop_home():
 @login_required
 def mobile_home():
     conn = db()
+    record_application_open(conn, "mobile version")
     project_count = len(fetch_visible_projects(conn))
     conn.close()
     return render_template("mobile_home.html", project_count=project_count)
@@ -7962,7 +8016,9 @@ def team_map():
                         <a href="/users">Users</a>
                         <a href="/settings">Settings</a>
                         <a href="/attendance/report">Time Report</a>
+                        <a href="/login/report">Login Report</a>
                         <a href="/tasks/report">Task Report</a>
+                        <a href="/comments/report">Comment Report</a>
                         <a href="/team-map">Where Is My Team</a>
                         <a href="/backup">Backup</a>
                     </nav>
@@ -8000,6 +8056,102 @@ def team_map_data():
     finally:
         if conn:
             conn.close()
+
+
+def login_event_in_range(event, period, selected_date):
+    period, start, end = attendance_range(period, selected_date)
+    event_dt = local_datetime(event.get("created_at"))
+    return bool(event_dt and start <= event_dt < end)
+
+
+def login_report_data(period, selected_date, selected_user_id=None):
+    if period not in ["day", "week", "month"]:
+        period = "day"
+    period, start, end = attendance_range(period, selected_date)
+    conn = db()
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    query = """
+        SELECT login_events.*,
+               COALESCE(login_events.user_name, users.name) AS report_user_name,
+               COALESCE(login_events.user_email, users.email) AS report_user_email,
+               COALESCE(login_events.role, users.role) AS report_role
+        FROM login_events
+        LEFT JOIN users ON login_events.user_id = users.id
+        WHERE login_events.event_type = 'login'
+          AND login_events.created_at >= %s
+          AND login_events.created_at < %s
+    """
+    params = [
+        storage_datetime(start - timedelta(days=1)).isoformat(),
+        storage_datetime(end + timedelta(days=1)).isoformat()
+    ]
+    if selected_user_id:
+        query += " AND login_events.user_id = %s"
+        params.append(selected_user_id)
+    query += " ORDER BY login_events.created_at DESC, login_events.id DESC"
+    events = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    events = [event for event in events if login_event_in_range(event, period, selected_date)]
+    summary = {}
+    for event in events:
+        key = event.get("user_id") or f"deleted-{event.get('report_user_email') or event.get('id')}"
+        if key not in summary:
+            summary[key] = {
+                "name": event.get("report_user_name") or "Unknown user",
+                "email": event.get("report_user_email") or "",
+                "role": event.get("report_role") or "",
+                "count": 0,
+                "last_open": event.get("created_at")
+            }
+        summary[key]["count"] += 1
+    return {"users": users, "events": events, "summary": summary.values(), "period": period, "start": start, "end": end}
+
+
+@app.route("/login/report")
+@admin_required
+def login_report():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_user_id = request.args.get("user_id", type=int)
+    report = login_report_data(period, selected_date, selected_user_id)
+    return render_template(
+        "login_report.html",
+        report=report,
+        users=report["users"],
+        events=report["events"],
+        summary=report["summary"],
+        period=report["period"],
+        selected_date=selected_date,
+        selected_user_id=selected_user_id,
+        start=report["start"],
+        end=report["end"]
+    )
+
+
+@app.route("/login/report/export")
+@admin_required
+def login_report_export():
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_user_id = request.args.get("user_id", type=int)
+    report = login_report_data(period, selected_date, selected_user_id)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["User", "Email", "Role", "Date / Time", "Message"])
+    for event in report["events"]:
+        writer.writerow([
+            event.get("report_user_name") or "Unknown user",
+            event.get("report_user_email") or "",
+            event.get("report_role") or "",
+            format_datetime(event.get("created_at")),
+            event.get("message") or "Opened ProjectONus"
+        ])
+    filename = f"projectonus_login_report_{report['period']}_{selected_date}.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @app.route("/attendance/report")

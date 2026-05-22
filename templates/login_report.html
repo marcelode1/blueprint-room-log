@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Login Report</h2>
+    <form method="get">
+        <div class="grid">
+            <div>
+                <label>User</label>
+                <select name="user_id">
+                    <option value="">All Users</option>
+                    {% for u in users %}
+                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Period</label>
+                <select name="period">
+                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
+                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
+                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
+                </select>
+            </div>
+            <div>
+                <label>Date</label>
+                <input type="date" name="date" value="{{ selected_date }}" required>
+            </div>
+        </div>
+        <button type="submit">Show Report</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('login_report_export', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
+    </form>
+    <p class="muted">Showing {{ start.date() }} through {{ end.date() }}.</p>
+</div>
+
+<div class="card">
+    <h3>Summary</h3>
+    <div class="loginSummaryGrid">
+        {% for row in summary %}
+            <div class="loginSummaryItem">
+                <strong>{{ row.name }}</strong>
+                <span class="muted">{{ row.email }}</span>
+                <span>{{ row.count }} open{{ '' if row.count == 1 else 's' }}</span>
+                <span class="muted">Last: {{ format_datetime(row.last_open) }}</span>
+            </div>
+        {% else %}
+            <p>No login activity for this period.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="card">
+    <h3>Login Activity</h3>
+    <div class="loginReportWrap">
+        <table class="loginReportTable">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Date / Time</th>
+                    <th>Activity</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for event in events %}
+                <tr>
+                    <td>{{ event.report_user_name or "Unknown user" }}</td>
+                    <td>{{ event.report_user_email or "-" }}</td>
+                    <td>{{ event.report_role or "-" }}</td>
+                    <td>{{ format_datetime(event.created_at) }}</td>
+                    <td>{{ event.message or "Opened ProjectONus" }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="5">No login activity for this period.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+.loginSummaryGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.loginSummaryItem{border:1px solid var(--border);border-radius:8px;padding:10px;display:grid;gap:4px}
+.loginReportWrap{overflow-x:auto}
+.loginReportTable{width:100%;border-collapse:collapse}
+.loginReportTable th,.loginReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
+.loginReportTable th{background:#f3f4f6}
+@page{size:letter portrait;margin:.45in}
+@media(max-width:800px){.loginReportTable{min-width:760px}}
+@media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0;margin:0 0 10px;padding:0}.loginSummaryGrid{grid-template-columns:repeat(2,1fr)}.loginReportWrap{overflow:visible}.loginReportTable th,.loginReportTable td{font-size:10px;padding:5px}.loginReportTable th:nth-child(5),.loginReportTable td:nth-child(5){width:34%}}
+</style>
+{% endblock %}
