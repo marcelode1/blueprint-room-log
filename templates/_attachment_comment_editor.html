@@ -6,6 +6,8 @@
             <input type="hidden" name="action" value="save">
             <label>Comment</label>
             <textarea name="comment" rows="3">{{ attachment.comment or '' }}</textarea>
+            {% set comment_action = attachment %}
+            {% include "_comment_action_fields.html" %}
             {% set media_id = 'edit_attachment_' ~ attachment.id %}
             {% set media_camera_name = 'extra_photo_camera' %}
             {% set media_upload_name = 'extra_photo' %}

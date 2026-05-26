@@ -19,6 +19,7 @@
         <input type="date" name="note_date" value="{{ note.note_date }}" required>
         <label>Comment</label>
         <textarea name="comment" rows="6">{{ note.comment or '' }}</textarea>
+        {% include "_comment_action_fields.html" %}
         {% set media_id = 'edit_note_' ~ note.id %}
         {% set media_camera_name = 'extra_photo_camera' %}
         {% set media_upload_name = 'extra_photo' %}

@@ -193,6 +193,7 @@
                             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                                 <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
                                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                                {% include "_comment_action_fields.html" %}
                                 <button type="submit">Mark Task Done</button>
                             </form>
                         {% endif %}
@@ -234,6 +235,7 @@
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                    {% include "_comment_action_fields.html" %}
                     <button type="submit">Mark Task Done</button>
                 </form>
             {% endif %}

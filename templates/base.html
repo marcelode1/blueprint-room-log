@@ -16,6 +16,7 @@
         input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
         button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
         button:hover,.btn-link:hover{background:var(--primary-dark)}.btn-secondary{background:#475569!important}.btn-danger{background:var(--danger)!important}
+        .commentActionFields{border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0;background:rgba(14,165,233,.06)}.commentActionFields label{font-weight:800}.commentActionDetails{display:grid;gap:6px;margin-top:8px}.commentActionDetails[hidden]{display:none}
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}.photo,img.photo{max-width:100%;border-radius:14px;border:1px solid var(--border)}
         .desktopPhotoOpen{width:auto;min-height:40px;padding:9px 14px;margin:0 0 8px 10px;border-radius:10px;font-size:14px;vertical-align:top}
         @media(min-width:761px){img.photo{max-width:25%;height:auto;vertical-align:top}.commentDetailMedia{max-width:100%!important}.desktopPhotoOpen{display:inline-flex!important}}
@@ -301,6 +302,21 @@ if(mobileMenuButton&&mobileMenuPanel){
 }
 if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js").catch(()=>{})}
 
+function refreshCommentActionFields(root){
+    (root||document).querySelectorAll("[data-comment-action-status]").forEach(select=>{
+        const details=select.closest(".commentActionFields")&&select.closest(".commentActionFields").querySelector("[data-comment-action-details]");
+        if(details)details.hidden=select.value==="no_action";
+    });
+}
+document.addEventListener("change",event=>{
+    if(event.target&&event.target.matches("[data-comment-action-status]"))refreshCommentActionFields(event.target.closest(".commentActionFields")||document);
+});
+if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",()=>refreshCommentActionFields(document));
+}else{
+    refreshCommentActionFields(document);
+}
+
 function addDesktopPhotoOpenButtons(){
     document.querySelectorAll("img.photo").forEach(img=>{
         if(img.dataset.desktopOpenReady==="1")return;
@@ -484,20 +500,71 @@ if(document.readyState==="loading"){
         return formData;
     }
 
-    function showUploadStatus(message){
+    async function clearAllUploads(){
+        const uploads=await listUploads();
+        for(const entry of uploads){
+            await deleteUpload(entry.id);
+        }
+        return uploads.length;
+    }
+
+    function showUploadStatus(message,options){
+        options=options||{};
         let status=document.getElementById("projectonusUploadStatus");
         if(!status)return;
-        status.textContent=message;
+        status.innerHTML="";
+        const text=document.createElement("span");
+        text.textContent=message;
+        status.appendChild(text);
+        if(options.actions&&options.actions.length){
+            const actions=document.createElement("div");
+            actions.className="projectonusUploadActions";
+            options.actions.forEach(action=>{
+                const button=document.createElement("button");
+                button.type="button";
+                button.textContent=action.label;
+                button.dataset.uploadAction=action.name;
+                if(action.danger)button.className="btn-danger";
+                actions.appendChild(button);
+            });
+            status.appendChild(actions);
+        }
         status.hidden=false;
         clearTimeout(showUploadStatus.timer);
-        showUploadStatus.timer=setTimeout(()=>{status.hidden=true;},7000);
+        if(!options.persist){
+            showUploadStatus.timer=setTimeout(()=>{status.hidden=true;},7000);
+        }
+    }
+
+    async function showPendingUploadStatus(prefix,options){
+        options=options||{};
+        const uploads=await listUploads();
+        if(!uploads.length){
+            showUploadStatus("No pending ProjectONus uploads.");
+            return;
+        }
+        const intro=prefix?prefix+" ":"";
+        const actions=options.actions===false?[]:[
+            {name:"retry",label:"Retry Now"},
+            {name:"clear",label:"Clear Pending Uploads",danger:true}
+        ];
+        showUploadStatus(
+            intro+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+" saved on this phone.",
+            {
+                persist:options.persist!==false,
+                actions
+            }
+        );
     }
 
     async function queueForm(form, reason){
         const entry=entryFromForm(form);
         await storeUpload(entry);
         registerBackgroundUploadSync();
-        showUploadStatus((reason||"Upload saved locally.")+" It will send automatically when the phone has a better connection.");
+        await showPendingUploadStatus(
+            (reason||"Upload saved locally.")+" Saved on this phone. It will send automatically when the phone has a better connection.",
+            {persist:false,actions:false}
+        );
         processUploadQueue();
     }
 
@@ -507,9 +574,6 @@ if(document.readyState==="loading"){
             const registration=await navigator.serviceWorker.ready;
             if("SyncManager" in window&&registration.sync){
                 await registration.sync.register("projectonus-pending-uploads");
-            }
-            if(navigator.serviceWorker.controller){
-                navigator.serviceWorker.controller.postMessage({type:"PROJECTONUS_PROCESS_UPLOADS"});
             }
         }catch(e){}
     }
@@ -521,33 +585,69 @@ if(document.readyState==="loading"){
             credentials:"same-origin",
             redirect:"follow"
         });
+        const finalUrl=response.url||"";
+        if(finalUrl.includes("/login")||finalUrl.includes("/mobile/login")){
+            throw new Error("Please log in again before sending pending uploads.");
+        }
         if(!response.ok)throw new Error("Upload failed");
         return response;
     }
 
     async function processUploadQueue(){
-        if(processing||uploadSignalIsWeak())return;
+        if(processing)return;
+        if(uploadSignalIsWeak()){
+            return;
+        }
         processing=true;
         try{
             const uploads=await listUploads();
             if(!uploads.length)return;
-            showUploadStatus("Sending "+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+"...");
+            showUploadStatus("Sending "+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+"...",{persist:true});
             let sent=0;
+            let failedMessage="";
+            let stoppedForSignal=false;
             for(const entry of uploads){
-                if(uploadSignalIsWeak())break;
+                if(uploadSignalIsWeak()){
+                    stoppedForSignal=true;
+                    break;
+                }
                 try{
                     await sendEntry(entry);
                     await deleteUpload(entry.id);
                     sent++;
                 }catch(e){
+                    failedMessage=(e&&e.message)||"Upload could not reach the cloud.";
                     break;
                 }
             }
-            if(sent)showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
+            const remaining=await listUploads();
+            if(remaining.length){
+                if(failedMessage){
+                    await showPendingUploadStatus(failedMessage+" Sent "+sent+".",{persist:true});
+                }else if(stoppedForSignal&&sent){
+                    showUploadStatus("Sent "+sent+" pending upload"+(sent===1?"":"s")+". The rest will send when the signal improves.");
+                }
+            }else if(sent){
+                showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
+            }
         }finally{
             processing=false;
         }
     }
+
+    document.addEventListener("click",async event=>{
+        const button=event.target.closest("[data-upload-action]");
+        if(!button)return;
+        if(button.dataset.uploadAction==="retry"){
+            processUploadQueue();
+            return;
+        }
+        if(button.dataset.uploadAction==="clear"){
+            if(!confirm("Clear pending ProjectONus uploads from this phone? Only do this if those pictures/audio are already saved or you no longer need to send them."))return;
+            const cleared=await clearAllUploads();
+            showUploadStatus(cleared+" pending upload"+(cleared===1?"":"s")+" cleared from this phone.");
+        }
+    });
 
     document.addEventListener("submit",async event=>{
         const form=event.target;
@@ -586,11 +686,11 @@ if(document.readyState==="loading"){
 })();
 </script>
 <style>
-.projectonusPermissionPrompt{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPermissionPrompt[hidden]{display:none}.projectonusPermissionCard{width:min(440px,100%);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPermissionCard h3{margin:0 0 8px}.projectonusPermissionCard p{line-height:1.4}.projectonusPermissionActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.projectonusPermissionActions button{margin:0}.projectonusPermissionStatus{min-height:20px;margin:10px 0 0;color:var(--muted);font-size:14px}.projectonusUploadStatus{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1850;max-width:min(520px,calc(100% - 24px));background:#0f172a;color:white;border:1px solid #334155;border-radius:999px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 16px;text-align:center;font-weight:800}.projectonusUploadStatus[hidden]{display:none}
+.projectonusPermissionPrompt{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPermissionPrompt[hidden]{display:none}.projectonusPermissionCard{width:min(440px,100%);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPermissionCard h3{margin:0 0 8px}.projectonusPermissionCard p{line-height:1.4}.projectonusPermissionActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.projectonusPermissionActions button{margin:0}.projectonusPermissionStatus{min-height:20px;margin:10px 0 0;color:var(--muted);font-size:14px}.projectonusUploadStatus{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1850;max-width:min(520px,calc(100% - 24px));background:#0f172a;color:white;border:1px solid #334155;border-radius:18px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 16px;text-align:center;font-weight:800}.projectonusUploadStatus[hidden]{display:none}.projectonusUploadActions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}.projectonusUploadActions button{width:auto!important;min-height:40px!important;margin:0!important;padding:8px 12px!important;border-radius:10px!important;font-size:13px!important}
 .mobileMediaPicker{margin:12px 0}.mobileMediaNativeInputs{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mobileMediaCommentLabel{margin-top:10px}.mobileMediaPicker textarea{border-radius:18px;min-height:74px}.mobileMediaBar{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--card);box-shadow:0 8px 22px rgba(15,23,42,.12);max-width:360px;margin:10px 0 0 auto}.mobileMediaIconButton{width:50px!important;height:50px!important;min-width:50px!important;min-height:50px!important;border-radius:50%!important;padding:0!important;margin:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--text)!important;border:0!important;box-shadow:none!important}.mobileMediaIconButton svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.mobileMediaCameraButton{background:var(--primary)!important;color:#fff!important}.mobileMediaPreview{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:rgba(14,165,233,.07)}.mobileMediaPreviewBody{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}.mobileMediaPreview p{margin:2px 0 0;word-break:break-word}.mobileMediaThumb{width:64px;height:64px;border-radius:10px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#334155;font-weight:900}.mobileMediaThumb img{width:100%;height:100%;object-fit:cover}.mobileMediaThumb audio{width:58px}.mobileMediaPreviewSave{width:auto!important;min-width:92px!important;margin:10px 0 0 auto!important;display:flex!important}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}.globalPictureMarkActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.globalPictureMarkActions button{margin:0!important;width:auto!important}.globalPictureMarkActions #globalPictureMarkSave{margin-left:auto!important}
 #globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
 #globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
-@media(max-width:760px){.projectonusPermissionActions{grid-template-columns:1fr}.projectonusUploadStatus{bottom:104px;border-radius:14px}}
+@media(max-width:760px){.projectonusPermissionActions{grid-template-columns:1fr}.projectonusUploadStatus{bottom:104px;border-radius:14px}.projectonusUploadActions{display:grid;grid-template-columns:1fr;gap:8px}.projectonusUploadActions button{width:100%!important}}
 </style>
 <div id="projectonusPermissionPrompt" class="projectonusPermissionPrompt" hidden>
     <div class="projectonusPermissionCard">

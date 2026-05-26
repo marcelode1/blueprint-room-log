@@ -1,0 +1,25 @@
+{% set ca = comment_action if comment_action is defined and comment_action else {} %}
+{% set current_status = ca.status or ca.action_status or 'no_action' %}
+{% set current_assigned_to = ca.assigned_to or ca.action_assigned_to or '' %}
+{% set current_due_date = ca.due_date or ca.action_due_date or '' %}
+{% set current_note = ca.action_note or '' %}
+<div class="commentActionFields">
+    <label>Comment Status</label>
+    <select name="comment_action_status" data-comment-action-status>
+        {% for value, label in comment_action_status_options.items() %}
+            <option value="{{ value }}" {% if current_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    <div class="commentActionDetails" data-comment-action-details>
+        <label>Assign / Send To</label>
+        <select name="comment_action_assigned_to">
+            {% for value, label in comment_action_assignee_options.items() %}
+                <option value="{{ value }}" {% if current_assigned_to == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label>Due Date</label>
+        <input type="date" name="comment_action_due_date" value="{{ current_due_date }}">
+        <label>Action Note</label>
+        <textarea name="comment_action_note" rows="2" placeholder="What should happen next?">{{ current_note }}</textarea>
+    </div>
+</div>

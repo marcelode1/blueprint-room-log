@@ -3,5 +3,6 @@
     <input type="hidden" name="completion_room_id" value="{{ r.id }}">
     <label>Completion Comment</label>
     <textarea name="completion_comment" rows="3"></textarea>
+    {% include "_comment_action_fields.html" %}
     <button type="submit">Mark This Room Done</button>
 </form>

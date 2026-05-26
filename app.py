@@ -549,6 +549,22 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS comment_actions (
+        id SERIAL PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'no_action',
+        assigned_to TEXT,
+        due_date TEXT,
+        action_note TEXT,
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (source_type, source_id)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS user_permissions (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         see_comments BOOLEAN NOT NULL DEFAULT TRUE,
@@ -881,6 +897,17 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
+        "CREATE TABLE IF NOT EXISTS comment_actions (id SERIAL PRIMARY KEY, source_type TEXT NOT NULL, source_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'no_action', assigned_to TEXT, due_date TEXT, action_note TEXT, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE (source_type, source_id))",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS source_type TEXT",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS source_id INTEGER",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'no_action'",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS assigned_to TEXT",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS due_date TEXT",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS action_note TEXT",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS updated_at TEXT",
+        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS created_at TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS comment_actions_source_idx ON comment_actions(source_type, source_id)",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -1219,6 +1246,7 @@ def insert_task_attachments(conn, task_id, uploads):
             )
         ).fetchone()
         inserted.append(attachment)
+        upsert_comment_action(conn, "task_attachment", attachment["id"])
         if item.get("room_id"):
             related_room_ids.add(item["room_id"])
         if item["file_type"] == "photo" and not first_photo:
@@ -1265,10 +1293,15 @@ def load_task_attachments(conn, task_id, room_id=None):
         params.append(room_id)
     return conn.execute(
         """
-        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name
+        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name,
+               COALESCE(comment_actions.status, 'no_action') AS action_status,
+               comment_actions.assigned_to AS action_assigned_to,
+               comment_actions.due_date AS action_due_date,
+               comment_actions.action_note
         FROM task_attachments
         LEFT JOIN rooms ON task_attachments.room_id = rooms.id
         LEFT JOIN users ON task_attachments.created_by = users.id
+        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
         WHERE """ + " AND ".join(where) + """
         ORDER BY task_attachments.id
         """,
@@ -2085,6 +2118,91 @@ def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
 
 
+COMMENT_ACTION_STATUS_LABELS = {
+    "no_action": "No Action Needed / Completed",
+    "to_do": "To Be Done",
+    "in_progress": "In Progress",
+    "done": "Done",
+}
+
+COMMENT_ACTION_ASSIGNEE_LABELS = {
+    "": "Not Assigned",
+    "customer": "Customer",
+    "contractor": "Contractor",
+    "worker": "Worker",
+    "admin": "Admin",
+}
+
+
+def comment_action_status_label(status):
+    return COMMENT_ACTION_STATUS_LABELS.get(status or "no_action", COMMENT_ACTION_STATUS_LABELS["no_action"])
+
+
+def comment_action_assignee_label(value):
+    return COMMENT_ACTION_ASSIGNEE_LABELS.get(value or "", value or "")
+
+
+def comment_action_form_data():
+    if "comment_action_status" not in request.form:
+        return None
+    status = request.form.get("comment_action_status", "no_action").strip()
+    if status not in COMMENT_ACTION_STATUS_LABELS:
+        status = "no_action"
+    assigned_to = request.form.get("comment_action_assigned_to", "").strip()
+    if assigned_to not in COMMENT_ACTION_ASSIGNEE_LABELS:
+        assigned_to = ""
+    due_date = request.form.get("comment_action_due_date", "").strip()
+    action_note = request.form.get("comment_action_note", "").strip()
+    if status == "no_action":
+        assigned_to = ""
+        due_date = ""
+        action_note = ""
+    return {
+        "status": status,
+        "assigned_to": assigned_to,
+        "due_date": due_date,
+        "action_note": action_note,
+    }
+
+
+def upsert_comment_action(conn, source_type, source_id, data=None):
+    if not source_type or not source_id:
+        return
+    if data is None:
+        data = comment_action_form_data()
+    if data is None:
+        return
+    if data.get("status") == "no_action" and not data.get("assigned_to") and not data.get("due_date") and not data.get("action_note"):
+        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
+        return
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO comment_actions
+        (source_type, source_id, status, assigned_to, due_date, action_note, updated_by, updated_at, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (source_type, source_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            assigned_to = EXCLUDED.assigned_to,
+            due_date = EXCLUDED.due_date,
+            action_note = EXCLUDED.action_note,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = EXCLUDED.updated_at
+        """,
+        (
+            source_type,
+            source_id,
+            data.get("status") or "no_action",
+            data.get("assigned_to") or "",
+            data.get("due_date") or "",
+            data.get("action_note") or "",
+            session.get("user_id"),
+            now,
+            now
+        )
+    )
+
+
 def can_delete_task_attachment_item(task, attachment):
     if is_main_admin():
         return True
@@ -2127,14 +2245,16 @@ def insert_extra_task_media(conn, task_id, room_id, inventory_item_id, photo, au
             display_name,
             upload_content_type(display_name, uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg"))
         )
-        conn.execute(
+        attachment = conn.execute(
             """
             INSERT INTO task_attachments
             (task_id, room_id, inventory_item_id, file_type, storage_path, original_filename, comment, created_by, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (task_id, room_id, inventory_item_id, file_type, storage_path, display_name, comment, session.get("user_id"), utc_now_iso())
-        )
+        ).fetchone()
+        upsert_comment_action(conn, "task_attachment", attachment["id"] if attachment else None)
         inserted += 1
     return inserted
 
@@ -2158,13 +2278,15 @@ def add_note_edit_media(conn, note, note_date, comment, photo, audio):
             tuple(params + [note["id"]])
         )
     if photo_file or audio_file:
-        conn.execute(
+        new_note = conn.execute(
             """
             INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (note["room_id"], session.get("user_id"), note_date, comment, photo_file, audio_file, utc_now_iso())
-        )
+        ).fetchone()
+        upsert_comment_action(conn, "room_note", new_note["id"] if new_note else None)
     return bool(updates or photo_file or audio_file)
 
 
@@ -3542,7 +3664,11 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
-        inventory_condition_label=inventory_condition_label
+        inventory_condition_label=inventory_condition_label,
+        comment_action_status_options=COMMENT_ACTION_STATUS_LABELS,
+        comment_action_assignee_options=COMMENT_ACTION_ASSIGNEE_LABELS,
+        comment_action_status_label=comment_action_status_label,
+        comment_action_assignee_label=comment_action_assignee_label
     )
 
 
@@ -3955,10 +4081,11 @@ def mobile_room(room_id):
             flash("Add a comment, picture, or audio before saving.")
             return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
-        conn.execute(
-            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        note = conn.execute(
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (room_id, session.get("user_id"), note_date, note_comment, photo_file, audio_file, datetime.now().isoformat())
-        )
+        ).fetchone()
+        upsert_comment_action(conn, "room_note", note["id"] if note else None)
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, note_comment, photo_file, audio_file, note_date)
         if notified:
@@ -5264,10 +5391,11 @@ def room(room_id):
 
         photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else None
         audio_file = upload_file_to_storage(audio) if wants_audio and allowed_audio(audio.filename) else None
-        conn.execute(
-            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        note = conn.execute(
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
-        )
+        ).fetchone()
+        upsert_comment_action(conn, "room_note", note["id"] if note else None)
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         if notified:
@@ -5795,6 +5923,7 @@ def delete_note(note_id):
         return redirect(url_for("room", room_id=note["room_id"]))
 
     room_id = note["room_id"]
+    conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
     conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
     conn.commit()
     conn.close()
@@ -5914,6 +6043,7 @@ def confirm_delete_note(note_id):
             return redirect(url_for("confirm_delete_note", note_id=note_id, next=next_url))
 
         conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s", (note_id,))
+        conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
         conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
         conn.commit()
         conn.close()
@@ -6435,6 +6565,7 @@ def delete_task_attachment(task_id, attachment_id):
         conn.close()
         flash("You do not have permission to delete this picture.")
         return redirect(next_url)
+    conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
     conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
     conn.commit()
     conn.close()
@@ -6580,6 +6711,7 @@ def confirm_delete_task_attachment(task_id, attachment_id):
             "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s",
             (attachment_id, task_id)
         )
+        conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
         conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
         conn.commit()
         conn.close()
@@ -6616,6 +6748,7 @@ def update_task_attachment_comment(task_id, attachment_id):
             conn.close()
             flash("You do not have permission to delete this item.")
             return redirect(next_url)
+        conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
         conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
         conn.commit()
         conn.close()
@@ -6639,6 +6772,7 @@ def update_task_attachment_comment(task_id, attachment_id):
         "UPDATE task_attachments SET comment = %s WHERE id = %s AND task_id = %s",
         (comment, attachment_id, task_id)
     )
+    upsert_comment_action(conn, "task_attachment", attachment_id)
     extra_comment = request.form.get("extra_media_comment", "").strip() or comment
     added_media = insert_extra_task_media(
         conn,
@@ -6732,14 +6866,16 @@ def add_task_field_note(task_id):
 
     inserted_attachments, _, _, _ = insert_task_attachments(conn, task_id, uploads) if uploads else ([], None, None, set())
     if comment and not inserted_attachments:
-        conn.execute(
+        note_attachment = conn.execute(
             """
             INSERT INTO task_attachments
             (task_id, room_id, file_type, storage_path, original_filename, comment, created_by, created_at)
             VALUES (%s, %s, 'note', NULL, NULL, %s, %s, %s)
+            RETURNING id
             """,
             (task_id, room_id, comment, session.get("user_id"), utc_now_iso())
-        )
+        ).fetchone()
+        upsert_comment_action(conn, "task_attachment", note_attachment["id"] if note_attachment else None)
 
     actor = conn.execute("SELECT name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
     note_parts = []
@@ -6857,6 +6993,7 @@ def complete_task(task_id):
         f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
         tuple(params)
     )
+    upsert_comment_action(conn, "task_completion", task_id)
     if task.get("supplier_id") and mark_entire_task_done:
         now = utc_now_iso()
         conn.execute(
@@ -7583,11 +7720,16 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 NULL::INTEGER AS task_id,
                 NULL::TEXT AS task_number,
-                NULL::TEXT AS task_title
+                NULL::TEXT AS task_title,
+                COALESCE(comment_actions.status, 'no_action') AS action_status,
+                comment_actions.assigned_to AS action_assigned_to,
+                comment_actions.due_date AS action_due_date,
+                comment_actions.action_note
             FROM notes
             JOIN rooms ON notes.room_id = rooms.id
             JOIN projects ON rooms.project_id = projects.id
             LEFT JOIN users ON notes.user_id = users.id
+            LEFT JOIN comment_actions ON comment_actions.source_type = 'room_note' AND comment_actions.source_id = notes.id
             WHERE notes.id = %s
             """,
             (source_id,)
@@ -7616,12 +7758,17 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 tasks.id AS task_id,
                 tasks.task_number,
-                tasks.title AS task_title
+                tasks.title AS task_title,
+                COALESCE(comment_actions.status, 'no_action') AS action_status,
+                comment_actions.assigned_to AS action_assigned_to,
+                comment_actions.due_date AS action_due_date,
+                comment_actions.action_note
             FROM task_attachments
             JOIN tasks ON task_attachments.task_id = tasks.id
             JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN rooms ON rooms.id = COALESCE(task_attachments.room_id, tasks.room_id)
             LEFT JOIN users ON task_attachments.created_by = users.id
+            LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
             WHERE task_attachments.id = %s
             """,
             (source_id,)
@@ -7650,11 +7797,16 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 tasks.id AS task_id,
                 tasks.task_number,
-                tasks.title AS task_title
+                tasks.title AS task_title,
+                COALESCE(comment_actions.status, 'no_action') AS action_status,
+                comment_actions.assigned_to AS action_assigned_to,
+                comment_actions.due_date AS action_due_date,
+                comment_actions.action_note
             FROM tasks
             JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN rooms ON tasks.room_id = rooms.id
             LEFT JOIN users ON tasks.assigned_user_id = users.id
+            LEFT JOIN comment_actions ON comment_actions.source_type = 'task_completion' AND comment_actions.source_id = tasks.id
             WHERE tasks.id = %s
             """,
             (source_id,)
@@ -7680,10 +7832,13 @@ def update_comment_detail_record(conn, source_type, source_id, comment):
 
 def delete_comment_detail_record(conn, source_type, source_id):
     if source_type == "room_note":
+        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute("DELETE FROM notes WHERE id = %s", (source_id,))
     elif source_type == "task_attachment":
+        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute("DELETE FROM task_attachments WHERE id = %s", (source_id,))
     elif source_type == "task_completion":
+        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute(
             """
             UPDATE tasks
@@ -7696,9 +7851,11 @@ def delete_comment_detail_record(conn, source_type, source_id):
         )
 
 
-def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None):
+def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_action_status=None):
     if period not in ["day", "week", "month", "year"]:
         period = "day"
+    if selected_action_status not in COMMENT_ACTION_STATUS_LABELS:
+        selected_action_status = ""
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -7762,11 +7919,16 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             NULL::INTEGER AS task_id,
             NULL::TEXT AS task_number,
-            NULL::TEXT AS task_title
+            NULL::TEXT AS task_title,
+            COALESCE(comment_actions.status, 'no_action') AS action_status,
+            comment_actions.assigned_to AS action_assigned_to,
+            comment_actions.due_date AS action_due_date,
+            comment_actions.action_note
         FROM notes
         JOIN rooms ON notes.room_id = rooms.id
         JOIN projects ON rooms.project_id = projects.id
         LEFT JOIN users ON notes.user_id = users.id
+        LEFT JOIN comment_actions ON comment_actions.source_type = 'room_note' AND comment_actions.source_id = notes.id
         WHERE """ + " AND ".join(note_where) + """
           AND (COALESCE(notes.comment, '') <> '' OR notes.photo_file IS NOT NULL OR notes.audio_file IS NOT NULL)
         """,
@@ -7794,12 +7956,17 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             tasks.id AS task_id,
             tasks.task_number,
-            tasks.title AS task_title
+            tasks.title AS task_title,
+            COALESCE(comment_actions.status, 'no_action') AS action_status,
+            comment_actions.assigned_to AS action_assigned_to,
+            comment_actions.due_date AS action_due_date,
+            comment_actions.action_note
         FROM task_attachments
         JOIN tasks ON task_attachments.task_id = tasks.id
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN rooms ON rooms.id = COALESCE(task_attachments.room_id, tasks.room_id)
         LEFT JOIN users ON task_attachments.created_by = users.id
+        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
         WHERE """ + " AND ".join(attachment_where) + """
           AND (COALESCE(task_attachments.comment, '') <> '' OR task_attachments.storage_path IS NOT NULL)
         """,
@@ -7827,11 +7994,16 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             tasks.id AS task_id,
             tasks.task_number,
-            tasks.title AS task_title
+            tasks.title AS task_title,
+            COALESCE(comment_actions.status, 'no_action') AS action_status,
+            comment_actions.assigned_to AS action_assigned_to,
+            comment_actions.due_date AS action_due_date,
+            comment_actions.action_note
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN users ON tasks.assigned_user_id = users.id
+        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_completion' AND comment_actions.source_id = tasks.id
         WHERE """ + " AND ".join(completion_where) + """
         """,
         tuple(completion_params)
@@ -7841,6 +8013,8 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
     for row in list(note_rows) + list(attachment_rows) + list(completion_rows):
         record = dict(row)
         if not comment_record_in_range(record, period, selected_date):
+            continue
+        if selected_action_status and (record.get("action_status") or "no_action") != selected_action_status:
             continue
         record["source_label"] = comment_report_source_label(record.get("source_type"))
         record["context_url"] = comment_report_context_url(record)
@@ -7855,6 +8029,7 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         "projects": projects,
         "rooms": rooms,
         "records": records,
+        "selected_action_status": selected_action_status,
     }
 
 
@@ -7865,14 +8040,16 @@ def comment_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    selected_action_status = request.args.get("action_status", "")
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status)
     return render_template(
         "comment_report.html",
         report=report,
         period=report["period"],
         selected_date=selected_date,
         selected_project_id=selected_project_id,
-        selected_room_id=selected_room_id
+        selected_room_id=selected_room_id,
+        selected_action_status=report["selected_action_status"]
     )
 
 
@@ -7883,12 +8060,14 @@ def comment_report_export():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    selected_action_status = request.args.get("action_status", "")
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Date", "Created At", "Project", "Room", "Type", "Comment", "Created By",
-        "Created By Email", "Task #", "Task"
+        "Date", "Created At", "Project", "Room", "Type", "Action Status",
+        "Assign / Send To", "Action Due Date", "Action Note", "Comment",
+        "Created By", "Created By Email", "Task #", "Task"
     ])
     for record in report["records"]:
         writer.writerow([
@@ -7897,6 +8076,10 @@ def comment_report_export():
             record.get("project_name") or "",
             record.get("room_name") or "",
             record.get("source_label") or "",
+            comment_action_status_label(record.get("action_status")),
+            comment_action_assignee_label(record.get("action_assigned_to")),
+            format_date(record.get("action_due_date")) if record.get("action_due_date") else "",
+            record.get("action_note") or "",
             record.get("comment") or "",
             record.get("created_by_name") or "",
             record.get("created_by_email") or "",
@@ -7941,6 +8124,7 @@ def comment_detail(source_type, source_id):
             return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
         comment = request.form.get("comment", "").strip()
         update_comment_detail_record(conn, source_type, source_id, comment)
+        upsert_comment_action(conn, source_type, source_id)
         media_comment = request.form.get("extra_media_comment", "").strip() or comment
         added_media = 0
         if photo or audio:
@@ -8687,6 +8871,7 @@ def edit_note(note_id):
                 flash("You do not have permission to delete this item.")
                 return redirect(next_url)
             conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
+            conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
             conn.commit()
             conn.close()
             flash("Comment/media deleted.")
@@ -8707,14 +8892,19 @@ def edit_note(note_id):
             flash("Add a comment, picture, or audio before saving.")
             return redirect(next_url)
         conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (comment, note_date, note_id))
+        upsert_comment_action(conn, "room_note", note_id)
         media_comment = request.form.get("extra_media_comment", "").strip() or comment
         added_media = add_note_edit_media(conn, note, note_date, media_comment, photo, audio)
         conn.commit()
         conn.close()
         flash("Comment updated." if not added_media else "Comment updated and media added.")
         return redirect(next_url)
+    comment_action = conn.execute(
+        "SELECT * FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s",
+        (note_id,)
+    ).fetchone() or {}
     conn.close()
-    return render_template("edit_note.html", note=note, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
+    return render_template("edit_note.html", note=note, comment_action=comment_action, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
 
 
 @app.route("/backup")

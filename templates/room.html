@@ -135,6 +135,7 @@
             {% include "_task_field_note_form.html" %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                {% include "_comment_action_fields.html" %}
                 <button type="submit">Mark Task Done</button>
             </form>
             {% endif %}
@@ -205,6 +206,7 @@
         <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
         {% endif %}
         <p id="recordStatus" class="muted"></p>
+        {% include "_comment_action_fields.html" %}
         <button type="submit">Save</button>
     </form>
 </div>
