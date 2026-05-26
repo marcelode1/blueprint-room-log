@@ -2128,6 +2128,8 @@ COMMENT_ACTION_STATUS_LABELS = {
     "no_action": "No Action Needed",
     "send_estimate": "Send Estimate",
     "waiting_estimate_approval": "Waiting for Estimate Approval",
+    "send_rfi": "Send RFI",
+    "waiting_rfi_answer": "Waiting RFI answer",
     "order_material": "Order Material",
     "waiting_material": "Waiting for Material",
     "install_material": "Install Material",
