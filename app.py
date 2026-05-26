@@ -2126,6 +2126,7 @@ def can_edit_inventory():
 
 COMMENT_ACTION_STATUS_LABELS = {
     "no_action": "No Action Needed",
+    "waiting_to_be_done": "Waiting to be done",
     "send_estimate": "Send Estimate",
     "waiting_estimate_approval": "Waiting for Estimate Approval",
     "send_rfi": "Send RFI",
