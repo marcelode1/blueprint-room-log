@@ -2125,10 +2125,22 @@ def can_edit_inventory():
 
 
 COMMENT_ACTION_STATUS_LABELS = {
-    "no_action": "No Action Needed / Completed",
-    "to_do": "To Be Done",
-    "in_progress": "In Progress",
+    "no_action": "No Action Needed",
+    "send_estimate": "Send Estimate",
+    "waiting_estimate_approval": "Waiting for Estimate Approval",
+    "order_material": "Order Material",
+    "waiting_material": "Waiting for Material",
+    "install_material": "Install Material",
+    "ready_for_inspection": "Ready for Inspection",
+    "call_inspection": "Call Inspection",
+    "waiting_inspection": "Waiting for Inspection",
+    "passed_inspection": "Passed Inspection",
     "done": "Done",
+}
+
+COMMENT_ACTION_STATUS_ALIASES = {
+    "to_do": "send_estimate",
+    "in_progress": "install_material",
 }
 
 COMMENT_ACTION_ASSIGNEE_LABELS = {
@@ -2140,8 +2152,14 @@ COMMENT_ACTION_ASSIGNEE_LABELS = {
 }
 
 
+def normalize_comment_action_status(status):
+    status = (status or "no_action").strip()
+    status = COMMENT_ACTION_STATUS_ALIASES.get(status, status)
+    return status if status in COMMENT_ACTION_STATUS_LABELS else "no_action"
+
+
 def comment_action_status_label(status):
-    return COMMENT_ACTION_STATUS_LABELS.get(status or "no_action", COMMENT_ACTION_STATUS_LABELS["no_action"])
+    return COMMENT_ACTION_STATUS_LABELS[normalize_comment_action_status(status)]
 
 
 def comment_action_assignee_label(value):
@@ -2151,9 +2169,7 @@ def comment_action_assignee_label(value):
 def comment_action_form_data():
     if "comment_action_status" not in request.form:
         return None
-    status = request.form.get("comment_action_status", "no_action").strip()
-    if status not in COMMENT_ACTION_STATUS_LABELS:
-        status = "no_action"
+    status = normalize_comment_action_status(request.form.get("comment_action_status", "no_action"))
     assigned_to = request.form.get("comment_action_assigned_to", "").strip()
     if assigned_to not in COMMENT_ACTION_ASSIGNEE_LABELS:
         assigned_to = ""
@@ -3673,6 +3689,7 @@ def utility_processor():
         inventory_condition_label=inventory_condition_label,
         comment_action_status_options=COMMENT_ACTION_STATUS_LABELS,
         comment_action_assignee_options=COMMENT_ACTION_ASSIGNEE_LABELS,
+        normalize_comment_action_status=normalize_comment_action_status,
         comment_action_status_label=comment_action_status_label,
         comment_action_assignee_label=comment_action_assignee_label
     )
@@ -7860,8 +7877,12 @@ def delete_comment_detail_record(conn, source_type, source_id):
 def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_action_status=None):
     if period not in ["day", "week", "month", "year"]:
         period = "day"
-    if selected_action_status not in COMMENT_ACTION_STATUS_LABELS:
-        selected_action_status = ""
+    raw_selected_action_status = (selected_action_status or "").strip()
+    selected_action_status = (
+        normalize_comment_action_status(raw_selected_action_status)
+        if raw_selected_action_status in COMMENT_ACTION_STATUS_LABELS or raw_selected_action_status in COMMENT_ACTION_STATUS_ALIASES
+        else ""
+    )
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -8020,7 +8041,8 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         record = dict(row)
         if not comment_record_in_range(record, period, selected_date):
             continue
-        if selected_action_status and (record.get("action_status") or "no_action") != selected_action_status:
+        record["action_status"] = normalize_comment_action_status(record.get("action_status"))
+        if selected_action_status and record["action_status"] != selected_action_status:
             continue
         record["source_label"] = comment_report_source_label(record.get("source_type"))
         record["context_url"] = comment_report_context_url(record)

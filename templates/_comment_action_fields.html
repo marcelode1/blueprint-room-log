@@ -1,5 +1,5 @@
 {% set ca = comment_action if comment_action is defined and comment_action else {} %}
-{% set current_status = ca.status or ca.action_status or 'no_action' %}
+{% set current_status = normalize_comment_action_status(ca.status or ca.action_status or 'no_action') %}
 {% set current_assigned_to = ca.assigned_to or ca.action_assigned_to or '' %}
 {% set current_due_date = ca.due_date or ca.action_due_date or '' %}
 {% set current_note = ca.action_note or '' %}
