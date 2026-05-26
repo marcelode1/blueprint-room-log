@@ -21,20 +21,14 @@
                     <input name="attachment___INDEX___comment" placeholder="Comment for this picture or audio">
                 </div>
             </div>
-            <div class="grid">
-                <div>
-                    <label>Upload Picture</label>
-                    <input name="attachment___INDEX___photo" type="file" accept="image/*,.heic,.heif">
-                </div>
-                <div class="mobileTaskCamera">
-                    <label>Take Picture From Phone</label>
-                    <input name="attachment___INDEX___camera" type="file" accept="image/*,.heic,.heif" capture="environment">
-                </div>
-                <div>
-                    <label>Audio</label>
-                    <input name="attachment___INDEX___audio" type="file" accept="audio/*">
-                </div>
-            </div>
+            {% set media_id = 'task_attachment___INDEX___media' %}
+            {% set media_camera_name = 'attachment___INDEX___camera' %}
+            {% set media_upload_name = 'attachment___INDEX___photo' %}
+            {% set media_audio_name = 'attachment___INDEX___audio' %}
+            {% set media_comment_name = '' %}
+            {% set media_save_label = 'Attachment Ready' %}
+            {% set media_show_save = false %}
+            {% include "_mobile_media_bar.html" %}
             <button type="button" class="btn-secondary removeTaskAttachmentBtn">Remove</button>
         </div>
     </template>
@@ -44,8 +38,7 @@
 .taskAttachmentBuilder{margin:16px 0}
 .taskAttachmentInput{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(255,255,255,.03)}
 .taskAttachmentInput .removeTaskAttachmentBtn{margin-top:8px}
-.mobileTaskCamera{display:none}
-@media(max-width:760px){.mobileTaskCamera{display:block}}
+.taskAttachmentInput .mobileMediaBar{margin-left:0}
 </style>
 
 <script>

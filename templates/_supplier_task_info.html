@@ -24,7 +24,7 @@
 
         <div class="supplierMaterialList">
         {% for item in display_supplier_items %}
-            {% set item_photos = supplier_item_attachments.get(item.id, []) %}
+            {% set item_media = supplier_item_attachments.get(item.id, []) %}
             <div class="supplierMaterialItem">
                 <p><strong>Material / Item:</strong> {{ item.item_name }}</p>
                 <p><strong>QTY:</strong> {{ item.quantity }}</p>
@@ -36,25 +36,27 @@
                 {% if item.pickup_comment %}
                     <p><strong>Comment:</strong><br>{{ item.pickup_comment }}</p>
                 {% endif %}
-                {% if item_photos %}
+                {% if item_media %}
                     <div class="supplierItemPhotoList">
-                        {% for attachment in item_photos %}
-                            {% if attachment.file_type == 'photo' %}
-                                <div class="supplierItemPhoto">
-                                    {% if attachment.comment %}
-                                        <div class="supplierPictureComment">{{ attachment.comment }}</div>
-                                    {% endif %}
+                        {% for attachment in item_media %}
+                            <div class="supplierItemPhoto">
+                                {% if attachment.comment %}
+                                    <div class="supplierPictureComment">{{ attachment.comment }}</div>
+                                {% endif %}
+                                {% if attachment.file_type == 'photo' %}
                                     <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
-                                    <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
-                                    {% include "_attachment_comment_editor.html" %}
-                                    {% if is_main_admin() and not is_mobile_request() %}
-                                        <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this picture?');">
-                                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
-                                            <button type="submit" class="btn-danger">Delete Picture</button>
-                                        </form>
-                                    {% endif %}
-                                </div>
-                            {% endif %}
+                                {% elif attachment.file_type == 'audio' %}
+                                    <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
+                                {% endif %}
+                                <p class="muted">{{ attachment.original_filename or 'Material media' }}</p>
+                                {% include "_attachment_comment_editor.html" %}
+                                {% if is_main_admin() and not is_mobile_request() %}
+                                    <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this media?');">
+                                        <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                                        <button type="submit" class="btn-danger">Delete Media</button>
+                                    </form>
+                                {% endif %}
+                            </div>
                         {% endfor %}
                     </div>
                 {% endif %}
@@ -71,7 +73,7 @@
                                 {% set media_id = 'supplier_item_' ~ item.id ~ '_media_0' %}
                                 {% set media_camera_name = 'supplier_item_attachment_0_camera' %}
                                 {% set media_upload_name = 'supplier_item_attachment_0_photo' %}
-                                {% set media_audio_name = '' %}
+                                {% set media_audio_name = 'supplier_item_attachment_0_audio' %}
                                 {% set media_comment_name = 'supplier_item_attachment_0_comment' %}
                                 {% set media_comment_label = 'Comment Box' %}
                                 {% set media_save_label = 'Save Item' %}
@@ -84,7 +86,7 @@
                                 {% set media_id = 'supplier_item_' ~ item.id ~ '_media___INDEX__' %}
                                 {% set media_camera_name = 'supplier_item_attachment___INDEX___camera' %}
                                 {% set media_upload_name = 'supplier_item_attachment___INDEX___photo' %}
-                                {% set media_audio_name = '' %}
+                                {% set media_audio_name = 'supplier_item_attachment___INDEX___audio' %}
                                 {% set media_comment_name = 'supplier_item_attachment___INDEX___comment' %}
                                 {% set media_comment_label = 'Comment Box' %}
                                 {% set media_save_label = 'Save Item' %}
@@ -92,7 +94,7 @@
                                 <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>
                             </div>
                         </template>
-                        <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
+                        <button type="button" class="btn-secondary addSupplierItemPhoto">Add more media</button>
                         <button type="submit">Save Item</button>
                     </form>
                 {% else %}

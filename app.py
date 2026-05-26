@@ -1186,34 +1186,40 @@ def collect_supplier_item_photo_uploads(item):
     if not indexes:
         indexes = ["0"]
 
-    def add_upload(field_name):
+    def add_upload(field_name, file_type):
         uploaded = request.files.get(field_name)
         if not uploaded or not uploaded.filename:
             return None
-        if not allowed_photo(uploaded.filename):
+        if file_type == "audio":
+            if not allowed_audio(uploaded.filename):
+                return "Please upload a valid supplier material audio file."
+        elif not allowed_photo(uploaded.filename):
             return "Please upload a valid supplier material picture."
         data = uploaded.read()
         if not data:
             return None
-        display_name = task_attachment_display_filename(uploaded, field_name, "photo")
+        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
         idx = field_name.replace("supplier_item_attachment_", "").rsplit("_", 1)[0]
         comment = request.form.get(f"supplier_item_attachment_{idx}_comment", "").strip()
         uploads.append({
             "room_id": item.get("room_id"),
             "inventory_item_id": item.get("id"),
-            "file_type": "photo",
+            "file_type": file_type,
             "data": data,
             "filename": display_name,
-            "content_type": upload_content_type(display_name, uploaded.content_type or "image/jpeg"),
+            "content_type": upload_content_type(display_name, uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg")),
             "comment": comment,
         })
         return None
 
     for idx in indexes:
-        error = add_upload(f"supplier_item_attachment_{idx}_camera")
+        error = add_upload(f"supplier_item_attachment_{idx}_camera", "photo")
         if error:
             return error, []
-        error = add_upload(f"supplier_item_attachment_{idx}_photo")
+        error = add_upload(f"supplier_item_attachment_{idx}_photo", "photo")
+        if error:
+            return error, []
+        error = add_upload(f"supplier_item_attachment_{idx}_audio", "audio")
         if error:
             return error, []
     return None, uploads
