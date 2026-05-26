@@ -26,7 +26,7 @@
                 <label>Status</label>
                 <select name="action_status">
                     <option value="">All Statuses</option>
-                    {% for value, label in comment_action_status_options.items() %}
+                    {% for value, label in comment_action_report_status_options.items() %}
                         <option value="{{ value }}" {% if selected_action_status == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>

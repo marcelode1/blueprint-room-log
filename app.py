@@ -2145,6 +2145,13 @@ COMMENT_ACTION_STATUS_ALIASES = {
     "in_progress": "install_material",
 }
 
+COMMENT_ACTION_NEEDED_FILTER = "action_needed"
+
+COMMENT_ACTION_REPORT_STATUS_LABELS = {
+    COMMENT_ACTION_NEEDED_FILTER: "Action Needed",
+    **COMMENT_ACTION_STATUS_LABELS,
+}
+
 COMMENT_ACTION_ASSIGNEE_LABELS = {
     "": "Not Assigned",
     "customer": "Customer",
@@ -2162,6 +2169,10 @@ def normalize_comment_action_status(status):
 
 def comment_action_status_label(status):
     return COMMENT_ACTION_STATUS_LABELS[normalize_comment_action_status(status)]
+
+
+def comment_action_is_needed(status):
+    return normalize_comment_action_status(status) not in ["no_action", "done"]
 
 
 def comment_action_assignee_label(value):
@@ -3690,9 +3701,11 @@ def utility_processor():
         inventory_location_label=inventory_location_label,
         inventory_condition_label=inventory_condition_label,
         comment_action_status_options=COMMENT_ACTION_STATUS_LABELS,
+        comment_action_report_status_options=COMMENT_ACTION_REPORT_STATUS_LABELS,
         comment_action_assignee_options=COMMENT_ACTION_ASSIGNEE_LABELS,
         normalize_comment_action_status=normalize_comment_action_status,
         comment_action_status_label=comment_action_status_label,
+        comment_action_is_needed=comment_action_is_needed,
         comment_action_assignee_label=comment_action_assignee_label
     )
 
@@ -7880,11 +7893,12 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
     if period not in ["day", "week", "month", "year"]:
         period = "day"
     raw_selected_action_status = (selected_action_status or "").strip()
-    selected_action_status = (
-        normalize_comment_action_status(raw_selected_action_status)
-        if raw_selected_action_status in COMMENT_ACTION_STATUS_LABELS or raw_selected_action_status in COMMENT_ACTION_STATUS_ALIASES
-        else ""
-    )
+    if raw_selected_action_status == COMMENT_ACTION_NEEDED_FILTER:
+        selected_action_status = COMMENT_ACTION_NEEDED_FILTER
+    elif raw_selected_action_status in COMMENT_ACTION_STATUS_LABELS or raw_selected_action_status in COMMENT_ACTION_STATUS_ALIASES:
+        selected_action_status = normalize_comment_action_status(raw_selected_action_status)
+    else:
+        selected_action_status = ""
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -8044,7 +8058,9 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         if not comment_record_in_range(record, period, selected_date):
             continue
         record["action_status"] = normalize_comment_action_status(record.get("action_status"))
-        if selected_action_status and record["action_status"] != selected_action_status:
+        if selected_action_status == COMMENT_ACTION_NEEDED_FILTER and not comment_action_is_needed(record["action_status"]):
+            continue
+        if selected_action_status not in ["", COMMENT_ACTION_NEEDED_FILTER] and record["action_status"] != selected_action_status:
             continue
         record["source_label"] = comment_report_source_label(record.get("source_type"))
         record["context_url"] = comment_report_context_url(record)
