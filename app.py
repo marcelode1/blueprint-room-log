@@ -7539,11 +7539,27 @@ def confirm_delete_task(task_id):
 
 
 def task_report_status(task):
+    return TASK_REPORT_STATUS_LABELS[task_report_status_key(task)]
+
+
+TASK_REPORT_STATUS_LABELS = {
+    "not_seen": "Not Seen",
+    "in_progress": "In Progress",
+    "done": "Done",
+}
+
+
+def task_report_status_key(task):
     if task.get("status") == "done":
-        return "Done"
+        return "done"
     if task.get("accepted_at"):
-        return "In Progress"
-    return "Not Seen"
+        return "in_progress"
+    return "not_seen"
+
+
+def normalize_task_report_status(status):
+    status = (status or "").strip()
+    return status if status in TASK_REPORT_STATUS_LABELS else ""
 
 
 def task_in_report_range(task, period, selected_date):
@@ -7558,11 +7574,27 @@ def task_in_report_range(task, period, selected_date):
     return start <= scheduled < end
 
 
-def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None):
+def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None, selected_room_id=None, selected_task_status=None):
+    selected_task_status = normalize_task_report_status(selected_task_status)
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
     users = conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    room_params = []
+    room_where = ""
+    if selected_project_id:
+        room_where = "WHERE rooms.project_id = %s"
+        room_params.append(selected_project_id)
+    rooms = conn.execute(
+        f"""
+        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
+        FROM rooms
+        JOIN projects ON rooms.project_id = projects.id
+        {room_where}
+        ORDER BY projects.name, rooms.name
+        """,
+        tuple(room_params)
+    ).fetchall()
     query = """
         SELECT tasks.*,
                projects.name AS project_name,
@@ -7588,17 +7620,24 @@ def task_report_data(period, selected_date, selected_project_id=None, selected_u
     if selected_user_id:
         query += " AND tasks.assigned_user_id = %s"
         params.append(selected_user_id)
+    if selected_room_id:
+        query += " AND tasks.room_id = %s"
+        params.append(selected_room_id)
     query += " ORDER BY projects.name, tasks.task_number DESC NULLS LAST, tasks.created_at DESC, tasks.id DESC"
     tasks = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     tasks = [t for t in tasks if task_in_report_range(t, period, selected_date)]
+    if selected_task_status:
+        tasks = [t for t in tasks if task_report_status_key(t) == selected_task_status]
     return {
         "period": period,
         "start": start,
         "end": end,
         "projects": projects,
+        "rooms": rooms,
         "users": users,
-        "tasks": tasks
+        "tasks": tasks,
+        "selected_task_status": selected_task_status,
     }
 
 
@@ -7609,7 +7648,9 @@ def task_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
+    selected_room_id = request.args.get("room_id", type=int)
+    selected_task_status = request.args.get("task_status", "")
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id, selected_room_id, selected_task_status)
     return render_template(
         "task_report.html",
         report=report,
@@ -7617,6 +7658,9 @@ def task_report():
         selected_date=selected_date,
         selected_project_id=selected_project_id,
         selected_user_id=selected_user_id,
+        selected_room_id=selected_room_id,
+        selected_task_status=report["selected_task_status"],
+        task_report_status_options=TASK_REPORT_STATUS_LABELS,
         task_report_status=task_report_status
     )
 
@@ -7628,7 +7672,9 @@ def task_report_export():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
+    selected_room_id = request.args.get("room_id", type=int)
+    selected_task_status = request.args.get("task_status", "")
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id, selected_room_id, selected_task_status)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([

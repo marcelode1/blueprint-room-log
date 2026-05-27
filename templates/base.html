@@ -11,7 +11,7 @@
         *{box-sizing:border-box}
         body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
         header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
-        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandText{display:flex;flex-direction:column;line-height:1.15}.brandUser{display:none;color:#cbd5e1;font-size:12px;font-weight:700;margin-top:2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandText{display:flex;flex-direction:column;line-height:1.15}.brandUser{display:none;color:#cbd5e1;font-size:12px;font-weight:700;margin-top:2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.navDropdown{position:relative;display:inline-flex;align-items:center}.navDropdownToggle{display:inline-flex;align-items:center;min-height:36px}.navDropdownToggle::after{content:"";border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid currentColor;margin-left:7px}.navDropdownMenu{display:none;position:absolute;top:100%;right:0;z-index:240;background:#0f172a;border:1px solid #334155;border-radius:10px;box-shadow:0 14px 34px rgba(0,0,0,.28);padding:8px;min-width:190px}.navDropdown:hover .navDropdownMenu,.navDropdown:focus-within .navDropdownMenu{display:grid;gap:4px}.navDropdownMenu a{display:flex;align-items:center;margin:0;padding:10px 12px;border-radius:8px;color:white;white-space:nowrap}.navDropdownMenu a:hover{background:#1e293b}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
         main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
         input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
         button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
@@ -49,7 +49,17 @@
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
             <a href="{{ url_for('index') }}#projects">Projects</a>
-            <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            {% if is_main_admin() %}
+                <div class="navDropdown">
+                    <a class="navDropdownToggle" href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+                    <div class="navDropdownMenu">
+                        <a href="{{ url_for('create_global_task') }}">Create Task</a>
+                        <a href="{{ url_for('task_report') }}">Task Report</a>
+                    </div>
+                </div>
+            {% else %}
+                <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            {% endif %}
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
             {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
             <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
@@ -59,7 +69,6 @@
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
                 <a href="{{ url_for('login_report') }}">Login Report</a>
-                <a href="{{ url_for('task_report') }}">Task Report</a>
                 <a href="{{ url_for('comment_report') }}">Comment Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>

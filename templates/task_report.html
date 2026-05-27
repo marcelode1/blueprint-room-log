@@ -14,11 +14,20 @@
                 </select>
             </div>
             <div>
-                <label>Worker</label>
-                <select name="user_id">
-                    <option value="">All Workers</option>
-                    {% for u in report.users %}
-                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                <label>Room</label>
+                <select name="room_id">
+                    <option value="">All Rooms</option>
+                    {% for r in report.rooms %}
+                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Status</label>
+                <select name="task_status">
+                    <option value="">All Statuses</option>
+                    {% for value, label in task_report_status_options.items() %}
+                        <option value="{{ value }}" {% if selected_task_status == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -37,7 +46,8 @@
             </div>
         </div>
         <button type="submit">Show Task Report</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('task_report_export', project_id=selected_project_id or '', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('task_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', task_status=selected_task_status or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
     </form>
     <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
 </div>
@@ -45,12 +55,15 @@
 <div class="card">
     <h3>Tasks</h3>
     <style>
+        .taskReportWrap{overflow-x:auto}
         .taskReportTable{width:100%;border-collapse:collapse}
         .taskReportTable th,.taskReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
         .taskReportTable th{background:#f3f4f6}
         .statusPill{display:inline-block;padding:4px 8px;border-radius:999px;background:#e2e8f0;font-weight:800;font-size:12px}
         .statusDone{background:#dcfce7;color:#166534}.statusProgress{background:#dbeafe;color:#1d4ed8}.statusNotSeen{background:#fee2e2;color:#991b1b}
-        @media(max-width:800px){.taskReportWrap{overflow-x:auto}.taskReportTable{min-width:1180px}}
+        @page{size:letter portrait;margin:.35in}
+        @media(max-width:800px){.taskReportTable{min-width:1180px}}
+        @media print{header,.bottom-nav,.noPrint,.backButton{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.taskReportWrap{overflow:visible}.taskReportTable{width:100%;min-width:0;table-layout:fixed}.taskReportTable th,.taskReportTable td{font-size:8px;line-height:1.2;padding:3px;word-break:break-word}.taskReportTable th:nth-child(1){width:8%}.taskReportTable th:nth-child(2){width:10%}.taskReportTable th:nth-child(3){width:9%}.taskReportTable th:nth-child(4){width:15%}.taskReportTable th:nth-child(5){width:11%}.taskReportTable th:nth-child(6){width:10%}.taskReportTable th:nth-child(7){width:10%}.taskReportTable th:nth-child(8){width:7%}.taskReportTable th:nth-child(9){width:7%}.taskReportTable th:nth-child(10){width:8%}.taskReportTable th:nth-child(11){width:15%}.statusPill{font-size:7px;padding:2px 4px}.muted{color:#444}}
     </style>
     <div class="taskReportWrap">
         <table class="taskReportTable">
