@@ -34,15 +34,17 @@
                     {% endfor %}
                 </select>
             </div>
-            <div>
-                <label>Supplier</label>
-                <select name="supplier_id" onchange="this.form.submit()">
-                    <option value="">All Suppliers</option>
-                    {% for s in suppliers %}
-                        <option value="{{ s.id }}" {% if selected_supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
+            {% if not (is_mobile_request() and selected_project_id) %}
+                <div>
+                    <label>Supplier</label>
+                    <select name="supplier_id" onchange="this.form.submit()">
+                        <option value="">All Suppliers</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}" {% if selected_supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            {% endif %}
             <div>
                 <label>View Scope</label>
                 <select name="room_id" {% if not selected_project_id %}disabled{% endif %} onchange="this.form.submit()">

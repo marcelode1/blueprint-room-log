@@ -462,13 +462,8 @@ if(document.readyState==="loading"){
         });
     }
 
-    function uploadSignalIsWeak(){
+    function uploadSignalIsUnavailable(){
         if(!navigator.onLine)return true;
-        const connection=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
-        if(!connection)return false;
-        const type=String(connection.effectiveType||"").toLowerCase();
-        if(type==="slow-2g"||type==="2g")return true;
-        if(typeof connection.downlink==="number"&&connection.downlink>0&&connection.downlink<0.35)return true;
         return false;
     }
 
@@ -541,7 +536,7 @@ if(document.readyState==="loading"){
         status.hidden=false;
         clearTimeout(showUploadStatus.timer);
         if(!options.persist){
-            showUploadStatus.timer=setTimeout(()=>{status.hidden=true;},7000);
+            showUploadStatus.timer=setTimeout(()=>{status.hidden=true;},options.duration||7000);
         }
     }
 
@@ -561,7 +556,8 @@ if(document.readyState==="loading"){
             intro+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+" saved on this phone.",
             {
                 persist:options.persist!==false,
-                actions
+                actions,
+                duration:options.duration
             }
         );
     }
@@ -572,9 +568,8 @@ if(document.readyState==="loading"){
         registerBackgroundUploadSync();
         await showPendingUploadStatus(
             (reason||"Upload saved locally.")+" Saved on this phone. It will send automatically when the phone has a better connection.",
-            {persist:false,actions:false}
+            {persist:false,actions:false,duration:2500}
         );
-        processUploadQueue();
     }
 
     async function registerBackgroundUploadSync(){
@@ -604,7 +599,7 @@ if(document.readyState==="loading"){
 
     async function processUploadQueue(){
         if(processing)return;
-        if(uploadSignalIsWeak()){
+        if(uploadSignalIsUnavailable()){
             return;
         }
         processing=true;
@@ -616,7 +611,7 @@ if(document.readyState==="loading"){
             let failedMessage="";
             let stoppedForSignal=false;
             for(const entry of uploads){
-                if(uploadSignalIsWeak()){
+                if(uploadSignalIsUnavailable()){
                     stoppedForSignal=true;
                     break;
                 }
@@ -667,8 +662,8 @@ if(document.readyState==="loading"){
         const submitter=event.submitter;
         if(submitter)submitter.disabled=true;
         try{
-            if(uploadSignalIsWeak()){
-                await queueForm(form,navigator.onLine?"Signal is too weak for upload right now.":"No signal right now.");
+            if(uploadSignalIsUnavailable()){
+                await queueForm(form,"No signal right now.");
                 form.reset();
                 return;
             }

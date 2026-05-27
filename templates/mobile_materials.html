@@ -56,7 +56,6 @@
             <strong>{{ m.item_name }}</strong>
             <p><strong>Date:</strong> {{ m.item_date }}<br><strong>Qty:</strong> {{ m.quantity }}</p>
             <p><strong>Model #:</strong> {{ m.item_model or '-' }}<br><strong>Brand:</strong> {{ m.brand or '-' }}</p>
-            {% if m.supplier_name %}<p><strong>Supplier:</strong> {{ m.supplier_name }}{% if m.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Condition:</strong> {{ inventory_condition_label(m.item_condition) }}</p>
             <p><strong>Room:</strong> {{ m.room_name or 'Project general' }}<br><strong>Located:</strong> {{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</p>
             <span class="statusBadge">{{ inventory_status_label(m.status) }}</span>

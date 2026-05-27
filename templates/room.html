@@ -193,24 +193,17 @@
         <button type="button" class="btn-secondary" id="voiceBtn">Voice-to-Text Note</button>
         {% else %}<input type="hidden" name="comment" value="">{% endif %}
         <p id="voiceStatus" class="muted"></p>
-        {% if has_perm("add_pictures") %}
-        <label>Upload Picture</label>
-        <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-        <label>Take Picture From Phone</label>
-        <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-        {% endif %}
-        {% if has_perm("add_audio") %}
-        <label>Upload Audio Recording</label>
-        <input name="audio" id="audioInput" type="file" accept="audio/*">
-        <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
-        <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
-        {% endif %}
-        <p id="recordStatus" class="muted"></p>
+        {% set media_id = 'desktop_room_' ~ room.id ~ '_field_note' %}
+        {% set media_camera_name = 'photo_camera' if has_perm("add_pictures") else '' %}
+        {% set media_upload_name = 'photo' if has_perm("add_pictures") else '' %}
+        {% set media_audio_name = 'audio' if has_perm("add_audio") else '' %}
+        {% set media_comment_name = '' %}
+        {% set media_save_label = 'Save' %}
+        {% include "_mobile_media_bar.html" %}
         {% include "_comment_action_fields.html" %}
         <button type="submit">Save</button>
     </form>
 </div>
-<button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
 {% endif %}
 
 <div class="card">
@@ -241,7 +234,7 @@
 </div>
 
 <style>
-.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
+.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -252,14 +245,10 @@
     </div>
 </div>
 <script>
-let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
-if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
-const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
 document.querySelectorAll(".roomSupplierBtn").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form"),panel=form?form.querySelector(".roomSupplierPanel"):null,enabled=form?form.querySelector(".roomSupplierEnabled"):null;if(!panel||!enabled)return;const opening=panel.style.display==="none";panel.style.display=opening?"block":"none";enabled.value=opening?"1":"0";btn.textContent=opening?"Remove Supplier":"Supplier"}));
 function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
-["photoInput","cameraInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>replaceWithCompressed(el))});
 document.querySelectorAll(".annotatablePhoto").forEach(el=>el.addEventListener("change",async()=>{await replaceWithCompressed(el);openDrawModal(el)}));
 let activePhotoInput=null,isDrawing=false,lastPoint=null;const drawModal=document.getElementById("drawModal"),drawCanvas=document.getElementById("drawCanvas"),drawCtx=drawCanvas.getContext("2d");
 function canvasPoint(e){const r=drawCanvas.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*(drawCanvas.width/r.width),y:(t.clientY-r.top)*(drawCanvas.height/r.height)}}

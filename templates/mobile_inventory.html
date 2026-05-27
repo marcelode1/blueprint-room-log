@@ -102,9 +102,6 @@
             <strong>{{ item.item_name }}</strong>
             <p><strong>Qty:</strong> {{ item.quantity }}<br><strong>Model #:</strong> {{ item.item_model or '-' }}<br><strong>Brand:</strong> {{ item.brand or '-' }}</p>
             <p><strong>Project:</strong> {{ item.project_name or '-' }}<br><strong>Room:</strong> {{ item.room_name or 'Project general' }}</p>
-            {% if item.supplier_name %}
-                <p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>
-            {% endif %}
             <span class="statusBadge">{{ inventory_status_label(item.status) }}</span>
             {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
             {% if item.media_comment %}<p class="muted">{{ item.media_comment }}</p>{% endif %}
