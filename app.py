@@ -7936,7 +7936,7 @@ def delete_comment_detail_record(conn, source_type, source_id):
         )
 
 
-def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_action_status=None):
+def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_action_status=None, selected_user_id=None):
     if period not in ["day", "week", "month", "year"]:
         period = "day"
     raw_selected_action_status = (selected_action_status or "").strip()
@@ -7949,6 +7949,7 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     room_params = []
     room_where = ""
     if selected_project_id:
@@ -8104,6 +8105,8 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         record = dict(row)
         if not comment_record_in_range(record, period, selected_date):
             continue
+        if selected_user_id and record.get("created_by") != selected_user_id:
+            continue
         record["action_status"] = normalize_comment_action_status(record.get("action_status"))
         if selected_action_status == COMMENT_ACTION_NEEDED_FILTER and not comment_action_is_needed(record["action_status"]):
             continue
@@ -8121,6 +8124,7 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         "end": end,
         "projects": projects,
         "rooms": rooms,
+        "users": users,
         "records": records,
         "selected_action_status": selected_action_status,
     }
@@ -8133,8 +8137,9 @@ def comment_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
     selected_action_status = request.args.get("action_status", "")
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status, selected_user_id)
     return render_template(
         "comment_report.html",
         report=report,
@@ -8142,6 +8147,7 @@ def comment_report():
         selected_date=selected_date,
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
+        selected_user_id=selected_user_id,
         selected_action_status=report["selected_action_status"]
     )
 
@@ -8153,8 +8159,9 @@ def comment_report_export():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
     selected_action_status = request.args.get("action_status", "")
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status, selected_user_id)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([

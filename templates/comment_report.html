@@ -32,6 +32,15 @@
                 </select>
             </div>
             <div>
+                <label>User</label>
+                <select name="user_id">
+                    <option value="">All Users</option>
+                    {% for u in report.users %}
+                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>Period</label>
                 <select name="period">
                     <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
@@ -46,7 +55,7 @@
             </div>
         </div>
         <button type="submit">Show Comment Report</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', action_status=selected_action_status or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', user_id=selected_user_id or '', action_status=selected_action_status or '', period=period, date=selected_date) }}">Export to CSV</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
     </form>
     <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
