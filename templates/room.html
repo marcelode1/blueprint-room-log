@@ -3,18 +3,9 @@
 {% block content %}
 <div class="card">
     <h2>{{ room.name }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Rooms</a>
     <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Timeline</a>
-</div>
-
-<div class="card" id="roomSwipeArea">
-    <h3>Switch Rooms</h3>
-    <div class="roomScroller">
-        {% for r in rooms %}
-            <a class="roomChip {% if r.id == room.id %}activeRoom{% endif %}" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
-        {% endfor %}
-    </div>
-    <p class="muted">Scroll up/down here to move between rooms.</p>
 </div>
 
 {% if is_main_admin() %}
@@ -46,43 +37,6 @@
         </div>
         <label>Instructions</label>
         <textarea name="instructions" rows="4"></textarea>
-        <button type="button" class="btn-secondary roomSupplierBtn">Supplier</button>
-        <input type="hidden" name="supplier_enabled" class="roomSupplierEnabled" value="0">
-        <div class="roomSupplierPanel" style="display:none;">
-            <h3>Supplier Material</h3>
-            <div class="grid">
-                <div>
-                    <label>Existing Supplier</label>
-                    <select name="supplier_id">
-                        <option value="">Enter new supplier below</option>
-                        {% for s in suppliers %}
-                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
-                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
-                <div><label>Material / Item</label><input name="supplier_item_name"></div>
-                <div><label>Brand</label><input name="supplier_brand"></div>
-                <div><label>Model Number</label><input name="supplier_model"></div>
-            </div>
-            <label>Purchase Note</label><textarea name="supplier_purchase_note" rows="2"></textarea>
-            <details>
-                <summary>Enter New Supplier</summary>
-                <div class="grid">
-                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
-                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
-                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
-                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
-                    <div><label>Street Address</label><input name="new_supplier_address"></div>
-                    <div><label>City</label><input name="new_supplier_city"></div>
-                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
-                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
-                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
-                </div>
-                <label>Supplier Notes</label><textarea name="new_supplier_notes" rows="2"></textarea>
-            </details>
-        </div>
         {% include "_task_attachments_form.html" %}
         <div class="grid taskOptions">
             <label><input type="checkbox" name="require_picture"> Must take picture</label>
@@ -234,7 +188,7 @@
 </div>
 
 <style>
-.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
+.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -245,7 +199,6 @@
     </div>
 </div>
 <script>
-document.querySelectorAll(".roomSupplierBtn").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form"),panel=form?form.querySelector(".roomSupplierPanel"):null,enabled=form?form.querySelector(".roomSupplierEnabled"):null;if(!panel||!enabled)return;const opening=panel.style.display==="none";panel.style.display=opening?"block":"none";enabled.value=opening?"1":"0";btn.textContent=opening?"Remove Supplier":"Supplier"}));
 function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
 async function replaceWithCompressed(input){if(!input||!input.files||!input.files.length)return;const compressed=await compressImageFile(input.files[0]);const dt=new DataTransfer();dt.items.add(compressed);input.files=dt.files}
@@ -261,6 +214,5 @@ document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{
 document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
 document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}
-const swipeArea=document.getElementById("roomSwipeArea");if(swipeArea){let sx=0,sy=0;swipeArea.addEventListener("touchstart",e=>{sx=e.changedTouches[0].screenX;sy=e.changedTouches[0].screenY},{passive:true});swipeArea.addEventListener("touchend",e=>{const dx=e.changedTouches[0].screenX-sx,dy=e.changedTouches[0].screenY-sy;if(Math.abs(dx)<60||Math.abs(dy)>80)return;const links=Array.from(document.querySelectorAll(".roomChip")),active=links.findIndex(a=>a.classList.contains("activeRoom")),next=dx<0?active+1:active-1;if(links[next])window.location.href=links[next].href},{passive:true})}
 </script>
 {% endblock %}
