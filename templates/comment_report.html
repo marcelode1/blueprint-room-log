@@ -6,7 +6,7 @@
         <div class="grid">
             <div>
                 <label>Project</label>
-                <select name="project_id">
+                <select name="project_id" id="commentReportProjectSelect">
                     <option value="">All Projects</option>
                     {% for p in report.projects %}
                         <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
@@ -15,28 +15,10 @@
             </div>
             <div>
                 <label>Room</label>
-                <select name="room_id">
+                <select name="room_id" id="commentReportRoomSelect">
                     <option value="">All Rooms</option>
                     {% for r in report.rooms %}
-                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Status</label>
-                <select name="action_status">
-                    <option value="">All Statuses</option>
-                    {% for value, label in comment_action_report_status_options.items() %}
-                        <option value="{{ value }}" {% if selected_action_status == value %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>User</label>
-                <select name="user_id">
-                    <option value="">All Users</option>
-                    {% for u in report.users %}
-                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -55,7 +37,7 @@
             </div>
         </div>
         <button type="submit">Show Comment Report</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', user_id=selected_user_id or '', action_status=selected_action_status or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', period=period, date=selected_date) }}">Export to CSV</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
     </form>
     <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
@@ -65,17 +47,15 @@
     <h3>Comments</h3>
     <style>
         .commentReportWrap{overflow-x:auto}
-        .commentReportTable{width:100%;border-collapse:collapse;min-width:1240px}
+        .commentReportTable{width:100%;border-collapse:collapse;min-width:980px}
         .commentReportTable th,.commentReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
         .commentReportTable th{background:#f3f4f6}
         .commentText{white-space:pre-wrap;min-width:260px}
         .commentLinkList{display:flex;gap:8px;flex-wrap:wrap}
         .commentLinkList a{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border-radius:8px;background:#e0f2fe;color:#075985;text-decoration:none;font-weight:800}
         .commentType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
-        .commentActionStatus{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#f1f5f9;color:#334155}
-        .action-no_action{background:#f1f5f9;color:#475569}.action-send_estimate,.action-send_rfi,.action-order_material,.action-call_inspection{background:#fef3c7;color:#92400e}.action-waiting_to_be_done,.action-waiting_estimate_approval,.action-waiting_rfi_answer,.action-waiting_material,.action-waiting_inspection{background:#ffedd5;color:#9a3412}.action-install_material,.action-ready_for_inspection{background:#dbeafe;color:#1d4ed8}.action-passed_inspection,.action-done{background:#dcfce7;color:#166534}
         @page{size:letter portrait;margin:.35in}
-        @media print{header,.bottom-nav,.noPrint,.backButton,.linkedColumn{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.commentReportWrap{overflow:visible}.commentReportTable{width:100%;min-width:0;table-layout:fixed}.commentReportTable th,.commentReportTable td{font-size:8px;line-height:1.2;padding:3px;word-break:break-word}.commentReportTable th:nth-child(1){width:10%}.commentReportTable th:nth-child(2){width:11%}.commentReportTable th:nth-child(3){width:9%}.commentReportTable th:nth-child(4){width:9%}.commentReportTable th:nth-child(5){width:12%}.commentReportTable th:nth-child(6){width:9%}.commentReportTable th:nth-child(7){width:8%}.commentReportTable th:nth-child(8){width:23%}.commentReportTable th:nth-child(9){width:9%}.commentType,.commentActionStatus{font-size:7px;padding:2px 4px}.muted{color:#444}}
+        @media print{header,.bottom-nav,.noPrint,.backButton,.linkedColumn{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.commentReportWrap{overflow:visible}.commentReportTable{width:100%;min-width:0;table-layout:fixed}.commentReportTable th,.commentReportTable td{font-size:9px;line-height:1.2;padding:4px;word-break:break-word}.commentReportTable th:nth-child(1){width:13%}.commentReportTable th:nth-child(2){width:15%}.commentReportTable th:nth-child(3){width:12%}.commentReportTable th:nth-child(4){width:17%}.commentReportTable th:nth-child(5){width:30%}.commentReportTable th:nth-child(6){width:13%}.commentType{font-size:8px;padding:2px 5px}.muted{color:#444}}
     </style>
     <div class="commentReportWrap">
         <table class="commentReportTable">
@@ -85,9 +65,6 @@
                     <th>Project</th>
                     <th>Room</th>
                     <th>Type</th>
-                    <th>Status</th>
-                    <th>Assign / Send To</th>
-                    <th>Due Date</th>
                     <th>Comment</th>
                     <th>Created By</th>
                     <th class="linkedColumn">Linked To</th>
@@ -109,12 +86,6 @@
                             {% if record.task_title %}<br><span class="muted">{{ record.task_title }}</span>{% endif %}
                         {% endif %}
                     </td>
-                    <td>
-                        <span class="commentActionStatus action-{{ record.action_status or 'no_action' }}">{{ comment_action_status_label(record.action_status) }}</span>
-                        {% if record.action_note %}<br><span class="muted">{{ record.action_note }}</span>{% endif %}
-                    </td>
-                    <td>{{ comment_action_assignee_label(record.action_assigned_to) or "-" }}</td>
-                    <td>{{ format_date(record.action_due_date) if record.action_due_date else "-" }}</td>
                     <td class="commentText">{{ record.comment or "-" }}</td>
                     <td>
                         {{ record.created_by_name or "Unknown user" }}
@@ -129,10 +100,32 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="10">No comments for this report.</td></tr>
+                <tr><td colspan="7">No comments for this report.</td></tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+<script>
+(function(){
+    const projectSelect=document.getElementById("commentReportProjectSelect");
+    const roomSelect=document.getElementById("commentReportRoomSelect");
+    function filterCommentReportRooms(){
+        if(!projectSelect||!roomSelect)return;
+        const projectId=projectSelect.value;
+        let selectedVisible=false;
+        Array.from(roomSelect.options).forEach(option=>{
+            const optionProject=option.dataset.projectId||"";
+            const isPlaceholder=!option.value;
+            const visible=isPlaceholder||(!projectId||optionProject===projectId);
+            option.hidden=!visible;
+            option.disabled=!visible;
+            if(option.selected&&visible)selectedVisible=true;
+        });
+        if(!selectedVisible)roomSelect.value="";
+    }
+    if(projectSelect)projectSelect.addEventListener("change",filterCommentReportRooms);
+    filterCommentReportRooms();
+})();
+</script>
 {% endblock %}

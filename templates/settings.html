@@ -146,8 +146,8 @@
                     <label><input type="checkbox" name="add_audio" {% if p and p.add_audio %}checked{% endif %}> Add audio</label>
                     <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
                     <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
-                    <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> Inventory tab / add inventory</label>
-                    <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory status</label>
+                    <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
+                    <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
                 </div>
                 <button type="submit">Save Permissions for {{ u.name }}</button>
             </form>

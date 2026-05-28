@@ -3,6 +3,21 @@
     <input type="hidden" name="completion_room_id" value="{{ r.id }}">
     <label>Completion Comment</label>
     <textarea name="completion_comment" rows="3"></textarea>
-    {% include "_comment_action_fields.html" %}
+    {% if not t.supplier_id %}
+    <div class="completionBlocks">
+        <div class="completionBlock">
+            <input type="hidden" name="completion_attachment_indexes" value="0">
+            {% set media_id = 'task_' ~ t.id ~ '_room_' ~ r.id ~ '_media_0' %}
+            {% set media_camera_name = 'completion_attachment_0_camera' %}
+            {% set media_upload_name = 'completion_attachment_0_photo' %}
+            {% set media_audio_name = 'completion_attachment_0_audio' %}
+            {% set media_comment_name = 'completion_attachment_0_comment' %}
+            {% set media_comment_label = 'Picture / Audio Comment' %}
+            {% set media_save_label = 'Attach to Task' %}
+            {% include "_mobile_media_bar.html" %}
+        </div>
+    </div>
+    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+    {% endif %}
     <button type="submit">Mark This Room Done</button>
 </form>

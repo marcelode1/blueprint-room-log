@@ -31,70 +31,6 @@
     </form>
 </div>
 
-{% if can_view_inventory() %}
-<div class="card">
-    <h3>Add Inventory Item</h3>
-    <form method="post" action="{{ url_for('mobile_inventory') }}" enctype="multipart/form-data">
-        <label>Date</label>
-        <input type="date" name="item_date" value="{{ today }}" required>
-        <label>Quantity</label>
-        <input type="number" name="quantity" step="0.01" min="0" required>
-        <label>Item Name</label>
-        <input name="item_name" placeholder="Amplifier, camera, speaker wire" required>
-        <label>Item Model #</label>
-        <input name="item_model" placeholder="Model or part number">
-        <label>Brand</label>
-        <input name="brand" placeholder="Sony, Lutron, Sonos">
-        <label>New or Used</label>
-        <select name="item_condition">
-            {% for value, label in condition_options.items() %}
-                <option value="{{ value }}">{{ label }}</option>
-            {% endfor %}
-        </select>
-        <label>Where Located</label>
-        <select name="location_type">
-            {% for value, label in location_options.items() %}
-                <option value="{{ value }}">{{ label }}</option>
-            {% endfor %}
-        </select>
-        <label>Location Detail</label>
-        <input name="location_detail" placeholder="Shelf, bin, truck, room note">
-        <label>Job Allocation</label>
-        <select name="project_id">
-            <option value="">No project yet</option>
-            {% for p in projects %}
-                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
-            {% endfor %}
-        </select>
-        <label>Room Allocation</label>
-        <select name="room_id">
-            <option value="">No room yet</option>
-            {% for r in rooms %}
-                <option value="{{ r.id }}">{{ r.project_name }} - {{ r.name }}</option>
-            {% endfor %}
-        </select>
-        <label>Status</label>
-        <select name="status">
-            {% for value, label in status_options.items() %}
-                <option value="{{ value }}">{{ label }}</option>
-            {% endfor %}
-        </select>
-        <label>Used / Purchase Note</label>
-        <textarea name="used_note" rows="2" placeholder="Where it was used, or why office needs to purchase it"></textarea>
-        {% set media_id = 'mobile_inventory_add_media' %}
-        {% set media_camera_name = 'picture_camera' %}
-        {% set media_upload_name = 'picture' %}
-        {% set media_audio_name = 'audio' %}
-        {% set media_comment_name = 'media_comment' %}
-        {% set media_comment_label = 'Picture / Audio Comment' %}
-        {% set media_comment_placeholder = 'Comment about this inventory picture or audio' %}
-        {% set media_save_label = 'Save Media' %}
-        {% include "_mobile_media_bar.html" %}
-        <button type="submit">Add Inventory Item</button>
-    </form>
-</div>
-{% endif %}
-
 <div class="card">
     <h3>Items</h3>
     {% for item in items %}
@@ -102,11 +38,12 @@
             <strong>{{ item.item_name }}</strong>
             <p><strong>Qty:</strong> {{ item.quantity }}<br><strong>Model #:</strong> {{ item.item_model or '-' }}<br><strong>Brand:</strong> {{ item.brand or '-' }}</p>
             <p><strong>Project:</strong> {{ item.project_name or '-' }}<br><strong>Room:</strong> {{ item.room_name or 'Project general' }}</p>
+            {% if item.supplier_name %}
+                <p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>
+            {% endif %}
             <span class="statusBadge">{{ inventory_status_label(item.status) }}</span>
             {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
-            {% if item.media_comment %}<p class="muted">{{ item.media_comment }}</p>{% endif %}
             {% if item.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
-            {% if item.audio_file %}<audio controls src="{{ url_for('storage_file', storage_path=item.audio_file) }}"></audio>{% endif %}
         </div>
     {% else %}
         <p>No inventory found.</p>
@@ -116,6 +53,5 @@
 .inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
-.inventoryCard audio{width:100%;margin-top:8px}
 </style>
 {% endblock %}

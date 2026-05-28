@@ -1,4 +1,4 @@
-const CACHE_NAME = "projectonus-v8-cache";
+const CACHE_NAME = "projectonus-v6-cache";
 const CORE_ASSETS = ["/static/manifest.json", "/static/icon.svg"];
 const UPLOAD_DB_NAME = "ProjectONusPendingUploads";
 const UPLOAD_STORE_NAME = "uploads";
@@ -95,10 +95,6 @@ async function processPendingUploads() {
             credentials: "include",
             redirect: "follow"
         });
-        const finalUrl = response.url || "";
-        if (finalUrl.includes("/login") || finalUrl.includes("/mobile/login")) {
-            throw new Error("Pending upload needs login");
-        }
         if (!response.ok) throw new Error("Pending upload failed");
         await deletePendingUpload(entry.id);
     }

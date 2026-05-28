@@ -10,16 +10,6 @@
         <p><strong>Date:</strong> {{ format_date(record.record_date) }}</p>
         <p><strong>Created:</strong> {{ format_datetime(record.created_at) }}</p>
         <p><strong>Created By:</strong> {{ record.created_by_name or 'Unknown user' }}{% if record.created_by_email %} - {{ record.created_by_email }}{% endif %}</p>
-        <p><strong>Status:</strong> {{ comment_action_status_label(record.action_status) }}</p>
-        {% if record.action_assigned_to %}
-            <p><strong>Assign / Send To:</strong> {{ comment_action_assignee_label(record.action_assigned_to) }}</p>
-        {% endif %}
-        {% if record.action_due_date %}
-            <p><strong>Due Date:</strong> {{ format_date(record.action_due_date) }}</p>
-        {% endif %}
-        {% if record.action_note %}
-            <p><strong>Action Note:</strong> {{ record.action_note }}</p>
-        {% endif %}
         {% if record.task_id %}
             <p><strong>Task:</strong> #{{ record.task_number or record.task_id }}{% if record.task_title %} - {{ record.task_title }}{% endif %}</p>
         {% endif %}
@@ -43,22 +33,11 @@
 
 <div class="card">
     <h3>Edit Comment</h3>
-    <form method="post" enctype="multipart/form-data">
+    <form method="post">
         <input type="hidden" name="next" value="{{ next_url }}">
         <input type="hidden" name="action" value="save">
         <label>Comment</label>
         <textarea name="comment" rows="6">{{ record.comment or '' }}</textarea>
-        {% set comment_action = record %}
-        {% include "_comment_action_fields.html" %}
-        {% set media_id = 'comment_detail_' ~ record.source_type ~ '_' ~ record.source_id %}
-        {% set media_camera_name = 'extra_photo_camera' %}
-        {% set media_upload_name = 'extra_photo' %}
-        {% set media_audio_name = 'extra_audio' %}
-        {% set media_comment_name = 'extra_media_comment' %}
-        {% set media_comment_label = 'New Media Comment' %}
-        {% set media_comment_placeholder = 'Comment for the new picture or audio' %}
-        {% set media_save_label = 'Save Comment' %}
-        {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Comment</button>
     </form>
 </div>

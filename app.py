@@ -501,8 +501,6 @@ def init_db():
         pickup_comment TEXT,
         supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE,
         picture_file TEXT,
-        audio_file TEXT,
-        media_comment TEXT,
         supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
         purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         purchased_at TEXT,
@@ -545,22 +543,6 @@ def init_db():
         message TEXT,
         is_read BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS comment_actions (
-        id SERIAL PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'no_action',
-        assigned_to TEXT,
-        due_date TEXT,
-        action_note TEXT,
-        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        updated_at TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        UNIQUE (source_type, source_id)
     )
     """)
 
@@ -649,7 +631,7 @@ def init_db():
         room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
         inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
         file_type TEXT NOT NULL,
-        storage_path TEXT,
+        storage_path TEXT NOT NULL,
         original_filename TEXT,
         comment TEXT,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -725,40 +707,6 @@ def init_db():
     """)
 
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS note_delete_codes (
-        id SERIAL PRIMARY KEY,
-        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        pin_hash TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS task_attachment_delete_codes (
-        id SERIAL PRIMARY KEY,
-        attachment_id INTEGER NOT NULL REFERENCES task_attachments(id) ON DELETE CASCADE,
-        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        pin_hash TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS inventory_delete_codes (
-        id SERIAL PRIMARY KEY,
-        item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
-        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        pin_hash TEXT NOT NULL,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -814,8 +762,7 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS tasks_task_number_idx ON tasks(task_number) WHERE task_number IS NOT NULL",
         "CREATE TABLE IF NOT EXISTS task_number_counters (month_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS task_attachments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, file_type TEXT NOT NULL, storage_path TEXT, original_filename TEXT, comment TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
-        "ALTER TABLE task_attachments ALTER COLUMN storage_path DROP NOT NULL",
+        "CREATE TABLE IF NOT EXISTS task_attachments (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, file_type TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, comment TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_room_statuses (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, is_done BOOLEAN NOT NULL DEFAULT FALSE, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT, PRIMARY KEY (task_id, room_id))",
         "CREATE TABLE IF NOT EXISTS task_supplier_items (task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, inventory_item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (task_id, inventory_item_id))",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
@@ -835,9 +782,6 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS note_delete_codes (id SERIAL PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS task_attachment_delete_codes (id SERIAL PRIMARY KEY, attachment_id INTEGER NOT NULL REFERENCES task_attachments(id) ON DELETE CASCADE, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS inventory_delete_codes (id SERIAL PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
@@ -859,8 +803,6 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS pickup_comment TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_picked_up BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS picture_file TEXT",
-        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS audio_file TEXT",
-        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS media_comment TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchased_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS purchased_at TEXT",
@@ -897,17 +839,6 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
-        "CREATE TABLE IF NOT EXISTS comment_actions (id SERIAL PRIMARY KEY, source_type TEXT NOT NULL, source_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'no_action', assigned_to TEXT, due_date TEXT, action_note TEXT, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE (source_type, source_id))",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS source_type TEXT",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS source_id INTEGER",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'no_action'",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS assigned_to TEXT",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS due_date TEXT",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS action_note TEXT",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS updated_at TEXT",
-        "ALTER TABLE comment_actions ADD COLUMN IF NOT EXISTS created_at TEXT",
-        "CREATE UNIQUE INDEX IF NOT EXISTS comment_actions_source_idx ON comment_actions(source_type, source_id)",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -1186,40 +1117,34 @@ def collect_supplier_item_photo_uploads(item):
     if not indexes:
         indexes = ["0"]
 
-    def add_upload(field_name, file_type):
+    def add_upload(field_name):
         uploaded = request.files.get(field_name)
         if not uploaded or not uploaded.filename:
             return None
-        if file_type == "audio":
-            if not allowed_audio(uploaded.filename):
-                return "Please upload a valid supplier material audio file."
-        elif not allowed_photo(uploaded.filename):
+        if not allowed_photo(uploaded.filename):
             return "Please upload a valid supplier material picture."
         data = uploaded.read()
         if not data:
             return None
-        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
+        display_name = task_attachment_display_filename(uploaded, field_name, "photo")
         idx = field_name.replace("supplier_item_attachment_", "").rsplit("_", 1)[0]
         comment = request.form.get(f"supplier_item_attachment_{idx}_comment", "").strip()
         uploads.append({
             "room_id": item.get("room_id"),
             "inventory_item_id": item.get("id"),
-            "file_type": file_type,
+            "file_type": "photo",
             "data": data,
             "filename": display_name,
-            "content_type": upload_content_type(display_name, uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg")),
+            "content_type": upload_content_type(display_name, uploaded.content_type or "image/jpeg"),
             "comment": comment,
         })
         return None
 
     for idx in indexes:
-        error = add_upload(f"supplier_item_attachment_{idx}_camera", "photo")
+        error = add_upload(f"supplier_item_attachment_{idx}_camera")
         if error:
             return error, []
-        error = add_upload(f"supplier_item_attachment_{idx}_photo", "photo")
-        if error:
-            return error, []
-        error = add_upload(f"supplier_item_attachment_{idx}_audio", "audio")
+        error = add_upload(f"supplier_item_attachment_{idx}_photo")
         if error:
             return error, []
     return None, uploads
@@ -1252,7 +1177,6 @@ def insert_task_attachments(conn, task_id, uploads):
             )
         ).fetchone()
         inserted.append(attachment)
-        upsert_comment_action(conn, "task_attachment", attachment["id"])
         if item.get("room_id"):
             related_room_ids.add(item["room_id"])
         if item["file_type"] == "photo" and not first_photo:
@@ -1279,18 +1203,6 @@ def apply_task_legacy_media(conn, task, first_photo=None, first_audio=None):
     return refreshed or task
 
 
-def task_has_photo_attachment(conn, task_id, room_id=None):
-    params = [task_id]
-    where = ["task_id = %s", "file_type = 'photo'", "storage_path IS NOT NULL"]
-    if room_id:
-        where.append("(room_id = %s OR room_id IS NULL)")
-        params.append(room_id)
-    return bool(conn.execute(
-        f"SELECT 1 FROM task_attachments WHERE {' AND '.join(where)} LIMIT 1",
-        tuple(params)
-    ).fetchone())
-
-
 def load_task_attachments(conn, task_id, room_id=None):
     where = ["task_attachments.task_id = %s"]
     params = [task_id]
@@ -1299,15 +1211,10 @@ def load_task_attachments(conn, task_id, room_id=None):
         params.append(room_id)
     return conn.execute(
         """
-        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name,
-               COALESCE(comment_actions.status, 'no_action') AS action_status,
-               comment_actions.assigned_to AS action_assigned_to,
-               comment_actions.due_date AS action_due_date,
-               comment_actions.action_note
+        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name
         FROM task_attachments
         LEFT JOIN rooms ON task_attachments.room_id = rooms.id
         LEFT JOIN users ON task_attachments.created_by = users.id
-        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
         WHERE """ + " AND ".join(where) + """
         ORDER BY task_attachments.id
         """,
@@ -1824,58 +1731,6 @@ def admin_email_rows(conn):
     return conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
 
 
-def record_application_open(conn, source_label):
-    user_id = session.get("user_id")
-    if not user_id:
-        return
-    now = datetime.now(timezone.utc)
-    last_logged = parse_iso_datetime(session.get("last_app_open_logged_at"))
-    if last_logged and (now - last_logged) < timedelta(minutes=30):
-        return
-
-    user = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (user_id,)).fetchone()
-    if not user:
-        return
-    opened_at = utc_now_iso()
-    session["last_app_open_logged_at"] = opened_at
-    session.modified = True
-    name = user.get("name") or session.get("name") or "Unknown user"
-    email = user.get("email") or ""
-    role = user.get("role") or session.get("role") or ""
-    message = f"{name} opened ProjectONus from the {source_label}."
-    conn.execute(
-        """
-        INSERT INTO login_events
-        (user_id, user_name, user_email, role, event_type, message, is_read, created_at)
-        VALUES (%s, %s, %s, %s, 'login', %s, TRUE, %s)
-        """,
-        (user.get("id"), name, email, role, message, opened_at)
-    )
-    admins = admin_email_rows(conn)
-    conn.commit()
-
-    ip_address = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",", 1)[0].strip()
-    device = (request.headers.get("User-Agent") or "").strip()
-    if len(device) > 220:
-        device = device[:220] + "..."
-    body = "\n".join([
-        "A user opened ProjectONus.",
-        "",
-        f"User: {name}",
-        f"Email: {email or '-'}",
-        f"Role: {role or '-'}",
-        f"Opened From: {source_label}",
-        f"Date/Time: {format_datetime(opened_at)}",
-        f"IP Address: {ip_address or '-'}",
-        f"Device: {device or '-'}",
-        "",
-        f"Login Report: {external_url('login_report')}",
-    ])
-    for admin in admins:
-        if admin.get("email"):
-            send_email(admin["email"], f"ProjectONus app opened - {name}", body)
-
-
 def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
     try:
         actor = conn.execute(
@@ -1899,7 +1754,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
         if not notification_types:
             notification_types.append("field_note_added")
             note_parts.append("field note")
-        message = f"{actor_name or 'User'} added {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
+        message = f"{actor_name or 'User'} saved one note with {', '.join(note_parts)} in {room.get('name') if room else 'room'}."
         project_id = project.get("id") if project else None
         room_id = room.get("id") if room else None
         for event_type in notification_types:
@@ -1928,7 +1783,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
                 attachments.append(attachment)
 
         lines = [
-            "A field update was added in ProjectONus.",
+            "A field note was saved in ProjectONus.",
             "",
             f"Project: {project.get('name') if project else '-'}",
             f"Room: {room.get('name') if room else '-'}",
@@ -1944,7 +1799,7 @@ def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_
         if audio_file and send_audio:
             lines.append("Audio attached.")
         body = "\n".join(lines)
-        subject = f"ProjectONus field update - {room.get('name') if room else 'Room'}"
+        subject = f"ProjectONus field note - {room.get('name') if room else 'Room'}"
         email_ok = True
         for admin in admins:
             if admin.get("email"):
@@ -2122,208 +1977,6 @@ def can_view_inventory():
 
 def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
-
-
-COMMENT_ACTION_STATUS_LABELS = {
-    "no_action": "No Action Needed",
-    "waiting_to_be_done": "Waiting to be done",
-    "send_estimate": "Send Estimate",
-    "waiting_estimate_approval": "Waiting for Estimate Approval",
-    "send_rfi": "Send RFI",
-    "waiting_rfi_answer": "Waiting RFI answer",
-    "order_material": "Order Material",
-    "waiting_material": "Waiting for Material",
-    "install_material": "Install Material",
-    "ready_for_inspection": "Ready for Inspection",
-    "call_inspection": "Call Inspection",
-    "waiting_inspection": "Waiting for Inspection",
-    "passed_inspection": "Passed Inspection",
-    "done": "Done",
-}
-
-COMMENT_ACTION_STATUS_ALIASES = {
-    "to_do": "send_estimate",
-    "in_progress": "install_material",
-}
-
-COMMENT_ACTION_NEEDED_FILTER = "action_needed"
-
-COMMENT_ACTION_REPORT_STATUS_LABELS = {
-    COMMENT_ACTION_NEEDED_FILTER: "Action Needed",
-    **COMMENT_ACTION_STATUS_LABELS,
-}
-
-COMMENT_ACTION_ASSIGNEE_LABELS = {
-    "": "Not Assigned",
-    "customer": "Customer",
-    "contractor": "Contractor",
-    "worker": "Worker",
-    "admin": "Admin",
-}
-
-
-def normalize_comment_action_status(status):
-    status = (status or "no_action").strip()
-    status = COMMENT_ACTION_STATUS_ALIASES.get(status, status)
-    return status if status in COMMENT_ACTION_STATUS_LABELS else "no_action"
-
-
-def comment_action_status_label(status):
-    return COMMENT_ACTION_STATUS_LABELS[normalize_comment_action_status(status)]
-
-
-def comment_action_is_needed(status):
-    return normalize_comment_action_status(status) not in ["no_action", "done"]
-
-
-def comment_action_assignee_label(value):
-    return COMMENT_ACTION_ASSIGNEE_LABELS.get(value or "", value or "")
-
-
-def comment_action_form_data():
-    if "comment_action_status" not in request.form:
-        return None
-    status = normalize_comment_action_status(request.form.get("comment_action_status", "no_action"))
-    assigned_to = request.form.get("comment_action_assigned_to", "").strip()
-    if assigned_to not in COMMENT_ACTION_ASSIGNEE_LABELS:
-        assigned_to = ""
-    due_date = request.form.get("comment_action_due_date", "").strip()
-    action_note = request.form.get("comment_action_note", "").strip()
-    if status == "no_action":
-        assigned_to = ""
-        due_date = ""
-        action_note = ""
-    return {
-        "status": status,
-        "assigned_to": assigned_to,
-        "due_date": due_date,
-        "action_note": action_note,
-    }
-
-
-def upsert_comment_action(conn, source_type, source_id, data=None):
-    if not source_type or not source_id:
-        return
-    if data is None:
-        data = comment_action_form_data()
-    if data is None:
-        return
-    if data.get("status") == "no_action" and not data.get("assigned_to") and not data.get("due_date") and not data.get("action_note"):
-        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
-        return
-    now = utc_now_iso()
-    conn.execute(
-        """
-        INSERT INTO comment_actions
-        (source_type, source_id, status, assigned_to, due_date, action_note, updated_by, updated_at, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (source_type, source_id) DO UPDATE SET
-            status = EXCLUDED.status,
-            assigned_to = EXCLUDED.assigned_to,
-            due_date = EXCLUDED.due_date,
-            action_note = EXCLUDED.action_note,
-            updated_by = EXCLUDED.updated_by,
-            updated_at = EXCLUDED.updated_at
-        """,
-        (
-            source_type,
-            source_id,
-            data.get("status") or "no_action",
-            data.get("assigned_to") or "",
-            data.get("due_date") or "",
-            data.get("action_note") or "",
-            session.get("user_id"),
-            now,
-            now
-        )
-    )
-
-
-def can_delete_task_attachment_item(task, attachment):
-    if is_main_admin():
-        return True
-    if not task or not attachment:
-        return False
-    if task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id"):
-        return True
-    file_type = attachment.get("file_type")
-    return (
-        has_perm("delete_comments")
-        or (file_type == "photo" and has_perm("delete_pictures"))
-        or (file_type == "audio" and has_perm("delete_audio"))
-    )
-
-
-def comment_media_uploads(photo_names, audio_names):
-    photo = first_uploaded_file(*photo_names)
-    audio = first_uploaded_file(*audio_names)
-    if photo and not allowed_photo(photo.filename):
-        return "Please upload a valid picture.", None, None
-    if audio and not allowed_audio(audio.filename):
-        return "Please upload a valid audio file.", None, None
-    return "", photo, audio
-
-
-def insert_extra_task_media(conn, task_id, room_id, inventory_item_id, photo, audio, comment):
-    inserted = 0
-    for uploaded, field_name, file_type in [
-        (photo, "extra_photo", "photo"),
-        (audio, "extra_audio", "audio"),
-    ]:
-        if not uploaded or not uploaded.filename:
-            continue
-        data = uploaded.read()
-        if not data:
-            continue
-        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
-        storage_path = upload_bytes_to_storage(
-            data,
-            display_name,
-            upload_content_type(display_name, uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg"))
-        )
-        attachment = conn.execute(
-            """
-            INSERT INTO task_attachments
-            (task_id, room_id, inventory_item_id, file_type, storage_path, original_filename, comment, created_by, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (task_id, room_id, inventory_item_id, file_type, storage_path, display_name, comment, session.get("user_id"), utc_now_iso())
-        ).fetchone()
-        upsert_comment_action(conn, "task_attachment", attachment["id"] if attachment else None)
-        inserted += 1
-    return inserted
-
-
-def add_note_edit_media(conn, note, note_date, comment, photo, audio):
-    photo_file = upload_file_to_storage(photo) if photo and photo.filename else None
-    audio_file = upload_file_to_storage(audio) if audio and audio.filename else None
-    updates = []
-    params = []
-    if photo_file and not note.get("photo_file"):
-        updates.append("photo_file = %s")
-        params.append(photo_file)
-        photo_file = None
-    if audio_file and not note.get("audio_file"):
-        updates.append("audio_file = %s")
-        params.append(audio_file)
-        audio_file = None
-    if updates:
-        conn.execute(
-            f"UPDATE notes SET {', '.join(updates)} WHERE id = %s",
-            tuple(params + [note["id"]])
-        )
-    if photo_file or audio_file:
-        new_note = conn.execute(
-            """
-            INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (note["room_id"], session.get("user_id"), note_date, comment, photo_file, audio_file, utc_now_iso())
-        ).fetchone()
-        upsert_comment_action(conn, "room_note", new_note["id"] if new_note else None)
-    return bool(updates or photo_file or audio_file)
 
 
 INVENTORY_STATUS_LABELS = {
@@ -2641,62 +2294,6 @@ def grant_project_access(conn, user_id, project_id, role=None):
     )
 
 
-def expire_completed_task_project_access(conn, user_id=None):
-    uid = user_id or session.get("user_id")
-    if not uid or is_main_admin():
-        return 0
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    result = conn.execute(
-        """
-        DELETE FROM project_permissions AS pp
-        WHERE pp.user_id = %s
-          AND EXISTS (
-              SELECT 1
-              FROM tasks
-              WHERE tasks.project_id = pp.project_id
-                AND tasks.assigned_user_id = pp.user_id
-                AND tasks.status = 'done'
-                AND COALESCE(tasks.completed_at, tasks.created_at) <= %s
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM tasks
-              WHERE tasks.project_id = pp.project_id
-                AND tasks.assigned_user_id = pp.user_id
-                AND tasks.status <> 'done'
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM tasks
-              WHERE tasks.project_id = pp.project_id
-                AND tasks.assigned_user_id = pp.user_id
-                AND tasks.status = 'done'
-                AND COALESCE(tasks.completed_at, tasks.created_at) > %s
-          )
-        """,
-        (uid, cutoff, cutoff)
-    )
-    return result.rowcount or 0
-
-
-@app.before_request
-def expire_project_access_before_request():
-    if not session.get("user_id") or is_main_admin():
-        return
-    conn = None
-    try:
-        conn = db()
-        expire_completed_task_project_access(conn)
-        conn.commit()
-    except Exception:
-        if conn:
-            conn.rollback()
-        app.logger.exception("Could not expire completed task project access.")
-    finally:
-        if conn:
-            conn.close()
-
-
 def fetch_visible_projects(conn, q=""):
     params = []
     join_sql = ""
@@ -2920,8 +2517,6 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
         return error
     file = request.files.get("picture") or request.files.get("picture_camera")
     picture_file = upload_file_to_storage(file) if file and file.filename and allowed_photo(file.filename) else None
-    audio = request.files.get("audio")
-    audio_file = upload_file_to_storage(audio) if audio and audio.filename and allowed_audio(audio.filename) else None
     status = clean_inventory_status(request.form.get("status"))
     used_by = session.get("user_id") if status == "used" else None
     used_at = utc_now_iso() if status == "used" else None
@@ -2931,8 +2526,8 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
     conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, audio_file, media_comment, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             request.form.get("item_date") or local_now().date().isoformat(),
@@ -2951,8 +2546,6 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
             used_at,
             request.form.get("used_note", "").strip(),
             picture_file,
-            audio_file,
-            request.form.get("media_comment", "").strip(),
             utc_now_iso(),
             utc_now_iso()
         )
@@ -3700,14 +3293,7 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
-        inventory_condition_label=inventory_condition_label,
-        comment_action_status_options=COMMENT_ACTION_STATUS_LABELS,
-        comment_action_report_status_options=COMMENT_ACTION_REPORT_STATUS_LABELS,
-        comment_action_assignee_options=COMMENT_ACTION_ASSIGNEE_LABELS,
-        normalize_comment_action_status=normalize_comment_action_status,
-        comment_action_status_label=comment_action_status_label,
-        comment_action_is_needed=comment_action_is_needed,
-        comment_action_assignee_label=comment_action_assignee_label
+        inventory_condition_label=inventory_condition_label
     )
 
 
@@ -3717,7 +3303,6 @@ def index():
         return redirect(url_for("login"))
     q = request.args.get("q", "").strip()
     conn = db()
-    record_application_open(conn, "desktop version")
     projects = fetch_visible_projects(conn, q)
     conn.close()
     return render_template("index.html", projects=projects, q=q)
@@ -3736,7 +3321,6 @@ def desktop_home():
 @login_required
 def mobile_home():
     conn = db()
-    record_application_open(conn, "mobile version")
     project_count = len(fetch_visible_projects(conn))
     conn.close()
     return render_template("mobile_home.html", project_count=project_count)
@@ -3763,24 +3347,13 @@ def mobile_project_search():
     return render_template("mobile_project_search.html", projects=projects, q=q)
 
 
-@app.route("/mobile/inventory", methods=["GET", "POST"])
+@app.route("/mobile/inventory")
 @login_required
 def mobile_inventory():
     if not can_view_inventory():
         flash("You do not have permission to view inventory.")
         return redirect(url_for("mobile_home"))
     conn = db()
-    if request.method == "POST":
-        error = insert_inventory_item(conn)
-        if error:
-            conn.close()
-            flash(error)
-            return redirect(url_for("mobile_inventory"))
-        conn.commit()
-        conn.close()
-        flash("Inventory item added.")
-        return redirect(url_for("mobile_inventory"))
-
     selected_project_id = request.args.get("project_id", type=int)
     if selected_project_id and not user_can_access_project(conn, selected_project_id):
         selected_project_id = None
@@ -3809,9 +3382,6 @@ def mobile_inventory():
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
         status_options=INVENTORY_STATUS_LABELS,
-        today=local_now().date().isoformat(),
-        location_options=INVENTORY_LOCATION_LABELS,
-        condition_options=INVENTORY_CONDITION_LABELS,
     )
 
 
@@ -3975,6 +3545,11 @@ def mobile_project_materials(project_id):
         return redirect(url_for("mobile_project", project_id=project_id))
 
     if request.method == "POST":
+        if not can_edit_inventory():
+            conn.close()
+            flash("You do not have permission to add material inventory.")
+            return redirect(url_for("mobile_project_materials", project_id=project_id))
+
         error = insert_inventory_item(conn, fixed_project_id=project_id)
         if error:
             conn.close()
@@ -4120,17 +3695,16 @@ def mobile_room(room_id):
             flash("Add a comment, picture, or audio before saving.")
             return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
-        note = conn.execute(
-            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        conn.execute(
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), note_date, note_comment, photo_file, audio_file, datetime.now().isoformat())
-        ).fetchone()
-        upsert_comment_action(conn, "room_note", note["id"] if note else None)
+        )
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, note_comment, photo_file, audio_file, note_date)
         if notified:
-            flash("Comment/photo/audio added.")
+            flash("Field note saved.")
         else:
-            flash("Comment/photo/audio added. Admin notification or email could not be sent.")
+            flash("Field note saved. Admin notification or email could not be sent.")
         conn.close()
         return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
 
@@ -4747,6 +4321,10 @@ def inventory():
 
     conn = db()
     if request.method == "POST":
+        if not can_edit_inventory():
+            conn.close()
+            flash("You do not have permission to add inventory.")
+            return redirect(url_for("inventory"))
         error = insert_inventory_item(conn)
         if error:
             conn.close()
@@ -4869,129 +4447,12 @@ def update_inventory_status(item_id):
 @app.route("/inventory/<int:item_id>/delete", methods=["POST"])
 @admin_required
 def delete_inventory_item(item_id):
-    next_url = safe_next_url("inventory")
-    if is_mobile_request():
-        flash("Inventory can only be deleted from the desktop version with an email PIN.")
-        return redirect(next_url)
     conn = db()
-    item = conn.execute(
-        """
-        SELECT inventory_items.*, projects.name AS project_name, rooms.name AS room_name
-        FROM inventory_items
-        LEFT JOIN projects ON inventory_items.project_id = projects.id
-        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
-        WHERE inventory_items.id = %s
-        """,
-        (item_id,)
-    ).fetchone()
-    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
-    if not item:
-        conn.close()
-        flash("Inventory item not found.")
-        return redirect(next_url)
-    if item.get("project_id") and not user_can_access_project(conn, item["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-    if not admin or not admin.get("email"):
-        conn.close()
-        flash("Your admin account needs an email before a delete PIN can be sent.")
-        return redirect(next_url)
-
-    pin = f"{secrets.randbelow(1000000):06d}"
-    conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s AND admin_id = %s", (item_id, admin["id"]))
-    conn.execute(
-        """
-        INSERT INTO inventory_delete_codes (item_id, admin_id, pin_hash, expires_at, created_at)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (item_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
-    )
+    deleted = delete_inventory_item_record(conn, item_id)
     conn.commit()
-    sent = send_email(
-        admin["email"],
-        "ProjectONus delete inventory PIN",
-        "\n".join([
-            "Your 6-digit PIN to delete this inventory item is:",
-            "",
-            pin,
-            "",
-            f"Item: {item.get('item_name') or '-'}",
-            f"Project: {item.get('project_name') or '-'}",
-            f"Room: {item.get('room_name') or '-'}",
-            "",
-            "This PIN expires in 10 minutes.",
-            "If you did not request this, ignore this email."
-        ])
-    )
-    if not sent:
-        conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s AND admin_id = %s", (item_id, admin["id"]))
-        conn.commit()
-        conn.close()
-        flash("Delete PIN could not be sent. Check SMTP email settings first.")
-        return redirect(next_url)
     conn.close()
-    flash("A 6-digit delete PIN was sent to your admin email.")
-    return redirect(url_for("confirm_delete_inventory_item", item_id=item_id, next=next_url))
-
-
-@app.route("/inventory/<int:item_id>/delete/confirm", methods=["GET", "POST"])
-@admin_required
-def confirm_delete_inventory_item(item_id):
-    next_url = safe_next_url("inventory")
-    if is_mobile_request():
-        flash("Inventory can only be deleted from the desktop version with an email PIN.")
-        return redirect(next_url)
-    conn = db()
-    item = conn.execute(
-        """
-        SELECT inventory_items.*, projects.name AS project_name, rooms.name AS room_name
-        FROM inventory_items
-        LEFT JOIN projects ON inventory_items.project_id = projects.id
-        LEFT JOIN rooms ON inventory_items.room_id = rooms.id
-        WHERE inventory_items.id = %s
-        """,
-        (item_id,)
-    ).fetchone()
-    if not item:
-        conn.close()
-        flash("Inventory item not found.")
-        return redirect(next_url)
-    if item.get("project_id") and not user_can_access_project(conn, item["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-
-    if request.method == "POST":
-        pin = request.form.get("pin", "").strip()
-        code = conn.execute(
-            """
-            SELECT * FROM inventory_delete_codes
-            WHERE item_id = %s AND admin_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (item_id, session.get("user_id"))
-        ).fetchone()
-        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
-        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
-            conn.close()
-            flash("Delete PIN expired. Press Delete Inventory again to get a new PIN.")
-            return redirect(next_url)
-        if not check_password_hash(code["pin_hash"], pin):
-            conn.close()
-            flash("Invalid delete PIN.")
-            return redirect(url_for("confirm_delete_inventory_item", item_id=item_id, next=next_url))
-
-        conn.execute("DELETE FROM inventory_delete_codes WHERE item_id = %s", (item_id,))
-        deleted = delete_inventory_item_record(conn, item_id)
-        conn.commit()
-        conn.close()
-        flash("Inventory item deleted." if deleted else "Inventory item not found.")
-        return redirect(next_url)
-
-    conn.close()
-    return render_template("delete_inventory_confirm.html", item=item, next_url=next_url)
+    flash("Inventory item deleted." if deleted else "Inventory item not found.")
+    return redirect(safe_next_url("inventory"))
 
 
 
@@ -5015,6 +4476,11 @@ def project_materials(project_id):
         return redirect(url_for("index"))
 
     if request.method == "POST":
+        if not can_edit_inventory():
+            conn.close()
+            flash("You do not have permission to add material inventory.")
+            return redirect(url_for("project_materials", project_id=project_id))
+
         error = insert_inventory_item(conn, fixed_project_id=project_id)
         if error:
             conn.close()
@@ -5132,8 +4598,11 @@ def delete_material(project_id, material_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    deleted = delete_inventory_item_record(conn, material_id, project_id)
+    conn.commit()
     conn.close()
-    return delete_inventory_item(material_id)
+    flash("Inventory item deleted." if deleted else "Inventory item not found.")
+    return redirect(url_for("project_materials", project_id=project_id))
 
 
 
@@ -5430,17 +4899,16 @@ def room(room_id):
 
         photo_file = upload_file_to_storage(file) if wants_photo and allowed_photo(file.filename) else None
         audio_file = upload_file_to_storage(audio) if wants_audio and allowed_audio(audio.filename) else None
-        note = conn.execute(
-            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        conn.execute(
+            "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (room_id, session.get("user_id"), request.form["note_date"], request.form["comment"].strip(), photo_file, audio_file, datetime.now().isoformat())
-        ).fetchone()
-        upsert_comment_action(conn, "room_note", note["id"] if note else None)
+        )
         conn.commit()
         notified = notify_admins_of_field_note(conn, project, room, request.form["comment"].strip(), photo_file, audio_file, request.form["note_date"])
         if notified:
-            flash("Comment/photo added.")
+            flash("Field note saved.")
         else:
-            flash("Comment/photo added. Admin notification or email could not be sent.")
+            flash("Field note saved. Admin notification or email could not be sent.")
 
     selected_date = request.args.get("date", "")
     query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
@@ -5468,21 +4936,12 @@ def project_timeline(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
 
-    project_rooms = conn.execute(
-        "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name, id",
-        (project_id,)
-    ).fetchall()
-    selected_room_id = request.args.get("room_id", type=int) or 0
-    if selected_room_id and not any(room["id"] == selected_room_id for room in project_rooms):
-        selected_room_id = 0
-    selected_room = next((room for room in project_rooms if room["id"] == selected_room_id), None)
-
     period = request.args.get("period", "day")
-    if period not in ["day", "week", "month", "all", "room"]:
+    if period not in ["day", "week", "month", "all"]:
         period = "day"
     selected_date = request.args.get("date") or local_now().date().isoformat()
     start = end = None
-    if period not in ["all", "room"]:
+    if period != "all":
         period, start, end = attendance_range(period, selected_date)
 
     def parse_timeline_date(date_value, time_value=""):
@@ -5500,22 +4959,19 @@ def project_timeline(project_id):
     def include_dt(dt):
         if not dt:
             return False
-        if period in ["all", "room"]:
+        if period == "all":
             return True
         return start <= dt < end
 
     def range_label():
-        room_prefix = f"{selected_room['name']} - " if selected_room else ""
-        if period == "room":
-            return room_prefix + "Project History by Room"
         if period == "all":
-            return room_prefix + "All Project History"
+            return "All Project History"
         if period == "month":
-            return room_prefix + start.strftime("%B %Y")
+            return start.strftime("%B %Y")
         if period == "week":
             last_day = end - timedelta(days=1)
-            return room_prefix + f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
-        return room_prefix + start.strftime("%m/%d/%Y")
+            return f"{start.strftime('%m/%d/%Y')} to {last_day.strftime('%m/%d/%Y')}"
+        return start.strftime("%m/%d/%Y")
 
     records = []
 
@@ -5541,9 +4997,6 @@ def project_timeline(project_id):
                 "body": note.get("comment") or "",
                 "photo_file": note.get("photo_file"),
                 "audio_file": note.get("audio_file"),
-                "room_id": note.get("room_id"),
-                "room_name": note.get("room_name") or "Project Activity",
-                "delete_url": url_for("request_delete_note", note_id=note["id"], next=request.full_path) if is_main_admin() and not is_mobile_request() else "",
                 "url": url_for("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]) if note.get("room_id") else "",
             })
 
@@ -5581,8 +5034,6 @@ def project_timeline(project_id):
                 "body": task_info,
                 "photo_file": task.get("task_photo_file"),
                 "audio_file": task.get("task_audio_file"),
-                "room_id": task.get("room_id"),
-                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
         accepted_dt = local_datetime(task.get("accepted_at"))
@@ -5594,8 +5045,6 @@ def project_timeline(project_id):
                 "title": task_display_name(task),
                 "subtitle": task.get("assigned_user_name") or "",
                 "body": "",
-                "room_id": task.get("room_id"),
-                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
         completed_dt = local_datetime(task.get("completed_at"))
@@ -5609,8 +5058,6 @@ def project_timeline(project_id):
                 "body": task.get("completion_comment") or "",
                 "photo_file": task.get("completion_photo_file"),
                 "audio_file": task.get("completion_audio_file"),
-                "room_id": task.get("room_id"),
-                "room_name": task.get("room_name") or "Project Activity",
                 "url": task_url,
             })
 
@@ -5638,9 +5085,6 @@ def project_timeline(project_id):
                 "body": attachment.get("comment") or "",
                 "photo_file": attachment.get("storage_path") if attachment.get("file_type") == "photo" else "",
                 "audio_file": attachment.get("storage_path") if attachment.get("file_type") == "audio" else "",
-                "room_id": attachment.get("room_id"),
-                "room_name": attachment.get("room_name") or "Project Activity",
-                "delete_url": url_for("request_delete_task_attachment", task_id=attachment["task_id"], attachment_id=attachment["id"], next=request.full_path) if is_main_admin() and not is_mobile_request() else "",
                 "url": url_for("my_tasks", task_id=attachment["task_id"]) + f"#task-{attachment['task_id']}",
             })
 
@@ -5673,8 +5117,6 @@ def project_timeline(project_id):
                 "subtitle": " - ".join(details),
                 "body": item.get("used_note") or item.get("pickup_comment") or "",
                 "photo_file": item.get("picture_file"),
-                "room_id": item.get("room_id"),
-                "room_name": item.get("room_name") or "Project Activity",
                 "url": url_for("mobile_project_materials" if is_mobile_request() else "project_materials", project_id=project_id),
             })
 
@@ -5697,46 +5139,16 @@ def project_timeline(project_id):
                 "title": event.get("user_name") or "Unknown user",
                 "subtitle": event.get("address") or "",
                 "body": "",
-                "room_name": "Project Activity",
                 "map_url": f"https://www.google.com/maps?q={event.get('latitude')},{event.get('longitude')}" if event.get("latitude") and event.get("longitude") else "",
             })
 
-    if selected_room_id:
-        records = [record for record in records if record.get("room_id") == selected_room_id]
-
     records.sort(key=lambda row: row["sort_dt"], reverse=True)
-    for record in records:
-        sort_dt = record.get("sort_dt")
-        record["date_key"] = sort_dt.strftime("%Y-%m-%d") if sort_dt else ""
-        record["date_label"] = sort_dt.strftime("%m/%d/%Y") if sort_dt else "No date"
-        record["room_name"] = record.get("room_name") or "Project Activity"
-
-    timeline_groups = []
-    if period == "room":
-        group_map = {}
-        for record in records:
-            key = (record.get("room_name") or "Project Activity", record.get("date_key") or "")
-            if key not in group_map:
-                group_map[key] = {
-                    "room_name": key[0],
-                    "date_label": record.get("date_label") or "No date",
-                    "sort_dt": record.get("sort_dt"),
-                    "records": []
-                }
-            group_map[key]["records"].append(record)
-            if record.get("sort_dt") and (not group_map[key].get("sort_dt") or record["sort_dt"] > group_map[key]["sort_dt"]):
-                group_map[key]["sort_dt"] = record["sort_dt"]
-        timeline_groups = list(group_map.values())
-        timeline_groups.sort(key=lambda group: ((group.get("room_name") or "").lower(), -(group.get("sort_dt").timestamp() if group.get("sort_dt") else 0)))
     conn.close()
     return render_template(
         "timeline.html",
         project=project,
-        project_rooms=project_rooms,
         records=records,
-        timeline_groups=timeline_groups,
         selected_date=selected_date,
-        selected_room_id=selected_room_id,
         period=period,
         range_label=range_label()
     )
@@ -5962,135 +5374,11 @@ def delete_note(note_id):
         return redirect(url_for("room", room_id=note["room_id"]))
 
     room_id = note["room_id"]
-    conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
     conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
     conn.commit()
     conn.close()
     flash("Comment/photo deleted.")
     return redirect(url_for("room", room_id=room_id))
-
-
-@app.route("/note/<int:note_id>/delete/request", methods=["POST"])
-@admin_required
-def request_delete_note(note_id):
-    next_url = safe_next_url("index")
-    conn = db()
-    note = conn.execute(
-        """
-        SELECT notes.*, rooms.name AS room_name, rooms.project_id, projects.name AS project_name
-        FROM notes
-        JOIN rooms ON notes.room_id = rooms.id
-        JOIN projects ON rooms.project_id = projects.id
-        WHERE notes.id = %s
-        """,
-        (note_id,)
-    ).fetchone()
-    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
-    if not note:
-        conn.close()
-        flash("Activity not found.")
-        return redirect(next_url)
-    if not user_can_access_project(conn, note["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-    if not admin or not admin.get("email"):
-        conn.close()
-        flash("Your admin account needs an email before a delete PIN can be sent.")
-        return redirect(next_url)
-
-    pin = f"{secrets.randbelow(1000000):06d}"
-    conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s AND admin_id = %s", (note_id, admin["id"]))
-    conn.execute(
-        """
-        INSERT INTO note_delete_codes (note_id, admin_id, pin_hash, expires_at, created_at)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
-        (note_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
-    )
-    conn.commit()
-    sent = send_email(
-        admin["email"],
-        "ProjectONus delete activity PIN",
-        "\n".join([
-            "Your 6-digit PIN to delete this timeline activity is:",
-            "",
-            pin,
-            "",
-            f"Project: {note.get('project_name') or '-'}",
-            f"Room: {note.get('room_name') or '-'}",
-            f"Date: {note.get('note_date') or '-'}",
-            "",
-            "This PIN expires in 10 minutes.",
-            "If you did not request this, ignore this email."
-        ])
-    )
-    if not sent:
-        conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s AND admin_id = %s", (note_id, admin["id"]))
-        conn.commit()
-        conn.close()
-        flash("Delete PIN could not be sent. Check SMTP email settings first.")
-        return redirect(next_url)
-    conn.close()
-    flash("A 6-digit delete PIN was sent to your admin email.")
-    return redirect(url_for("confirm_delete_note", note_id=note_id, next=next_url))
-
-
-@app.route("/note/<int:note_id>/delete/confirm", methods=["GET", "POST"])
-@admin_required
-def confirm_delete_note(note_id):
-    next_url = safe_next_url("index")
-    conn = db()
-    note = conn.execute(
-        """
-        SELECT notes.*, rooms.name AS room_name, rooms.project_id, projects.name AS project_name
-        FROM notes
-        JOIN rooms ON notes.room_id = rooms.id
-        JOIN projects ON rooms.project_id = projects.id
-        WHERE notes.id = %s
-        """,
-        (note_id,)
-    ).fetchone()
-    if not note:
-        conn.close()
-        flash("Activity not found.")
-        return redirect(next_url)
-    if not user_can_access_project(conn, note["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-
-    if request.method == "POST":
-        pin = request.form.get("pin", "").strip()
-        code = conn.execute(
-            """
-            SELECT * FROM note_delete_codes
-            WHERE note_id = %s AND admin_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (note_id, session.get("user_id"))
-        ).fetchone()
-        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
-        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
-            conn.close()
-            flash("Delete PIN expired. Press Delete Activity again to get a new PIN.")
-            return redirect(next_url)
-        if not check_password_hash(code["pin_hash"], pin):
-            conn.close()
-            flash("Invalid delete PIN.")
-            return redirect(url_for("confirm_delete_note", note_id=note_id, next=next_url))
-
-        conn.execute("DELETE FROM note_delete_codes WHERE note_id = %s", (note_id,))
-        conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
-        conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
-        conn.commit()
-        conn.close()
-        flash("Timeline activity deleted.")
-        return redirect(next_url)
-
-    conn.close()
-    return render_template("delete_activity_confirm.html", activity=note, activity_label="room note", next_url=next_url)
 
 
 @app.route("/room/<int:room_id>/tasks", methods=["POST"])
@@ -6600,168 +5888,15 @@ def delete_task_attachment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if not can_delete_task_attachment_item(task, attachment):
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id")):
         conn.close()
         flash("You do not have permission to delete this picture.")
         return redirect(next_url)
-    conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
     conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
     conn.commit()
     conn.close()
     flash("Picture deleted.")
     return redirect(next_url)
-
-
-@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/delete/request", methods=["POST"])
-@admin_required
-def request_delete_task_attachment(task_id, attachment_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
-    conn = db()
-    task = conn.execute(
-        """
-        SELECT tasks.*, projects.name AS project_name
-        FROM tasks
-        JOIN projects ON tasks.project_id = projects.id
-        WHERE tasks.id = %s
-        """,
-        (task_id,)
-    ).fetchone()
-    attachment = conn.execute(
-        """
-        SELECT task_attachments.*, rooms.name AS room_name
-        FROM task_attachments
-        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
-        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
-        """,
-        (attachment_id, task_id)
-    ).fetchone()
-    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
-    if not task or not attachment:
-        conn.close()
-        flash("Activity not found.")
-        return redirect(next_url)
-    if not user_can_access_project(conn, task["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-    if not admin or not admin.get("email"):
-        conn.close()
-        flash("Your admin account needs an email before a delete PIN can be sent.")
-        return redirect(next_url)
-
-    pin = f"{secrets.randbelow(1000000):06d}"
-    conn.execute(
-        "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s AND admin_id = %s",
-        (attachment_id, task_id, admin["id"])
-    )
-    conn.execute(
-        """
-        INSERT INTO task_attachment_delete_codes (attachment_id, task_id, admin_id, pin_hash, expires_at, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (attachment_id, task_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
-    )
-    conn.commit()
-    sent = send_email(
-        admin["email"],
-        "ProjectONus delete activity PIN",
-        "\n".join([
-            "Your 6-digit PIN to delete this timeline activity is:",
-            "",
-            pin,
-            "",
-            f"Project: {task.get('project_name') or '-'}",
-            f"Task: {task_display_name(task)}",
-            f"Room: {attachment.get('room_name') or '-'}",
-            f"Type: {attachment.get('file_type') or 'media'}",
-            "",
-            "This PIN expires in 10 minutes.",
-            "If you did not request this, ignore this email."
-        ])
-    )
-    if not sent:
-        conn.execute(
-            "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s AND admin_id = %s",
-            (attachment_id, task_id, admin["id"])
-        )
-        conn.commit()
-        conn.close()
-        flash("Delete PIN could not be sent. Check SMTP email settings first.")
-        return redirect(next_url)
-    conn.close()
-    flash("A 6-digit delete PIN was sent to your admin email.")
-    return redirect(url_for("confirm_delete_task_attachment", task_id=task_id, attachment_id=attachment_id, next=next_url))
-
-
-@app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/delete/confirm", methods=["GET", "POST"])
-@admin_required
-def confirm_delete_task_attachment(task_id, attachment_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
-    conn = db()
-    task = conn.execute(
-        """
-        SELECT tasks.*, projects.name AS project_name
-        FROM tasks
-        JOIN projects ON tasks.project_id = projects.id
-        WHERE tasks.id = %s
-        """,
-        (task_id,)
-    ).fetchone()
-    attachment = conn.execute(
-        """
-        SELECT task_attachments.*, rooms.name AS room_name
-        FROM task_attachments
-        LEFT JOIN rooms ON task_attachments.room_id = rooms.id
-        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
-        """,
-        (attachment_id, task_id)
-    ).fetchone()
-    if not task or not attachment:
-        conn.close()
-        flash("Activity not found.")
-        return redirect(next_url)
-    if not user_can_access_project(conn, task["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-
-    if request.method == "POST":
-        pin = request.form.get("pin", "").strip()
-        code = conn.execute(
-            """
-            SELECT * FROM task_attachment_delete_codes
-            WHERE attachment_id = %s AND task_id = %s AND admin_id = %s
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            (attachment_id, task_id, session.get("user_id"))
-        ).fetchone()
-        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
-        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
-            conn.close()
-            flash("Delete PIN expired. Press Delete Activity again to get a new PIN.")
-            return redirect(next_url)
-        if not check_password_hash(code["pin_hash"], pin):
-            conn.close()
-            flash("Invalid delete PIN.")
-            return redirect(url_for("confirm_delete_task_attachment", task_id=task_id, attachment_id=attachment_id, next=next_url))
-
-        conn.execute(
-            "DELETE FROM task_attachment_delete_codes WHERE attachment_id = %s AND task_id = %s",
-            (attachment_id, task_id)
-        )
-        conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
-        conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
-        conn.commit()
-        conn.close()
-        flash("Timeline activity deleted.")
-        return redirect(next_url)
-
-    activity = dict(attachment)
-    activity["project_name"] = task.get("project_name")
-    activity["task_name"] = task_display_name(task)
-    conn.close()
-    return render_template("delete_activity_confirm.html", activity=activity, activity_label="task media", next_url=next_url)
 
 
 @app.route("/tasks/<int:task_id>/attachments/<int:attachment_id>/comment", methods=["POST"])
@@ -6782,163 +5917,17 @@ def update_task_attachment_comment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if request.form.get("action") == "delete":
-        if not can_delete_task_attachment_item(task, attachment):
-            conn.close()
-            flash("You do not have permission to delete this item.")
-            return redirect(next_url)
-        conn.execute("DELETE FROM comment_actions WHERE source_type = 'task_attachment' AND source_id = %s", (attachment_id,))
-        conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
-        conn.commit()
-        conn.close()
-        flash("Comment/media deleted.")
-        return redirect(next_url)
     if not (is_main_admin() or has_perm("edit_comments") or attachment.get("created_by") == session.get("user_id")):
         conn.close()
         flash("You do not have permission to edit this comment.")
         return redirect(next_url)
-
-    error, photo, audio = comment_media_uploads(
-        ["extra_photo", "extra_photo_camera"],
-        ["extra_audio"]
-    )
-    if error:
-        conn.close()
-        flash(error)
-        return redirect(next_url)
-    comment = request.form.get("comment", "").strip()
     conn.execute(
         "UPDATE task_attachments SET comment = %s WHERE id = %s AND task_id = %s",
-        (comment, attachment_id, task_id)
-    )
-    upsert_comment_action(conn, "task_attachment", attachment_id)
-    extra_comment = request.form.get("extra_media_comment", "").strip() or comment
-    added_media = insert_extra_task_media(
-        conn,
-        task_id,
-        attachment.get("room_id"),
-        attachment.get("inventory_item_id"),
-        photo,
-        audio,
-        extra_comment
+        (request.form.get("comment", "").strip(), attachment_id, task_id)
     )
     conn.commit()
     conn.close()
-    flash("Comment updated." if not added_media else "Comment updated and media added.")
-    return redirect(next_url)
-
-
-@app.route("/tasks/<int:task_id>/field-note", methods=["POST"])
-@login_required
-def add_task_field_note(task_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
-    conn = db()
-    task = conn.execute(
-        """
-        SELECT tasks.*, projects.name AS project_name
-        FROM tasks
-        JOIN projects ON tasks.project_id = projects.id
-        WHERE tasks.id = %s
-        """,
-        (task_id,)
-    ).fetchone()
-    if not task:
-        conn.close()
-        flash("Task not found.")
-        return redirect(url_for("my_tasks"))
-    if not user_can_access_project(conn, task["project_id"]):
-        conn.close()
-        flash("You do not have access to this project.")
-        return redirect(url_for("index"))
-    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
-        conn.close()
-        flash("This task is assigned to another user.")
-        return redirect(next_url)
-
-    requested_room = request.form.get("field_note_room_id") or task.get("room_id")
-    room_id = project_room_id_or_none(conn, task["project_id"], requested_room) if requested_room else None
-    if requested_room and not room_id:
-        conn.close()
-        flash("Choose a room that belongs to this project.")
-        return redirect(next_url)
-
-    comment = request.form.get("field_note_comment", "").strip()
-    photo = request.files.get("field_note_photo") or request.files.get("field_note_camera")
-    audio = request.files.get("field_note_audio")
-    wants_photo = bool(photo and photo.filename)
-    wants_audio = bool(audio and audio.filename)
-    if wants_photo and not allowed_photo(photo.filename):
-        conn.close()
-        flash("Please upload a valid picture.")
-        return redirect(next_url)
-    if wants_audio and not allowed_audio(audio.filename):
-        conn.close()
-        flash("Please upload a valid audio file.")
-        return redirect(next_url)
-    if not comment and not wants_photo and not wants_audio:
-        conn.close()
-        flash("Add a comment, picture, or audio before saving the field note.")
-        return redirect(next_url)
-
-    uploads = []
-    for uploaded, field_name, file_type in [
-        (photo, "field_note_photo", "photo"),
-        (audio, "field_note_audio", "audio"),
-    ]:
-        if not uploaded or not uploaded.filename:
-            continue
-        data = uploaded.read()
-        if not data:
-            continue
-        display_name = task_attachment_display_filename(uploaded, field_name, file_type)
-        uploads.append({
-            "room_id": room_id,
-            "file_type": file_type,
-            "data": data,
-            "filename": display_name,
-            "content_type": upload_content_type(
-                display_name,
-                uploaded.content_type or ("audio/webm" if file_type == "audio" else "image/jpeg")
-            ),
-            "comment": comment,
-        })
-
-    inserted_attachments, _, _, _ = insert_task_attachments(conn, task_id, uploads) if uploads else ([], None, None, set())
-    if comment and not inserted_attachments:
-        note_attachment = conn.execute(
-            """
-            INSERT INTO task_attachments
-            (task_id, room_id, file_type, storage_path, original_filename, comment, created_by, created_at)
-            VALUES (%s, %s, 'note', NULL, NULL, %s, %s, %s)
-            RETURNING id
-            """,
-            (task_id, room_id, comment, session.get("user_id"), utc_now_iso())
-        ).fetchone()
-        upsert_comment_action(conn, "task_attachment", note_attachment["id"] if note_attachment else None)
-
-    actor = conn.execute("SELECT name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
-    note_parts = []
-    if comment:
-        note_parts.append("comment")
-    if wants_photo:
-        note_parts.append("picture")
-    if wants_audio:
-        note_parts.append("audio")
-    add_notification(
-        conn,
-        session.get("user_id"),
-        actor.get("name") or session.get("name"),
-        actor.get("email") or "",
-        actor.get("role") or session.get("role"),
-        "field_note_added",
-        task.get("project_id"),
-        task_id,
-        f"{actor.get('name') or session.get('name') or 'User'} added {', '.join(note_parts) or 'field note'} to {task_display_name(task)}.",
-        room_id
-    )
-    conn.commit()
-    conn.close()
-    flash("Field note saved.")
+    flash("Comment updated.")
     return redirect(next_url)
 
 
@@ -6983,8 +5972,7 @@ def complete_task(task_id):
         flash(upload_error)
         return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
-    existing_task_photo = task_has_photo_attachment(conn, task_id, completion_room_id)
-    if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file") and not existing_task_photo:
+    if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
         conn.close()
         flash("This task requires a picture before it can be completed.")
         if task.get("room_id"):
@@ -7032,7 +6020,6 @@ def complete_task(task_id):
         f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
         tuple(params)
     )
-    upsert_comment_action(conn, "task_completion", task_id)
     if task.get("supplier_id") and mark_entire_task_done:
         now = utc_now_iso()
         conn.execute(
@@ -7407,8 +6394,7 @@ def my_tasks():
         task_period=task_period,
         task_date=task_date,
         task_date_filter=task_date_filter,
-        open_only=open_only,
-        today=local_now().date().isoformat()
+        open_only=open_only
     )
 
 
@@ -7539,27 +6525,11 @@ def confirm_delete_task(task_id):
 
 
 def task_report_status(task):
-    return TASK_REPORT_STATUS_LABELS[task_report_status_key(task)]
-
-
-TASK_REPORT_STATUS_LABELS = {
-    "not_seen": "Not Seen",
-    "in_progress": "In Progress",
-    "done": "Done",
-}
-
-
-def task_report_status_key(task):
     if task.get("status") == "done":
-        return "done"
+        return "Done"
     if task.get("accepted_at"):
-        return "in_progress"
-    return "not_seen"
-
-
-def normalize_task_report_status(status):
-    status = (status or "").strip()
-    return status if status in TASK_REPORT_STATUS_LABELS else ""
+        return "In Progress"
+    return "Not Seen"
 
 
 def task_in_report_range(task, period, selected_date):
@@ -7574,27 +6544,11 @@ def task_in_report_range(task, period, selected_date):
     return start <= scheduled < end
 
 
-def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None, selected_room_id=None, selected_task_status=None):
-    selected_task_status = normalize_task_report_status(selected_task_status)
+def task_report_data(period, selected_date, selected_project_id=None, selected_user_id=None):
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
     users = conn.execute("SELECT id, name, email, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-    room_params = []
-    room_where = ""
-    if selected_project_id:
-        room_where = "WHERE rooms.project_id = %s"
-        room_params.append(selected_project_id)
-    rooms = conn.execute(
-        f"""
-        SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
-        FROM rooms
-        JOIN projects ON rooms.project_id = projects.id
-        {room_where}
-        ORDER BY projects.name, rooms.name
-        """,
-        tuple(room_params)
-    ).fetchall()
     query = """
         SELECT tasks.*,
                projects.name AS project_name,
@@ -7620,24 +6574,17 @@ def task_report_data(period, selected_date, selected_project_id=None, selected_u
     if selected_user_id:
         query += " AND tasks.assigned_user_id = %s"
         params.append(selected_user_id)
-    if selected_room_id:
-        query += " AND tasks.room_id = %s"
-        params.append(selected_room_id)
     query += " ORDER BY projects.name, tasks.task_number DESC NULLS LAST, tasks.created_at DESC, tasks.id DESC"
     tasks = conn.execute(query, tuple(params)).fetchall()
     conn.close()
     tasks = [t for t in tasks if task_in_report_range(t, period, selected_date)]
-    if selected_task_status:
-        tasks = [t for t in tasks if task_report_status_key(t) == selected_task_status]
     return {
         "period": period,
         "start": start,
         "end": end,
         "projects": projects,
-        "rooms": rooms,
         "users": users,
-        "tasks": tasks,
-        "selected_task_status": selected_task_status,
+        "tasks": tasks
     }
 
 
@@ -7648,9 +6595,7 @@ def task_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
-    selected_room_id = request.args.get("room_id", type=int)
-    selected_task_status = request.args.get("task_status", "")
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id, selected_room_id, selected_task_status)
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
     return render_template(
         "task_report.html",
         report=report,
@@ -7658,9 +6603,6 @@ def task_report():
         selected_date=selected_date,
         selected_project_id=selected_project_id,
         selected_user_id=selected_user_id,
-        selected_room_id=selected_room_id,
-        selected_task_status=report["selected_task_status"],
-        task_report_status_options=TASK_REPORT_STATUS_LABELS,
         task_report_status=task_report_status
     )
 
@@ -7672,9 +6614,7 @@ def task_report_export():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
-    selected_room_id = request.args.get("room_id", type=int)
-    selected_task_status = request.args.get("task_status", "")
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id, selected_room_id, selected_task_status)
+    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -7792,10 +6732,6 @@ def load_comment_detail_record(conn, source_type, source_id):
                 notes.comment,
                 notes.photo_file,
                 notes.audio_file,
-                NULL::TEXT AS media_file_type,
-                NULL::TEXT AS media_path,
-                NULL::TEXT AS media_filename,
-                NULL::INTEGER AS inventory_item_id,
                 notes.user_id AS created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7805,16 +6741,11 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 NULL::INTEGER AS task_id,
                 NULL::TEXT AS task_number,
-                NULL::TEXT AS task_title,
-                COALESCE(comment_actions.status, 'no_action') AS action_status,
-                comment_actions.assigned_to AS action_assigned_to,
-                comment_actions.due_date AS action_due_date,
-                comment_actions.action_note
+                NULL::TEXT AS task_title
             FROM notes
             JOIN rooms ON notes.room_id = rooms.id
             JOIN projects ON rooms.project_id = projects.id
             LEFT JOIN users ON notes.user_id = users.id
-            LEFT JOIN comment_actions ON comment_actions.source_type = 'room_note' AND comment_actions.source_id = notes.id
             WHERE notes.id = %s
             """,
             (source_id,)
@@ -7830,10 +6761,6 @@ def load_comment_detail_record(conn, source_type, source_id):
                 task_attachments.comment,
                 CASE WHEN task_attachments.file_type = 'photo' THEN task_attachments.storage_path ELSE NULL END AS photo_file,
                 CASE WHEN task_attachments.file_type = 'audio' THEN task_attachments.storage_path ELSE NULL END AS audio_file,
-                task_attachments.file_type AS media_file_type,
-                task_attachments.storage_path AS media_path,
-                task_attachments.original_filename AS media_filename,
-                task_attachments.inventory_item_id,
                 task_attachments.created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7843,17 +6770,12 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 tasks.id AS task_id,
                 tasks.task_number,
-                tasks.title AS task_title,
-                COALESCE(comment_actions.status, 'no_action') AS action_status,
-                comment_actions.assigned_to AS action_assigned_to,
-                comment_actions.due_date AS action_due_date,
-                comment_actions.action_note
+                tasks.title AS task_title
             FROM task_attachments
             JOIN tasks ON task_attachments.task_id = tasks.id
             JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN rooms ON rooms.id = COALESCE(task_attachments.room_id, tasks.room_id)
             LEFT JOIN users ON task_attachments.created_by = users.id
-            LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
             WHERE task_attachments.id = %s
             """,
             (source_id,)
@@ -7869,10 +6791,6 @@ def load_comment_detail_record(conn, source_type, source_id):
                 tasks.completion_comment AS comment,
                 tasks.completion_photo_file AS photo_file,
                 tasks.completion_audio_file AS audio_file,
-                NULL::TEXT AS media_file_type,
-                NULL::TEXT AS media_path,
-                NULL::TEXT AS media_filename,
-                NULL::INTEGER AS inventory_item_id,
                 tasks.assigned_user_id AS created_by,
                 users.name AS created_by_name,
                 users.email AS created_by_email,
@@ -7882,16 +6800,11 @@ def load_comment_detail_record(conn, source_type, source_id):
                 rooms.name AS room_name,
                 tasks.id AS task_id,
                 tasks.task_number,
-                tasks.title AS task_title,
-                COALESCE(comment_actions.status, 'no_action') AS action_status,
-                comment_actions.assigned_to AS action_assigned_to,
-                comment_actions.due_date AS action_due_date,
-                comment_actions.action_note
+                tasks.title AS task_title
             FROM tasks
             JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN rooms ON tasks.room_id = rooms.id
             LEFT JOIN users ON tasks.assigned_user_id = users.id
-            LEFT JOIN comment_actions ON comment_actions.source_type = 'task_completion' AND comment_actions.source_id = tasks.id
             WHERE tasks.id = %s
             """,
             (source_id,)
@@ -7917,13 +6830,10 @@ def update_comment_detail_record(conn, source_type, source_id, comment):
 
 def delete_comment_detail_record(conn, source_type, source_id):
     if source_type == "room_note":
-        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute("DELETE FROM notes WHERE id = %s", (source_id,))
     elif source_type == "task_attachment":
-        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute("DELETE FROM task_attachments WHERE id = %s", (source_id,))
     elif source_type == "task_completion":
-        conn.execute("DELETE FROM comment_actions WHERE source_type = %s AND source_id = %s", (source_type, source_id))
         conn.execute(
             """
             UPDATE tasks
@@ -7936,20 +6846,12 @@ def delete_comment_detail_record(conn, source_type, source_id):
         )
 
 
-def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_action_status=None, selected_user_id=None):
+def comment_report_data(period, selected_date, selected_project_id=None, selected_room_id=None):
     if period not in ["day", "week", "month", "year"]:
         period = "day"
-    raw_selected_action_status = (selected_action_status or "").strip()
-    if raw_selected_action_status == COMMENT_ACTION_NEEDED_FILTER:
-        selected_action_status = COMMENT_ACTION_NEEDED_FILTER
-    elif raw_selected_action_status in COMMENT_ACTION_STATUS_LABELS or raw_selected_action_status in COMMENT_ACTION_STATUS_ALIASES:
-        selected_action_status = normalize_comment_action_status(raw_selected_action_status)
-    else:
-        selected_action_status = ""
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
-    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     room_params = []
     room_where = ""
     if selected_project_id:
@@ -7965,6 +6867,8 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         """,
         tuple(room_params)
     ).fetchall()
+    if selected_project_id and selected_room_id and not any(room["id"] == selected_room_id for room in rooms):
+        selected_room_id = None
 
     note_where = ["1=1"]
     note_params = []
@@ -8010,16 +6914,11 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             NULL::INTEGER AS task_id,
             NULL::TEXT AS task_number,
-            NULL::TEXT AS task_title,
-            COALESCE(comment_actions.status, 'no_action') AS action_status,
-            comment_actions.assigned_to AS action_assigned_to,
-            comment_actions.due_date AS action_due_date,
-            comment_actions.action_note
+            NULL::TEXT AS task_title
         FROM notes
         JOIN rooms ON notes.room_id = rooms.id
         JOIN projects ON rooms.project_id = projects.id
         LEFT JOIN users ON notes.user_id = users.id
-        LEFT JOIN comment_actions ON comment_actions.source_type = 'room_note' AND comment_actions.source_id = notes.id
         WHERE """ + " AND ".join(note_where) + """
           AND (COALESCE(notes.comment, '') <> '' OR notes.photo_file IS NOT NULL OR notes.audio_file IS NOT NULL)
         """,
@@ -8047,17 +6946,12 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             tasks.id AS task_id,
             tasks.task_number,
-            tasks.title AS task_title,
-            COALESCE(comment_actions.status, 'no_action') AS action_status,
-            comment_actions.assigned_to AS action_assigned_to,
-            comment_actions.due_date AS action_due_date,
-            comment_actions.action_note
+            tasks.title AS task_title
         FROM task_attachments
         JOIN tasks ON task_attachments.task_id = tasks.id
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN rooms ON rooms.id = COALESCE(task_attachments.room_id, tasks.room_id)
         LEFT JOIN users ON task_attachments.created_by = users.id
-        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_attachment' AND comment_actions.source_id = task_attachments.id
         WHERE """ + " AND ".join(attachment_where) + """
           AND (COALESCE(task_attachments.comment, '') <> '' OR task_attachments.storage_path IS NOT NULL)
         """,
@@ -8085,16 +6979,11 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
             rooms.name AS room_name,
             tasks.id AS task_id,
             tasks.task_number,
-            tasks.title AS task_title,
-            COALESCE(comment_actions.status, 'no_action') AS action_status,
-            comment_actions.assigned_to AS action_assigned_to,
-            comment_actions.due_date AS action_due_date,
-            comment_actions.action_note
+            tasks.title AS task_title
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN users ON tasks.assigned_user_id = users.id
-        LEFT JOIN comment_actions ON comment_actions.source_type = 'task_completion' AND comment_actions.source_id = tasks.id
         WHERE """ + " AND ".join(completion_where) + """
         """,
         tuple(completion_params)
@@ -8104,13 +6993,6 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
     for row in list(note_rows) + list(attachment_rows) + list(completion_rows):
         record = dict(row)
         if not comment_record_in_range(record, period, selected_date):
-            continue
-        if selected_user_id and record.get("created_by") != selected_user_id:
-            continue
-        record["action_status"] = normalize_comment_action_status(record.get("action_status"))
-        if selected_action_status == COMMENT_ACTION_NEEDED_FILTER and not comment_action_is_needed(record["action_status"]):
-            continue
-        if selected_action_status not in ["", COMMENT_ACTION_NEEDED_FILTER] and record["action_status"] != selected_action_status:
             continue
         record["source_label"] = comment_report_source_label(record.get("source_type"))
         record["context_url"] = comment_report_context_url(record)
@@ -8124,9 +7006,8 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         "end": end,
         "projects": projects,
         "rooms": rooms,
-        "users": users,
+        "selected_room_id": selected_room_id,
         "records": records,
-        "selected_action_status": selected_action_status,
     }
 
 
@@ -8137,18 +7018,14 @@ def comment_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
-    selected_user_id = request.args.get("user_id", type=int)
-    selected_action_status = request.args.get("action_status", "")
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status, selected_user_id)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
     return render_template(
         "comment_report.html",
         report=report,
         period=report["period"],
         selected_date=selected_date,
         selected_project_id=selected_project_id,
-        selected_room_id=selected_room_id,
-        selected_user_id=selected_user_id,
-        selected_action_status=report["selected_action_status"]
+        selected_room_id=report["selected_room_id"]
     )
 
 
@@ -8159,15 +7036,12 @@ def comment_report_export():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
-    selected_user_id = request.args.get("user_id", type=int)
-    selected_action_status = request.args.get("action_status", "")
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id, selected_action_status, selected_user_id)
+    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Date", "Created At", "Project", "Room", "Type", "Action Status",
-        "Assign / Send To", "Action Due Date", "Action Note", "Comment",
-        "Created By", "Created By Email", "Task #", "Task"
+        "Date", "Created At", "Project", "Room", "Type", "Comment", "Created By",
+        "Created By Email", "Task #", "Task"
     ])
     for record in report["records"]:
         writer.writerow([
@@ -8176,10 +7050,6 @@ def comment_report_export():
             record.get("project_name") or "",
             record.get("room_name") or "",
             record.get("source_label") or "",
-            comment_action_status_label(record.get("action_status")),
-            comment_action_assignee_label(record.get("action_assigned_to")),
-            format_date(record.get("action_due_date")) if record.get("action_due_date") else "",
-            record.get("action_note") or "",
             record.get("comment") or "",
             record.get("created_by_name") or "",
             record.get("created_by_email") or "",
@@ -8214,47 +7084,10 @@ def comment_detail(source_type, source_id):
             conn.close()
             flash("Comment/media deleted.")
             return redirect(next_url)
-        error, photo, audio = comment_media_uploads(
-            ["extra_photo", "extra_photo_camera"],
-            ["extra_audio"]
-        )
-        if error:
-            conn.close()
-            flash(error)
-            return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
-        comment = request.form.get("comment", "").strip()
-        update_comment_detail_record(conn, source_type, source_id, comment)
-        upsert_comment_action(conn, source_type, source_id)
-        media_comment = request.form.get("extra_media_comment", "").strip() or comment
-        added_media = 0
-        if photo or audio:
-            if source_type == "room_note":
-                added_media = add_note_edit_media(
-                    conn,
-                    {
-                        "id": source_id,
-                        "room_id": record.get("room_id"),
-                        "photo_file": record.get("photo_file"),
-                        "audio_file": record.get("audio_file"),
-                    },
-                    record.get("record_date") or local_now().date().isoformat(),
-                    media_comment,
-                    photo,
-                    audio
-                )
-            elif source_type in ["task_attachment", "task_completion"] and record.get("task_id"):
-                added_media = insert_extra_task_media(
-                    conn,
-                    record.get("task_id"),
-                    record.get("room_id"),
-                    record.get("inventory_item_id"),
-                    photo,
-                    audio,
-                    media_comment
-                )
+        update_comment_detail_record(conn, source_type, source_id, request.form.get("comment", "").strip())
         conn.commit()
         conn.close()
-        flash("Comment updated." if not added_media else "Comment updated and media added.")
+        flash("Comment updated.")
         return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
 
     conn.close()
@@ -8300,9 +7133,7 @@ def team_map():
                         <a href="/users">Users</a>
                         <a href="/settings">Settings</a>
                         <a href="/attendance/report">Time Report</a>
-                        <a href="/login/report">Login Report</a>
                         <a href="/tasks/report">Task Report</a>
-                        <a href="/comments/report">Comment Report</a>
                         <a href="/team-map">Where Is My Team</a>
                         <a href="/backup">Backup</a>
                     </nav>
@@ -8340,102 +7171,6 @@ def team_map_data():
     finally:
         if conn:
             conn.close()
-
-
-def login_event_in_range(event, period, selected_date):
-    period, start, end = attendance_range(period, selected_date)
-    event_dt = local_datetime(event.get("created_at"))
-    return bool(event_dt and start <= event_dt < end)
-
-
-def login_report_data(period, selected_date, selected_user_id=None):
-    if period not in ["day", "week", "month"]:
-        period = "day"
-    period, start, end = attendance_range(period, selected_date)
-    conn = db()
-    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
-    query = """
-        SELECT login_events.*,
-               COALESCE(login_events.user_name, users.name) AS report_user_name,
-               COALESCE(login_events.user_email, users.email) AS report_user_email,
-               COALESCE(login_events.role, users.role) AS report_role
-        FROM login_events
-        LEFT JOIN users ON login_events.user_id = users.id
-        WHERE login_events.event_type = 'login'
-          AND login_events.created_at >= %s
-          AND login_events.created_at < %s
-    """
-    params = [
-        storage_datetime(start - timedelta(days=1)).isoformat(),
-        storage_datetime(end + timedelta(days=1)).isoformat()
-    ]
-    if selected_user_id:
-        query += " AND login_events.user_id = %s"
-        params.append(selected_user_id)
-    query += " ORDER BY login_events.created_at DESC, login_events.id DESC"
-    events = conn.execute(query, tuple(params)).fetchall()
-    conn.close()
-    events = [event for event in events if login_event_in_range(event, period, selected_date)]
-    summary = {}
-    for event in events:
-        key = event.get("user_id") or f"deleted-{event.get('report_user_email') or event.get('id')}"
-        if key not in summary:
-            summary[key] = {
-                "name": event.get("report_user_name") or "Unknown user",
-                "email": event.get("report_user_email") or "",
-                "role": event.get("report_role") or "",
-                "count": 0,
-                "last_open": event.get("created_at")
-            }
-        summary[key]["count"] += 1
-    return {"users": users, "events": events, "summary": summary.values(), "period": period, "start": start, "end": end}
-
-
-@app.route("/login/report")
-@admin_required
-def login_report():
-    period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or local_now().date().isoformat()
-    selected_user_id = request.args.get("user_id", type=int)
-    report = login_report_data(period, selected_date, selected_user_id)
-    return render_template(
-        "login_report.html",
-        report=report,
-        users=report["users"],
-        events=report["events"],
-        summary=report["summary"],
-        period=report["period"],
-        selected_date=selected_date,
-        selected_user_id=selected_user_id,
-        start=report["start"],
-        end=report["end"]
-    )
-
-
-@app.route("/login/report/export")
-@admin_required
-def login_report_export():
-    period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or local_now().date().isoformat()
-    selected_user_id = request.args.get("user_id", type=int)
-    report = login_report_data(period, selected_date, selected_user_id)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["User", "Email", "Role", "Date / Time", "Message"])
-    for event in report["events"]:
-        writer.writerow([
-            event.get("report_user_name") or "Unknown user",
-            event.get("report_user_email") or "",
-            event.get("report_role") or "",
-            format_datetime(event.get("created_at")),
-            event.get("message") or "Opened ProjectONus"
-        ])
-    filename = f"projectonus_login_report_{report['period']}_{selected_date}.csv"
-    return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
 
 
 @app.route("/attendance/report")
@@ -8957,54 +7692,14 @@ def edit_note(note_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
     if request.method == "POST":
-        next_url = safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"])
-        if request.form.get("action") == "delete":
-            can_delete_note = (
-                is_main_admin()
-                or has_perm("delete_comments")
-                or (note.get("photo_file") and has_perm("delete_pictures"))
-                or (note.get("audio_file") and has_perm("delete_audio"))
-                or note.get("user_id") == session.get("user_id")
-            )
-            if not can_delete_note:
-                conn.close()
-                flash("You do not have permission to delete this item.")
-                return redirect(next_url)
-            conn.execute("DELETE FROM notes WHERE id = %s", (note_id,))
-            conn.execute("DELETE FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s", (note_id,))
-            conn.commit()
-            conn.close()
-            flash("Comment/media deleted.")
-            return redirect(next_url)
-
-        error, photo, audio = comment_media_uploads(
-            ["extra_photo", "extra_photo_camera"],
-            ["extra_audio"]
-        )
-        if error:
-            conn.close()
-            flash(error)
-            return redirect(next_url)
-        note_date = request.form.get("note_date") or note.get("note_date") or local_now().date().isoformat()
-        comment = request.form.get("comment", "").strip()
-        if not comment and not note.get("photo_file") and not note.get("audio_file") and not photo and not audio:
-            conn.close()
-            flash("Add a comment, picture, or audio before saving.")
-            return redirect(next_url)
-        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (comment, note_date, note_id))
-        upsert_comment_action(conn, "room_note", note_id)
-        media_comment = request.form.get("extra_media_comment", "").strip() or comment
-        added_media = add_note_edit_media(conn, note, note_date, media_comment, photo, audio)
+        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (request.form["comment"].strip(), request.form["note_date"], note_id))
         conn.commit()
+        room_id = note["room_id"]
         conn.close()
-        flash("Comment updated." if not added_media else "Comment updated and media added.")
-        return redirect(next_url)
-    comment_action = conn.execute(
-        "SELECT * FROM comment_actions WHERE source_type = 'room_note' AND source_id = %s",
-        (note_id,)
-    ).fetchone() or {}
+        flash("Comment updated.")
+        return redirect(safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=room_id))
     conn.close()
-    return render_template("edit_note.html", note=note, comment_action=comment_action, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
+    return render_template("edit_note.html", note=note, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
 
 
 @app.route("/backup")
@@ -9029,7 +7724,6 @@ def backup():
         ("login_events", "id"),
         ("task_number_counters", "month_key"),
         ("task_delete_codes", "id"),
-        ("inventory_delete_codes", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
         ("app_settings", "key"),
@@ -9068,7 +7762,7 @@ def backup():
         material_pictures = []
         backup_warnings.append(f"Material pictures could not be listed: {e}")
     try:
-        inventory_pictures = conn.execute("SELECT picture_file, audio_file FROM inventory_items WHERE picture_file IS NOT NULL OR audio_file IS NOT NULL").fetchall()
+        inventory_pictures = conn.execute("SELECT picture_file FROM inventory_items WHERE picture_file IS NOT NULL").fetchall()
     except Exception as e:
         conn.rollback()
         inventory_pictures = []
@@ -9125,7 +7819,6 @@ def backup():
             add_storage_file(m.get("picture_file"), "material_pictures")
         for item in inventory_pictures:
             add_storage_file(item.get("picture_file"), "inventory_pictures")
-            add_storage_file(item.get("audio_file"), "inventory_audio")
         for task in task_files:
             add_storage_file(task.get("task_photo_file"), "task_files")
             add_storage_file(task.get("task_audio_file"), "task_files")
@@ -9159,7 +7852,7 @@ def storage_file(storage_path):
         UNION
         SELECT project_id FROM material_inventory WHERE picture_file = %s
         UNION
-        SELECT project_id FROM inventory_items WHERE picture_file = %s OR audio_file = %s
+        SELECT project_id FROM inventory_items WHERE picture_file = %s
         UNION
         SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
         UNION
@@ -9167,7 +7860,6 @@ def storage_file(storage_path):
         LIMIT 1
         """,
         (
-            storage_path,
             storage_path,
             storage_path,
             storage_path,

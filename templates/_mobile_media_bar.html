@@ -5,8 +5,7 @@
 {% set media_comment_name = media_comment_name|default('') %}
 {% set media_comment_label = media_comment_label|default('Comment') %}
 {% set media_comment_placeholder = media_comment_placeholder|default('Comment about this picture or audio') %}
-{% set media_save_label = media_save_label|default('Save') %}
-{% set media_show_save = media_show_save|default(true) %}
+{% set media_save_label = media_save_label|default('Attach') %}
 <div class="mobileMediaPicker" data-media-picker>
     <div class="mobileMediaNativeInputs">
         {% if media_upload_name %}
@@ -31,9 +30,7 @@
                 <p class="muted" data-media-filename></p>
             </div>
         </div>
-        {% if media_show_save %}
-            <button type="button" class="mobileMediaPreviewSave" data-media-save>{{ media_save_label }}</button>
-        {% endif %}
+        <button type="button" class="mobileMediaPreviewSave" data-media-save data-media-save-label="{{ media_save_label }}">{{ media_save_label }}</button>
     </div>
     <div class="mobileMediaBar" aria-label="Add picture, attachment, or audio">
         {% if media_upload_name %}

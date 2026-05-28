@@ -7,13 +7,13 @@
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
         <a class="btn-link" href="{{ url_for('my_tasks') }}">Today's Tasks</a>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
-        {% if can_view_inventory() %}<a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>{% endif %}
+        <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% else %}
         <a class="btn-link" href="{{ url_for('mobile_projects') }}">Projects</a>
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
         <a class="btn-link" href="{{ url_for('my_tasks') }}">Today's Tasks</a>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
-        {% if can_view_inventory() %}<a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>{% endif %}
+        <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% endif %}
 </div>
 <style>

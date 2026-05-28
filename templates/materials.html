@@ -7,7 +7,7 @@
     <a class="btn-link" href="{{ url_for('inventory', project_id=project.id) }}">Open Main Inventory</a>
 </div>
 
-{% if can_view_inventory() %}
+{% if can_edit_inventory() %}
 <div class="card">
     <h3>Add Item to This Project</h3>
     <form method="post" enctype="multipart/form-data">
@@ -37,18 +37,11 @@
                 <label>Status</label>
                 <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
             </div>
+            <div><label>Picture</label><input type="file" name="picture" accept="image/*,.heic,.heif"></div>
+            <div><label>Take Picture</label><input type="file" name="picture_camera" accept="image/*,.heic,.heif" capture="environment"></div>
         </div>
         <label>Used / Purchase Note</label>
         <textarea name="used_note" rows="2"></textarea>
-        {% set media_id = 'project_inventory_add_media' %}
-        {% set media_camera_name = 'picture_camera' %}
-        {% set media_upload_name = 'picture' %}
-        {% set media_audio_name = 'audio' %}
-        {% set media_comment_name = 'media_comment' %}
-        {% set media_comment_label = 'Picture / Audio Comment' %}
-        {% set media_comment_placeholder = 'Comment about this inventory picture or audio' %}
-        {% set media_save_label = 'Save Media' %}
-        {% include "_mobile_media_bar.html" %}
         <button type="submit">Add Inventory Item</button>
     </form>
 </div>
@@ -95,9 +88,9 @@
                     <th>Condition</th>
                     <th>Room / Location</th>
                     <th>Status</th>
-                    <th>Media</th>
+                    <th>Picture</th>
                     {% if can_edit_inventory() %}<th>Action</th>{% endif %}
-                    {% if is_main_admin() and not is_mobile_request() %}<th>Delete</th>{% endif %}
+                    {% if is_main_admin() %}<th>Delete</th>{% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -112,12 +105,7 @@
                     <td>{{ inventory_condition_label(m.item_condition) }}</td>
                     <td>{{ m.room_name or 'Project general' }}<br><span class="muted">{{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</span></td>
                     <td><span class="statusBadge">{{ inventory_status_label(m.status) }}</span>{% if m.used_by_name %}<br><span class="muted">By {{ m.used_by_name }}</span>{% endif %}</td>
-                    <td>
-                        {% if m.media_comment %}<p class="muted">{{ m.media_comment }}</p>{% endif %}
-                        {% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% endif %}
-                        {% if m.audio_file %}<audio controls src="{{ url_for('storage_file', storage_path=m.audio_file) }}"></audio>{% endif %}
-                        {% if not m.picture_file and not m.audio_file and not m.media_comment %}-{% endif %}
-                    </td>
+                    <td>{% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
                     <td>
                         {% if m.status == "needs_purchase" %}
@@ -151,7 +139,7 @@
                         </form>
                     </td>
                     {% endif %}
-                    {% if is_main_admin() and not is_mobile_request() %}
+                    {% if is_main_admin() %}
                     <td>
                         <form method="post" action="{{ url_for('delete_inventory_item', item_id=m.id) }}" onsubmit="return confirm('Delete this inventory item?');">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
@@ -174,7 +162,6 @@
 .inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:110px;border-radius:8px;border:1px solid var(--border)}
-.inventoryTable audio{max-width:180px;width:100%;display:block;margin-top:8px}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 </style>
 {% endblock %}

@@ -6,7 +6,7 @@
     <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Project</a>
 </div>
 
-{% if can_view_inventory() %}
+{% if can_edit_inventory() %}
 <div class="card">
     <h3>Add Item</h3>
     <form method="post" enctype="multipart/form-data">
@@ -35,15 +35,10 @@
         <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
         <label>Used / Purchase Note</label>
         <textarea name="used_note" rows="2"></textarea>
-        {% set media_id = 'mobile_project_inventory_add_media' %}
-        {% set media_camera_name = 'picture_camera' %}
-        {% set media_upload_name = 'picture' %}
-        {% set media_audio_name = 'audio' %}
-        {% set media_comment_name = 'media_comment' %}
-        {% set media_comment_label = 'Picture / Audio Comment' %}
-        {% set media_comment_placeholder = 'Comment about this inventory picture or audio' %}
-        {% set media_save_label = 'Save Media' %}
-        {% include "_mobile_media_bar.html" %}
+        <label>Take Picture</label>
+        <input type="file" name="picture_camera" accept="image/*,.heic,.heif" capture="environment">
+        <label>Upload Picture</label>
+        <input type="file" name="picture" accept="image/*,.heic,.heif">
         <button type="submit">Add Inventory Item</button>
     </form>
 </div>
@@ -56,14 +51,13 @@
             <strong>{{ m.item_name }}</strong>
             <p><strong>Date:</strong> {{ m.item_date }}<br><strong>Qty:</strong> {{ m.quantity }}</p>
             <p><strong>Model #:</strong> {{ m.item_model or '-' }}<br><strong>Brand:</strong> {{ m.brand or '-' }}</p>
+            {% if m.supplier_name %}<p><strong>Supplier:</strong> {{ m.supplier_name }}{% if m.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Condition:</strong> {{ inventory_condition_label(m.item_condition) }}</p>
             <p><strong>Room:</strong> {{ m.room_name or 'Project general' }}<br><strong>Located:</strong> {{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</p>
             <span class="statusBadge">{{ inventory_status_label(m.status) }}</span>
             {% if m.used_by_name %}<p class="muted">By {{ m.used_by_name }}</p>{% endif %}
             {% if m.used_note %}<p>{{ m.used_note }}</p>{% endif %}
-            {% if m.media_comment %}<p class="muted">{{ m.media_comment }}</p>{% endif %}
             {% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% endif %}
-            {% if m.audio_file %}<audio controls src="{{ url_for('storage_file', storage_path=m.audio_file) }}"></audio>{% endif %}
             {% if can_edit_inventory() %}
             {% if m.status == "needs_purchase" %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
@@ -108,7 +102,6 @@
 .inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
-.inventoryCard audio{width:100%;margin-top:8px}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 </style>
 {% endblock %}
