@@ -397,6 +397,7 @@
     let aiVoiceMimeType="audio/webm";
     let aiSpeechRecognition=null;
     let aiSpeechTranscript="";
+    let aiSpeechFinalTranscript="";
 
     function setAiVoiceStatus(message,isError=false){
         if(!aiVoiceTaskStatus)return;
@@ -495,6 +496,16 @@
         recognition.continuous=true;
         return recognition;
     }
+    function normalizeAiSpeechTranscript(text){
+        const words=String(text||"").trim().split(/\s+/).filter(Boolean);
+        const cleaned=[];
+        words.forEach(word=>{
+            if(cleaned.length<3||word.toLowerCase()!==cleaned[cleaned.length-1].toLowerCase()){
+                cleaned.push(word);
+            }
+        });
+        return cleaned.join(" ");
+    }
     if(aiVoiceTaskButton)aiVoiceTaskButton.addEventListener("click",()=>{
         if(aiVoiceTaskPanel)aiVoiceTaskPanel.hidden=!aiVoiceTaskPanel.hidden;
     });
@@ -517,12 +528,18 @@
         aiSpeechRecognition=createAiSpeechRecognition();
         if(aiSpeechRecognition){
             aiSpeechTranscript="";
+            aiSpeechFinalTranscript="";
             aiSpeechRecognition.onresult=event=>{
-                let transcript="";
-                for(let i=0;i<event.results.length;i++){
-                    transcript+=event.results[i][0].transcript+" ";
+                let interimTranscript="";
+                for(let i=event.resultIndex;i<event.results.length;i++){
+                    const phrase=event.results[i][0].transcript.trim();
+                    if(event.results[i].isFinal){
+                        aiSpeechFinalTranscript=(aiSpeechFinalTranscript+" "+phrase).trim();
+                    }else{
+                        interimTranscript=(interimTranscript+" "+phrase).trim();
+                    }
                 }
-                aiSpeechTranscript=transcript.trim();
+                aiSpeechTranscript=normalizeAiSpeechTranscript((aiSpeechFinalTranscript+" "+interimTranscript).trim());
                 if(aiTextTaskCommand)aiTextTaskCommand.value=aiSpeechTranscript;
             };
             aiSpeechRecognition.onerror=event=>{
@@ -576,7 +593,7 @@
     });
     if(aiVoiceStopButton)aiVoiceStopButton.addEventListener("click",()=>{
         if(aiSpeechRecognition){
-            const transcript=aiSpeechTranscript.trim();
+            const transcript=normalizeAiSpeechTranscript(aiSpeechTranscript.trim());
             try{aiSpeechRecognition.stop();}catch(error){}
             aiSpeechRecognition=null;
             aiVoiceStartButton.disabled=false;
