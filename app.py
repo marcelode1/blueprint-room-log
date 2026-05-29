@@ -5505,7 +5505,7 @@ def openai_realtime_task_context():
     return projects_context, users_context
 
 
-def clean_voice_task_payload(payload, projects_context, users_context):
+def clean_voice_task_payload(payload, projects_context, users_context, preferred_project_id=0, preferred_room_id=0, preferred_user_ids=None):
     project_ids = {int(project["id"]) for project in projects_context}
     rooms_by_id = {}
     for project in projects_context:
@@ -5525,11 +5525,25 @@ def clean_voice_task_payload(payload, projects_context, users_context):
     project_id = int_value("project_id")
     if project_id not in project_ids:
         project_id = 0
+    try:
+        preferred_project_id = int(preferred_project_id or 0)
+    except Exception:
+        preferred_project_id = 0
+    if preferred_project_id in project_ids:
+        project_id = preferred_project_id
     room_id = int_value("room_id")
     if room_id:
         room = rooms_by_id.get(room_id)
         if not room or (project_id and room["project_id"] != project_id):
             room_id = 0
+    if not room_id:
+        try:
+            preferred_room_id = int(preferred_room_id or 0)
+        except Exception:
+            preferred_room_id = 0
+        preferred_room = rooms_by_id.get(preferred_room_id)
+        if preferred_room and (not project_id or preferred_room["project_id"] == project_id):
+            room_id = preferred_room_id
     selected_users = []
     for value in payload.get("user_ids") or []:
         try:
@@ -5538,6 +5552,14 @@ def clean_voice_task_payload(payload, projects_context, users_context):
             continue
         if user_id in user_ids and user_id not in selected_users:
             selected_users.append(user_id)
+    if not selected_users:
+        for value in preferred_user_ids or []:
+            try:
+                user_id = int(value)
+            except Exception:
+                continue
+            if user_id in user_ids and user_id not in selected_users:
+                selected_users.append(user_id)
     task_start_date = text_value("task_start_date") or local_now().date().isoformat()
     return {
         "project_id": project_id,
@@ -5592,6 +5614,7 @@ def create_task_realtime_token():
             "Confirm what you understood before the task form is filled.",
             "If the project, worker, date, time, room, or task details are unclear, ask one short follow-up question at a time.",
             "Do not read JSON aloud during the conversation.",
+            "Do not output JSON, code blocks, or raw IDs to the admin. Speak normal English only.",
             "Use integer numeric IDs from the provided projects, rooms, and workers. Never put project names, room names, or worker names in ID fields.",
             "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
             "Return task_start_time in 24-hour HH:MM format when possible.",
@@ -5601,7 +5624,7 @@ def create_task_realtime_token():
             "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
             "Ignore confirmation phrases such as thank you, yes, correct, fill the form, finish the conversation, and other meta conversation. Use only the actual task details.",
             "Keep notes empty unless important task information is missing or unclear.",
-            "Return compact JSON with exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
+            "When the admin asks to fill the task form or finish, say briefly that the form is being filled."
         ],
     }
     payload = {
@@ -5667,6 +5690,11 @@ def create_task_realtime_draft():
     assistant = str(payload.get("assistant") or "").strip()
     if not transcript and not assistant:
         return json_response({"error": "No conversation text was captured."}, 400)
+    selected_project_id = payload.get("selected_project_id") or 0
+    selected_room_id = payload.get("selected_room_id") or 0
+    selected_user_ids = payload.get("selected_user_ids") or []
+    if not isinstance(selected_user_ids, list):
+        selected_user_ids = []
 
     projects_context, users_context = openai_realtime_task_context()
     schema = {
@@ -5700,12 +5728,17 @@ def create_task_realtime_draft():
     parse_payload = {
         "model": OPENAI_TASK_PARSE_MODEL,
         "messages": [
-            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only the actual task details. Ignore thank-yous, confirmations, finish/fill commands, and other meta conversation. Use only numeric IDs from the provided project, room, and worker lists. Keep notes empty unless important task information is missing or unclear."},
+            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only the actual task details. Ignore thank-yous, confirmations, finish/fill commands, and other meta conversation. Use only numeric IDs from the provided project, room, and worker lists. If a selected_form_project_id is provided, keep that project_id unless the admin clearly named a different project. If the room name is mentioned, choose a room that belongs to the selected project. Keep notes empty unless important task information is missing or unclear."},
             {"role": "user", "content": json.dumps({
                 "today": local_now().date().isoformat(),
                 "timezone": APP_TIMEZONE,
                 "admin_said": transcript,
                 "assistant_confirmed": assistant,
+                "selected_form_project_id": selected_project_id,
+                "selected_form_project_name": payload.get("selected_project_name") or "",
+                "selected_form_room_id": selected_room_id,
+                "selected_form_room_name": payload.get("selected_room_name") or "",
+                "selected_form_user_ids": selected_user_ids,
                 "projects": projects_context,
                 "workers": users_context,
             })},
@@ -5715,7 +5748,14 @@ def create_task_realtime_draft():
     try:
         parsed = openai_api_post_json("https://api.openai.com/v1/chat/completions", parse_payload)
         content = parsed["choices"][0]["message"]["content"]
-        draft = clean_voice_task_payload(json.loads(content), projects_context, users_context)
+        draft = clean_voice_task_payload(
+            json.loads(content),
+            projects_context,
+            users_context,
+            selected_project_id,
+            selected_room_id,
+            selected_user_ids,
+        )
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")[:300]
         return json_response({"error": f"OpenAI could not create the task draft. {detail}".strip()}, 502)

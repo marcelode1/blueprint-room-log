@@ -401,6 +401,10 @@
     let realtimeText="";
     let realtimeTranscriptText="";
     let realtimeAssistantText="";
+    let realtimeUserTranscriptLog="";
+    let realtimeAssistantTranscriptLog="";
+    let realtimeCurrentTranscriptText="";
+    let realtimeCurrentAssistantText="";
     let realtimeProcessingTimer=null;
     let realtimeFinalRequested=false;
     let realtimeLastJsonText="";
@@ -422,6 +426,22 @@
     function setCheckbox(name,value){
         const input=document.querySelector('input[name="'+name+'"]');
         if(input)input.checked=Boolean(value);
+    }
+    function appendRealtimeLine(existing,line){
+        const clean=String(line||"").trim();
+        if(!clean)return existing||"";
+        const current=String(existing||"").trim();
+        if(current.endsWith(clean))return current;
+        return current?current+"\n"+clean:clean;
+    }
+    function selectedRealtimeUserIds(){
+        return Array.from(document.querySelectorAll('input[name="user_ids"]:checked')).map(input=>input.value);
+    }
+    function getRealtimeUserText(){
+        return [realtimeUserTranscriptLog,realtimeCurrentTranscriptText].filter(Boolean).join("\n").trim();
+    }
+    function getRealtimeAssistantText(){
+        return [realtimeAssistantTranscriptLog,realtimeCurrentAssistantText,realtimeText].filter(Boolean).join("\n").trim();
     }
     function prepareRealtimeJsonText(text){
         return String(text||"")
@@ -637,6 +657,10 @@
         realtimeText="";
         realtimeTranscriptText="";
         realtimeAssistantText="";
+        realtimeUserTranscriptLog="";
+        realtimeAssistantTranscriptLog="";
+        realtimeCurrentTranscriptText="";
+        realtimeCurrentAssistantText="";
         realtimeLastJsonText="";
         realtimeFinalRequested=false;
         realtimeResponseInProgress=false;
@@ -667,20 +691,26 @@
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         setRealtimeStatus("Processing voice command...");
-        if(realtimeDc&&realtimeDc.readyState==="open"){
-            try{realtimeDc.send(JSON.stringify({type:"response.cancel"}));}catch(error){}
-        }
-        if(tryFillRealtimeFromVisibleJson())return;
+        stopRealtimeVoice();
         createRealtimeDraftFromServer();
     }
     async function createRealtimeDraftFromServer(){
         try{
+            if(realtimeVoiceTaskResult){
+                realtimeVoiceTaskResult.hidden=false;
+                realtimeVoiceTaskResult.textContent="Creating task form...";
+            }
             const response=await fetch("{{ url_for('create_task_realtime_draft') }}",{
                 method:"POST",
                 headers:{"Content-Type":"application/json"},
                 body:JSON.stringify({
-                    transcript:realtimeTranscriptText,
-                    assistant:realtimeAssistantText
+                    transcript:getRealtimeUserText(),
+                    assistant:getRealtimeAssistantText(),
+                    selected_project_id:projectSelect?projectSelect.value:"",
+                    selected_project_name:optionText(projectSelect),
+                    selected_room_id:roomSelect?roomSelect.value:"",
+                    selected_room_name:optionText(roomSelect),
+                    selected_user_ids:selectedRealtimeUserIds()
                 })
             });
             const data=await response.json().catch(()=>({error:"Could not read task draft response."}));
@@ -688,10 +718,8 @@
             fillRealtimeTaskDraft(data.draft||{});
             stopRealtimeVoice();
         }catch(error){
-            if(!tryFillRealtimeFromVisibleJson()){
-                setRealtimeStatus(error.message||"Task draft failed.",true);
-                stopRealtimeVoice();
-            }
+            setRealtimeStatus(error.message||"Task draft failed.",true);
+            stopRealtimeVoice();
         }
     }
     function tryFillRealtimeFromVisibleJson(){
@@ -714,24 +742,22 @@
     function handleRealtimeText(text){
         realtimeText=(realtimeText+" "+String(text||"")).trim();
         realtimeLastJsonText=realtimeText;
-        if(realtimeVoiceTaskResult){
-            realtimeVoiceTaskResult.hidden=false;
-            realtimeVoiceTaskResult.textContent="Creating task form...";
-        }
-        try{
-            fillRealtimeTaskDraft(parseRealtimeJson(realtimeText));
-            stopRealtimeVoice();
-        }catch(error){}
     }
     function showRealtimeTranscript(text,isFinal=false){
         const transcript=String(text||"").trim();
         if(!transcript||!realtimeVoiceTranscript)return;
-        realtimeTranscriptText=isFinal?transcript:transcript;
+        if(isFinal){
+            realtimeUserTranscriptLog=appendRealtimeLine(realtimeUserTranscriptLog,transcript);
+            realtimeCurrentTranscriptText="";
+        }else{
+            realtimeCurrentTranscriptText=transcript;
+        }
+        realtimeTranscriptText=getRealtimeUserText();
         realtimeVoiceTranscript.hidden=false;
-        realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
-        if(shouldAutoFillRealtimeTask(transcript)){
+        realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+transcript;
+        if(isFinal&&shouldAutoFillRealtimeTask(transcript)){
             setRealtimeStatus("Voice command received. Turning off mic and filling the task...");
-            requestRealtimeResponse();
+            setTimeout(()=>requestRealtimeResponse(),250);
         }
     }
     function shouldAutoFillRealtimeTask(text){
@@ -786,12 +812,18 @@
             "stop and fill the task"
         ].some(phrase=>compact.includes(phrase));
     }
-    function showRealtimeAssistant(text){
+    function showRealtimeAssistant(text,isFinal=false){
         const message=String(text||"").trim();
         if(!message||!realtimeVoiceAssistant)return;
-        realtimeAssistantText=message;
+        if(isFinal){
+            realtimeAssistantTranscriptLog=appendRealtimeLine(realtimeAssistantTranscriptLog,message);
+            realtimeCurrentAssistantText="";
+        }else{
+            realtimeCurrentAssistantText=message;
+        }
+        realtimeAssistantText=getRealtimeAssistantText();
         realtimeVoiceAssistant.hidden=false;
-        realtimeVoiceAssistant.textContent="Assistant: "+realtimeAssistantText;
+        realtimeVoiceAssistant.textContent="Assistant: "+message;
     }
     async function startRealtimeVoiceTask(){
         if(!navigator.mediaDevices||!window.RTCPeerConnection){
@@ -801,6 +833,10 @@
         realtimeText="";
         realtimeTranscriptText="";
         realtimeAssistantText="";
+        realtimeUserTranscriptLog="";
+        realtimeAssistantTranscriptLog="";
+        realtimeCurrentTranscriptText="";
+        realtimeCurrentAssistantText="";
         realtimeFinalRequested=false;
         realtimeResponseInProgress=false;
         realtimePendingFinalRequest=false;
@@ -864,10 +900,10 @@
                     showRealtimeTranscript(payload.transcript||realtimeTranscriptText,true);
                 }
                 if(payload.type==="response.audio_transcript.delta"){
-                    showRealtimeAssistant((realtimeAssistantText+" "+(payload.delta||"")).trim());
+                    showRealtimeAssistant((realtimeCurrentAssistantText+" "+(payload.delta||"")).trim(),false);
                 }
                 if(payload.type==="response.audio_transcript.done"){
-                    showRealtimeAssistant(payload.transcript||realtimeAssistantText);
+                    showRealtimeAssistant(payload.transcript||realtimeCurrentAssistantText,true);
                 }
                 if(payload.type==="response.done"){
                     realtimeResponseInProgress=false;
