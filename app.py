@@ -39,6 +39,8 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -5474,6 +5476,96 @@ def create_task(room_id):
 
 def json_response(payload, status=200):
     return Response(json.dumps(payload), status=status, mimetype="application/json")
+
+
+def openai_realtime_task_context():
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms ORDER BY project_id, name").fetchall()
+    users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    conn.close()
+    rooms_by_project = {}
+    for room in rooms:
+        rooms_by_project.setdefault(room["project_id"], []).append({"id": room["id"], "name": room["name"]})
+    projects_context = [
+        {
+            "id": project["id"],
+            "name": project["name"],
+            "customer_name": project.get("customer_name") or "",
+            "rooms": rooms_by_project.get(project["id"], []),
+        }
+        for project in projects
+    ]
+    users_context = [{"id": user["id"], "name": user["name"], "email": user["email"]} for user in users]
+    return projects_context, users_context
+
+
+@app.route("/tasks/create/realtime-token", methods=["POST"])
+@admin_required
+def create_task_realtime_token():
+    if not is_mobile_request():
+        return json_response({"error": "Realtime voice task creation is available on the mobile admin version only."}, 403)
+    if not OPENAI_API_KEY:
+        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+
+    projects_context, users_context = openai_realtime_task_context()
+    instructions = {
+        "role": "ProjectONus task voice assistant",
+        "today": local_now().date().isoformat(),
+        "timezone": APP_TIMEZONE,
+        "projects": projects_context,
+        "workers": users_context,
+        "rules": [
+            "Listen to the admin's spoken task command.",
+            "Return only valid JSON. Do not include markdown, explanation, or extra text.",
+            "Use only IDs from the provided projects, rooms, and workers.",
+            "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
+            "Return task_start_time in 24-hour HH:MM format when possible.",
+            "Default task_start_date to today when no date is spoken.",
+            "Default task_end_date to task_start_date.",
+            "Make title short and put the full work description in instructions.",
+            "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
+            "Return keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
+        ],
+    }
+    payload = {
+        "expires_after": {"anchor": "created_at", "seconds": 600},
+        "session": {
+            "type": "realtime",
+            "model": OPENAI_REALTIME_MODEL,
+            "instructions": json.dumps(instructions),
+            "output_modalities": ["text"],
+            "audio": {
+                "input": {
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 700,
+                        "create_response": True,
+                        "interrupt_response": True
+                    }
+                }
+            }
+        }
+    }
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/realtime/client_secrets",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json_response(json.loads(response.read().decode("utf-8")))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:300]
+        return json_response({"error": f"OpenAI could not start realtime voice. {detail}".strip()}, 502)
+    except Exception as exc:
+        return json_response({"error": f"Realtime voice could not start. {str(exc)[:200]}"}, 502)
 
 
 @app.route("/tasks/create", methods=["GET", "POST"])

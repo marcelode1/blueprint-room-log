@@ -3,6 +3,17 @@
 <div class="card">
     <h2>Create a Task</h2>
     <p class="muted">Choose a project, select one or more workers, and send task details to their app and email.</p>
+    {% if is_mobile_request() and is_main_admin() %}
+    <button type="button" id="realtimeVoiceTaskButton" class="btn-secondary">Realtime Voice Task</button>
+    <div id="realtimeVoiceTaskPanel" class="realtimeVoiceTaskPanel" hidden>
+        <div class="realtimeVoiceTaskActions">
+            <button type="button" id="realtimeVoiceStartButton">Start Realtime Voice</button>
+            <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop</button>
+        </div>
+        <p id="realtimeVoiceTaskStatus" class="muted">Speak the task, then pause. Review the filled form before saving.</p>
+        <p id="realtimeVoiceTaskResult" class="realtimeVoiceTaskResult" hidden></p>
+    </div>
+    {% endif %}
 </div>
 
 <div class="card">
@@ -153,7 +164,11 @@
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
 .modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .mainRoomField[data-supplier-mode="0"]{display:none}
-@media(max-width:760px){.modalActions{grid-template-columns:1fr}}
+.realtimeVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
+.realtimeVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.realtimeVoiceTaskActions button{margin:0}
+.realtimeVoiceTaskResult{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
+@media(max-width:760px){.modalActions,.realtimeVoiceTaskActions{grid-template-columns:1fr}}
 </style>
 <script>
 (function(){
@@ -364,6 +379,173 @@
         }
     });
 
+    const realtimeVoiceTaskButton=document.getElementById("realtimeVoiceTaskButton");
+    const realtimeVoiceTaskPanel=document.getElementById("realtimeVoiceTaskPanel");
+    const realtimeVoiceStartButton=document.getElementById("realtimeVoiceStartButton");
+    const realtimeVoiceStopButton=document.getElementById("realtimeVoiceStopButton");
+    const realtimeVoiceTaskStatus=document.getElementById("realtimeVoiceTaskStatus");
+    const realtimeVoiceTaskResult=document.getElementById("realtimeVoiceTaskResult");
+    let realtimePc=null;
+    let realtimeDc=null;
+    let realtimeStream=null;
+    let realtimeText="";
+
+    function setRealtimeStatus(message,isError=false){
+        if(!realtimeVoiceTaskStatus)return;
+        realtimeVoiceTaskStatus.textContent=message;
+        realtimeVoiceTaskStatus.style.color=isError?"#dc2626":"";
+    }
+    function setSelectValue(select,value){
+        if(!select)return;
+        select.value=value?String(value):"";
+        select.dispatchEvent(new Event("change",{bubbles:true}));
+    }
+    function setCheckbox(name,value){
+        const input=document.querySelector('input[name="'+name+'"]');
+        if(input)input.checked=Boolean(value);
+    }
+    function parseRealtimeJson(text){
+        const raw=String(text||"").trim();
+        const fenced=raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        const candidate=(fenced?fenced[1]:raw).trim();
+        const start=candidate.indexOf("{");
+        const end=candidate.lastIndexOf("}");
+        if(start>=0&&end>start)return JSON.parse(candidate.slice(start,end+1));
+        return JSON.parse(candidate);
+    }
+    function fillRealtimeTaskDraft(draft){
+        if(taskTypeSelect){
+            taskTypeSelect.value="project";
+            updateTaskType();
+        }
+        setSelectValue(projectSelect,draft.project_id);
+        filterMainRooms();
+        setSelectValue(roomSelect,draft.room_id);
+        const userIds=(draft.user_ids||[]).map(String);
+        document.querySelectorAll('input[name="user_ids"]').forEach(input=>{
+            input.checked=userIds.includes(input.value);
+        });
+        const startDate=document.querySelector('[name="task_start_date"]');
+        const startTime=document.querySelector('[name="task_start_time"]');
+        const endDate=document.querySelector('[name="task_end_date"]');
+        const title=document.querySelector('[name="title"]');
+        const instructions=document.querySelector('[name="instructions"]');
+        if(startDate)startDate.value=draft.task_start_date||"";
+        if(startTime)startTime.value=draft.task_start_time||"";
+        if(endDate)endDate.value=draft.task_end_date||draft.task_start_date||"";
+        if(title)title.value=draft.title||"";
+        if(instructions)instructions.value=draft.instructions||"";
+        setCheckbox("require_picture",draft.require_picture);
+        setCheckbox("allow_picture_upload",draft.allow_picture_upload!==false);
+        setCheckbox("allow_comment",draft.allow_comment!==false);
+        setCheckbox("allow_audio",draft.allow_audio!==false);
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=false;
+            realtimeVoiceTaskResult.textContent="Realtime result:\n"+JSON.stringify(draft,null,2);
+        }
+        const missing=[];
+        if(!draft.project_id)missing.push("project");
+        if(!userIds.length)missing.push("worker");
+        if(!draft.task_start_time)missing.push("time");
+        if(!draft.title)missing.push("task title");
+        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+".":"Task form filled. Please review it, then click Save Task.",missing.length>0);
+    }
+    function stopRealtimeVoice(){
+        if(realtimeStream){
+            realtimeStream.getTracks().forEach(track=>track.stop());
+            realtimeStream=null;
+        }
+        if(realtimeDc){
+            try{realtimeDc.close();}catch(error){}
+            realtimeDc=null;
+        }
+        if(realtimePc){
+            try{realtimePc.close();}catch(error){}
+            realtimePc=null;
+        }
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=false;
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+    }
+    function handleRealtimeText(text){
+        realtimeText=(realtimeText+" "+String(text||"")).trim();
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=false;
+            realtimeVoiceTaskResult.textContent=realtimeText;
+        }
+        try{
+            fillRealtimeTaskDraft(parseRealtimeJson(realtimeText));
+            stopRealtimeVoice();
+        }catch(error){}
+    }
+    async function startRealtimeVoiceTask(){
+        if(!navigator.mediaDevices||!window.RTCPeerConnection){
+            setRealtimeStatus("This phone browser cannot start Realtime voice.",true);
+            return;
+        }
+        realtimeText="";
+        setRealtimeStatus("Starting Realtime voice...");
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=true;
+            realtimeVoiceTaskResult.textContent="";
+        }
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=true;
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=false;
+        try{
+            const tokenResponse=await fetch("{{ url_for('create_task_realtime_token') }}",{method:"POST"});
+            const tokenData=await tokenResponse.json().catch(()=>({error:"Could not read Realtime token response."}));
+            if(!tokenResponse.ok)throw new Error(tokenData.error||"Realtime token failed.");
+            const realtimeKey=tokenData.value||(tokenData.client_secret&&tokenData.client_secret.value)||(tokenData.session&&tokenData.session.client_secret&&tokenData.session.client_secret.value);
+            if(!realtimeKey)throw new Error("Realtime token was missing.");
+
+            realtimePc=new RTCPeerConnection();
+            realtimeStream=await navigator.mediaDevices.getUserMedia({audio:true});
+            realtimeStream.getTracks().forEach(track=>realtimePc.addTrack(track,realtimeStream));
+            realtimeDc=realtimePc.createDataChannel("oai-events");
+            realtimeDc.addEventListener("open",()=>setRealtimeStatus("Listening... speak the task, then pause."));
+            realtimeDc.addEventListener("message",event=>{
+                let payload=null;
+                try{payload=JSON.parse(event.data);}catch(error){return;}
+                if(payload.type==="response.output_text.delta"||payload.type==="response.text.delta"){
+                    handleRealtimeText(payload.delta||"");
+                }
+                if(payload.type==="response.output_text.done"||payload.type==="response.text.done"){
+                    handleRealtimeText(payload.text||"");
+                }
+                if(payload.type==="response.done"&&!realtimeText){
+                    const output=((payload.response||{}).output||[]).flatMap(item=>item.content||[]);
+                    output.forEach(content=>handleRealtimeText(content.text||content.transcript||""));
+                }
+                if(payload.type==="error"){
+                    setRealtimeStatus(payload.error&&payload.error.message?payload.error.message:"Realtime voice error.",true);
+                }
+            });
+
+            const offer=await realtimePc.createOffer();
+            await realtimePc.setLocalDescription(offer);
+            const sdpResponse=await fetch("https://api.openai.com/v1/realtime/calls",{
+                method:"POST",
+                body:offer.sdp,
+                headers:{
+                    "Authorization":"Bearer "+realtimeKey,
+                    "Content-Type":"application/sdp"
+                }
+            });
+            const answerText=await sdpResponse.text();
+            if(!sdpResponse.ok)throw new Error(answerText.slice(0,220)||"Realtime connection failed.");
+            await realtimePc.setRemoteDescription({type:"answer",sdp:answerText});
+        }catch(error){
+            stopRealtimeVoice();
+            setRealtimeStatus(error.message||"Realtime voice failed.",true);
+        }
+    }
+    if(realtimeVoiceTaskButton)realtimeVoiceTaskButton.addEventListener("click",()=>{
+        if(realtimeVoiceTaskPanel)realtimeVoiceTaskPanel.hidden=!realtimeVoiceTaskPanel.hidden;
+    });
+    if(realtimeVoiceStartButton)realtimeVoiceStartButton.addEventListener("click",startRealtimeVoiceTask);
+    if(realtimeVoiceStopButton)realtimeVoiceStopButton.addEventListener("click",()=>{
+        setRealtimeStatus(realtimeText?"Realtime voice stopped. Review the form.":"Realtime voice stopped.");
+        stopRealtimeVoice();
+    });
 })();
 </script>
 {% endblock %}
