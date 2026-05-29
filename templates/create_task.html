@@ -465,7 +465,9 @@
         formData.append("audio",blob,"voice_command."+extension);
         setAiVoiceStatus("Creating task draft from voice...");
         const response=await fetch("{{ url_for('ai_voice_task_draft') }}",{method:"POST",body:formData});
-        const data=await response.json().catch(()=>({error:"Could not read server response."}));
+        const responseText=await response.text();
+        let data={};
+        try{data=JSON.parse(responseText);}catch(error){data={error:"Server returned "+response.status+": "+responseText.slice(0,180)};}
         if(!response.ok){
             throw new Error(data.message||data.error||"Voice AI task failed.");
         }
@@ -476,7 +478,9 @@
         formData.append("command",command);
         setAiVoiceStatus("Creating task draft from text...");
         const response=await fetch("{{ url_for('ai_text_task_draft') }}",{method:"POST",body:formData});
-        const data=await response.json().catch(()=>({error:"Could not read server response."}));
+        const responseText=await response.text();
+        let data={};
+        try{data=JSON.parse(responseText);}catch(error){data={error:"Server returned "+response.status+": "+responseText.slice(0,180)};}
         if(!response.ok){
             throw new Error(data.message||data.error||"Text AI task failed.");
         }

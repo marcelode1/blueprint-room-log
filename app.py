@@ -5585,7 +5585,11 @@ def clean_ai_task_payload(payload, projects, rooms, users):
 
 
 def load_ai_task_context():
-    projects, rooms, users = load_ai_task_context()
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms ORDER BY project_id, name").fetchall()
+    users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    conn.close()
     return projects, rooms, users
 
 
@@ -5735,15 +5739,16 @@ def ai_text_task_draft():
     if not transcript:
         return json_response({"error": "Type the task command first."}, 400)
 
-    projects, rooms, users = load_ai_task_context()
     try:
+        projects, rooms, users = load_ai_task_context()
         draft = parse_ai_task_transcript(transcript, projects, rooms, users)
     except requests.RequestException as exc:
         detail = openai_error_detail(getattr(exc, "response", None))
         message = f"OpenAI could not create the task draft. {detail}".strip()
         return json_response({"error": message, "detail": detail, "message": message}, 502)
-    except Exception:
-        return json_response({"error": "The AI task draft could not be read."}, 502)
+    except Exception as exc:
+        message = f"The AI task draft could not be read. {str(exc)[:200]}".strip()
+        return json_response({"error": message, "message": message}, 502)
 
     return json_response({"transcript": transcript, "draft": draft})
 
