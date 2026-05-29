@@ -755,7 +755,7 @@
         realtimeTranscriptText=getRealtimeUserText();
         realtimeVoiceTranscript.hidden=false;
         realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+transcript;
-        if(isFinal&&shouldAutoFillRealtimeTask(transcript)){
+        if(shouldAutoFillRealtimeTask(transcript)&&!realtimeFinalRequested){
             setRealtimeStatus("Voice command received. Turning off mic and filling the task...");
             setTimeout(()=>requestRealtimeResponse(),250);
         }
@@ -773,7 +773,11 @@
             "fill form",
             "fill up the form",
             "fill up form",
+            "fill up the task",
+            "fill up task",
             "fill out the form",
+            "fill it out",
+            "fill it up",
             "fill the form now",
             "fill out the form now",
             "feel the task",

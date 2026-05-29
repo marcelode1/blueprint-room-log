@@ -5505,7 +5505,39 @@ def openai_realtime_task_context():
     return projects_context, users_context
 
 
-def clean_voice_task_payload(payload, projects_context, users_context, preferred_project_id=0, preferred_room_id=0, preferred_user_ids=None):
+def voice_match_text(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def infer_voice_room_id(project_id, projects_context, conversation_text):
+    if not project_id or not conversation_text:
+        return 0
+    haystack = voice_match_text(conversation_text)
+    if not haystack:
+        return 0
+    matches = []
+    for project in projects_context:
+        try:
+            context_project_id = int(project.get("id") or 0)
+        except Exception:
+            continue
+        if context_project_id != project_id:
+            continue
+        for room in project.get("rooms") or []:
+            room_name = room.get("name") or ""
+            room_key = voice_match_text(room_name)
+            if room_key and room_key in haystack:
+                try:
+                    matches.append((len(room_key), int(room["id"])))
+                except Exception:
+                    pass
+    if not matches:
+        return 0
+    matches.sort(reverse=True)
+    return matches[0][1]
+
+
+def clean_voice_task_payload(payload, projects_context, users_context, preferred_project_id=0, preferred_room_id=0, preferred_user_ids=None, conversation_text=""):
     project_ids = {int(project["id"]) for project in projects_context}
     rooms_by_id = {}
     for project in projects_context:
@@ -5544,6 +5576,8 @@ def clean_voice_task_payload(payload, projects_context, users_context, preferred
         preferred_room = rooms_by_id.get(preferred_room_id)
         if preferred_room and (not project_id or preferred_room["project_id"] == project_id):
             room_id = preferred_room_id
+    if not room_id:
+        room_id = infer_voice_room_id(project_id, projects_context, conversation_text)
     selected_users = []
     for value in payload.get("user_ids") or []:
         try:
@@ -5755,6 +5789,7 @@ def create_task_realtime_draft():
             selected_project_id,
             selected_room_id,
             selected_user_ids,
+            f"{transcript}\n{assistant}",
         )
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")[:300]
