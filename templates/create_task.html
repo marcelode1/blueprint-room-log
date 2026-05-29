@@ -388,6 +388,7 @@
     let aiVoiceRecorder=null;
     let aiVoiceStream=null;
     let aiVoiceChunks=[];
+    let aiVoiceMimeType="audio/webm";
 
     function setAiVoiceStatus(message,isError=false){
         if(!aiVoiceTaskStatus)return;
@@ -451,14 +452,20 @@
     }
     async function sendAiVoiceCommand(blob){
         const formData=new FormData();
-        formData.append("audio",blob,"voice_command.webm");
+        const extension=blob.type&&blob.type.includes("mp4")?"mp4":(blob.type&&blob.type.includes("ogg")?"ogg":"webm");
+        formData.append("audio",blob,"voice_command."+extension);
         setAiVoiceStatus("Creating task draft from voice...");
         const response=await fetch("{{ url_for('ai_voice_task_draft') }}",{method:"POST",body:formData});
         const data=await response.json().catch(()=>({error:"Could not read server response."}));
         if(!response.ok){
-            throw new Error(data.error||"Voice AI task failed.");
+            throw new Error(data.message||data.error||"Voice AI task failed.");
         }
         fillTaskFromAiDraft(data.draft||{},data.transcript||"");
+    }
+    function preferredAiVoiceMimeType(){
+        const types=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus","audio/ogg"];
+        if(!window.MediaRecorder||!MediaRecorder.isTypeSupported)return "";
+        return types.find(type=>MediaRecorder.isTypeSupported(type))||"";
     }
     if(aiVoiceTaskButton)aiVoiceTaskButton.addEventListener("click",()=>{
         if(aiVoiceTaskPanel)aiVoiceTaskPanel.hidden=!aiVoiceTaskPanel.hidden;
@@ -471,7 +478,8 @@
         try{
             aiVoiceChunks=[];
             aiVoiceStream=await navigator.mediaDevices.getUserMedia({audio:true});
-            aiVoiceRecorder=new MediaRecorder(aiVoiceStream,{mimeType:"audio/webm"});
+            aiVoiceMimeType=preferredAiVoiceMimeType();
+            aiVoiceRecorder=aiVoiceMimeType?new MediaRecorder(aiVoiceStream,{mimeType:aiVoiceMimeType}):new MediaRecorder(aiVoiceStream);
             aiVoiceRecorder.addEventListener("dataavailable",event=>{
                 if(event.data&&event.data.size)aiVoiceChunks.push(event.data);
             });
@@ -480,7 +488,7 @@
                 if(aiVoiceStartButton)aiVoiceStartButton.disabled=false;
                 if(aiVoiceStopButton)aiVoiceStopButton.disabled=true;
                 try{
-                    await sendAiVoiceCommand(new Blob(aiVoiceChunks,{type:"audio/webm"}));
+                    await sendAiVoiceCommand(new Blob(aiVoiceChunks,{type:aiVoiceMimeType||"audio/webm"}));
                 }catch(error){
                     setAiVoiceStatus(error.message||"Voice AI task failed.",true);
                 }

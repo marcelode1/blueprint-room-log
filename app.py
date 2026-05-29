@@ -41,9 +41,9 @@ TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-AI_TASK_TRANSCRIBE_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+AI_TASK_TRANSCRIBE_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_MODEL", "whisper-1")
 AI_TASK_PARSE_MODEL = os.environ.get("AI_TASK_PARSE_MODEL", "gpt-4.1-mini")
-AI_TASK_TRANSCRIBE_FALLBACK_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_FALLBACK_MODEL", "whisper-1")
+AI_TASK_TRANSCRIBE_FALLBACK_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_FALLBACK_MODEL", "gpt-4o-mini-transcribe")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -5494,6 +5494,17 @@ def openai_error_detail(response):
     return (response.text or "")[:300]
 
 
+def openai_voice_error(message, detail="", status=502):
+    clean_detail = str(detail or "").strip()
+    if clean_detail:
+        print(f"AI voice transcription failed: {clean_detail}")
+    return json_response({
+        "error": message,
+        "detail": clean_detail,
+        "message": f"{message} {clean_detail}".strip()
+    }, status)
+
+
 def transcribe_openai_audio(audio_file, model):
     filename = secure_filename(audio_file.filename) or "voice_command.webm"
     content_type = audio_file.mimetype or mimetypes.guess_type(filename)[0] or "audio/webm"
@@ -5601,18 +5612,18 @@ def ai_voice_task_draft():
                 transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_FALLBACK_MODEL)
             except requests.RequestException as fallback_exc:
                 fallback_detail = openai_error_detail(getattr(fallback_exc, "response", None))
-                return json_response({
-                    "error": "OpenAI could not transcribe the voice command.",
-                    "detail": fallback_detail or detail
-                }, 502)
+                return openai_voice_error(
+                    "OpenAI could not transcribe the voice command.",
+                    fallback_detail or detail
+                )
             except Exception:
-                return json_response({"error": "The voice command could not be transcribed.", "detail": detail}, 502)
+                return openai_voice_error("The voice command could not be transcribed.", detail)
         else:
-            return json_response({"error": "OpenAI could not transcribe the voice command.", "detail": detail}, 502)
+            return openai_voice_error("OpenAI could not transcribe the voice command.", detail)
     except ValueError:
         return json_response({"error": "No audio was recorded. Hold the button a little longer and try again."}, 400)
-    except Exception:
-        return json_response({"error": "The voice command could not be transcribed."}, 502)
+    except Exception as exc:
+        return openai_voice_error("The voice command could not be transcribed.", str(exc))
 
     if not transcript:
         return json_response({"error": "No speech was detected in the voice command."}, 400)
