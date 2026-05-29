@@ -5496,12 +5496,13 @@ def openai_error_detail(response):
 
 def openai_voice_error(message, detail="", status=502):
     clean_detail = str(detail or "").strip()
+    full_message = f"{message} {clean_detail}".strip()
     if clean_detail:
         print(f"AI voice transcription failed: {clean_detail}")
     return json_response({
-        "error": message,
+        "error": full_message,
         "detail": clean_detail,
-        "message": f"{message} {clean_detail}".strip()
+        "message": full_message
     }, status)
 
 
@@ -5583,51 +5584,12 @@ def clean_ai_task_payload(payload, projects, rooms, users):
     }
 
 
-@app.route("/tasks/create/ai-voice", methods=["POST"])
-@admin_required
-def ai_voice_task_draft():
-    if not is_mobile_request():
-        return json_response({"error": "Voice AI task creation is available on the mobile admin version only."}, 403)
-    if not OPENAI_API_KEY:
-        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+def load_ai_task_context():
+    projects, rooms, users = load_ai_task_context()
+    return projects, rooms, users
 
-    audio = request.files.get("audio")
-    if not audio or not audio.filename:
-        return json_response({"error": "Record a voice command first."}, 400)
-    if file_ext(audio.filename) not in ALLOWED_AUDIO:
-        return json_response({"error": "The voice command must be a webm, mp3, m4a, wav, ogg, mp4, mpeg, mpga, or flac file."}, 400)
 
-    conn = db()
-    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
-    rooms = conn.execute("SELECT id, name, project_id FROM rooms ORDER BY project_id, name").fetchall()
-    users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
-    conn.close()
-
-    try:
-        transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_MODEL)
-    except requests.RequestException as exc:
-        detail = openai_error_detail(getattr(exc, "response", None))
-        if AI_TASK_TRANSCRIBE_FALLBACK_MODEL and AI_TASK_TRANSCRIBE_FALLBACK_MODEL != AI_TASK_TRANSCRIBE_MODEL:
-            try:
-                transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_FALLBACK_MODEL)
-            except requests.RequestException as fallback_exc:
-                fallback_detail = openai_error_detail(getattr(fallback_exc, "response", None))
-                return openai_voice_error(
-                    "OpenAI could not transcribe the voice command.",
-                    fallback_detail or detail
-                )
-            except Exception:
-                return openai_voice_error("The voice command could not be transcribed.", detail)
-        else:
-            return openai_voice_error("OpenAI could not transcribe the voice command.", detail)
-    except ValueError:
-        return json_response({"error": "No audio was recorded. Hold the button a little longer and try again."}, 400)
-    except Exception as exc:
-        return openai_voice_error("The voice command could not be transcribed.", str(exc))
-
-    if not transcript:
-        return json_response({"error": "No speech was detected in the voice command."}, 400)
-
+def parse_ai_task_transcript(transcript, projects, rooms, users):
     rooms_by_project = {}
     for room in rooms:
         rooms_by_project.setdefault(room["project_id"], []).append({"id": room["id"], "name": room["name"]})
@@ -5686,29 +5648,100 @@ def ai_voice_task_draft():
         ],
     }
 
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    parse_response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": AI_TASK_PARSE_MODEL,
+            "messages": [
+                {"role": "system", "content": "You convert ProjectONus admin voice commands into task form fields."},
+                {"role": "user", "content": json.dumps(parse_prompt)},
+            ],
+            "response_format": {"type": "json_schema", "json_schema": schema},
+        },
+        timeout=60
+    )
+    parse_response.raise_for_status()
+    content = parse_response.json()["choices"][0]["message"]["content"]
+    return clean_ai_task_payload(json.loads(content), projects, rooms, users)
+
+
+@app.route("/tasks/create/ai-voice", methods=["POST"])
+@admin_required
+def ai_voice_task_draft():
+    if not is_mobile_request():
+        return json_response({"error": "Voice AI task creation is available on the mobile admin version only."}, 403)
+    if not OPENAI_API_KEY:
+        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+
+    audio = request.files.get("audio")
+    if not audio or not audio.filename:
+        return json_response({"error": "Record a voice command first."}, 400)
+    if file_ext(audio.filename) not in ALLOWED_AUDIO:
+        return json_response({"error": "The voice command must be a webm, mp3, m4a, wav, ogg, mp4, mpeg, mpga, or flac file."}, 400)
+
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms ORDER BY project_id, name").fetchall()
+    users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    conn.close()
+
     try:
-        parse_response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={**headers, "Content-Type": "application/json"},
-            json={
-                "model": AI_TASK_PARSE_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You convert ProjectONus admin voice commands into task form fields."},
-                    {"role": "user", "content": json.dumps(parse_prompt)},
-                ],
-                "response_format": {"type": "json_schema", "json_schema": schema},
-            },
-            timeout=60
-        )
-        parse_response.raise_for_status()
-        content = parse_response.json()["choices"][0]["message"]["content"]
-        draft = clean_ai_task_payload(json.loads(content), projects, rooms, users)
+        transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_MODEL)
     except requests.RequestException as exc:
-        detail = ""
-        if getattr(exc, "response", None) is not None:
-            detail = exc.response.text[:300]
-        return json_response({"error": "OpenAI could not create the task draft.", "detail": detail}, 502)
+        detail = openai_error_detail(getattr(exc, "response", None))
+        if AI_TASK_TRANSCRIBE_FALLBACK_MODEL and AI_TASK_TRANSCRIBE_FALLBACK_MODEL != AI_TASK_TRANSCRIBE_MODEL:
+            try:
+                transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_FALLBACK_MODEL)
+            except requests.RequestException as fallback_exc:
+                fallback_detail = openai_error_detail(getattr(fallback_exc, "response", None))
+                return openai_voice_error(
+                    "OpenAI could not transcribe the voice command.",
+                    fallback_detail or detail
+                )
+            except Exception:
+                return openai_voice_error("The voice command could not be transcribed.", detail)
+        else:
+            return openai_voice_error("OpenAI could not transcribe the voice command.", detail)
+    except ValueError:
+        return json_response({"error": "No audio was recorded. Hold the button a little longer and try again."}, 400)
+    except Exception as exc:
+        return openai_voice_error("The voice command could not be transcribed.", str(exc))
+
+    if not transcript:
+        return json_response({"error": "No speech was detected in the voice command."}, 400)
+
+    try:
+        draft = parse_ai_task_transcript(transcript, projects, rooms, users)
+    except requests.RequestException as exc:
+        detail = openai_error_detail(getattr(exc, "response", None))
+        message = f"OpenAI could not create the task draft. {detail}".strip()
+        return json_response({"error": message, "detail": detail, "message": message}, 502)
+    except Exception:
+        return json_response({"error": "The AI task draft could not be read."}, 502)
+
+    return json_response({"transcript": transcript, "draft": draft})
+
+
+@app.route("/tasks/create/ai-text", methods=["POST"])
+@admin_required
+def ai_text_task_draft():
+    if not is_mobile_request():
+        return json_response({"error": "AI task creation is available on the mobile admin version only."}, 403)
+    if not OPENAI_API_KEY:
+        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+
+    transcript = (request.form.get("command") or "").strip()
+    if not transcript:
+        return json_response({"error": "Type the task command first."}, 400)
+
+    projects, rooms, users = load_ai_task_context()
+    try:
+        draft = parse_ai_task_transcript(transcript, projects, rooms, users)
+    except requests.RequestException as exc:
+        detail = openai_error_detail(getattr(exc, "response", None))
+        message = f"OpenAI could not create the task draft. {detail}".strip()
+        return json_response({"error": message, "detail": detail, "message": message}, 502)
     except Exception:
         return json_response({"error": "The AI task draft could not be read."}, 502)
 

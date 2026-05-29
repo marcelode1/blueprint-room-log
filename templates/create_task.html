@@ -10,6 +10,8 @@
                 <button type="button" id="aiVoiceStartButton">Start Recording</button>
                 <button type="button" id="aiVoiceStopButton" class="btn-secondary" disabled>Stop & Fill Task</button>
             </div>
+            <textarea id="aiTextTaskCommand" rows="3" placeholder="Or type the task command here"></textarea>
+            <button type="button" id="aiTextTaskButton" class="btn-secondary">Fill From Text</button>
             <p id="aiVoiceTaskStatus" class="muted">Press Start Recording, say the task command, then stop to fill the form.</p>
             <p id="aiVoiceTranscript" class="aiVoiceTranscript" hidden></p>
         </div>
@@ -162,6 +164,8 @@
 .aiVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
 .aiVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .aiVoiceTaskActions button{margin:0}
+.aiVoiceTaskPanel textarea{margin-top:10px}
+.aiVoiceTaskPanel #aiTextTaskButton{margin-top:8px}
 .aiVoiceTranscript{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
 .newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
@@ -385,10 +389,14 @@
     const aiVoiceStopButton=document.getElementById("aiVoiceStopButton");
     const aiVoiceTaskStatus=document.getElementById("aiVoiceTaskStatus");
     const aiVoiceTranscript=document.getElementById("aiVoiceTranscript");
+    const aiTextTaskCommand=document.getElementById("aiTextTaskCommand");
+    const aiTextTaskButton=document.getElementById("aiTextTaskButton");
     let aiVoiceRecorder=null;
     let aiVoiceStream=null;
     let aiVoiceChunks=[];
     let aiVoiceMimeType="audio/webm";
+    let aiSpeechRecognition=null;
+    let aiSpeechTranscript="";
 
     function setAiVoiceStatus(message,isError=false){
         if(!aiVoiceTaskStatus)return;
@@ -462,17 +470,81 @@
         }
         fillTaskFromAiDraft(data.draft||{},data.transcript||"");
     }
+    async function sendAiTextCommand(command){
+        const formData=new FormData();
+        formData.append("command",command);
+        setAiVoiceStatus("Creating task draft from text...");
+        const response=await fetch("{{ url_for('ai_text_task_draft') }}",{method:"POST",body:formData});
+        const data=await response.json().catch(()=>({error:"Could not read server response."}));
+        if(!response.ok){
+            throw new Error(data.message||data.error||"Text AI task failed.");
+        }
+        fillTaskFromAiDraft(data.draft||{},data.transcript||command);
+    }
     function preferredAiVoiceMimeType(){
         const types=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus","audio/ogg"];
         if(!window.MediaRecorder||!MediaRecorder.isTypeSupported)return "";
         return types.find(type=>MediaRecorder.isTypeSupported(type))||"";
     }
+    function createAiSpeechRecognition(){
+        const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+        if(!SpeechRecognition)return null;
+        const recognition=new SpeechRecognition();
+        recognition.lang=(navigator.language||"en-US");
+        recognition.interimResults=true;
+        recognition.continuous=true;
+        return recognition;
+    }
     if(aiVoiceTaskButton)aiVoiceTaskButton.addEventListener("click",()=>{
         if(aiVoiceTaskPanel)aiVoiceTaskPanel.hidden=!aiVoiceTaskPanel.hidden;
     });
+    if(aiTextTaskButton)aiTextTaskButton.addEventListener("click",async()=>{
+        const command=(aiTextTaskCommand&&aiTextTaskCommand.value||"").trim();
+        if(!command){
+            setAiVoiceStatus("Type the task command first.",true);
+            return;
+        }
+        aiTextTaskButton.disabled=true;
+        try{
+            await sendAiTextCommand(command);
+        }catch(error){
+            setAiVoiceStatus(error.message||"Text AI task failed.",true);
+        }finally{
+            aiTextTaskButton.disabled=false;
+        }
+    });
     if(aiVoiceStartButton)aiVoiceStartButton.addEventListener("click",async()=>{
+        aiSpeechRecognition=createAiSpeechRecognition();
+        if(aiSpeechRecognition){
+            aiSpeechTranscript="";
+            aiSpeechRecognition.onresult=event=>{
+                let transcript="";
+                for(let i=0;i<event.results.length;i++){
+                    transcript+=event.results[i][0].transcript+" ";
+                }
+                aiSpeechTranscript=transcript.trim();
+                if(aiTextTaskCommand)aiTextTaskCommand.value=aiSpeechTranscript;
+            };
+            aiSpeechRecognition.onerror=event=>{
+                setAiVoiceStatus("Phone speech recognition stopped: "+(event.error||"unknown error")+". You can type the command and tap Fill From Text.",true);
+                if(aiVoiceStartButton)aiVoiceStartButton.disabled=false;
+                if(aiVoiceStopButton)aiVoiceStopButton.disabled=true;
+            };
+            aiSpeechRecognition.onend=()=>{};
+            try{
+                aiSpeechRecognition.start();
+                aiVoiceStartButton.disabled=true;
+                if(aiVoiceStopButton)aiVoiceStopButton.disabled=false;
+                setAiVoiceStatus("Listening... say the task command now.");
+            }catch(error){
+                setAiVoiceStatus("Phone speech recognition could not start. Type the command and tap Fill From Text.",true);
+                aiVoiceStartButton.disabled=false;
+                if(aiVoiceStopButton)aiVoiceStopButton.disabled=true;
+            }
+            return;
+        }
         if(!navigator.mediaDevices||!window.MediaRecorder){
-            setAiVoiceStatus("This browser cannot record voice commands.",true);
+            setAiVoiceStatus("This browser cannot record voice commands. Type the command and tap Fill From Text.",true);
             return;
         }
         try{
@@ -503,6 +575,22 @@
         }
     });
     if(aiVoiceStopButton)aiVoiceStopButton.addEventListener("click",()=>{
+        if(aiSpeechRecognition){
+            const transcript=aiSpeechTranscript.trim();
+            try{aiSpeechRecognition.stop();}catch(error){}
+            aiSpeechRecognition=null;
+            aiVoiceStartButton.disabled=false;
+            aiVoiceStopButton.disabled=true;
+            if(!transcript){
+                setAiVoiceStatus("No speech was heard. Type the command and tap Fill From Text.",true);
+                return;
+            }
+            setAiVoiceStatus("Creating task draft from phone speech...");
+            sendAiTextCommand(transcript).catch(error=>{
+                setAiVoiceStatus(error.message||"Voice AI task failed.",true);
+            });
+            return;
+        }
         if(aiVoiceRecorder&&aiVoiceRecorder.state==="recording"){
             setAiVoiceStatus("Processing voice command...");
             aiVoiceRecorder.stop();
