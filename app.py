@@ -5526,9 +5526,16 @@ def infer_voice_room_id(project_id, projects_context, conversation_text):
         for room in project.get("rooms") or []:
             room_name = room.get("name") or ""
             room_key = voice_match_text(room_name)
-            if room_key and room_key in haystack:
+            if not room_key:
+                continue
+            word_hits = sum(
+                1
+                for word in re.split(r"[^a-z0-9]+", str(room_name or "").lower())
+                if len(word) >= 4 and voice_match_text(word) in haystack
+            )
+            if room_key in haystack or haystack in room_key or word_hits:
                 try:
-                    matches.append((len(room_key), int(room["id"])))
+                    matches.append((word_hits * 20 + len(room_key), int(room["id"])))
                 except Exception:
                     pass
     if not matches:
@@ -6299,10 +6306,24 @@ def complete_task(task_id):
         flash(upload_error)
         return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
     save_media_only = request.form.get("completion_save_media_only") == "1"
+    completion_comment = request.form.get("completion_comment", "").strip()
+    service_order_verified = request.form.get("service_order_verified") == "1"
+
+    def completion_comment_with_service_order(base_comment=""):
+        parts = []
+        existing = str(base_comment or "").strip()
+        if existing:
+            parts.append(existing)
+        if completion_comment:
+            parts.append(completion_comment)
+        if service_order_verified and "Service order verified." not in "\n".join(parts):
+            parts.append("Service order verified.")
+        return "\n".join(parts).strip()
+
     if save_media_only:
-        if not completion_uploads:
+        if not completion_uploads and not completion_comment and not service_order_verified:
             conn.close()
-            flash("Choose a picture or audio before saving to a room.")
+            flash("Choose a picture, audio, comment, or verify the service order before saving.")
             next_url = request.form.get("next")
             return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
         inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
@@ -6314,6 +6335,10 @@ def complete_task(task_id):
         if first_audio and not task.get("completion_audio_file"):
             update_fields.append("completion_audio_file = %s")
             params.append(first_audio)
+        merged_comment = completion_comment_with_service_order(task.get("completion_comment"))
+        if merged_comment != str(task.get("completion_comment") or "").strip():
+            update_fields.append("completion_comment = %s")
+            params.append(merged_comment)
         if update_fields:
             params.append(task_id)
             conn.execute(
@@ -6362,7 +6387,7 @@ def complete_task(task_id):
         "completion_audio_file = %s",
     ]
     params = [
-        request.form.get("completion_comment", "").strip(),
+        completion_comment_with_service_order(),
         photo_file,
         audio_file,
     ]

@@ -163,7 +163,7 @@
                             {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <button type="button" class="btn-secondary" disabled>Received</button>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                            {% if t.status != 'done' and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                                 {% include "_mobile_room_completion_form.html" %}
                             {% endif %}
                         </div>
@@ -197,6 +197,7 @@
                             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                                 <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                                <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
                                 {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                                     <div class="completionBlocks">
                                         <div class="completionBlock">
@@ -220,7 +221,7 @@
                                     </div>
                                     <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                                 {% endif %}
-                                <button type="submit">Mark Task Done</button>
+                                <button type="submit">Task Done</button>
                             </form>
                         {% endif %}
                         {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
@@ -268,6 +269,7 @@
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
+                    <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
                     {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                         <div class="completionBlocks">
                             <div class="completionBlock">
@@ -291,7 +293,7 @@
                         </div>
                         <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                     {% endif %}
-                    <button type="submit">Mark Task Done</button>
+                    <button type="submit">Task Done</button>
                 </form>
             {% endif %}
             {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
@@ -361,5 +363,5 @@ document.querySelectorAll(".mobileRoomCompletionForm").forEach(form=>{
     });
 });
 </script>
-<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
+<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.serviceOrderCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.serviceOrderCheck input{width:auto;min-height:auto}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}

@@ -566,26 +566,80 @@
         });
         return ids;
     }
+    function roomOptionText(option){
+        const text=String(option&&option.textContent||"").trim();
+        const separator=text.indexOf(" - ");
+        return separator>=0?text.slice(separator+3).trim():text;
+    }
+    function resolveRealtimeRoomValue(projectId,normalized,title,instructions,notes){
+        let roomId=resolveSelectValue(roomSelect,normalized.room_id,projectId);
+        if(roomId)return roomId;
+        ["room_name","room","main_room","location","area"].some(key=>{
+            roomId=resolveSelectValue(roomSelect,normalized[key],projectId);
+            return Boolean(roomId);
+        });
+        if(roomId)return roomId;
+        const spokenText=[
+            title,
+            instructions,
+            notes,
+            normalized.room_name,
+            normalized.room,
+            normalized.main_room,
+            normalized.location,
+            normalized.area,
+            getRealtimeUserText(),
+            getRealtimeAssistantText(),
+            realtimeText
+        ].join(" ");
+        const compactSpoken=compactMatchText(spokenText);
+        if(!compactSpoken||!roomSelect)return "";
+        const options=Array.from(roomSelect.options).filter(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            return option.value&&(!projectId||optionProject===String(projectId));
+        });
+        if(options.length===1)return options[0].value;
+        const matches=[];
+        options.forEach(option=>{
+            const roomText=roomOptionText(option);
+            const roomKey=compactMatchText(roomText);
+            if(!roomKey)return;
+            if(compactSpoken.includes(roomKey)||roomKey.includes(compactSpoken)){
+                matches.push({score:roomKey.length,value:option.value});
+                return;
+            }
+            const words=String(roomText||"").toLowerCase().split(/[^a-z0-9]+/).filter(word=>word.length>=4);
+            const wordHits=words.filter(word=>compactSpoken.includes(compactMatchText(word))).length;
+            if(wordHits){
+                matches.push({score:wordHits*20+roomKey.length,value:option.value});
+            }
+        });
+        matches.sort((a,b)=>b.score-a.score);
+        return matches.length?matches[0].value:"";
+    }
     function cleanRealtimeDraft(rawDraft){
         const normalized={};
         Object.keys(rawDraft||{}).forEach(key=>{
             normalized[normalizedDraftKey(key)]=rawDraft[key];
         });
         const projectId=resolveSelectValue(projectSelect,normalized.project_id);
+        const title=String(normalized.title||"").trim();
+        const instructions=String(normalized.instructions||"").trim();
+        const notes=String(normalized.notes||"").trim();
         return {
             project_id:projectId,
-            room_id:resolveSelectValue(roomSelect,normalized.room_id,projectId),
+            room_id:resolveRealtimeRoomValue(projectId,normalized,title,instructions,notes),
             user_ids:resolveUserIds(normalized.user_ids),
             task_start_date:normalizeRealtimeDate(normalized.task_start_date),
             task_start_time:normalizeRealtimeTime(normalized.task_start_time),
             task_end_date:normalizeRealtimeDate(normalized.task_end_date||normalized.task_start_date),
-            title:String(normalized.title||"").trim(),
-            instructions:String(normalized.instructions||"").trim(),
+            title:title,
+            instructions:instructions,
             require_picture:Boolean(normalized.require_picture),
             allow_picture_upload:normalized.allow_picture_upload!==false,
             allow_comment:normalized.allow_comment!==false,
             allow_audio:normalized.allow_audio!==false,
-            notes:String(normalized.notes||"").trim()
+            notes:notes
         };
     }
     function fillRealtimeTaskDraft(draft){
@@ -621,6 +675,7 @@
         }
         const missing=[];
         if(!draft.project_id)missing.push("project");
+        if(!draft.room_id)missing.push("room");
         if(!userIds.length)missing.push("worker");
         if(!draft.task_start_time)missing.push("time");
         if(!draft.title)missing.push("task title");
