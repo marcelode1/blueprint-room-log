@@ -5583,8 +5583,16 @@ def clean_voice_task_payload(payload, projects_context, users_context, preferred
         preferred_room = rooms_by_id.get(preferred_room_id)
         if preferred_room and (not project_id or preferred_room["project_id"] == project_id):
             room_id = preferred_room_id
+    spoken_room_name = " ".join(
+        text_value(name)
+        for name in ["room_name", "room", "main_room", "location", "area"]
+        if text_value(name)
+    ).strip()
     if not room_id:
-        room_id = infer_voice_room_id(project_id, projects_context, conversation_text)
+        room_id = infer_voice_room_id(project_id, projects_context, f"{spoken_room_name}\n{conversation_text}")
+    resolved_room_name = ""
+    if room_id and room_id in rooms_by_id:
+        resolved_room_name = rooms_by_id[room_id].get("name") or ""
     selected_users = []
     for value in payload.get("user_ids") or []:
         try:
@@ -5605,6 +5613,7 @@ def clean_voice_task_payload(payload, projects_context, users_context, preferred
     return {
         "project_id": project_id,
         "room_id": room_id,
+        "room_name": resolved_room_name or spoken_room_name,
         "user_ids": selected_users,
         "task_start_date": task_start_date,
         "task_start_time": text_value("task_start_time"),
@@ -5747,6 +5756,7 @@ def create_task_realtime_draft():
             "properties": {
                 "project_id": {"type": "integer"},
                 "room_id": {"type": "integer"},
+                "room_name": {"type": "string"},
                 "user_ids": {"type": "array", "items": {"type": "integer"}},
                 "task_start_date": {"type": "string"},
                 "task_start_time": {"type": "string"},
@@ -5760,7 +5770,7 @@ def create_task_realtime_draft():
                 "notes": {"type": "string"},
             },
             "required": [
-                "project_id", "room_id", "user_ids", "task_start_date", "task_start_time",
+                "project_id", "room_id", "room_name", "user_ids", "task_start_date", "task_start_time",
                 "task_end_date", "title", "instructions", "require_picture",
                 "allow_picture_upload", "allow_comment", "allow_audio", "notes"
             ],
@@ -5769,7 +5779,7 @@ def create_task_realtime_draft():
     parse_payload = {
         "model": OPENAI_TASK_PARSE_MODEL,
         "messages": [
-            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only the actual task details. Ignore thank-yous, confirmations, finish/fill commands, and other meta conversation. Use only numeric IDs from the provided project, room, and worker lists. If a selected_form_project_id is provided, keep that project_id unless the admin clearly named a different project. If the room name is mentioned, choose a room that belongs to the selected project. Keep notes empty unless important task information is missing or unclear."},
+            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only the actual task details. Ignore thank-yous, confirmations, finish/fill commands, and other meta conversation. Use only numeric IDs from the provided project, room, and worker lists. If a selected_form_project_id is provided, keep that project_id unless the admin clearly named a different project. If the room is mentioned, set room_name to the spoken room and choose the matching room_id from the selected project's room list. If unsure, set room_id to 0 but keep the spoken room_name. Keep notes empty unless important task information is missing or unclear."},
             {"role": "user", "content": json.dumps({
                 "today": local_now().date().isoformat(),
                 "timezone": APP_TIMEZONE,
@@ -6305,7 +6315,8 @@ def complete_task(task_id):
         conn.close()
         flash(upload_error)
         return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
-    save_media_only = request.form.get("completion_save_media_only") == "1"
+    task_done_requested = request.form.get("task_done") == "1"
+    save_media_only = request.form.get("completion_save_media_only") == "1" or not task_done_requested
     completion_comment = request.form.get("completion_comment", "").strip()
     service_order_verified = request.form.get("service_order_verified") == "1"
 
@@ -6347,7 +6358,7 @@ def complete_task(task_id):
             )
         conn.commit()
         conn.close()
-        flash("Saved. Add the next picture, comment, audio, or choose another room.")
+        flash("Saved. Add another picture, upload, comment, audio, or press Task Done when finished.")
         next_url = request.form.get("next")
         return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)

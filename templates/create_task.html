@@ -599,6 +599,25 @@
             return option.value&&(!projectId||optionProject===String(projectId));
         });
         if(options.length===1)return options[0].value;
+        const directRoomText=[
+            normalized.room_name,
+            normalized.room,
+            normalized.main_room,
+            normalized.location,
+            normalized.area
+        ].join(" ");
+        const compactDirectRoom=compactMatchText(directRoomText);
+        if(compactDirectRoom){
+            const directMatches=[];
+            options.forEach(option=>{
+                const roomKey=compactMatchText(roomOptionText(option));
+                if(roomKey&&(roomKey.includes(compactDirectRoom)||compactDirectRoom.includes(roomKey))){
+                    directMatches.push({score:roomKey.length,value:option.value});
+                }
+            });
+            directMatches.sort((a,b)=>b.score-a.score);
+            if(directMatches.length)return directMatches[0].value;
+        }
         const matches=[];
         options.forEach(option=>{
             const roomText=roomOptionText(option);
@@ -629,6 +648,7 @@
         return {
             project_id:projectId,
             room_id:resolveRealtimeRoomValue(projectId,normalized,title,instructions,notes),
+            room_name:String(normalized.room_name||normalized.room||normalized.main_room||normalized.location||normalized.area||"").trim(),
             user_ids:resolveUserIds(normalized.user_ids),
             task_start_date:normalizeRealtimeDate(normalized.task_start_date),
             task_start_time:normalizeRealtimeTime(normalized.task_start_time),
@@ -679,7 +699,8 @@
         if(!userIds.length)missing.push("worker");
         if(!draft.task_start_time)missing.push("time");
         if(!draft.title)missing.push("task title");
-        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+".":"Task form filled. Please review it, then click Save Task.",missing.length>0);
+        const roomNote=(!draft.room_id&&draft.room_name)?" Heard room: "+draft.room_name+".":"";
+        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+". "+roomNote:"Task form filled. Please review it, then click Save Task.",missing.length>0);
     }
     function stopRealtimeVoice(){
         if(realtimeProcessingTimer){

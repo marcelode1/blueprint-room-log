@@ -221,7 +221,7 @@
                                     </div>
                                     <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                                 {% endif %}
-                                <button type="submit">Task Done</button>
+                                <button type="submit" name="task_done" value="1">Task Done</button>
                             </form>
                         {% endif %}
                         {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
@@ -293,7 +293,7 @@
                         </div>
                         <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                     {% endif %}
-                    <button type="submit">Task Done</button>
+                    <button type="submit" name="task_done" value="1">Task Done</button>
                 </form>
             {% endif %}
             {% if t.completion_comment %}<p><strong>Completion Comment:</strong><br>{{ t.completion_comment }}</p>{% endif %}
