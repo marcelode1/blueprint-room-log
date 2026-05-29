@@ -79,6 +79,11 @@
                 {% endfor %}
             </select>
         </div>
+        <div id="roomTabsField" class="roomTabsField" hidden>
+            <label id="roomTabsLabel">Room Options</label>
+            <div id="taskRoomTabs" class="roomTabs" role="tablist" aria-label="Task room options"></div>
+            <p id="roomTabsEmpty" class="muted">Choose a project to see rooms.</p>
+        </div>
 
         <div id="supplierItemActions" class="supplierItemActions" style="display:none;">
             <button type="button" id="addSupplierItemBtn">Add to List</button>
@@ -167,7 +172,12 @@
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
 .modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.mainRoomField[data-supplier-mode="0"]{display:none}
+.mainRoomField{display:none}
+.roomTabsField{border:1px solid var(--border);border-radius:12px;padding:12px;margin:10px 0 16px;background:rgba(37,99,235,.06)}
+.roomTabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.roomTabButton{width:auto!important;min-height:44px!important;margin:0!important;border-radius:999px!important;padding:10px 14px!important;background:var(--card)!important;color:var(--text)!important;border:1px solid var(--border)!important;box-shadow:none!important}
+.roomTabButton.active{background:var(--primary)!important;color:white!important;border-color:var(--primary)!important}
+.roomTabsField[hidden]{display:none}
 .realtimeVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
 .realtimeVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .realtimeVoiceTaskActions button{margin:0}
@@ -180,6 +190,40 @@
 (function(){
     const projectSelect=document.getElementById("taskProjectSelect");
     const roomSelect=document.getElementById("taskMainRoomSelect");
+    const roomTabsField=document.getElementById("roomTabsField");
+    const roomTabs=document.getElementById("taskRoomTabs");
+    const roomTabsEmpty=document.getElementById("roomTabsEmpty");
+    const roomTabsLabel=document.getElementById("roomTabsLabel");
+    function roomTabText(option){
+        const text=String(option&&option.textContent||"").trim();
+        const separator=text.indexOf(" - ");
+        return separator>=0?text.slice(separator+3).trim():text;
+    }
+    function renderRoomTabs(){
+        if(!projectSelect||!roomSelect||!roomTabs||!roomTabsField)return;
+        const projectId=projectSelect.value;
+        roomTabs.innerHTML="";
+        roomTabsField.hidden=!projectId;
+        if(roomTabsEmpty)roomTabsEmpty.hidden=Boolean(projectId);
+        if(!projectId)return;
+        const currentTaskType=document.getElementById("taskTypeSelect");
+        if(roomTabsLabel)roomTabsLabel.textContent=currentTaskType&&currentTaskType.value==="supplier"?"Room Where Material Will Go":"Where is this task designated?";
+        const roomOptions=Array.from(roomSelect.options).filter(option=>option.value&&option.getAttribute("data-project-id")===projectId);
+        const choices=[{value:"",label:"Project General"}].concat(roomOptions.map(option=>({value:option.value,label:roomTabText(option)})));
+        choices.forEach(choice=>{
+            const button=document.createElement("button");
+            button.type="button";
+            button.className="roomTabButton"+(String(roomSelect.value||"")===String(choice.value)?" active":"");
+            button.textContent=choice.label;
+            button.setAttribute("role","tab");
+            button.setAttribute("aria-selected",String(String(roomSelect.value||"")===String(choice.value)));
+            button.addEventListener("click",()=>{
+                roomSelect.value=choice.value;
+                roomSelect.dispatchEvent(new Event("change",{bubbles:true}));
+            });
+            roomTabs.appendChild(button);
+        });
+    }
     function filterMainRooms(){
         if(!projectSelect||!roomSelect)return;
         const projectId=projectSelect.value;
@@ -190,8 +234,10 @@
         });
         const selectedOption=roomSelect.options[roomSelect.selectedIndex];
         if(selectedOption&&selectedOption.hidden)roomSelect.value="";
+        renderRoomTabs();
     }
     if(projectSelect)projectSelect.addEventListener("change",filterMainRooms);
+    if(roomSelect)roomSelect.addEventListener("change",renderRoomTabs);
     filterMainRooms();
     const taskTypeSelect=document.getElementById("taskTypeSelect");
     const supplierPanel=document.getElementById("supplierTaskPanel");
@@ -261,6 +307,7 @@
         if(titleInput)titleInput.required=!supplierMode;
         if(startDateInput)startDateInput.required=!supplierMode;
         if(startTimeInput)startTimeInput.required=!supplierMode;
+        renderRoomTabs();
     }
     if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
     updateTaskType();
