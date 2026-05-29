@@ -492,8 +492,8 @@
         if(!SpeechRecognition)return null;
         const recognition=new SpeechRecognition();
         recognition.lang=(navigator.language||"en-US");
-        recognition.interimResults=true;
-        recognition.continuous=true;
+        recognition.interimResults=false;
+        recognition.continuous=false;
         return recognition;
     }
     function normalizeAiSpeechTranscript(text){
@@ -505,6 +505,13 @@
             }
         });
         return cleaned.join(" ");
+    }
+    function cleanAiVoiceCommand(text){
+        let command=normalizeAiSpeechTranscript(text);
+        command=command.replace(/\bcredit test\b/gi,"create task");
+        command=command.replace(/\bcredit\b/gi,"create");
+        command=command.replace(/\btest\b/gi,"task");
+        return normalizeAiSpeechTranscript(command);
     }
     if(aiVoiceTaskButton)aiVoiceTaskButton.addEventListener("click",()=>{
         if(aiVoiceTaskPanel)aiVoiceTaskPanel.hidden=!aiVoiceTaskPanel.hidden;
@@ -530,17 +537,12 @@
             aiSpeechTranscript="";
             aiSpeechFinalTranscript="";
             aiSpeechRecognition.onresult=event=>{
-                let interimTranscript="";
-                for(let i=event.resultIndex;i<event.results.length;i++){
-                    const phrase=event.results[i][0].transcript.trim();
-                    if(event.results[i].isFinal){
-                        aiSpeechFinalTranscript=(aiSpeechFinalTranscript+" "+phrase).trim();
-                    }else{
-                        interimTranscript=(interimTranscript+" "+phrase).trim();
-                    }
+                const result=event.results[event.results.length-1];
+                if(result&&result[0]){
+                    aiSpeechFinalTranscript=result[0].transcript.trim();
+                    aiSpeechTranscript=cleanAiVoiceCommand(aiSpeechFinalTranscript);
+                    if(aiTextTaskCommand)aiTextTaskCommand.value=aiSpeechTranscript;
                 }
-                aiSpeechTranscript=normalizeAiSpeechTranscript((aiSpeechFinalTranscript+" "+interimTranscript).trim());
-                if(aiTextTaskCommand)aiTextTaskCommand.value=aiSpeechTranscript;
             };
             aiSpeechRecognition.onerror=event=>{
                 setAiVoiceStatus("Phone speech recognition stopped: "+(event.error||"unknown error")+". You can type the command and tap Fill From Text.",true);
@@ -593,7 +595,7 @@
     });
     if(aiVoiceStopButton)aiVoiceStopButton.addEventListener("click",()=>{
         if(aiSpeechRecognition){
-            const transcript=normalizeAiSpeechTranscript(aiSpeechTranscript.trim());
+            const transcript=cleanAiVoiceCommand(aiSpeechTranscript.trim());
             try{aiSpeechRecognition.stop();}catch(error){}
             aiSpeechRecognition=null;
             aiVoiceStartButton.disabled=false;
