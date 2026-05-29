@@ -195,7 +195,7 @@
                         {% endif %}
                         {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
-                                <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+                                <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
                                 {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                                     <div class="completionBlocks">

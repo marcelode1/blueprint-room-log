@@ -5599,6 +5599,8 @@ def create_task_realtime_token():
             "Default task_end_date to task_start_date.",
             "Make title short and put the full work description in instructions.",
             "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
+            "Ignore confirmation phrases such as thank you, yes, correct, fill the form, finish the conversation, and other meta conversation. Use only the actual task details.",
+            "Keep notes empty unless important task information is missing or unclear.",
             "Return compact JSON with exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
         ],
     }
@@ -5698,7 +5700,7 @@ def create_task_realtime_draft():
     parse_payload = {
         "model": OPENAI_TASK_PARSE_MODEL,
         "messages": [
-            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only numeric IDs from the provided project, room, and worker lists."},
+            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only the actual task details. Ignore thank-yous, confirmations, finish/fill commands, and other meta conversation. Use only numeric IDs from the provided project, room, and worker lists. Keep notes empty unless important task information is missing or unclear."},
             {"role": "user", "content": json.dumps({
                 "today": local_now().date().isoformat(),
                 "timezone": APP_TIMEZONE,
@@ -6245,7 +6247,7 @@ def complete_task(task_id):
             )
         conn.commit()
         conn.close()
-        flash("Picture/audio saved to the selected room. You can add the next one.")
+        flash("Saved. Add the next picture, comment, audio, or choose another room.")
         next_url = request.form.get("next")
         return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)

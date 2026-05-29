@@ -423,14 +423,65 @@
         const input=document.querySelector('input[name="'+name+'"]');
         if(input)input.checked=Boolean(value);
     }
+    function prepareRealtimeJsonText(text){
+        return String(text||"")
+            .replace(/([:\[,]\s*)(-?\d[\d\s]*\d)(?=\s*[\],}])/g,(match,prefix,numberText)=>prefix+numberText.replace(/\s+/g,""));
+    }
+    function parsedRealtimeObject(value){
+        const parsed=JSON.parse(prepareRealtimeJsonText(value));
+        if(Array.isArray(parsed)){
+            for(let i=parsed.length-1;i>=0;i--){
+                if(parsed[i]&&typeof parsed[i]==="object"&&!Array.isArray(parsed[i]))return parsed[i];
+            }
+            throw new Error("No task object in JSON array.");
+        }
+        return parsed;
+    }
+    function extractRealtimeJsonObjects(text){
+        const source=prepareRealtimeJsonText(text);
+        const objects=[];
+        let start=-1,depth=0,inString=false,escape=false;
+        for(let i=0;i<source.length;i++){
+            const char=source[i];
+            if(inString){
+                if(escape){escape=false;continue;}
+                if(char==="\\"){escape=true;continue;}
+                if(char==='"')inString=false;
+                continue;
+            }
+            if(char==='"'){inString=true;continue;}
+            if(char==="{"){
+                if(depth===0)start=i;
+                depth++;
+            }else if(char==="}"&&depth>0){
+                depth--;
+                if(depth===0&&start>=0){
+                    const candidate=source.slice(start,i+1);
+                    try{
+                        const parsed=parsedRealtimeObject(candidate);
+                        if(parsed&&typeof parsed==="object")objects.push(parsed);
+                    }catch(error){}
+                    start=-1;
+                }
+            }
+        }
+        return objects;
+    }
+    function looksLikeTaskDraft(draft){
+        if(!draft||typeof draft!=="object")return false;
+        const keys=Object.keys(draft).map(normalizedDraftKey);
+        return ["project_id","user_ids","task_start_date","task_start_time","title","instructions"].some(key=>keys.includes(key));
+    }
     function parseRealtimeJson(text){
         const raw=String(text||"").trim();
         const fenced=raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
         const candidate=(fenced?fenced[1]:raw).trim();
-        const start=candidate.indexOf("{");
-        const end=candidate.lastIndexOf("}");
-        if(start>=0&&end>start)return JSON.parse(candidate.slice(start,end+1));
-        return JSON.parse(candidate);
+        try{
+            return parsedRealtimeObject(candidate);
+        }catch(error){}
+        const objects=extractRealtimeJsonObjects(candidate).filter(looksLikeTaskDraft);
+        if(objects.length)return objects[objects.length-1];
+        throw new Error("No task JSON found.");
     }
     function compactMatchText(value){
         return String(value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
@@ -546,7 +597,7 @@
         setCheckbox("allow_audio",draft.allow_audio!==false);
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=false;
-            realtimeVoiceTaskResult.textContent="Realtime result:\n"+JSON.stringify(draft,null,2);
+            realtimeVoiceTaskResult.textContent="Task form filled. Review the fields below before saving.";
         }
         const missing=[];
         if(!draft.project_id)missing.push("project");
@@ -619,6 +670,7 @@
         if(realtimeDc&&realtimeDc.readyState==="open"){
             try{realtimeDc.send(JSON.stringify({type:"response.cancel"}));}catch(error){}
         }
+        if(tryFillRealtimeFromVisibleJson())return;
         createRealtimeDraftFromServer();
     }
     async function createRealtimeDraftFromServer(){
@@ -664,7 +716,7 @@
         realtimeLastJsonText=realtimeText;
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=false;
-            realtimeVoiceTaskResult.textContent=realtimeText;
+            realtimeVoiceTaskResult.textContent="Creating task form...";
         }
         try{
             fillRealtimeTaskDraft(parseRealtimeJson(realtimeText));
