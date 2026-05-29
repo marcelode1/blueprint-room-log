@@ -401,6 +401,7 @@
     let realtimeAssistantText="";
     let realtimeProcessingTimer=null;
     let realtimeFinalRequested=false;
+    let realtimeLastJsonText="";
 
     function setRealtimeStatus(message,isError=false){
         if(!realtimeVoiceTaskStatus)return;
@@ -570,8 +571,9 @@
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
     }
-    function requestRealtimeResponse(){
-        if(realtimeFinalRequested)return;
+    function requestRealtimeResponse(force=false){
+        if(realtimeFinalRequested&&!force)return;
+        if(force)realtimeFinalRequested=false;
         realtimeFinalRequested=true;
         if(realtimeStream){
             realtimeStream.getTracks().forEach(track=>track.stop());
@@ -581,23 +583,45 @@
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         setRealtimeStatus("Processing voice command...");
         if(realtimeDc&&realtimeDc.readyState==="open"){
+            const conversationSummary=[
+                realtimeTranscriptText?"User said: "+realtimeTranscriptText:"",
+                realtimeAssistantText?"Assistant confirmed: "+realtimeAssistantText:""
+            ].filter(Boolean).join("\n");
             realtimeDc.send(JSON.stringify({
                 type:"response.create",
                 response:{
                     output_modalities:["text"],
-                    instructions:"Based on the full English conversation, return only compact valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes. project_id, room_id, and user_ids must be numeric IDs from the provided lists, not names."
+                    instructions:"Based on the full English conversation below, return only compact valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes. project_id, room_id, and user_ids must be numeric IDs from the provided lists, not names.\n"+conversationSummary
                 }
             }));
         }
         realtimeProcessingTimer=setTimeout(()=>{
-            if(!realtimeText){
-                setRealtimeStatus("No Realtime response came back. Try again and wait one second after speaking before pressing Stop.",true);
+            if(!realtimeText&&!tryFillRealtimeFromVisibleJson()){
+                setRealtimeStatus("No Realtime form response came back. Try Stop & Fill Task again.",true);
                 stopRealtimeVoice();
             }
         },12000);
     }
+    function tryFillRealtimeFromVisibleJson(){
+        const sources=[
+            realtimeLastJsonText,
+            realtimeText,
+            realtimeVoiceTaskResult?realtimeVoiceTaskResult.textContent:"",
+            realtimeAssistantText,
+            realtimeTranscriptText
+        ];
+        for(const source of sources){
+            try{
+                fillRealtimeTaskDraft(parseRealtimeJson(source));
+                stopRealtimeVoice();
+                return true;
+            }catch(error){}
+        }
+        return false;
+    }
     function handleRealtimeText(text){
         realtimeText=(realtimeText+" "+String(text||"")).trim();
+        realtimeLastJsonText=realtimeText;
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=false;
             realtimeVoiceTaskResult.textContent=realtimeText;
@@ -613,7 +637,7 @@
         realtimeTranscriptText=isFinal?transcript:transcript;
         realtimeVoiceTranscript.hidden=false;
         realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
-        if(isFinal&&shouldAutoFillRealtimeTask(transcript)){
+        if(shouldAutoFillRealtimeTask(transcript)){
             requestRealtimeResponse();
         }
     }
@@ -624,12 +648,39 @@
             "fill the task",
             "fill out task",
             "fill task",
+            "fill the task now",
+            "fill task now",
             "fill the form",
+            "fill up the form",
+            "fill up form",
             "fill out the form",
+            "fill the form now",
+            "fill out the form now",
+            "feel the task",
+            "feel the task now",
+            "feel the form",
+            "feel the form now",
             "save it to the form",
             "put it in the form",
             "create the task form",
-            "make the task"
+            "make the task",
+            "make the task form",
+            "write the task",
+            "write the task form",
+            "finish and fill the task",
+            "finish and fill the form",
+            "finish the conversation",
+            "finish conversation",
+            "end the conversation",
+            "we are done",
+            "that is correct",
+            "everything is correct",
+            "that sounds good",
+            "close the mic",
+            "close microphone",
+            "stop and fill",
+            "stop and fill task",
+            "stop and fill the task"
         ].some(phrase=>compact.includes(phrase));
     }
     function showRealtimeAssistant(text){
@@ -742,7 +793,7 @@
     });
     if(realtimeVoiceStartButton)realtimeVoiceStartButton.addEventListener("click",startRealtimeVoiceTask);
     if(realtimeVoiceStopButton)realtimeVoiceStopButton.addEventListener("click",()=>{
-        requestRealtimeResponse();
+        requestRealtimeResponse(true);
     });
 })();
 </script>
