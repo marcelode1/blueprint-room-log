@@ -8,10 +8,12 @@
     <div id="realtimeVoiceTaskPanel" class="realtimeVoiceTaskPanel" hidden>
         <div class="realtimeVoiceTaskActions">
             <button type="button" id="realtimeVoiceStartButton">Start Realtime Voice</button>
-            <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop</button>
+            <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop & Fill Task</button>
         </div>
-        <p id="realtimeVoiceTaskStatus" class="muted">Speak the task, then pause. Review the filled form before saving.</p>
+        <audio id="realtimeVoiceAudio" autoplay hidden></audio>
+        <p id="realtimeVoiceTaskStatus" class="muted">Speak naturally. The assistant can ask questions, then tap Stop & Fill Task when ready.</p>
         <p id="realtimeVoiceTranscript" class="realtimeVoiceTranscript" hidden></p>
+        <p id="realtimeVoiceAssistant" class="realtimeVoiceTranscript" hidden></p>
         <p id="realtimeVoiceTaskResult" class="realtimeVoiceTaskResult" hidden></p>
     </div>
     {% endif %}
@@ -386,14 +388,17 @@
     const realtimeVoiceTaskPanel=document.getElementById("realtimeVoiceTaskPanel");
     const realtimeVoiceStartButton=document.getElementById("realtimeVoiceStartButton");
     const realtimeVoiceStopButton=document.getElementById("realtimeVoiceStopButton");
+    const realtimeVoiceAudio=document.getElementById("realtimeVoiceAudio");
     const realtimeVoiceTaskStatus=document.getElementById("realtimeVoiceTaskStatus");
     const realtimeVoiceTranscript=document.getElementById("realtimeVoiceTranscript");
+    const realtimeVoiceAssistant=document.getElementById("realtimeVoiceAssistant");
     const realtimeVoiceTaskResult=document.getElementById("realtimeVoiceTaskResult");
     let realtimePc=null;
     let realtimeDc=null;
     let realtimeStream=null;
     let realtimeText="";
     let realtimeTranscriptText="";
+    let realtimeAssistantText="";
     let realtimeProcessingTimer=null;
 
     function setRealtimeStatus(message,isError=false){
@@ -473,6 +478,7 @@
             try{realtimePc.close();}catch(error){}
             realtimePc=null;
         }
+        if(realtimeVoiceAudio)realtimeVoiceAudio.srcObject=null;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=false;
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
@@ -490,7 +496,7 @@
                 type:"response.create",
                 response:{
                     output_modalities:["text"],
-                    instructions:"Return only the final ProjectONus task JSON for the English speech you just heard."
+                    instructions:"Based on the full English conversation, return only valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
                 }
             }));
         }
@@ -519,6 +525,13 @@
         realtimeVoiceTranscript.hidden=false;
         realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
     }
+    function showRealtimeAssistant(text){
+        const message=String(text||"").trim();
+        if(!message||!realtimeVoiceAssistant)return;
+        realtimeAssistantText=message;
+        realtimeVoiceAssistant.hidden=false;
+        realtimeVoiceAssistant.textContent="Assistant: "+realtimeAssistantText;
+    }
     async function startRealtimeVoiceTask(){
         if(!navigator.mediaDevices||!window.RTCPeerConnection){
             setRealtimeStatus("This phone browser cannot start Realtime voice.",true);
@@ -526,6 +539,7 @@
         }
         realtimeText="";
         realtimeTranscriptText="";
+        realtimeAssistantText="";
         setRealtimeStatus("Starting Realtime voice...");
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=true;
@@ -534,6 +548,10 @@
         if(realtimeVoiceTranscript){
             realtimeVoiceTranscript.hidden=true;
             realtimeVoiceTranscript.textContent="";
+        }
+        if(realtimeVoiceAssistant){
+            realtimeVoiceAssistant.hidden=true;
+            realtimeVoiceAssistant.textContent="";
         }
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=true;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.add("isListening");
@@ -546,6 +564,11 @@
             if(!realtimeKey)throw new Error("Realtime token was missing.");
 
             realtimePc=new RTCPeerConnection();
+            realtimePc.addEventListener("track",event=>{
+                if(realtimeVoiceAudio&&event.streams&&event.streams[0]){
+                    realtimeVoiceAudio.srcObject=event.streams[0];
+                }
+            });
             realtimePc.addEventListener("connectionstatechange",()=>{
                 if(realtimePc&&realtimePc.connectionState==="connected"){
                     setRealtimeStatus("Listening... speak the task, then pause.");
@@ -576,6 +599,12 @@
                 }
                 if(payload.type==="conversation.item.input_audio_transcription.completed"){
                     showRealtimeTranscript(payload.transcript||realtimeTranscriptText,true);
+                }
+                if(payload.type==="response.audio_transcript.delta"){
+                    showRealtimeAssistant((realtimeAssistantText+" "+(payload.delta||"")).trim());
+                }
+                if(payload.type==="response.audio_transcript.done"){
+                    showRealtimeAssistant(payload.transcript||realtimeAssistantText);
                 }
                 if(payload.type==="error"){
                     setRealtimeStatus(payload.error&&payload.error.message?payload.error.message:"Realtime voice error.",true);

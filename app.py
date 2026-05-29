@@ -5510,7 +5510,7 @@ def create_task_realtime_token():
 
     projects_context, users_context = openai_realtime_task_context()
     instructions = {
-        "role": "ProjectONus task voice assistant",
+        "role": "ProjectONus conversational task voice assistant",
         "today": local_now().date().isoformat(),
         "timezone": APP_TIMEZONE,
         "projects": projects_context,
@@ -5518,7 +5518,10 @@ def create_task_realtime_token():
         "rules": [
             "Listen to the admin's spoken task command in English.",
             "Use English only. Do not translate from or respond in any other language.",
-            "Return only valid JSON. Do not include markdown, explanation, or extra text.",
+            "Have a short spoken conversation with the admin.",
+            "Confirm what you understood before the task form is filled.",
+            "If the project, worker, date, time, room, or task details are unclear, ask one short follow-up question at a time.",
+            "Do not read JSON aloud during the conversation.",
             "Use only IDs from the provided projects, rooms, and workers.",
             "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
             "Return task_start_time in 24-hour HH:MM format when possible.",
@@ -5535,8 +5538,11 @@ def create_task_realtime_token():
             "type": "realtime",
             "model": OPENAI_REALTIME_MODEL,
             "instructions": json.dumps(instructions),
-            "output_modalities": ["text"],
+            "output_modalities": ["audio"],
             "audio": {
+                "output": {
+                    "voice": "marin"
+                },
                 "input": {
                     "transcription": {
                         "model": "gpt-4o-mini-transcribe",
