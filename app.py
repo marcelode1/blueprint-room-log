@@ -1270,6 +1270,10 @@ def load_task_details(conn, tasks, room_id=None):
         ).fetchall()
         if task["_supplier_inventory_items"] and not task["_supplier_inventory_item"]:
             task["_supplier_inventory_item"] = task["_supplier_inventory_items"][0]
+        task["_project_rooms"] = conn.execute(
+            "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name",
+            (task["project_id"],)
+        ).fetchall()
         room_ids = set()
         if room_id:
             room_ids.add(room_id)
@@ -6079,6 +6083,33 @@ def complete_task(task_id):
         conn.close()
         flash(upload_error)
         return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
+    save_media_only = request.form.get("completion_save_media_only") == "1"
+    if save_media_only:
+        if not completion_uploads:
+            conn.close()
+            flash("Choose a picture or audio before saving to a room.")
+            next_url = request.form.get("next")
+            return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
+        inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
+        update_fields = []
+        params = []
+        if first_photo and not task.get("completion_photo_file"):
+            update_fields.append("completion_photo_file = %s")
+            params.append(first_photo)
+        if first_audio and not task.get("completion_audio_file"):
+            update_fields.append("completion_audio_file = %s")
+            params.append(first_audio)
+        if update_fields:
+            params.append(task_id)
+            conn.execute(
+                f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
+                tuple(params)
+            )
+        conn.commit()
+        conn.close()
+        flash("Picture/audio saved to the selected room. You can add the next one.")
+        next_url = request.form.get("next")
+        return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
     if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
         conn.close()

@@ -201,6 +201,13 @@
                                     <div class="completionBlocks">
                                         <div class="completionBlock">
                                             <input type="hidden" name="completion_attachment_indexes" value="0">
+                                            <label>Room for this picture / audio</label>
+                                            <select name="completion_attachment_0_room_id">
+                                                <option value="">Project general</option>
+                                                {% for room_option in t._project_rooms %}
+                                                    <option value="{{ room_option.id }}" {% if t.room_id == room_option.id %}selected{% endif %}>{{ room_option.name }}</option>
+                                                {% endfor %}
+                                            </select>
                                             {% set media_id = 'task_' ~ t.id ~ '_project_media_0' %}
                                             {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
                                             {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
@@ -211,7 +218,7 @@
                                             {% include "_mobile_media_bar.html" %}
                                         </div>
                                     </div>
-                                    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+                                    <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                                 {% endif %}
                                 <button type="submit">Mark Task Done</button>
                             </form>
@@ -265,6 +272,13 @@
                         <div class="completionBlocks">
                             <div class="completionBlock">
                                 <input type="hidden" name="completion_attachment_indexes" value="0">
+                                <label>Room for this picture / audio</label>
+                                <select name="completion_attachment_0_room_id">
+                                    <option value="">Project general</option>
+                                    {% for room_option in t._project_rooms %}
+                                        <option value="{{ room_option.id }}" {% if t.room_id == room_option.id %}selected{% endif %}>{{ room_option.name }}</option>
+                                    {% endfor %}
+                                </select>
                                 {% set media_id = 'task_' ~ t.id ~ '_media_0' %}
                                 {% set media_camera_name = 'completion_attachment_0_camera' if t.require_picture or t.allow_picture_upload else '' %}
                                 {% set media_upload_name = 'completion_attachment_0_photo' if t.allow_picture_upload else '' %}
@@ -275,7 +289,7 @@
                                 {% include "_mobile_media_bar.html" %}
                             </div>
                         </div>
-                        <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+                        <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
                     {% endif %}
                     <button type="submit">Mark Task Done</button>
                 </form>
