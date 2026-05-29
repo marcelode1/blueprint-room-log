@@ -11,6 +11,7 @@
             <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop</button>
         </div>
         <p id="realtimeVoiceTaskStatus" class="muted">Speak the task, then pause. Review the filled form before saving.</p>
+        <p id="realtimeVoiceTranscript" class="realtimeVoiceTranscript" hidden></p>
         <p id="realtimeVoiceTaskResult" class="realtimeVoiceTaskResult" hidden></p>
     </div>
     {% endif %}
@@ -167,7 +168,9 @@
 .realtimeVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
 .realtimeVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .realtimeVoiceTaskActions button{margin:0}
-.realtimeVoiceTaskResult{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
+.realtimeVoiceTaskActions button.isListening{background:#16a34a!important}
+.realtimeVoiceTranscript,.realtimeVoiceTaskResult{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
+.realtimeVoiceTranscript{font-weight:800}
 @media(max-width:760px){.modalActions,.realtimeVoiceTaskActions{grid-template-columns:1fr}}
 </style>
 <script>
@@ -384,11 +387,13 @@
     const realtimeVoiceStartButton=document.getElementById("realtimeVoiceStartButton");
     const realtimeVoiceStopButton=document.getElementById("realtimeVoiceStopButton");
     const realtimeVoiceTaskStatus=document.getElementById("realtimeVoiceTaskStatus");
+    const realtimeVoiceTranscript=document.getElementById("realtimeVoiceTranscript");
     const realtimeVoiceTaskResult=document.getElementById("realtimeVoiceTaskResult");
     let realtimePc=null;
     let realtimeDc=null;
     let realtimeStream=null;
     let realtimeText="";
+    let realtimeTranscriptText="";
 
     function setRealtimeStatus(message,isError=false){
         if(!realtimeVoiceTaskStatus)return;
@@ -465,6 +470,7 @@
         }
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=false;
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
     }
     function handleRealtimeText(text){
         realtimeText=(realtimeText+" "+String(text||"")).trim();
@@ -477,18 +483,31 @@
             stopRealtimeVoice();
         }catch(error){}
     }
+    function showRealtimeTranscript(text,isFinal=false){
+        const transcript=String(text||"").trim();
+        if(!transcript||!realtimeVoiceTranscript)return;
+        realtimeTranscriptText=isFinal?transcript:transcript;
+        realtimeVoiceTranscript.hidden=false;
+        realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
+    }
     async function startRealtimeVoiceTask(){
         if(!navigator.mediaDevices||!window.RTCPeerConnection){
             setRealtimeStatus("This phone browser cannot start Realtime voice.",true);
             return;
         }
         realtimeText="";
+        realtimeTranscriptText="";
         setRealtimeStatus("Starting Realtime voice...");
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=true;
             realtimeVoiceTaskResult.textContent="";
         }
+        if(realtimeVoiceTranscript){
+            realtimeVoiceTranscript.hidden=true;
+            realtimeVoiceTranscript.textContent="";
+        }
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=true;
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.add("isListening");
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=false;
         try{
             const tokenResponse=await fetch("{{ url_for('create_task_realtime_token') }}",{method:"POST"});
@@ -514,6 +533,12 @@
                 if(payload.type==="response.done"&&!realtimeText){
                     const output=((payload.response||{}).output||[]).flatMap(item=>item.content||[]);
                     output.forEach(content=>handleRealtimeText(content.text||content.transcript||""));
+                }
+                if(payload.type==="conversation.item.input_audio_transcription.delta"){
+                    showRealtimeTranscript((realtimeTranscriptText+" "+(payload.delta||"")).trim(),false);
+                }
+                if(payload.type==="conversation.item.input_audio_transcription.completed"){
+                    showRealtimeTranscript(payload.transcript||realtimeTranscriptText,true);
                 }
                 if(payload.type==="error"){
                     setRealtimeStatus(payload.error&&payload.error.message?payload.error.message:"Realtime voice error.",true);

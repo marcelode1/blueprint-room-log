@@ -5516,7 +5516,8 @@ def create_task_realtime_token():
         "projects": projects_context,
         "workers": users_context,
         "rules": [
-            "Listen to the admin's spoken task command.",
+            "Listen to the admin's spoken task command in English.",
+            "Use English only. Do not translate from or respond in any other language.",
             "Return only valid JSON. Do not include markdown, explanation, or extra text.",
             "Use only IDs from the provided projects, rooms, and workers.",
             "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
@@ -5537,6 +5538,11 @@ def create_task_realtime_token():
             "output_modalities": ["text"],
             "audio": {
                 "input": {
+                    "transcription": {
+                        "model": "gpt-4o-mini-transcribe",
+                        "language": "en",
+                        "prompt": "ProjectONus construction task command in English. Common words include create task, worker names, project names, room names, office, install, service, picture, photo, audio, today, tomorrow, morning, afternoon."
+                    },
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.5,
