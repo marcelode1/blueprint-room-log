@@ -43,6 +43,7 @@ APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 AI_TASK_TRANSCRIBE_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
 AI_TASK_PARSE_MODEL = os.environ.get("AI_TASK_PARSE_MODEL", "gpt-4.1-mini")
+AI_TASK_TRANSCRIBE_FALLBACK_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_FALLBACK_MODEL", "whisper-1")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -58,7 +59,7 @@ COMMON_TIMEZONES = [
 ]
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
-ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg"}
+ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg", "mp4", "mpeg", "mpga", "flac"}
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
 ALLOWED_VENDOR_DOCUMENTS = {"pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "png", "jpg", "jpeg", "webp"}
@@ -5480,6 +5481,41 @@ def json_response(payload, status=200):
     return Response(json.dumps(payload), status=status, mimetype="application/json")
 
 
+def openai_error_detail(response):
+    if not response:
+        return ""
+    try:
+        payload = response.json()
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            return str(error.get("message") or response.text)[:300]
+    except Exception:
+        pass
+    return (response.text or "")[:300]
+
+
+def transcribe_openai_audio(audio_file, model):
+    filename = secure_filename(audio_file.filename) or "voice_command.webm"
+    content_type = audio_file.mimetype or mimetypes.guess_type(filename)[0] or "audio/webm"
+    audio_file.stream.seek(0)
+    audio_bytes = audio_file.stream.read()
+    if not audio_bytes:
+        raise ValueError("empty_audio")
+    response = requests.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+        data={
+            "model": model,
+            "response_format": "json",
+            "prompt": "This is a ProjectONus admin voice command for creating a task. Preserve project, room, worker names, dates, times, and picture requirements."
+        },
+        files={"file": (filename, io.BytesIO(audio_bytes), content_type)},
+        timeout=60
+    )
+    response.raise_for_status()
+    return (response.json().get("text") or "").strip()
+
+
 def clean_ai_task_payload(payload, projects, rooms, users):
     project_ids = {int(project["id"]) for project in projects}
     room_by_id = {int(room["id"]): room for room in rooms}
@@ -5548,7 +5584,7 @@ def ai_voice_task_draft():
     if not audio or not audio.filename:
         return json_response({"error": "Record a voice command first."}, 400)
     if file_ext(audio.filename) not in ALLOWED_AUDIO:
-        return json_response({"error": "The voice command must be a webm, mp3, m4a, wav, or ogg file."}, 400)
+        return json_response({"error": "The voice command must be a webm, mp3, m4a, wav, ogg, mp4, mpeg, mpga, or flac file."}, 400)
 
     conn = db()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -5556,27 +5592,25 @@ def ai_voice_task_draft():
     users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     conn.close()
 
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     try:
-        audio.stream.seek(0)
-        transcript_response = requests.post(
-            "https://api.openai.com/v1/audio/transcriptions",
-            headers=headers,
-            data={
-                "model": AI_TASK_TRANSCRIBE_MODEL,
-                "response_format": "json",
-                "prompt": "This is a ProjectONus admin voice command for creating a task. Preserve project, room, worker names, dates, times, and picture requirements."
-            },
-            files={"file": (secure_filename(audio.filename) or "voice_command.webm", audio.stream, audio.mimetype or "audio/webm")},
-            timeout=60
-        )
-        transcript_response.raise_for_status()
-        transcript = (transcript_response.json().get("text") or "").strip()
+        transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_MODEL)
     except requests.RequestException as exc:
-        detail = ""
-        if getattr(exc, "response", None) is not None:
-            detail = exc.response.text[:300]
-        return json_response({"error": "OpenAI could not transcribe the voice command.", "detail": detail}, 502)
+        detail = openai_error_detail(getattr(exc, "response", None))
+        if AI_TASK_TRANSCRIBE_FALLBACK_MODEL and AI_TASK_TRANSCRIBE_FALLBACK_MODEL != AI_TASK_TRANSCRIBE_MODEL:
+            try:
+                transcript = transcribe_openai_audio(audio, AI_TASK_TRANSCRIBE_FALLBACK_MODEL)
+            except requests.RequestException as fallback_exc:
+                fallback_detail = openai_error_detail(getattr(fallback_exc, "response", None))
+                return json_response({
+                    "error": "OpenAI could not transcribe the voice command.",
+                    "detail": fallback_detail or detail
+                }, 502)
+            except Exception:
+                return json_response({"error": "The voice command could not be transcribed.", "detail": detail}, 502)
+        else:
+            return json_response({"error": "OpenAI could not transcribe the voice command.", "detail": detail}, 502)
+    except ValueError:
+        return json_response({"error": "No audio was recorded. Hold the button a little longer and try again."}, 400)
     except Exception:
         return json_response({"error": "The voice command could not be transcribed."}, 502)
 
@@ -5641,6 +5675,7 @@ def ai_voice_task_draft():
         ],
     }
 
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     try:
         parse_response = requests.post(
             "https://api.openai.com/v1/chat/completions",
