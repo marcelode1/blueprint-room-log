@@ -394,6 +394,7 @@
     let realtimeStream=null;
     let realtimeText="";
     let realtimeTranscriptText="";
+    let realtimeProcessingTimer=null;
 
     function setRealtimeStatus(message,isError=false){
         if(!realtimeVoiceTaskStatus)return;
@@ -456,6 +457,10 @@
         setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+".":"Task form filled. Please review it, then click Save Task.",missing.length>0);
     }
     function stopRealtimeVoice(){
+        if(realtimeProcessingTimer){
+            clearTimeout(realtimeProcessingTimer);
+            realtimeProcessingTimer=null;
+        }
         if(realtimeStream){
             realtimeStream.getTracks().forEach(track=>track.stop());
             realtimeStream=null;
@@ -471,6 +476,30 @@
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=false;
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
+    }
+    function requestRealtimeResponse(){
+        if(realtimeStream){
+            realtimeStream.getTracks().forEach(track=>track.stop());
+            realtimeStream=null;
+        }
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+        setRealtimeStatus("Processing voice command...");
+        if(realtimeDc&&realtimeDc.readyState==="open"){
+            realtimeDc.send(JSON.stringify({
+                type:"response.create",
+                response:{
+                    modalities:["text"],
+                    instructions:"Return only the final ProjectONus task JSON for the English speech you just heard."
+                }
+            }));
+        }
+        realtimeProcessingTimer=setTimeout(()=>{
+            if(!realtimeText){
+                setRealtimeStatus("No Realtime response came back. Try again and wait one second after speaking before pressing Stop.",true);
+                stopRealtimeVoice();
+            }
+        },12000);
     }
     function handleRealtimeText(text){
         realtimeText=(realtimeText+" "+String(text||"")).trim();
@@ -517,6 +546,14 @@
             if(!realtimeKey)throw new Error("Realtime token was missing.");
 
             realtimePc=new RTCPeerConnection();
+            realtimePc.addEventListener("connectionstatechange",()=>{
+                if(realtimePc&&realtimePc.connectionState==="connected"){
+                    setRealtimeStatus("Listening... speak the task, then pause.");
+                }
+                if(realtimePc&&["failed","disconnected","closed"].includes(realtimePc.connectionState)&&!realtimeText){
+                    setRealtimeStatus("Realtime connection ended before a task was created.",true);
+                }
+            });
             realtimeStream=await navigator.mediaDevices.getUserMedia({audio:true});
             realtimeStream.getTracks().forEach(track=>realtimePc.addTrack(track,realtimeStream));
             realtimeDc=realtimePc.createDataChannel("oai-events");
@@ -568,8 +605,7 @@
     });
     if(realtimeVoiceStartButton)realtimeVoiceStartButton.addEventListener("click",startRealtimeVoiceTask);
     if(realtimeVoiceStopButton)realtimeVoiceStopButton.addEventListener("click",()=>{
-        setRealtimeStatus(realtimeText?"Realtime voice stopped. Review the form.":"Realtime voice stopped.");
-        stopRealtimeVoice();
+        requestRealtimeResponse();
     });
 })();
 </script>
