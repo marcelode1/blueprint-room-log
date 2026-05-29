@@ -9,6 +9,7 @@
         <div class="realtimeVoiceTaskActions">
             <button type="button" id="realtimeVoiceStartButton">Start Realtime Voice</button>
             <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop & Fill Task</button>
+            <button type="button" class="btn-secondary" id="realtimeVoiceClearButton">Clear Conversation</button>
         </div>
         <audio id="realtimeVoiceAudio" autoplay hidden></audio>
         <p id="realtimeVoiceTaskStatus" class="muted">Speak naturally. The assistant can ask questions, then tap Stop & Fill Task when ready.</p>
@@ -388,6 +389,7 @@
     const realtimeVoiceTaskPanel=document.getElementById("realtimeVoiceTaskPanel");
     const realtimeVoiceStartButton=document.getElementById("realtimeVoiceStartButton");
     const realtimeVoiceStopButton=document.getElementById("realtimeVoiceStopButton");
+    const realtimeVoiceClearButton=document.getElementById("realtimeVoiceClearButton");
     const realtimeVoiceAudio=document.getElementById("realtimeVoiceAudio");
     const realtimeVoiceTaskStatus=document.getElementById("realtimeVoiceTaskStatus");
     const realtimeVoiceTranscript=document.getElementById("realtimeVoiceTranscript");
@@ -402,6 +404,10 @@
     let realtimeProcessingTimer=null;
     let realtimeFinalRequested=false;
     let realtimeLastJsonText="";
+    let realtimeResponseInProgress=false;
+    let realtimePendingFinalRequest=false;
+    let realtimeCancelingForFinal=false;
+    let realtimeActiveResponseRetryTimer=null;
 
     function setRealtimeStatus(message,isError=false){
         if(!realtimeVoiceTaskStatus)return;
@@ -554,6 +560,10 @@
             clearTimeout(realtimeProcessingTimer);
             realtimeProcessingTimer=null;
         }
+        if(realtimeActiveResponseRetryTimer){
+            clearTimeout(realtimeActiveResponseRetryTimer);
+            realtimeActiveResponseRetryTimer=null;
+        }
         if(realtimeStream){
             realtimeStream.getTracks().forEach(track=>track.stop());
             realtimeStream=null;
@@ -571,8 +581,47 @@
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
     }
+    function clearRealtimeConversation(){
+        stopRealtimeVoice();
+        realtimeText="";
+        realtimeTranscriptText="";
+        realtimeAssistantText="";
+        realtimeLastJsonText="";
+        realtimeFinalRequested=false;
+        realtimeResponseInProgress=false;
+        realtimePendingFinalRequest=false;
+        realtimeCancelingForFinal=false;
+        if(realtimeVoiceTranscript){
+            realtimeVoiceTranscript.hidden=true;
+            realtimeVoiceTranscript.textContent="";
+        }
+        if(realtimeVoiceAssistant){
+            realtimeVoiceAssistant.hidden=true;
+            realtimeVoiceAssistant.textContent="";
+        }
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=true;
+            realtimeVoiceTaskResult.textContent="";
+        }
+        setRealtimeStatus("Conversation cleared. Start Realtime Voice again when ready.");
+    }
     function requestRealtimeResponse(force=false){
         if(realtimeFinalRequested&&!force)return;
+        if(realtimeResponseInProgress){
+            realtimePendingFinalRequest=true;
+            realtimeCancelingForFinal=true;
+            if(realtimeStream){
+                realtimeStream.getTracks().forEach(track=>track.stop());
+                realtimeStream=null;
+            }
+            if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
+            if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+            setRealtimeStatus("Stopping assistant response, then filling the task...");
+            if(realtimeDc&&realtimeDc.readyState==="open"){
+                realtimeDc.send(JSON.stringify({type:"response.cancel"}));
+            }
+            return;
+        }
         if(force)realtimeFinalRequested=false;
         realtimeFinalRequested=true;
         if(realtimeStream){
@@ -594,6 +643,7 @@
                     instructions:"Based on the full English conversation below, return only compact valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes. project_id, room_id, and user_ids must be numeric IDs from the provided lists, not names.\n"+conversationSummary
                 }
             }));
+            realtimeResponseInProgress=true;
         }
         realtimeProcessingTimer=setTimeout(()=>{
             if(!realtimeText&&!tryFillRealtimeFromVisibleJson()){
@@ -638,6 +688,7 @@
         realtimeVoiceTranscript.hidden=false;
         realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
         if(shouldAutoFillRealtimeTask(transcript)){
+            setRealtimeStatus("Voice command received. Turning off mic and filling the task...");
             requestRealtimeResponse();
         }
     }
@@ -651,6 +702,7 @@
             "fill the task now",
             "fill task now",
             "fill the form",
+            "fill form",
             "fill up the form",
             "fill up form",
             "fill out the form",
@@ -660,6 +712,7 @@
             "feel the task now",
             "feel the form",
             "feel the form now",
+            "feel up the form",
             "save it to the form",
             "put it in the form",
             "create the task form",
@@ -667,15 +720,23 @@
             "make the task form",
             "write the task",
             "write the task form",
+            "yes fill the task",
+            "yes fill the form",
+            "correct fill the task",
+            "correct fill the form",
+            "that is correct fill the task",
+            "that is correct fill the form",
+            "everything is correct fill the task",
+            "everything is correct fill the form",
+            "excellent fill the task",
+            "excellent fill the form",
             "finish and fill the task",
             "finish and fill the form",
             "finish the conversation",
             "finish conversation",
             "end the conversation",
-            "we are done",
-            "that is correct",
-            "everything is correct",
-            "that sounds good",
+            "we are done fill the task",
+            "we are done fill the form",
             "close the mic",
             "close microphone",
             "stop and fill",
@@ -699,6 +760,8 @@
         realtimeTranscriptText="";
         realtimeAssistantText="";
         realtimeFinalRequested=false;
+        realtimeResponseInProgress=false;
+        realtimePendingFinalRequest=false;
         setRealtimeStatus("Starting Realtime voice...");
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=true;
@@ -749,9 +812,8 @@
                 if(payload.type==="response.output_text.done"||payload.type==="response.text.done"){
                     handleRealtimeText(payload.text||"");
                 }
-                if(payload.type==="response.done"&&!realtimeText){
-                    const output=((payload.response||{}).output||[]).flatMap(item=>item.content||[]);
-                    output.forEach(content=>handleRealtimeText(content.text||content.transcript||""));
+                if(payload.type==="response.created"){
+                    realtimeResponseInProgress=true;
                 }
                 if(payload.type==="conversation.item.input_audio_transcription.delta"){
                     showRealtimeTranscript((realtimeTranscriptText+" "+(payload.delta||"")).trim(),false);
@@ -765,8 +827,35 @@
                 if(payload.type==="response.audio_transcript.done"){
                     showRealtimeAssistant(payload.transcript||realtimeAssistantText);
                 }
+                if(payload.type==="response.done"){
+                    realtimeResponseInProgress=false;
+                    if(!realtimeText){
+                        const output=((payload.response||{}).output||[]).flatMap(item=>item.content||[]);
+                        output.forEach(content=>handleRealtimeText(content.text||content.transcript||""));
+                    }
+                    if(realtimePendingFinalRequest&&!realtimeText){
+                        realtimePendingFinalRequest=false;
+                        realtimeCancelingForFinal=false;
+                        setTimeout(()=>requestRealtimeResponse(true),250);
+                    }
+                }
+                if(payload.type==="response.cancelled"||payload.type==="response.canceled"){
+                    realtimeResponseInProgress=false;
+                    if(realtimePendingFinalRequest){
+                        realtimePendingFinalRequest=false;
+                        realtimeCancelingForFinal=false;
+                        setTimeout(()=>requestRealtimeResponse(true),250);
+                    }
+                }
                 if(payload.type==="error"){
-                    setRealtimeStatus(payload.error&&payload.error.message?payload.error.message:"Realtime voice error.",true);
+                    const message=payload.error&&payload.error.message?payload.error.message:"Realtime voice error.";
+                    if(realtimePendingFinalRequest&&message.toLowerCase().includes("active response")){
+                        setRealtimeStatus("Assistant is still finishing. Retrying form fill...");
+                        if(realtimeActiveResponseRetryTimer)clearTimeout(realtimeActiveResponseRetryTimer);
+                        realtimeActiveResponseRetryTimer=setTimeout(()=>requestRealtimeResponse(true),1200);
+                    }else{
+                        setRealtimeStatus(message,true);
+                    }
                 }
             });
 
@@ -795,6 +884,7 @@
     if(realtimeVoiceStopButton)realtimeVoiceStopButton.addEventListener("click",()=>{
         requestRealtimeResponse(true);
     });
+    if(realtimeVoiceClearButton)realtimeVoiceClearButton.addEventListener("click",clearRealtimeConversation);
 })();
 </script>
 {% endblock %}
