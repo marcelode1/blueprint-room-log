@@ -5522,14 +5522,14 @@ def create_task_realtime_token():
             "Confirm what you understood before the task form is filled.",
             "If the project, worker, date, time, room, or task details are unclear, ask one short follow-up question at a time.",
             "Do not read JSON aloud during the conversation.",
-            "Use only IDs from the provided projects, rooms, and workers.",
+            "Use integer numeric IDs from the provided projects, rooms, and workers. Never put project names, room names, or worker names in ID fields.",
             "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
             "Return task_start_time in 24-hour HH:MM format when possible.",
             "Default task_start_date to today when no date is spoken.",
             "Default task_end_date to task_start_date.",
             "Make title short and put the full work description in instructions.",
             "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
-            "Return keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
+            "Return compact JSON with exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
         ],
     }
     payload = {

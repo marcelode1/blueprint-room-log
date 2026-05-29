@@ -21,24 +21,27 @@
                     <input name="attachment___INDEX___comment" placeholder="Comment for this picture or audio">
                 </div>
             </div>
-            <div class="mobileAttachmentActions" aria-label="Add picture, upload, or audio">
-                <button type="button" class="btn-secondary mobileAttachmentButton" data-attachment-pick="photo">Upload Picture</button>
-                <button type="button" class="mobileAttachmentButton" data-attachment-pick="camera">Take Picture</button>
-                <button type="button" class="btn-secondary mobileAttachmentButton" data-attachment-pick="audio">Audio</button>
+            <div class="taskAttachmentMobileMedia">
+                {% set media_id = 'task_attachment___INDEX__' %}
+                {% set media_camera_name = 'attachment___INDEX___camera' %}
+                {% set media_upload_name = 'attachment___INDEX___photo' %}
+                {% set media_audio_name = 'attachment___INDEX___audio' %}
+                {% set media_comment_name = '' %}
+                {% set media_save_label = 'Attach to Task' %}
+                {% include "_mobile_media_bar.html" %}
             </div>
-            <p class="muted mobileAttachmentStatus" data-attachment-status>No picture or audio selected.</p>
             <div class="grid taskAttachmentFileGrid">
                 <div class="taskAttachmentFileField">
                     <label>Upload Picture</label>
-                    <input name="attachment___INDEX___photo" type="file" accept="image/*,.heic,.heif" data-attachment-input="photo">
+                    <input name="attachment___INDEX___photo" type="file" accept="image/*,.heic,.heif">
                 </div>
                 <div class="mobileTaskCamera taskAttachmentFileField">
                     <label>Take Picture From Phone</label>
-                    <input name="attachment___INDEX___camera" type="file" accept="image/*,.heic,.heif" capture="environment" data-attachment-input="camera">
+                    <input name="attachment___INDEX___camera" type="file" accept="image/*,.heic,.heif" capture="environment">
                 </div>
                 <div class="taskAttachmentFileField">
                     <label>Audio</label>
-                    <input name="attachment___INDEX___audio" type="file" accept="audio/*" data-attachment-input="audio">
+                    <input name="attachment___INDEX___audio" type="file" accept="audio/*">
                 </div>
             </div>
             <button type="button" class="btn-secondary removeTaskAttachmentBtn">Remove</button>
@@ -51,12 +54,10 @@
 .taskAttachmentInput{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(255,255,255,.03)}
 .taskAttachmentInput .removeTaskAttachmentBtn{margin-top:8px}
 .mobileTaskCamera{display:none}
-.mobileAttachmentActions,.mobileAttachmentStatus{display:none}
+.taskAttachmentMobileMedia{display:none}
 @media(max-width:760px){
     .mobileTaskCamera{display:block}
-    .mobileAttachmentActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}
-    .mobileAttachmentActions button{margin:0}
-    .mobileAttachmentStatus{display:block;margin:6px 0 10px}
+    .taskAttachmentMobileMedia{display:block}
     .taskAttachmentFileGrid{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 }
 </style>
@@ -93,22 +94,8 @@
             wrapper.innerHTML=html.trim();
             const block=wrapper.firstElementChild;
             block.querySelector(".removeTaskAttachmentBtn").addEventListener("click",()=>block.remove());
-            block.querySelectorAll("[data-attachment-pick]").forEach(button=>{
-                button.addEventListener("click",()=>{
-                    const input=block.querySelector('[data-attachment-input="'+button.dataset.attachmentPick+'"]');
-                    if(input)input.click();
-                });
-            });
-            block.querySelectorAll("[data-attachment-input]").forEach(input=>{
-                input.addEventListener("change",()=>{
-                    const status=block.querySelector("[data-attachment-status]");
-                    const selected=Array.from(block.querySelectorAll("[data-attachment-input]"))
-                        .filter(item=>item.files&&item.files.length)
-                        .map(item=>item.files[0].name);
-                    if(status)status.textContent=selected.length ? selected.join(", ") : "No picture or audio selected.";
-                });
-            });
             blocks.appendChild(block);
+            if(window.ProjectONusMobileMedia)window.ProjectONusMobileMedia.init(block);
             filterRooms(builder);
         }
         addBtn.addEventListener("click",addBlock);

@@ -652,6 +652,22 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         const comment=picker.querySelector("[data-media-comment]");
         if(comment&&input.dataset.mediaInput!=="audio")comment.focus();
     }
+    window.ProjectONusMobileMedia={
+        init(root){
+            (root||document).querySelectorAll("[data-media-input]").forEach(input=>{
+                if(input.dataset.mobileMediaReady==="1")return;
+                input.dataset.mobileMediaReady="1";
+                input.addEventListener("change",()=>{
+                    if(!input.files||!input.files[0])return;
+                    const prefix=input.dataset.generatedPrefix;
+                    if(prefix){
+                        setOneFile(input,renameFile(input.files[0],generatedName(prefix,input.files[0])));
+                    }
+                    updatePreview(input);
+                });
+            });
+        }
+    };
 
     document.addEventListener("click",event=>{
         const actionButton=event.target.closest("[data-media-action]");
@@ -675,12 +691,14 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
     document.addEventListener("change",event=>{
         const input=event.target.closest&&event.target.closest("[data-media-input]");
         if(!input||!input.files||!input.files[0])return;
+        if(input.dataset.mobileMediaReady==="1")return;
         const prefix=input.dataset.generatedPrefix;
         if(prefix){
             setOneFile(input,renameFile(input.files[0],generatedName(prefix,input.files[0])));
         }
         updatePreview(input);
     });
+    window.ProjectONusMobileMedia.init(document);
 })();
 
 (function(){

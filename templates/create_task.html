@@ -400,6 +400,7 @@
     let realtimeTranscriptText="";
     let realtimeAssistantText="";
     let realtimeProcessingTimer=null;
+    let realtimeFinalRequested=false;
 
     function setRealtimeStatus(message,isError=false){
         if(!realtimeVoiceTaskStatus)return;
@@ -424,7 +425,93 @@
         if(start>=0&&end>start)return JSON.parse(candidate.slice(start,end+1));
         return JSON.parse(candidate);
     }
+    function compactMatchText(value){
+        return String(value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+    }
+    function normalizedDraftKey(key){
+        return String(key||"").replace(/\s+/g,"").replace(/-/g,"_");
+    }
+    function normalizeRealtimeDate(value){
+        const text=String(value||"").replace(/\s+/g,"");
+        const match=text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if(!match)return text;
+        return match[1]+"-"+match[2].padStart(2,"0")+"-"+match[3].padStart(2,"0");
+    }
+    function normalizeRealtimeTime(value){
+        const text=String(value||"").replace(/\s+/g,"").toLowerCase();
+        const match=text.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)?$/);
+        if(!match)return text;
+        let hour=parseInt(match[1],10);
+        const minute=parseInt(match[2]||"0",10);
+        if(match[3]==="pm"&&hour<12)hour+=12;
+        if(match[3]==="am"&&hour===12)hour=0;
+        if(hour<0||hour>23||minute<0||minute>59)return text;
+        return String(hour).padStart(2,"0")+":"+String(minute).padStart(2,"0");
+    }
+    function resolveSelectValue(select,value,projectId){
+        if(!select||value===undefined||value===null||value==="")return "";
+        const direct=String(value).trim();
+        if(Array.from(select.options).some(option=>option.value===direct))return direct;
+        const compact=compactMatchText(direct);
+        if(!compact)return "";
+        const options=Array.from(select.options).filter(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            return !projectId||!optionProject||optionProject===String(projectId);
+        });
+        const exact=options.find(option=>compactMatchText(option.textContent)===compact);
+        if(exact)return exact.value;
+        const contains=options.find(option=>{
+            const optionText=compactMatchText(option.textContent);
+            return optionText.includes(compact)||compact.includes(optionText);
+        });
+        return contains?contains.value:"";
+    }
+    function resolveUserIds(values){
+        const incoming=Array.isArray(values)?values:[values];
+        const inputs=Array.from(document.querySelectorAll('input[name="user_ids"]'));
+        const ids=[];
+        incoming.forEach(value=>{
+            if(value===undefined||value===null||value==="")return;
+            const direct=String(value).trim();
+            const directInput=inputs.find(input=>input.value===direct);
+            if(directInput){
+                if(!ids.includes(directInput.value))ids.push(directInput.value);
+                return;
+            }
+            const compact=compactMatchText(direct);
+            const match=inputs.find(input=>{
+                const label=input.closest("label");
+                const labelText=compactMatchText(label?label.textContent:"");
+                return labelText.includes(compact)||compact.includes(labelText.split("-")[0]||labelText);
+            });
+            if(match&&!ids.includes(match.value))ids.push(match.value);
+        });
+        return ids;
+    }
+    function cleanRealtimeDraft(rawDraft){
+        const normalized={};
+        Object.keys(rawDraft||{}).forEach(key=>{
+            normalized[normalizedDraftKey(key)]=rawDraft[key];
+        });
+        const projectId=resolveSelectValue(projectSelect,normalized.project_id);
+        return {
+            project_id:projectId,
+            room_id:resolveSelectValue(roomSelect,normalized.room_id,projectId),
+            user_ids:resolveUserIds(normalized.user_ids),
+            task_start_date:normalizeRealtimeDate(normalized.task_start_date),
+            task_start_time:normalizeRealtimeTime(normalized.task_start_time),
+            task_end_date:normalizeRealtimeDate(normalized.task_end_date||normalized.task_start_date),
+            title:String(normalized.title||"").trim(),
+            instructions:String(normalized.instructions||"").trim(),
+            require_picture:Boolean(normalized.require_picture),
+            allow_picture_upload:normalized.allow_picture_upload!==false,
+            allow_comment:normalized.allow_comment!==false,
+            allow_audio:normalized.allow_audio!==false,
+            notes:String(normalized.notes||"").trim()
+        };
+    }
     function fillRealtimeTaskDraft(draft){
+        draft=cleanRealtimeDraft(draft);
         if(taskTypeSelect){
             taskTypeSelect.value="project";
             updateTaskType();
@@ -484,6 +571,8 @@
         if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
     }
     function requestRealtimeResponse(){
+        if(realtimeFinalRequested)return;
+        realtimeFinalRequested=true;
         if(realtimeStream){
             realtimeStream.getTracks().forEach(track=>track.stop());
             realtimeStream=null;
@@ -496,7 +585,7 @@
                 type:"response.create",
                 response:{
                     output_modalities:["text"],
-                    instructions:"Based on the full English conversation, return only valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes."
+                    instructions:"Based on the full English conversation, return only compact valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes. project_id, room_id, and user_ids must be numeric IDs from the provided lists, not names."
                 }
             }));
         }
@@ -524,6 +613,24 @@
         realtimeTranscriptText=isFinal?transcript:transcript;
         realtimeVoiceTranscript.hidden=false;
         realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+realtimeTranscriptText;
+        if(isFinal&&shouldAutoFillRealtimeTask(transcript)){
+            requestRealtimeResponse();
+        }
+    }
+    function shouldAutoFillRealtimeTask(text){
+        const compact=String(text||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+        return [
+            "fill out the task",
+            "fill the task",
+            "fill out task",
+            "fill task",
+            "fill the form",
+            "fill out the form",
+            "save it to the form",
+            "put it in the form",
+            "create the task form",
+            "make the task"
+        ].some(phrase=>compact.includes(phrase));
     }
     function showRealtimeAssistant(text){
         const message=String(text||"").trim();
@@ -540,6 +647,7 @@
         realtimeText="";
         realtimeTranscriptText="";
         realtimeAssistantText="";
+        realtimeFinalRequested=false;
         setRealtimeStatus("Starting Realtime voice...");
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=true;
