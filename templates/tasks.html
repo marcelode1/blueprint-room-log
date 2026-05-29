@@ -155,12 +155,12 @@
                             {% else %}
                                 <p class="muted"><strong>Picture:</strong> No picture, upload, or audio from admin yet.</p>
                             {% endif %}
-                            {% if t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                            {% if not selected_task_id and t.status != 'done' and not room_state.done and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                                     <button type="submit">Received</button>
                                 </form>
-                            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                            {% elif not selected_task_id and t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                                 <button type="button" class="btn-secondary" disabled>Received</button>
                             {% endif %}
                             {% if t.status != 'done' and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
@@ -185,12 +185,12 @@
                         {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
                         {% include "_supplier_task_info.html" %}
                         {% include "_task_media.html" %}
-                        {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                        {% if not selected_task_id and t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                             <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                                 <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
                                 <button type="submit">Received</button>
                             </form>
-                        {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+                        {% elif not selected_task_id and t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                             <button type="button" class="btn-secondary" disabled>Received</button>
                         {% endif %}
                         {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
@@ -257,12 +257,12 @@
             {% if task_info %}<p><strong>Task Information:</strong><br>{{ task_info }}</p>{% endif %}
             {% include "_supplier_task_info.html" %}
             {% include "_task_media.html" %}
-            {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+            {% if not selected_task_id and t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
                     <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=t.id) }}#task-{{ t.id }}">
                     <button type="submit">Received</button>
                 </form>
-            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
+            {% elif not selected_task_id and t.accepted_at and t.assigned_user_id == session.get("user_id") %}
                 <button type="button" class="btn-secondary" disabled>Received</button>
             {% endif %}
             {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
