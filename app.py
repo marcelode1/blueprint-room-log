@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re
 import psycopg
+import requests
 from psycopg.rows import dict_row
 from supabase import create_client
 
@@ -39,6 +40,9 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+AI_TASK_TRANSCRIBE_MODEL = os.environ.get("AI_TASK_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+AI_TASK_PARSE_MODEL = os.environ.get("AI_TASK_PARSE_MODEL", "gpt-4.1-mini")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -5470,6 +5474,199 @@ def create_task(room_id):
     conn.close()
     flash("Task assigned, project access granted, and user notified.")
     return redirect(url_for("room", room_id=room_id))
+
+
+def json_response(payload, status=200):
+    return Response(json.dumps(payload), status=status, mimetype="application/json")
+
+
+def clean_ai_task_payload(payload, projects, rooms, users):
+    project_ids = {int(project["id"]) for project in projects}
+    room_by_id = {int(room["id"]): room for room in rooms}
+    user_ids = {int(user["id"]) for user in users}
+
+    def text_value(name, default=""):
+        value = payload.get(name, default)
+        return str(value or "").strip()
+
+    def int_value(name):
+        try:
+            return int(payload.get(name) or 0)
+        except Exception:
+            return 0
+
+    project_id = int_value("project_id")
+    if project_id not in project_ids:
+        project_id = 0
+
+    room_id = int_value("room_id")
+    if room_id:
+        room = room_by_id.get(room_id)
+        if not room or (project_id and int(room["project_id"]) != project_id):
+            room_id = 0
+
+    selected_users = []
+    for value in payload.get("user_ids") or []:
+        try:
+            user_id = int(value)
+        except Exception:
+            continue
+        if user_id in user_ids and user_id not in selected_users:
+            selected_users.append(user_id)
+
+    task_start_date = text_value("task_start_date") or local_now().date().isoformat()
+    task_start_time = text_value("task_start_time")
+    task_end_date = text_value("task_end_date") or task_start_date
+
+    return {
+        "project_id": project_id,
+        "room_id": room_id,
+        "user_ids": selected_users,
+        "task_start_date": task_start_date,
+        "task_start_time": task_start_time,
+        "task_end_date": task_end_date,
+        "title": text_value("title"),
+        "instructions": text_value("instructions"),
+        "require_picture": bool(payload.get("require_picture")),
+        "allow_picture_upload": payload.get("allow_picture_upload", True) is not False,
+        "allow_comment": payload.get("allow_comment", True) is not False,
+        "allow_audio": payload.get("allow_audio", True) is not False,
+        "confidence": payload.get("confidence", 0),
+        "notes": text_value("notes"),
+    }
+
+
+@app.route("/tasks/create/ai-voice", methods=["POST"])
+@admin_required
+def ai_voice_task_draft():
+    if not is_mobile_request():
+        return json_response({"error": "Voice AI task creation is available on the mobile admin version only."}, 403)
+    if not OPENAI_API_KEY:
+        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+
+    audio = request.files.get("audio")
+    if not audio or not audio.filename:
+        return json_response({"error": "Record a voice command first."}, 400)
+    if file_ext(audio.filename) not in ALLOWED_AUDIO:
+        return json_response({"error": "The voice command must be a webm, mp3, m4a, wav, or ogg file."}, 400)
+
+    conn = db()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    rooms = conn.execute("SELECT id, name, project_id FROM rooms ORDER BY project_id, name").fetchall()
+    users = conn.execute("SELECT id, name, email FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
+    conn.close()
+
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    try:
+        audio.stream.seek(0)
+        transcript_response = requests.post(
+            "https://api.openai.com/v1/audio/transcriptions",
+            headers=headers,
+            data={
+                "model": AI_TASK_TRANSCRIBE_MODEL,
+                "response_format": "json",
+                "prompt": "This is a ProjectONus admin voice command for creating a task. Preserve project, room, worker names, dates, times, and picture requirements."
+            },
+            files={"file": (secure_filename(audio.filename) or "voice_command.webm", audio.stream, audio.mimetype or "audio/webm")},
+            timeout=60
+        )
+        transcript_response.raise_for_status()
+        transcript = (transcript_response.json().get("text") or "").strip()
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            detail = exc.response.text[:300]
+        return json_response({"error": "OpenAI could not transcribe the voice command.", "detail": detail}, 502)
+    except Exception:
+        return json_response({"error": "The voice command could not be transcribed."}, 502)
+
+    if not transcript:
+        return json_response({"error": "No speech was detected in the voice command."}, 400)
+
+    rooms_by_project = {}
+    for room in rooms:
+        rooms_by_project.setdefault(room["project_id"], []).append({"id": room["id"], "name": room["name"]})
+    project_context = [
+        {
+            "id": project["id"],
+            "name": project["name"],
+            "customer_name": project.get("customer_name") or "",
+            "rooms": rooms_by_project.get(project["id"], []),
+        }
+        for project in projects
+    ]
+    user_context = [{"id": user["id"], "name": user["name"], "email": user["email"]} for user in users]
+
+    schema = {
+        "name": "projectonus_task_draft",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "integer"},
+                "room_id": {"type": "integer"},
+                "user_ids": {"type": "array", "items": {"type": "integer"}},
+                "task_start_date": {"type": "string"},
+                "task_start_time": {"type": "string"},
+                "task_end_date": {"type": "string"},
+                "title": {"type": "string"},
+                "instructions": {"type": "string"},
+                "require_picture": {"type": "boolean"},
+                "allow_picture_upload": {"type": "boolean"},
+                "allow_comment": {"type": "boolean"},
+                "allow_audio": {"type": "boolean"},
+                "confidence": {"type": "number"},
+                "notes": {"type": "string"},
+            },
+            "required": [
+                "project_id", "room_id", "user_ids", "task_start_date", "task_start_time",
+                "task_end_date", "title", "instructions", "require_picture",
+                "allow_picture_upload", "allow_comment", "allow_audio", "confidence", "notes"
+            ],
+        },
+    }
+    parse_prompt = {
+        "today": local_now().date().isoformat(),
+        "timezone": APP_TIMEZONE,
+        "transcript": transcript,
+        "projects": project_context,
+        "workers": user_context,
+        "rules": [
+            "Use only IDs from the provided projects, rooms, and workers.",
+            "If a project, room, worker, date, or time is unclear, use 0, an empty array, or an empty string and explain in notes.",
+            "Return task_start_time in 24-hour HH:MM format when possible.",
+            "Make the title short and put the detailed work description in instructions.",
+            "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
+        ],
+    }
+
+    try:
+        parse_response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                "model": AI_TASK_PARSE_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You convert ProjectONus admin voice commands into task form fields."},
+                    {"role": "user", "content": json.dumps(parse_prompt)},
+                ],
+                "response_format": {"type": "json_schema", "json_schema": schema},
+            },
+            timeout=60
+        )
+        parse_response.raise_for_status()
+        content = parse_response.json()["choices"][0]["message"]["content"]
+        draft = clean_ai_task_payload(json.loads(content), projects, rooms, users)
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            detail = exc.response.text[:300]
+        return json_response({"error": "OpenAI could not create the task draft.", "detail": detail}, 502)
+    except Exception:
+        return json_response({"error": "The AI task draft could not be read."}, 502)
+
+    return json_response({"transcript": transcript, "draft": draft})
 
 
 @app.route("/tasks/create", methods=["GET", "POST"])

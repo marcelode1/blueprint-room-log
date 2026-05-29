@@ -3,6 +3,17 @@
 <div class="card">
     <h2>Create a Task</h2>
     <p class="muted">Choose a project, select one or more workers, and send task details to their app and email.</p>
+    {% if is_mobile_request() and is_main_admin() %}
+        <button type="button" id="aiVoiceTaskButton" class="btn-secondary">Voice AI Task</button>
+        <div id="aiVoiceTaskPanel" class="aiVoiceTaskPanel" hidden>
+            <div class="aiVoiceTaskActions">
+                <button type="button" id="aiVoiceStartButton">Start Recording</button>
+                <button type="button" id="aiVoiceStopButton" class="btn-secondary" disabled>Stop & Fill Task</button>
+            </div>
+            <p id="aiVoiceTaskStatus" class="muted">Press Start Recording, say the task command, then stop to fill the form.</p>
+            <p id="aiVoiceTranscript" class="aiVoiceTranscript" hidden></p>
+        </div>
+    {% endif %}
 </div>
 
 <div class="card">
@@ -148,12 +159,16 @@
 .supplierItemList{display:grid;gap:8px;margin-top:8px}
 .supplierItemRow{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 .supplierItemRow button{width:auto;min-height:40px;padding:8px 12px;margin:0}
+.aiVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
+.aiVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.aiVoiceTaskActions button{margin:0}
+.aiVoiceTranscript{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
 .newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
 .modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .mainRoomField[data-supplier-mode="0"]{display:none}
-@media(max-width:760px){.modalActions{grid-template-columns:1fr}}
+@media(max-width:760px){.modalActions,.aiVoiceTaskActions{grid-template-columns:1fr}}
 </style>
 <script>
 (function(){
@@ -361,6 +376,128 @@
         if(event.target===newSupplierModal){
             closeNewSupplierModal();
             if(supplierSelect&&supplierSelect.value==="__new__")supplierSelect.value="";
+        }
+    });
+
+    const aiVoiceTaskButton=document.getElementById("aiVoiceTaskButton");
+    const aiVoiceTaskPanel=document.getElementById("aiVoiceTaskPanel");
+    const aiVoiceStartButton=document.getElementById("aiVoiceStartButton");
+    const aiVoiceStopButton=document.getElementById("aiVoiceStopButton");
+    const aiVoiceTaskStatus=document.getElementById("aiVoiceTaskStatus");
+    const aiVoiceTranscript=document.getElementById("aiVoiceTranscript");
+    let aiVoiceRecorder=null;
+    let aiVoiceStream=null;
+    let aiVoiceChunks=[];
+
+    function setAiVoiceStatus(message,isError=false){
+        if(!aiVoiceTaskStatus)return;
+        aiVoiceTaskStatus.textContent=message;
+        aiVoiceTaskStatus.style.color=isError?"#dc2626":"";
+    }
+    function setSelectAndNotify(select,value){
+        if(!select)return;
+        select.value=value?String(value):"";
+        select.dispatchEvent(new Event("change",{bubbles:true}));
+    }
+    function setChecked(name,value){
+        const input=document.querySelector('input[name="'+name+'"]');
+        if(input)input.checked=Boolean(value);
+    }
+    function fillTaskFromAiDraft(draft,transcript){
+        if(taskTypeSelect){
+            taskTypeSelect.value="project";
+            updateTaskType();
+        }
+        setSelectAndNotify(projectSelect,draft.project_id);
+        filterMainRooms();
+        setSelectAndNotify(roomSelect,draft.room_id);
+        document.querySelectorAll('input[name="user_ids"]').forEach(input=>{
+            input.checked=(draft.user_ids||[]).map(String).includes(input.value);
+        });
+        const startDate=document.querySelector('[name="task_start_date"]');
+        const startTime=document.querySelector('[name="task_start_time"]');
+        const endDate=document.querySelector('[name="task_end_date"]');
+        const title=document.querySelector('[name="title"]');
+        const instructions=document.querySelector('[name="instructions"]');
+        if(startDate)startDate.value=draft.task_start_date||"";
+        if(startTime)startTime.value=draft.task_start_time||"";
+        if(endDate)endDate.value=draft.task_end_date||"";
+        if(title)title.value=draft.title||"";
+        if(instructions)instructions.value=draft.instructions||"";
+        setChecked("require_picture",draft.require_picture);
+        setChecked("allow_picture_upload",draft.allow_picture_upload);
+        setChecked("allow_comment",draft.allow_comment);
+        setChecked("allow_audio",draft.allow_audio);
+        if(aiVoiceTranscript){
+            aiVoiceTranscript.hidden=false;
+            aiVoiceTranscript.textContent="Heard: "+transcript+(draft.notes?"\nNote: "+draft.notes:"");
+        }
+        const missing=[];
+        if(!draft.project_id)missing.push("project");
+        if(!draft.user_ids||!draft.user_ids.length)missing.push("worker");
+        if(!draft.task_start_time)missing.push("time");
+        if(!draft.title)missing.push("task title");
+        if(missing.length){
+            setAiVoiceStatus("AI filled what it could. Please review and choose: "+missing.join(", ")+".",true);
+        }else{
+            setAiVoiceStatus("Task form filled. Please review it, then click Save Task.");
+        }
+    }
+    function stopAiVoiceStream(){
+        if(aiVoiceStream){
+            aiVoiceStream.getTracks().forEach(track=>track.stop());
+            aiVoiceStream=null;
+        }
+    }
+    async function sendAiVoiceCommand(blob){
+        const formData=new FormData();
+        formData.append("audio",blob,"voice_command.webm");
+        setAiVoiceStatus("Creating task draft from voice...");
+        const response=await fetch("{{ url_for('ai_voice_task_draft') }}",{method:"POST",body:formData});
+        const data=await response.json().catch(()=>({error:"Could not read server response."}));
+        if(!response.ok){
+            throw new Error(data.error||"Voice AI task failed.");
+        }
+        fillTaskFromAiDraft(data.draft||{},data.transcript||"");
+    }
+    if(aiVoiceTaskButton)aiVoiceTaskButton.addEventListener("click",()=>{
+        if(aiVoiceTaskPanel)aiVoiceTaskPanel.hidden=!aiVoiceTaskPanel.hidden;
+    });
+    if(aiVoiceStartButton)aiVoiceStartButton.addEventListener("click",async()=>{
+        if(!navigator.mediaDevices||!window.MediaRecorder){
+            setAiVoiceStatus("This browser cannot record voice commands.",true);
+            return;
+        }
+        try{
+            aiVoiceChunks=[];
+            aiVoiceStream=await navigator.mediaDevices.getUserMedia({audio:true});
+            aiVoiceRecorder=new MediaRecorder(aiVoiceStream,{mimeType:"audio/webm"});
+            aiVoiceRecorder.addEventListener("dataavailable",event=>{
+                if(event.data&&event.data.size)aiVoiceChunks.push(event.data);
+            });
+            aiVoiceRecorder.addEventListener("stop",async()=>{
+                stopAiVoiceStream();
+                if(aiVoiceStartButton)aiVoiceStartButton.disabled=false;
+                if(aiVoiceStopButton)aiVoiceStopButton.disabled=true;
+                try{
+                    await sendAiVoiceCommand(new Blob(aiVoiceChunks,{type:"audio/webm"}));
+                }catch(error){
+                    setAiVoiceStatus(error.message||"Voice AI task failed.",true);
+                }
+            });
+            aiVoiceRecorder.start();
+            aiVoiceStartButton.disabled=true;
+            if(aiVoiceStopButton)aiVoiceStopButton.disabled=false;
+            setAiVoiceStatus("Recording... say the task command now.");
+        }catch(error){
+            stopAiVoiceStream();
+            setAiVoiceStatus("Microphone permission was not granted.",true);
+        }
+    });
+    if(aiVoiceStopButton)aiVoiceStopButton.addEventListener("click",()=>{
+        if(aiVoiceRecorder&&aiVoiceRecorder.state==="recording"){
+            setAiVoiceStatus("Processing voice command...");
+            aiVoiceRecorder.stop();
         }
     });
 })();
