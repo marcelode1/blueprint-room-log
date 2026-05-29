@@ -607,21 +607,6 @@
     }
     function requestRealtimeResponse(force=false){
         if(realtimeFinalRequested&&!force)return;
-        if(realtimeResponseInProgress){
-            realtimePendingFinalRequest=true;
-            realtimeCancelingForFinal=true;
-            if(realtimeStream){
-                realtimeStream.getTracks().forEach(track=>track.stop());
-                realtimeStream=null;
-            }
-            if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
-            if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
-            setRealtimeStatus("Stopping assistant response, then filling the task...");
-            if(realtimeDc&&realtimeDc.readyState==="open"){
-                realtimeDc.send(JSON.stringify({type:"response.cancel"}));
-            }
-            return;
-        }
         if(force)realtimeFinalRequested=false;
         realtimeFinalRequested=true;
         if(realtimeStream){
@@ -632,25 +617,30 @@
         if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
         setRealtimeStatus("Processing voice command...");
         if(realtimeDc&&realtimeDc.readyState==="open"){
-            const conversationSummary=[
-                realtimeTranscriptText?"User said: "+realtimeTranscriptText:"",
-                realtimeAssistantText?"Assistant confirmed: "+realtimeAssistantText:""
-            ].filter(Boolean).join("\n");
-            realtimeDc.send(JSON.stringify({
-                type:"response.create",
-                response:{
-                    output_modalities:["text"],
-                    instructions:"Based on the full English conversation below, return only compact valid JSON for the ProjectONus task form. Do not include markdown, explanation, or spoken confirmation. Use exact keys: project_id, room_id, user_ids, task_start_date, task_start_time, task_end_date, title, instructions, require_picture, allow_picture_upload, allow_comment, allow_audio, notes. project_id, room_id, and user_ids must be numeric IDs from the provided lists, not names.\n"+conversationSummary
-                }
-            }));
-            realtimeResponseInProgress=true;
+            try{realtimeDc.send(JSON.stringify({type:"response.cancel"}));}catch(error){}
         }
-        realtimeProcessingTimer=setTimeout(()=>{
-            if(!realtimeText&&!tryFillRealtimeFromVisibleJson()){
-                setRealtimeStatus("No Realtime form response came back. Try Stop & Fill Task again.",true);
+        createRealtimeDraftFromServer();
+    }
+    async function createRealtimeDraftFromServer(){
+        try{
+            const response=await fetch("{{ url_for('create_task_realtime_draft') }}",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({
+                    transcript:realtimeTranscriptText,
+                    assistant:realtimeAssistantText
+                })
+            });
+            const data=await response.json().catch(()=>({error:"Could not read task draft response."}));
+            if(!response.ok)throw new Error(data.error||"Task draft failed.");
+            fillRealtimeTaskDraft(data.draft||{});
+            stopRealtimeVoice();
+        }catch(error){
+            if(!tryFillRealtimeFromVisibleJson()){
+                setRealtimeStatus(error.message||"Task draft failed.",true);
                 stopRealtimeVoice();
             }
-        },12000);
+        }
     }
     function tryFillRealtimeFromVisibleJson(){
         const sources=[

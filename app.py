@@ -41,6 +41,7 @@ APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
+OPENAI_TASK_PARSE_MODEL = os.environ.get("OPENAI_TASK_PARSE_MODEL", "gpt-4.1-mini")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -5504,6 +5505,71 @@ def openai_realtime_task_context():
     return projects_context, users_context
 
 
+def clean_voice_task_payload(payload, projects_context, users_context):
+    project_ids = {int(project["id"]) for project in projects_context}
+    rooms_by_id = {}
+    for project in projects_context:
+        for room in project.get("rooms") or []:
+            rooms_by_id[int(room["id"])] = {"project_id": int(project["id"]), "name": room.get("name")}
+    user_ids = {int(user["id"]) for user in users_context}
+
+    def int_value(name):
+        try:
+            return int(payload.get(name) or 0)
+        except Exception:
+            return 0
+
+    def text_value(name):
+        return str(payload.get(name) or "").strip()
+
+    project_id = int_value("project_id")
+    if project_id not in project_ids:
+        project_id = 0
+    room_id = int_value("room_id")
+    if room_id:
+        room = rooms_by_id.get(room_id)
+        if not room or (project_id and room["project_id"] != project_id):
+            room_id = 0
+    selected_users = []
+    for value in payload.get("user_ids") or []:
+        try:
+            user_id = int(value)
+        except Exception:
+            continue
+        if user_id in user_ids and user_id not in selected_users:
+            selected_users.append(user_id)
+    task_start_date = text_value("task_start_date") or local_now().date().isoformat()
+    return {
+        "project_id": project_id,
+        "room_id": room_id,
+        "user_ids": selected_users,
+        "task_start_date": task_start_date,
+        "task_start_time": text_value("task_start_time"),
+        "task_end_date": text_value("task_end_date") or task_start_date,
+        "title": text_value("title"),
+        "instructions": text_value("instructions"),
+        "require_picture": bool(payload.get("require_picture")),
+        "allow_picture_upload": payload.get("allow_picture_upload", True) is not False,
+        "allow_comment": payload.get("allow_comment", True) is not False,
+        "allow_audio": payload.get("allow_audio", True) is not False,
+        "notes": text_value("notes"),
+    }
+
+
+def openai_api_post_json(url, payload, timeout=60):
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 @app.route("/tasks/create/realtime-token", methods=["POST"])
 @admin_required
 def create_task_realtime_token():
@@ -5582,6 +5648,78 @@ def create_task_realtime_token():
         return json_response({"error": f"OpenAI could not start realtime voice. {detail}".strip()}, 502)
     except Exception as exc:
         return json_response({"error": f"Realtime voice could not start. {str(exc)[:200]}"}, 502)
+
+
+@app.route("/tasks/create/realtime-draft", methods=["POST"])
+@admin_required
+def create_task_realtime_draft():
+    if not is_mobile_request():
+        return json_response({"error": "Realtime voice task creation is available on the mobile admin version only."}, 403)
+    if not OPENAI_API_KEY:
+        return json_response({"error": "OPENAI_API_KEY is not configured on the server."}, 500)
+    try:
+        payload = json.loads(request.data.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+    transcript = str(payload.get("transcript") or "").strip()
+    assistant = str(payload.get("assistant") or "").strip()
+    if not transcript and not assistant:
+        return json_response({"error": "No conversation text was captured."}, 400)
+
+    projects_context, users_context = openai_realtime_task_context()
+    schema = {
+        "name": "projectonus_task_draft",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "integer"},
+                "room_id": {"type": "integer"},
+                "user_ids": {"type": "array", "items": {"type": "integer"}},
+                "task_start_date": {"type": "string"},
+                "task_start_time": {"type": "string"},
+                "task_end_date": {"type": "string"},
+                "title": {"type": "string"},
+                "instructions": {"type": "string"},
+                "require_picture": {"type": "boolean"},
+                "allow_picture_upload": {"type": "boolean"},
+                "allow_comment": {"type": "boolean"},
+                "allow_audio": {"type": "boolean"},
+                "notes": {"type": "string"},
+            },
+            "required": [
+                "project_id", "room_id", "user_ids", "task_start_date", "task_start_time",
+                "task_end_date", "title", "instructions", "require_picture",
+                "allow_picture_upload", "allow_comment", "allow_audio", "notes"
+            ],
+        },
+    }
+    parse_payload = {
+        "model": OPENAI_TASK_PARSE_MODEL,
+        "messages": [
+            {"role": "system", "content": "Convert the ProjectONus mobile admin voice conversation into task form JSON. Use only numeric IDs from the provided project, room, and worker lists."},
+            {"role": "user", "content": json.dumps({
+                "today": local_now().date().isoformat(),
+                "timezone": APP_TIMEZONE,
+                "admin_said": transcript,
+                "assistant_confirmed": assistant,
+                "projects": projects_context,
+                "workers": users_context,
+            })},
+        ],
+        "response_format": {"type": "json_schema", "json_schema": schema},
+    }
+    try:
+        parsed = openai_api_post_json("https://api.openai.com/v1/chat/completions", parse_payload)
+        content = parsed["choices"][0]["message"]["content"]
+        draft = clean_voice_task_payload(json.loads(content), projects_context, users_context)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:300]
+        return json_response({"error": f"OpenAI could not create the task draft. {detail}".strip()}, 502)
+    except Exception as exc:
+        return json_response({"error": f"The task draft could not be created. {str(exc)[:200]}"}, 502)
+    return json_response({"draft": draft})
 
 
 @app.route("/tasks/create", methods=["GET", "POST"])
