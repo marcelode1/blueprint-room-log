@@ -1724,7 +1724,10 @@ def notification_target_url(conn, event):
     if not event:
         return url_for("notifications")
     if event.get("task_id"):
-        return url_for("my_tasks", task_id=event.get("task_id")) + f"#task-{event.get('task_id')}"
+        args = {"task_id": event.get("task_id")}
+        if event.get("event_type") == "task_assigned":
+            args["from_notification"] = "1"
+        return url_for("my_tasks", **args) + f"#task-{event.get('task_id')}"
 
     project_id = event.get("target_project_id") or event.get("project_id")
     room_id = event.get("room_id")
@@ -6696,6 +6699,7 @@ def task_calendar_file(task_id):
 def my_tasks():
     conn = db()
     selected_task_id = request.args.get("task_id", type=int)
+    from_notification = request.args.get("from_notification") == "1"
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
     selected_supplier_id = request.args.get("supplier_id", type=int)
@@ -6937,7 +6941,8 @@ def my_tasks():
         task_date_filter=task_date_filter,
         open_only=open_only,
         selected_task_status=selected_task_status,
-        task_status_options=task_status_options
+        task_status_options=task_status_options,
+        from_notification=from_notification
     )
 
 
@@ -7393,12 +7398,29 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         period = "day"
     period, start, end = attendance_range(period, selected_date)
     conn = db()
-    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    if selected_project_id and not user_can_access_project(conn, selected_project_id):
+        selected_project_id = None
+        selected_room_id = None
+    if is_main_admin():
+        projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    else:
+        projects = conn.execute(
+            """
+            SELECT projects.id, projects.name, projects.customer_name
+            FROM projects
+            JOIN project_permissions ON project_permissions.project_id = projects.id AND project_permissions.user_id = %s
+            ORDER BY projects.name
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
     room_params = []
     room_where = ""
     if selected_project_id:
         room_where = "WHERE rooms.project_id = %s"
         room_params.append(selected_project_id)
+    elif not is_main_admin():
+        room_where = "JOIN project_permissions ON project_permissions.project_id = rooms.project_id AND project_permissions.user_id = %s"
+        room_params.append(session.get("user_id"))
     rooms = conn.execute(
         f"""
         SELECT rooms.id, rooms.name, rooms.project_id, projects.name AS project_name
@@ -7418,6 +7440,13 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
     attachment_params = []
     completion_where = ["(COALESCE(tasks.completion_comment, '') <> '' OR tasks.completion_photo_file IS NOT NULL OR tasks.completion_audio_file IS NOT NULL)"]
     completion_params = []
+    if not is_main_admin():
+        note_where.append("EXISTS (SELECT 1 FROM project_permissions WHERE project_permissions.project_id = projects.id AND project_permissions.user_id = %s)")
+        note_params.append(session.get("user_id"))
+        attachment_where.append("EXISTS (SELECT 1 FROM project_permissions WHERE project_permissions.project_id = projects.id AND project_permissions.user_id = %s)")
+        attachment_params.append(session.get("user_id"))
+        completion_where.append("EXISTS (SELECT 1 FROM project_permissions WHERE project_permissions.project_id = projects.id AND project_permissions.user_id = %s)")
+        completion_params.append(session.get("user_id"))
     if selected_project_id:
         note_where.append("projects.id = %s")
         note_params.append(selected_project_id)
@@ -7548,13 +7577,14 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
         "end": end,
         "projects": projects,
         "rooms": rooms,
+        "selected_project_id": selected_project_id,
         "selected_room_id": selected_room_id,
         "records": records,
     }
 
 
 @app.route("/comments/report")
-@admin_required
+@login_required
 def comment_report():
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
@@ -7566,13 +7596,13 @@ def comment_report():
         report=report,
         period=report["period"],
         selected_date=selected_date,
-        selected_project_id=selected_project_id,
+        selected_project_id=report["selected_project_id"],
         selected_room_id=report["selected_room_id"]
     )
 
 
 @app.route("/comments/report/export")
-@admin_required
+@login_required
 def comment_report_export():
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
@@ -7607,7 +7637,7 @@ def comment_report_export():
 
 
 @app.route("/comments/<source_type>/<int:source_id>", methods=["GET", "POST"])
-@admin_required
+@login_required
 def comment_detail(source_type, source_id):
     source_type = comment_db_source_type(source_type)
     next_url = safe_next_url("comment_report")
@@ -7617,14 +7647,28 @@ def comment_detail(source_type, source_id):
         conn.close()
         flash("Comment was not found.")
         return redirect(next_url)
+    if not user_can_access_project(conn, record.get("project_id")):
+        conn.close()
+        flash("You do not have access to that comment.")
+        return redirect(next_url)
+    can_edit_comment = is_main_admin() or has_perm("edit_comments") or record.get("created_by") == session.get("user_id")
+    can_delete_comment = is_main_admin() or has_perm("delete_comments")
 
     if request.method == "POST":
         action = request.form.get("action")
         if action == "delete":
+            if not can_delete_comment:
+                conn.close()
+                flash("You do not have permission to delete this comment.")
+                return redirect(next_url)
             delete_comment_detail_record(conn, source_type, source_id)
             conn.commit()
             conn.close()
             flash("Comment/media deleted.")
+            return redirect(next_url)
+        if not can_edit_comment:
+            conn.close()
+            flash("You do not have permission to edit this comment.")
             return redirect(next_url)
         update_comment_detail_record(conn, source_type, source_id, request.form.get("comment", "").strip())
         conn.commit()
@@ -7633,7 +7677,7 @@ def comment_detail(source_type, source_id):
         return redirect(url_for("comment_detail", source_type=comment_route_source_type(source_type), source_id=source_id, next=next_url))
 
     conn.close()
-    return render_template("comment_detail.html", record=record, next_url=next_url)
+    return render_template("comment_detail.html", record=record, next_url=next_url, can_edit_comment=can_edit_comment, can_delete_comment=can_delete_comment)
 
 
 @app.route("/team-map")

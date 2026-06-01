@@ -120,13 +120,6 @@
                 <p class="muted mobile-only-delete-note">Received tasks can only be deleted from the desktop version with an email PIN.</p>
             {% endif %}
             {% endif %}
-            {% if not task_is_completed(t) and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-            <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
-                <button type="submit">Received</button>
-            </form>
-            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-            <button type="button" class="btn-secondary" disabled>Received</button>
-            {% endif %}
             {% if not task_is_completed(t) and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
