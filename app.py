@@ -945,6 +945,35 @@ def task_display_name(task):
     return f"{number} - {title}" if number else title
 
 
+TASK_STATUS_LABELS = {
+    "sent_to_worker": "Sent to worker",
+    "received": "Received",
+    "in_progress": "In progress",
+    "waiting_rfi": "Waiting for RFI",
+    "waiting_material": "Waiting on material",
+    "completed": "Completed",
+}
+TASK_STATUS_ALIASES = {
+    "open": "sent_to_worker",
+    "done": "completed",
+}
+
+
+def normalize_task_status(value):
+    status = str(value or "").strip()
+    return TASK_STATUS_ALIASES.get(status, status if status in TASK_STATUS_LABELS else "sent_to_worker")
+
+
+def task_status_label(task_or_status):
+    raw = task_or_status.get("status") if isinstance(task_or_status, dict) else task_or_status
+    return TASK_STATUS_LABELS.get(normalize_task_status(raw), "Sent to worker")
+
+
+def task_is_completed(task_or_status):
+    raw = task_or_status.get("status") if isinstance(task_or_status, dict) else task_or_status
+    return normalize_task_status(raw) == "completed"
+
+
 GENERIC_PHOTO_FILENAMES = {
     "image.jpg", "image.jpeg", "image.png",
     "photo.jpg", "photo.jpeg", "photo.png",
@@ -1959,7 +1988,7 @@ def mark_task_received(conn, task):
     if not task or task.get("accepted_at"):
         return False
     accepted_at = utc_now_iso()
-    conn.execute("UPDATE tasks SET accepted_at = %s WHERE id = %s", (accepted_at, task["id"]))
+    conn.execute("UPDATE tasks SET accepted_at = %s, status = %s WHERE id = %s", (accepted_at, "received", task["id"]))
     conn.execute(
         """
         UPDATE login_events
@@ -3300,7 +3329,10 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
-        inventory_condition_label=inventory_condition_label
+        inventory_condition_label=inventory_condition_label,
+        task_status_label=task_status_label,
+        task_is_completed=task_is_completed,
+        normalize_task_status=normalize_task_status
     )
 
 
@@ -5430,8 +5462,8 @@ def create_task(room_id):
     task = conn.execute(
         """
         INSERT INTO tasks
-        (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -5453,6 +5485,7 @@ def create_task(room_id):
             "allow_picture_upload" in request.form,
             "allow_comment" in request.form,
             "allow_audio" in request.form,
+            "sent_to_worker",
             created_at
         )
     ).fetchone()
@@ -5831,7 +5864,38 @@ def create_global_task():
                 pass
         title = request.form.get("title", "").strip()
         start_time = request.form.get("task_start_time", "").strip()
-        if not project_id or not user_ids or (not supplier_mode and (not title or not start_time)):
+        task_drafts = []
+        if not supplier_mode:
+            try:
+                raw_batch = json.loads(request.form.get("task_batch_json") or "[]")
+            except Exception:
+                raw_batch = []
+            if isinstance(raw_batch, list):
+                for item in raw_batch:
+                    if not isinstance(item, dict):
+                        continue
+                    draft_title = str(item.get("title") or "").strip()
+                    draft_start_time = str(item.get("task_start_time") or "").strip()
+                    if not draft_title and not draft_start_time:
+                        continue
+                    task_drafts.append({
+                        "room_id": item.get("room_id") or "",
+                        "task_start_date": str(item.get("task_start_date") or "").strip(),
+                        "task_start_time": draft_start_time,
+                        "task_end_date": str(item.get("task_end_date") or "").strip(),
+                        "title": draft_title,
+                        "instructions": str(item.get("instructions") or "").strip(),
+                    })
+            if not task_drafts:
+                task_drafts = [{
+                    "room_id": request.form.get("room_id", ""),
+                    "task_start_date": request.form.get("task_start_date") or "",
+                    "task_start_time": start_time,
+                    "task_end_date": request.form.get("task_end_date") or "",
+                    "title": title,
+                    "instructions": request.form.get("instructions", "").strip(),
+                }]
+        if not project_id or not user_ids or (not supplier_mode and any(not draft["title"] or not draft["task_start_time"] for draft in task_drafts)):
             conn.close()
             flash("Choose a project, at least one worker, enter a task, and choose the be-there time.")
             return redirect(url_for("create_global_task"))
@@ -5853,6 +5917,13 @@ def create_global_task():
             conn.close()
             flash("Choose a room that belongs to this project.")
             return redirect(url_for("create_global_task"))
+        for draft in task_drafts:
+            requested_draft_room = draft.get("room_id") or ""
+            draft["room_id"] = project_room_id_or_none(conn, project_id, requested_draft_room)
+            if requested_draft_room and not draft["room_id"]:
+                conn.close()
+                flash("Choose a room that belongs to this project.")
+                return redirect(url_for("create_global_task"))
         attachment_error, attachment_uploads, attachment_room_ids = collect_task_attachment_uploads(conn, project_id, room_id)
         if attachment_error:
             conn.close()
@@ -5875,69 +5946,79 @@ def create_global_task():
             title = f"Supplier pickup - {supplier.get('name') or 'Supplier'}"
             start_date = supplier_inventory_items[0].get("item_date") or local_now().date().isoformat()
             start_time = supplier_inventory_items[0].get("supplier_pickup_time") or "08:00"
+            task_drafts = [{
+                "room_id": room_id,
+                "task_start_date": start_date,
+                "task_start_time": start_time,
+                "task_end_date": request.form.get("task_end_date") or start_date,
+                "title": title,
+                "instructions": request.form.get("instructions", "").strip(),
+            }]
         else:
-            start_date = request.form.get("task_start_date") or datetime.now().date().isoformat()
-        end_date = request.form.get("task_end_date") or start_date
-        task_instructions = request.form.get("instructions", "").strip()
+            for draft in task_drafts:
+                draft["task_start_date"] = draft.get("task_start_date") or datetime.now().date().isoformat()
+                draft["task_end_date"] = draft.get("task_end_date") or draft["task_start_date"]
         created_tasks = []
 
-        for assigned in selected_users:
-            grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
-            created_at = utc_now_iso()
-            task_number = next_task_number(conn, created_at)
-            task = conn.execute(
-                """
-                INSERT INTO tasks
-                (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING *
-                """,
-                (
-                    task_number,
-                    project_id,
-                    room_id,
+        for draft in task_drafts:
+            for assigned in selected_users:
+                grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
+                created_at = utc_now_iso()
+                task_number = next_task_number(conn, created_at)
+                task = conn.execute(
+                    """
+                    INSERT INTO tasks
+                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        task_number,
+                        project_id,
+                        draft.get("room_id"),
+                        assigned["id"],
+                        session.get("user_id"),
+                        draft["task_start_date"],
+                        draft["task_start_date"],
+                        draft["task_start_time"],
+                        draft["task_end_date"],
+                        draft["title"],
+                        draft["instructions"],
+                        None,
+                        None,
+                        supplier["id"] if supplier else None,
+                        supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
+                        "require_picture" in request.form,
+                        "allow_picture_upload" in request.form,
+                        "allow_comment" in request.form,
+                        "allow_audio" in request.form,
+                        "sent_to_worker",
+                        created_at
+                    )
+                ).fetchone()
+                inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task["id"], attachment_uploads)
+                link_supplier_items_to_task(conn, task["id"], supplier_inventory_items)
+                task = apply_task_legacy_media(conn, task, first_photo, first_audio)
+                task["_attachments"] = inserted_attachments
+                add_notification(
+                    conn,
                     assigned["id"],
-                    session.get("user_id"),
-                    start_date,
-                    start_date,
-                    start_time,
-                    end_date,
-                    title,
-                    task_instructions,
-                    None,
-                    None,
-                    supplier["id"] if supplier else None,
-                    supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
-                    "require_picture" in request.form,
-                    "allow_picture_upload" in request.form,
-                    "allow_comment" in request.form,
-                    "allow_audio" in request.form,
-                    created_at
+                    assigned["name"],
+                    assigned["email"],
+                    assigned["role"],
+                    "task_assigned",
+                    task.get("project_id"),
+                    task.get("id"),
+                    f"New task assigned: {task_display_name(task)}. Be there {task_schedule_text(task)}. Project access granted."
                 )
-            ).fetchone()
-            inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task["id"], attachment_uploads)
-            link_supplier_items_to_task(conn, task["id"], supplier_inventory_items)
-            task = apply_task_legacy_media(conn, task, first_photo, first_audio)
-            task["_attachments"] = inserted_attachments
-            add_notification(
-                conn,
-                assigned["id"],
-                assigned["name"],
-                assigned["email"],
-                assigned["role"],
-                "task_assigned",
-                task.get("project_id"),
-                task.get("id"),
-                f"New task assigned: {task_display_name(task)}. Be there {task_schedule_text(task)}. Project access granted."
-            )
-            created_tasks.append((task, assigned))
+                created_tasks.append((task, assigned))
 
         conn.commit()
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
             send_task_assignment_sms(task, assigned, project)
         conn.close()
-        flash(f"Task sent to {len(created_tasks)} worker(s). Project access was granted.")
+        flash(f"{len(created_tasks)} task assignment(s) sent. Project access was granted.")
         return redirect(url_for("my_tasks"))
 
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -5999,6 +6080,7 @@ def edit_task(task_id):
             conn.close()
             flash("Choose a room that belongs to this project.")
             return redirect(url_for("edit_task", task_id=task_id, next=next_url))
+        requested_status = normalize_task_status(request.form.get("task_status"))
         attachment_error, attachment_uploads, attachment_room_ids = collect_task_attachment_uploads(conn, task["project_id"], room_id)
         if attachment_error:
             conn.close()
@@ -6006,13 +6088,14 @@ def edit_task(task_id):
             return redirect(url_for("edit_task", task_id=task_id, next=next_url))
 
         assigned_changed = assigned_user_id != task.get("assigned_user_id")
-        reset_received = assigned_changed and task.get("status") != "done"
+        reset_received = (assigned_changed or requested_status == "sent_to_worker") and not task_is_completed(requested_status)
         grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
         conn.execute(
             """
             UPDATE tasks
             SET assigned_user_id = %s,
                 room_id = %s,
+                status = %s,
                 task_date = %s,
                 task_start_date = %s,
                 task_start_time = %s,
@@ -6029,6 +6112,7 @@ def edit_task(task_id):
             (
                 assigned_user_id,
                 room_id,
+                requested_status,
                 start_date,
                 start_date,
                 start_time,
@@ -6073,7 +6157,7 @@ def edit_task(task_id):
 
     task = load_task_details(conn, [task])[0]
     conn.close()
-    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url)
+    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url, task_status_options=TASK_STATUS_LABELS)
 
 
 @app.route("/tasks/<int:task_id>/room-status/<int:room_id>", methods=["POST"])
@@ -6350,6 +6434,9 @@ def complete_task(task_id):
         if merged_comment != str(task.get("completion_comment") or "").strip():
             update_fields.append("completion_comment = %s")
             params.append(merged_comment)
+        if normalize_task_status(task.get("status")) in ["sent_to_worker", "received"]:
+            update_fields.append("status = %s")
+            params.append("in_progress")
         if update_fields:
             params.append(task_id)
             conn.execute(
@@ -6403,7 +6490,8 @@ def complete_task(task_id):
         audio_file,
     ]
     if mark_entire_task_done:
-        update_fields.extend(["status = 'done'", "completed_at = %s"])
+        update_fields.extend(["status = %s", "completed_at = %s"])
+        params.append("completed")
         params.append(completed_at)
     params.append(task_id)
     conn.execute(
@@ -6574,12 +6662,7 @@ def my_tasks():
     selected_supplier_id = request.args.get("supplier_id", type=int)
     selected_user_id = request.args.get("user_id", type=int)
     selected_task_status = request.args.get("task_status", "")
-    task_status_options = {
-        "open": "Open Tasks",
-        "waiting": "Waiting for Received",
-        "received": "Received / In Progress",
-        "done": "Completed",
-    }
+    task_status_options = TASK_STATUS_LABELS
     if selected_task_status not in task_status_options:
         selected_task_status = ""
     open_only = request.args.get("open_only") == "1"
@@ -6599,18 +6682,27 @@ def my_tasks():
     task_date_filter = False if open_only else (bool(task_date_arg) or (task_mode == "search" and has_filter_selection))
 
     def add_task_status_filter(where, params):
-        if selected_task_status == "open" or open_only:
-            where.append("tasks.status <> %s")
-            params.append("done")
-        elif selected_task_status == "waiting":
-            where.append("tasks.status <> %s AND tasks.accepted_at IS NULL")
-            params.append("done")
+        if open_only and not selected_task_status:
+            where.append("COALESCE(tasks.status, 'open') NOT IN (%s, %s)")
+            params.extend(["done", "completed"])
+        elif selected_task_status == "sent_to_worker":
+            where.append("(COALESCE(tasks.status, 'open') IN (%s, %s) AND tasks.accepted_at IS NULL)")
+            params.extend(["open", "sent_to_worker"])
         elif selected_task_status == "received":
-            where.append("tasks.status <> %s AND tasks.accepted_at IS NOT NULL")
-            params.append("done")
-        elif selected_task_status == "done":
+            where.append("(tasks.status = %s OR (COALESCE(tasks.status, 'open') IN (%s, %s) AND tasks.accepted_at IS NOT NULL))")
+            params.extend(["received", "open", "sent_to_worker"])
+        elif selected_task_status == "in_progress":
             where.append("tasks.status = %s")
-            params.append("done")
+            params.append("in_progress")
+        elif selected_task_status == "waiting_rfi":
+            where.append("tasks.status = %s")
+            params.append("waiting_rfi")
+        elif selected_task_status == "waiting_material":
+            where.append("tasks.status = %s")
+            params.append("waiting_material")
+        elif selected_task_status == "completed":
+            where.append("COALESCE(tasks.status, '') IN (%s, %s)")
+            params.extend(["done", "completed"])
 
     projects = []
     project_rooms = []
@@ -6752,7 +6844,7 @@ def my_tasks():
                 LEFT JOIN projects ON tasks.project_id = projects.id
                 LEFT JOIN users ON tasks.assigned_user_id = users.id
                 JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
-                WHERE tasks.assigned_user_id = %s AND tasks.status <> 'done'
+                WHERE tasks.assigned_user_id = %s AND COALESCE(tasks.status, 'open') NOT IN ('done', 'completed')
                 ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
                 """,
                 (session.get("user_id"), session.get("user_id"))
@@ -6776,14 +6868,14 @@ def my_tasks():
                 status_rooms = [status.get("room_id") for status in task.get("_room_statuses", [])]
                 room_done = any(status.get("room_id") == room["id"] and status.get("is_done") for status in task.get("_room_statuses", []))
                 if task.get("room_id") == room["id"] or room["id"] in status_rooms:
-                    if open_only and (task.get("status") == "done" or room_done):
+                    if open_only and (task_is_completed(task) or room_done):
                         continue
                     room_tasks.append(task)
             tasks_by_room[room["id"]] = room_tasks
         for task in tasks:
             status_rooms = [status.get("room_id") for status in task.get("_room_statuses", [])]
             if not task.get("room_id") and not status_rooms:
-                if not open_only or task.get("status") != "done":
+                if not open_only or not task_is_completed(task):
                     project_level_tasks.append(task)
         tasks_by_room[0] = project_level_tasks
     conn.close()
@@ -6937,11 +7029,10 @@ def confirm_delete_task(task_id):
 
 
 def task_report_status(task):
-    if task.get("status") == "done":
-        return "Done"
-    if task.get("accepted_at"):
-        return "In Progress"
-    return "Not Seen"
+    status = normalize_task_status(task.get("status"))
+    if status == "sent_to_worker" and task.get("accepted_at"):
+        return TASK_STATUS_LABELS["received"]
+    return TASK_STATUS_LABELS.get(status, "Sent to worker")
 
 
 def task_in_report_range(task, period, selected_date):

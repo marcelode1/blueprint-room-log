@@ -31,6 +31,13 @@
             {% endfor %}
         </select>
 
+        <label>Task Status</label>
+        <select name="task_status">
+            {% for value, label in task_status_options.items() %}
+                <option value="{{ value }}" {% if normalize_task_status(task.status) == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+
         <div class="grid">
             <div>
                 <label>Start Date</label>

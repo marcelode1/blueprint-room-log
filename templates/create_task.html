@@ -21,7 +21,7 @@
 </div>
 
 <div class="card">
-    <form method="post" enctype="multipart/form-data">
+    <form method="post" enctype="multipart/form-data" novalidate>
         <label>Create Task For</label>
         <select id="taskTypeSelect" name="task_type">
             <option value="project">Project</option>
@@ -113,9 +113,14 @@
 
         <div id="taskTextFields">
             <label>Task</label>
-            <input name="title" placeholder="Task title" required>
+            <input name="title" placeholder="Task title">
             <label>Task Information / Instructions</label>
             <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+        </div>
+        <input type="hidden" name="task_batch_json" id="taskBatchJson">
+        <div id="taskBatchPanel" class="taskBatchPanel">
+            <button type="button" class="btn-secondary" id="addTaskDraftBtn">Add Task</button>
+            <div id="taskDraftList" class="taskDraftList"></div>
         </div>
 
         {% set attachment_project_select_id = "taskProjectSelect" %}
@@ -127,7 +132,7 @@
             <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
             <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
         </div>
-        <button type="submit">Save Task</button>
+        <button type="submit">Save and Send</button>
     </form>
 </div>
 
@@ -161,8 +166,10 @@
 .supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
 .supplierItemActions{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(245,158,11,.08)}
 .supplierItemList{display:grid;gap:8px;margin-top:8px}
-.supplierItemRow{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
-.supplierItemRow button{width:auto;min-height:40px;padding:8px 12px;margin:0}
+.supplierItemRow,.taskDraftItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.supplierItemRow button,.taskDraftItem button{width:auto;min-height:40px;padding:8px 12px;margin:0}
+.taskBatchPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(37,99,235,.06)}
+.taskDraftList{display:grid;gap:8px;margin-top:8px}
 .newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
@@ -203,6 +210,9 @@
     const supplierItemActions=document.getElementById("supplierItemActions");
     const addSupplierItemBtn=document.getElementById("addSupplierItemBtn");
     const supplierItemList=document.getElementById("supplierItemList");
+    const taskBatchJson=document.getElementById("taskBatchJson");
+    const addTaskDraftBtn=document.getElementById("addTaskDraftBtn");
+    const taskDraftList=document.getElementById("taskDraftList");
     const taskForm=supplierEnabled?supplierEnabled.closest("form"):null;
     const newSupplierModal=document.getElementById("newSupplierModal");
     const saveNewSupplierBtn=document.getElementById("saveNewSupplierBtn");
@@ -221,6 +231,7 @@
         note:document.querySelector('[name="supplier_purchase_note"]')
     };
     let supplierItems=[];
+    let taskDrafts=[];
     const hiddenSupplierFields={
         name:document.getElementById("newSupplierName"),
         contact:document.getElementById("newSupplierContactName"),
@@ -253,10 +264,12 @@
         if(projectLabel)projectLabel.textContent=supplierMode?"Project Where Material Will Go":"Project";
         if(roomLabel)roomLabel.textContent=supplierMode?"Room Where Material Will Go":"Room";
         const mainRoomField=document.getElementById("mainRoomField");
+        const taskBatchPanel=document.getElementById("taskBatchPanel");
         if(mainRoomField)mainRoomField.dataset.supplierMode=supplierMode?"1":"0";
         if(roomSelect&&!supplierMode)roomSelect.value="";
         if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
         if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
+        if(taskBatchPanel)taskBatchPanel.style.display=supplierMode?"none":"block";
         const titleInput=document.querySelector('[name="title"]');
         const startDateInput=document.querySelector('[name="task_start_date"]');
         const startTimeInput=document.querySelector('[name="task_start_time"]');
@@ -295,6 +308,63 @@
             supplierItemList.appendChild(row);
         });
     }
+    function taskField(name){
+        return document.querySelector('[name="'+name+'"]');
+    }
+    function currentTaskDraft(){
+        return {
+            room_id:roomSelect?roomSelect.value:"",
+            room_name:roomSelect&&roomSelect.value?optionText(roomSelect):"Project general",
+            task_start_date:taskField("task_start_date")?taskField("task_start_date").value:"",
+            task_start_time:taskField("task_start_time")?taskField("task_start_time").value:"",
+            task_end_date:taskField("task_end_date")?taskField("task_end_date").value:"",
+            title:taskField("title")?taskField("title").value.trim():"",
+            instructions:taskField("instructions")?taskField("instructions").value.trim():""
+        };
+    }
+    function hasTaskDraftContent(draft){
+        return Boolean((draft.title||"").trim()||(draft.instructions||"").trim()||(draft.task_start_time||"").trim());
+    }
+    function renderTaskDrafts(){
+        if(taskBatchJson)taskBatchJson.value=JSON.stringify(taskDrafts);
+        if(!taskDraftList)return;
+        taskDraftList.innerHTML="";
+        taskDrafts.forEach((draft,index)=>{
+            const row=document.createElement("div");
+            row.className="taskDraftItem";
+            const text=document.createElement("div");
+            text.innerHTML="<strong>"+(index+1)+". "+draft.title+"</strong><br>"+
+                "Room: "+(draft.room_name||"Project general")+" | Be there: "+(draft.task_start_date||"date not set")+" "+(draft.task_start_time||"time not set");
+            const remove=document.createElement("button");
+            remove.type="button";
+            remove.className="btn-danger";
+            remove.textContent="Remove";
+            remove.addEventListener("click",()=>{
+                taskDrafts.splice(index,1);
+                renderTaskDrafts();
+            });
+            row.appendChild(text);
+            row.appendChild(remove);
+            taskDraftList.appendChild(row);
+        });
+    }
+    function addTaskDraft(showAlert=true){
+        const draft=currentTaskDraft();
+        if(!projectSelect||!projectSelect.value){
+            if(showAlert)alert("Choose a project before adding a task.");
+            return false;
+        }
+        if(!draft.title||!draft.task_start_time){
+            if(showAlert)alert("Enter the task and be-there time before adding it.");
+            return false;
+        }
+        taskDrafts.push(draft);
+        renderTaskDrafts();
+        if(taskField("title"))taskField("title").value="";
+        if(taskField("instructions"))taskField("instructions").value="";
+        if(taskField("title"))taskField("title").focus();
+        return true;
+    }
     function addSupplierItem(showAlert=true){
         const projectId=projectSelect?projectSelect.value:"";
         const roomId=roomSelect?roomSelect.value:"";
@@ -324,9 +394,32 @@
         return true;
     }
     if(addSupplierItemBtn)addSupplierItemBtn.addEventListener("click",()=>addSupplierItem(true));
+    if(addTaskDraftBtn)addTaskDraftBtn.addEventListener("click",()=>addTaskDraft(true));
+    if(projectSelect)projectSelect.addEventListener("change",()=>{
+        if(taskDrafts.length){
+            taskDrafts=[];
+            renderTaskDrafts();
+        }
+    });
     if(taskForm)taskForm.addEventListener("submit",event=>{
         const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
-        if(!supplierMode)return;
+        if(!supplierMode){
+            const draft=currentTaskDraft();
+            if(hasTaskDraftContent(draft)){
+                if(!addTaskDraft(false)){
+                    event.preventDefault();
+                    alert("Enter the task and be-there time before saving.");
+                    return;
+                }
+            }
+            if(!taskDrafts.length){
+                event.preventDefault();
+                alert("Add at least one task before saving and sending.");
+                return;
+            }
+            renderTaskDrafts();
+            return;
+        }
         const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
         if(hasDraft||!supplierItems.length){
             addSupplierItem(false);
@@ -702,7 +795,7 @@
         if(!draft.task_start_time)missing.push("time");
         if(!draft.title)missing.push("task title");
         const roomNote=(!draft.room_id&&draft.room_name)?" Heard room: "+draft.room_name+".":"";
-        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+". "+roomNote:"Task form filled. Please review it, then click Save Task.",missing.length>0);
+        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+". "+roomNote:"Task form filled. Please review it, then click Save and Send.",missing.length>0);
     }
     function stopRealtimeVoice(){
         if(realtimeProcessingTimer){

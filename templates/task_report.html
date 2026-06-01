@@ -49,7 +49,7 @@
         .taskReportTable th,.taskReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
         .taskReportTable th{background:#f3f4f6}
         .statusPill{display:inline-block;padding:4px 8px;border-radius:999px;background:#e2e8f0;font-weight:800;font-size:12px}
-        .statusDone{background:#dcfce7;color:#166534}.statusProgress{background:#dbeafe;color:#1d4ed8}.statusNotSeen{background:#fee2e2;color:#991b1b}
+        .statusDone{background:#dcfce7;color:#166534}.statusProgress{background:#dbeafe;color:#1d4ed8}.statusWaiting{background:#fef3c7;color:#92400e}.statusNotSeen{background:#fee2e2;color:#991b1b}
         @media(max-width:800px){.taskReportWrap{overflow-x:auto}.taskReportTable{min-width:1180px}}
     </style>
     <div class="taskReportWrap">
@@ -85,8 +85,8 @@
                     <td>{{ format_datetime(t.created_at) }}</td>
                     <td>{{ task_schedule_text(t) }}</td>
                     <td>{% if t.accepted_at %}Yes<br><span class="muted">{{ format_datetime(t.accepted_at) }}</span>{% else %}No{% endif %}</td>
-                    <td>{% if t.status == "done" %}Yes<br><span class="muted">{{ format_datetime(t.completed_at) if t.completed_at else "" }}</span>{% else %}No{% endif %}</td>
-                    <td><span class="statusPill {% if status == 'Done' %}statusDone{% elif status == 'In Progress' %}statusProgress{% else %}statusNotSeen{% endif %}">{{ status }}</span></td>
+                    <td>{% if task_is_completed(t) %}Yes<br><span class="muted">{{ format_datetime(t.completed_at) if t.completed_at else "" }}</span>{% else %}No{% endif %}</td>
+                    <td><span class="statusPill {% if status == 'Completed' %}statusDone{% elif status in ['Received', 'In progress'] %}statusProgress{% elif status in ['Waiting for RFI', 'Waiting on material'] %}statusWaiting{% else %}statusNotSeen{% endif %}">{{ status }}</span></td>
                     <td>{{ task_instruction_text(t) or "-" }}</td>
                 </tr>
             {% else %}
