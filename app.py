@@ -6403,6 +6403,10 @@ def complete_task(task_id):
     save_media_only = request.form.get("completion_save_media_only") == "1" or not task_done_requested
     completion_comment = request.form.get("completion_comment", "").strip()
     service_order_verified = request.form.get("service_order_verified") == "1"
+    posted_completion_status = request.form.get("completion_task_status", "").strip()
+    requested_completion_status = normalize_task_status(posted_completion_status) if posted_completion_status else ""
+    current_completion_status = normalize_task_status(task.get("status"))
+    status_changed = bool(requested_completion_status and requested_completion_status != current_completion_status)
 
     def completion_comment_with_service_order(base_comment=""):
         parts = []
@@ -6416,12 +6420,35 @@ def complete_task(task_id):
         return "\n".join(parts).strip()
 
     if save_media_only:
-        if not completion_uploads and not completion_comment and not service_order_verified:
+        if not completion_uploads and not completion_comment and not service_order_verified and not status_changed:
             conn.close()
-            flash("Choose a picture, audio, comment, or verify the service order before saving.")
+            flash("Choose a picture, audio, comment, service order, or status before saving.")
             next_url = request.form.get("next")
             return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
         inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
+        completed_at = datetime.now().isoformat()
+        mark_entire_task_done = False
+        if requested_completion_status == "completed":
+            if completion_room_id:
+                conn.execute(
+                    """
+                    INSERT INTO task_room_statuses (task_id, room_id, is_done, updated_by, updated_at)
+                    VALUES (%s, %s, TRUE, %s, %s)
+                    ON CONFLICT (task_id, room_id) DO UPDATE SET
+                        is_done = TRUE,
+                        updated_by = EXCLUDED.updated_by,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (task_id, completion_room_id, session.get("user_id"), utc_now_iso())
+                )
+                if task.get("supplier_id"):
+                    mark_entire_task_done = True
+                else:
+                    related_room_ids = task_related_room_ids(conn, task_id, task)
+                    related_room_ids.add(completion_room_id)
+                    mark_entire_task_done = all_task_rooms_done(conn, task_id, related_room_ids)
+            else:
+                mark_entire_task_done = True
         update_fields = []
         params = []
         if first_photo and not task.get("completion_photo_file"):
@@ -6434,7 +6461,19 @@ def complete_task(task_id):
         if merged_comment != str(task.get("completion_comment") or "").strip():
             update_fields.append("completion_comment = %s")
             params.append(merged_comment)
-        if normalize_task_status(task.get("status")) in ["sent_to_worker", "received"]:
+        if requested_completion_status == "completed":
+            if mark_entire_task_done:
+                update_fields.append("status = %s")
+                params.append("completed")
+                update_fields.append("completed_at = %s")
+                params.append(completed_at)
+            elif current_completion_status != "in_progress":
+                update_fields.append("status = %s")
+                params.append("in_progress")
+        elif requested_completion_status:
+            update_fields.append("status = %s")
+            params.append(requested_completion_status)
+        elif current_completion_status in ["sent_to_worker", "received"]:
             update_fields.append("status = %s")
             params.append("in_progress")
         if update_fields:
@@ -6445,7 +6484,7 @@ def complete_task(task_id):
             )
         conn.commit()
         conn.close()
-        flash("Saved. Add another picture, upload, comment, audio, or press Task Done when finished.")
+        flash("Saved. Add another picture, upload, comment, audio, or update another room.")
         next_url = request.form.get("next")
         return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)

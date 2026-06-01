@@ -1,13 +1,19 @@
 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
     <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-    <label>Room for this save</label>
+    <label>Room name</label>
     <select name="completion_room_id">
         {% for room_option in t._project_rooms %}
             <option value="{{ room_option.id }}" {% if r.id == room_option.id %}selected{% endif %}>{{ room_option.name }}</option>
         {% endfor %}
     </select>
-    <label>Completion Comment</label>
-    <textarea name="completion_comment" rows="3"></textarea>
+    <label>What is being done</label>
+    <textarea name="completion_comment" rows="3" placeholder="Write what was done or what still needs to be done"></textarea>
+    <label>Task Status</label>
+    <select name="completion_task_status">
+        {% for value, label in task_status_options.items() %}
+            <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
     <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
     {% if not t.supplier_id %}
     <div class="completionBlocks">
@@ -23,7 +29,6 @@
             {% include "_mobile_media_bar.html" %}
         </div>
     </div>
-    <button type="submit" class="btn-secondary" name="completion_save_media_only" value="1">Save</button>
     {% endif %}
-    <button type="submit" name="task_done" value="1">Task Done</button>
+    <button type="submit" name="completion_save_media_only" value="1">Save</button>
 </form>
