@@ -66,6 +66,15 @@
                 </select>
             </div>
             {% endif %}
+            <div>
+                <label>Status</label>
+                <select name="task_status" onchange="this.form.submit()">
+                    <option value="">All Statuses</option>
+                    {% for value, label in task_status_options.items() %}
+                        <option value="{{ value }}" {% if selected_task_status == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
             {% if not open_only %}
                 <div>
                     <label>Show By</label>
@@ -84,18 +93,20 @@
         <button type="submit">{% if open_only %}Show Open Tasks{% else %}Show Tasks{% endif %}</button>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Clear Search</a>
     </form>
-    {% if not selected_project_id and not selected_supplier_id and not selected_user_id and not task_date_filter %}
-        <p class="muted">Choose a project, supplier{% if is_main_admin() %}, user{% endif %}, or task date to see only those tasks.</p>
+    {% if not selected_project_id and not selected_supplier_id and not selected_user_id and not selected_task_status and not task_date_filter %}
+        <p class="muted">Choose a project, supplier{% if is_main_admin() %}, user{% endif %}, status, or task date to see only those tasks.</p>
     {% endif %}
 </div>
 {% endif %}
 
 {% if not is_main_admin() or task_mode == "search" %}
 <div class="card">
-    {% if task_mode == "search" and (selected_project_id or selected_supplier_id or selected_user_id or task_date_filter) %}
+    {% if task_mode == "search" and (selected_project_id or selected_supplier_id or selected_user_id or selected_task_status or task_date_filter) %}
         <p class="muted taskScopeSummary">
             Showing {{ tasks|length }} {% if open_only %}open {% endif %}task{{ '' if tasks|length == 1 else 's' }} for
-            {% if selected_supplier_id %}
+            {% if selected_task_status %}
+                {{ task_status_options.get(selected_task_status, 'selected status') }}
+            {% elif selected_supplier_id %}
                 {% for s in suppliers %}{% if s.id == selected_supplier_id %}{{ s.name }}{% endif %}{% endfor %}
             {% elif selected_room_id %}
                 {% for r in project_rooms %}{% if r.id == selected_room_id %}{{ r.name }}{% endif %}{% endfor %}
@@ -323,8 +334,8 @@
     {% else %}
         {% if is_main_admin() and not selected_project_id and not selected_supplier_id and not selected_user_id and not task_date_filter %}
             <p>No project, supplier, user, or task date selected.</p>
-        {% elif not is_main_admin() and task_mode == "search" and not selected_project_id and not selected_supplier_id and not task_date_filter %}
-            <p>Choose a project, supplier, or task date to search your tasks.</p>
+        {% elif not is_main_admin() and task_mode == "search" and not selected_project_id and not selected_supplier_id and not selected_task_status and not task_date_filter %}
+            <p>Choose a project, supplier, status, or task date to search your tasks.</p>
         {% elif not is_main_admin() and task_mode != "search" %}
             <p>No tasks due today or overdue. Use Search My Tasks to view other tasks.</p>
         {% else %}
