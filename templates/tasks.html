@@ -15,7 +15,7 @@
             <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search My Tasks</a>
         </div>
         {% if task_mode != "search" %}
-            <p class="muted">Today's Tasks shows every task due today or overdue, including completed tasks.</p>
+            <p class="muted">Today's Tasks shows every task scheduled for today, including completed tasks.</p>
         {% endif %}
     {% endif %}
 </div>
@@ -320,7 +320,7 @@
             </div>
         </div>
     {% else %}
-        <p>No tasks due today or overdue. Use Search My Tasks to view other tasks.</p>
+        <p>No tasks scheduled for today. Use Search My Tasks to view other tasks.</p>
     {% endfor %}
     {% else %}
     {% for t in tasks %}
@@ -437,7 +437,7 @@
         {% elif not is_main_admin() and task_mode == "search" and not selected_project_id and not selected_supplier_id and not selected_task_status and not task_date_filter %}
             <p>Choose a project, supplier, status, or task date to search your tasks.</p>
         {% elif not is_main_admin() and task_mode != "search" %}
-            <p>No tasks due today or overdue. Use Search My Tasks to view other tasks.</p>
+            <p>No tasks scheduled for today. Use Search My Tasks to view other tasks.</p>
         {% else %}
             <p>No tasks found.</p>
         {% endif %}

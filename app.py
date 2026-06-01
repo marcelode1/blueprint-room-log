@@ -6989,7 +6989,7 @@ def my_tasks():
             today = local_now().date()
             tasks = [
                 t for t in tasks
-                if (task_scheduled_date_value(t) or today) <= today
+                if (task_scheduled_date_value(t) or today) == today
             ]
             tasks = sorted(tasks, key=task_active_sort_key)
     tasks = load_task_details(conn, tasks, selected_room_id)
