@@ -6313,20 +6313,74 @@ def delete_task_attachment(task_id, attachment_id):
     ).fetchone()
     if not task or not attachment:
         conn.close()
-        flash("Picture not found.")
+        flash("Picture or audio not found.")
         return redirect(next_url)
     if not user_can_access_project(conn, task["project_id"]):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if task_is_completed(task) and not is_main_admin():
+        conn.close()
+        flash("Completed task items can only be deleted by an admin.")
+        return redirect(next_url)
     if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id")):
         conn.close()
-        flash("You do not have permission to delete this picture.")
+        flash("You do not have permission to delete this picture or audio.")
         return redirect(next_url)
     conn.execute("DELETE FROM task_attachments WHERE id = %s AND task_id = %s", (attachment_id, task_id))
     conn.commit()
     conn.close()
-    flash("Picture deleted.")
+    flash("Picture or audio deleted.")
+    return redirect(next_url)
+
+
+@app.route("/tasks/<int:task_id>/completion/delete", methods=["POST"])
+@login_required
+def delete_task_completion_item(task_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(next_url)
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if task_is_completed(task) and not is_main_admin():
+        conn.close()
+        flash("Completed task items can only be deleted by an admin.")
+        return redirect(next_url)
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
+        conn.close()
+        flash("You do not have permission to delete this task item.")
+        return redirect(next_url)
+
+    update_fields = []
+    deleted_labels = []
+    if request.form.get("delete_comment") == "1":
+        update_fields.append("completion_comment = ''")
+        deleted_labels.append("comment")
+    if request.form.get("delete_photo") == "1":
+        update_fields.append("completion_photo_file = NULL")
+        deleted_labels.append("picture")
+    if request.form.get("delete_audio") == "1":
+        update_fields.append("completion_audio_file = NULL")
+        deleted_labels.append("audio")
+
+    if not update_fields:
+        conn.close()
+        flash("Choose a comment, picture, or audio to delete.")
+        return redirect(next_url)
+
+    conn.execute(
+        f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
+        (task_id,)
+    )
+    conn.commit()
+    conn.close()
+    flash(f"Deleted {' / '.join(deleted_labels)}.")
     return redirect(next_url)
 
 
@@ -6348,6 +6402,10 @@ def update_task_attachment_comment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if task_is_completed(task) and not is_main_admin():
+        conn.close()
+        flash("Completed task comments can only be changed by an admin.")
+        return redirect(next_url)
     if not (is_main_admin() or has_perm("edit_comments") or attachment.get("created_by") == session.get("user_id")):
         conn.close()
         flash("You do not have permission to edit this comment.")
@@ -6923,7 +6981,7 @@ def my_tasks():
                 LEFT JOIN projects ON tasks.project_id = projects.id
                 LEFT JOIN users ON tasks.assigned_user_id = users.id
                 JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
-                WHERE tasks.assigned_user_id = %s AND COALESCE(tasks.status, 'open') NOT IN ('done', 'completed')
+                WHERE tasks.assigned_user_id = %s
                 ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
                 """,
                 (session.get("user_id"), session.get("user_id"))
@@ -6990,7 +7048,7 @@ def delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, tasks.status, tasks.completed_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -7003,7 +7061,8 @@ def delete_task(task_id):
         flash("Task not found.")
         return redirect(url_for("my_tasks"))
     next_url = safe_next_url("my_tasks", project_id=task["project_id"])
-    if not task.get("accepted_at"):
+    needs_delete_pin = bool(task.get("accepted_at") or task.get("completed_at") or task_is_completed(task))
+    if not needs_delete_pin:
         conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
         conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
         conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
@@ -7013,7 +7072,7 @@ def delete_task(task_id):
         return redirect(next_url)
     if is_mobile_request():
         conn.close()
-        flash("This task was already received by the worker. Delete it from the desktop version with an email PIN.")
+        flash("This task was already received or completed. Delete it from the desktop version with an email PIN.")
         return redirect(next_url)
     if not admin or not admin.get("email"):
         conn.close()
@@ -7060,7 +7119,7 @@ def confirm_delete_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, projects.name AS project_name
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, tasks.accepted_at, tasks.status, tasks.completed_at, projects.name AS project_name
         FROM tasks
         LEFT JOIN projects ON tasks.project_id = projects.id
         WHERE tasks.id = %s
@@ -7074,7 +7133,7 @@ def confirm_delete_task(task_id):
     next_url = safe_next_url("my_tasks", project_id=task["project_id"])
     if is_mobile_request():
         conn.close()
-        flash("This task was already received by the worker. Delete it from the desktop version with an email PIN.")
+        flash("This task was already received or completed. Delete it from the desktop version with an email PIN.")
         return redirect(next_url)
 
     if request.method == "POST":
