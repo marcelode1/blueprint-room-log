@@ -11,7 +11,7 @@
         *{box-sizing:border-box}
         body{font-family:Arial,sans-serif;margin:0;background:var(--bg);color:var(--text);transition:.2s;padding-bottom:env(safe-area-inset-bottom)}
         header{background:#0f172a;color:white;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;position:sticky;top:0;z-index:100;box-shadow:0 4px 14px rgba(0,0,0,.16)}
-        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandText{display:flex;flex-direction:column;line-height:1.15}.brandUser{display:none;color:#cbd5e1;font-size:12px;font-weight:700;margin-top:2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
+        header a{color:white;margin-left:12px;text-decoration:none;font-weight:700}.brand{font-weight:900;letter-spacing:.2px}.brandWrap{display:flex;align-items:center;gap:10px}.brandText{display:flex;flex-direction:column;line-height:1.15}.brandUser{display:none;color:#cbd5e1;font-size:12px;font-weight:700;margin-top:2px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brandLogo{width:36px;height:36px;object-fit:contain;background:white;border-radius:8px;padding:4px}.topNav{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end}.navDropdown{position:relative;margin-left:12px}.navDropdownButton{color:white;font-weight:700;cursor:default;padding:8px 0}.navDropdownMenu{display:none;position:absolute;top:100%;left:0;z-index:240;min-width:190px;background:#1e293b;border:1px solid #334155;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.28);padding:8px}.navDropdown:hover .navDropdownMenu,.navDropdown:focus-within .navDropdownMenu{display:block}.navDropdownMenu a{display:flex;margin:0;color:white;padding:10px 12px;border-radius:8px;white-space:nowrap}.navDropdownMenu a:hover{background:#334155}.mobileMenuButton{display:none}.mobileMenuPanel{display:none}
         main{padding:20px;max-width:1240px;margin:auto}.card{background:var(--card);padding:20px;border-radius:18px;margin-bottom:18px;box-shadow:var(--shadow);border:1px solid var(--border)}
         input,textarea,select,button{padding:14px;margin:7px 0;width:100%;font-size:17px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text)}
         button,.btn-link{min-height:54px;background:var(--primary);color:white;border:0;border-radius:14px;cursor:pointer;font-weight:800;text-align:center;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;padding:14px 18px;margin:6px 0;touch-action:manipulation}
@@ -20,7 +20,7 @@
         @media(min-width:761px){.photo,img.photo{max-width:25%}}
         .flash{background:#fff3cd;color:#1f2937;padding:12px;border-radius:12px;margin-bottom:14px}.desktop-only{display:block}.muted{color:var(--muted)}
         .dark-toggle{width:auto;min-height:38px;padding:8px 12px;background:#334155!important;margin-left:10px;border-radius:999px;font-size:14px}.bottom-nav{display:none}.backButton{width:auto;min-height:42px;padding:9px 14px;margin:0 0 12px;background:#475569!important;border-radius:10px;font-size:14px}
-        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:10px 12px;flex-wrap:nowrap;z-index:1600}header a{margin-left:0}.topNav{display:none}.mobileMenuButton{display:inline-flex!important;width:48px!important;min-height:48px!important;margin:0!important;padding:0!important;border-radius:12px!important;background:#1e293b!important;align-items:center!important;justify-content:center!important;flex-direction:column;gap:5px}.mobileMenuButton span{display:block;width:24px;height:3px;background:white;border-radius:999px}.brandWrap{min-width:0}.brandText{min-width:0}.brandLogo{width:40px;height:40px}.brand{white-space:nowrap}.brandUser{display:block}.mobileMenuPanel{position:fixed;top:60px;left:0;right:0;bottom:0;z-index:1500;background:#0f172a;border-top:1px solid #334155;padding:14px;overflow-y:auto}.mobileMenuPanel.open{display:block}.mobileMenuPanel a,.mobileMenuPanel button{width:100%;min-height:50px;margin:5px 0;border-radius:12px;justify-content:center}.mobileMenuPanel a{display:flex;align-items:center;background:#1e293b;color:white;text-decoration:none;font-weight:800;padding:12px}.mobileMenuPanel .dark-toggle{margin:5px 0!important;background:#334155!important}body.mobile-menu-open{overflow:hidden}body.mobile-menu-open main,body.mobile-menu-open .bottom-nav{display:none!important}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
+        @media(max-width:760px){main{padding:12px 12px 92px}header{gap:8px;padding:10px 12px;flex-wrap:nowrap;z-index:1600}header a{margin-left:0}.topNav{display:none}.mobileMenuButton{display:inline-flex!important;width:48px!important;min-height:48px!important;margin:0!important;padding:0!important;border-radius:12px!important;background:#1e293b!important;align-items:center!important;justify-content:center!important;flex-direction:column;gap:5px}.mobileMenuButton span{display:block;width:24px;height:3px;background:white;border-radius:999px}.brandWrap{min-width:0}.brandText{min-width:0}.brandLogo{width:40px;height:40px}.brand{white-space:nowrap}.brandUser{display:block}.mobileMenuPanel{position:fixed;top:60px;left:0;right:0;bottom:0;z-index:1500;background:#0f172a;border-top:1px solid #334155;padding:14px;overflow-y:auto}.mobileMenuPanel.open{display:block}.mobileMenuPanel a,.mobileMenuPanel button{width:100%;min-height:50px;margin:5px 0;border-radius:12px;justify-content:center}.mobileMenuPanel a{display:flex;align-items:center;background:#1e293b;color:white;text-decoration:none;font-weight:800;padding:12px}.mobileMenuGroup{margin:5px 0;border:1px solid #334155;border-radius:12px;background:#111827;overflow:hidden}.mobileMenuGroup summary{display:flex;align-items:center;justify-content:center;min-height:50px;padding:12px;color:white;font-weight:900;cursor:pointer}.mobileMenuGroup a{border-radius:0!important;margin:0!important;border-top:1px solid #334155;background:#1e293b}.mobileMenuPanel .dark-toggle{margin:5px 0!important;background:#334155!important}body.mobile-menu-open{overflow:hidden}body.mobile-menu-open main,body.mobile-menu-open .bottom-nav{display:none!important}.desktop-only{display:none!important}.card{padding:16px;border-radius:16px}.grid{grid-template-columns:1fr;gap:12px}button,.btn-link{width:100%;min-height:58px;font-size:17px}input,textarea,select{min-height:54px;font-size:17px}.backButton{width:100%;min-height:48px}.bottom-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0f172a;padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:200;gap:8px;box-shadow:0 -6px 18px rgba(0,0,0,.25)}.bottom-nav a{flex:1;color:white;text-decoration:none;text-align:center;padding:10px 6px;border-radius:12px;background:#1e293b;font-weight:800;font-size:13px}}
     </style>
     {% if session.get("ui_theme") == "pro_test" %}<link rel="stylesheet" href="{{ url_for('static', filename='pro_interface_test.css') }}">{% endif %}
     {% block extra_head %}{% endblock %}
@@ -46,7 +46,18 @@
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
             <a href="{{ url_for('index') }}#projects">Projects</a>
-            <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            {% if is_main_admin() %}
+                <div class="navDropdown">
+                    <div class="navDropdownButton" tabindex="0">Tasks</div>
+                    <div class="navDropdownMenu">
+                        <a href="{{ url_for('create_global_task') }}">Create a Task</a>
+                        <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+                        <a href="{{ url_for('task_report') }}">Task Report</a>
+                    </div>
+                </div>
+            {% else %}
+                <a href="{{ url_for('my_tasks') }}">Tasks</a>
+            {% endif %}
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
             {% if not is_main_admin() %}<a href="{{ url_for('my_time_report') }}">Time Report</a>{% endif %}
             <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
@@ -55,7 +66,6 @@
                 <a href="{{ url_for('suppliers') }}">Suppliers</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
-                <a href="{{ url_for('task_report') }}">Task Report</a>
                 <a href="{{ url_for('comment_report') }}">Comment Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
@@ -86,15 +96,18 @@
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
         <a href="{{ url_for('index') }}#projects">Projects</a>
-        <a href="{{ url_for('create_global_task') }}">Create Task</a>
-        <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
+        <details class="mobileMenuGroup">
+            <summary>Tasks</summary>
+            <a href="{{ url_for('create_global_task') }}">Create a Task</a>
+            <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+            <a href="{{ url_for('task_report') }}">Task Report</a>
+        </details>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('users') }}">Users</a>
         <a href="{{ url_for('suppliers') }}">Suppliers</a>
         <a href="{{ url_for('settings') }}">Settings</a>
         <a href="{{ url_for('attendance_report') }}">Time Report</a>
-        <a href="{{ url_for('task_report') }}">Task Report</a>
         <a href="{{ url_for('comment_report') }}">Comment Report</a>
         <a href="{{ url_for('team_map') }}">Where Is My Team</a>
         <a href="{{ url_for('backup') }}">Backup</a>
