@@ -6425,7 +6425,7 @@ def complete_task(task_id):
     if save_media_only:
         if not completion_uploads and not completion_comment and not service_order_verified and not status_changed:
             conn.close()
-            flash("Choose a picture, audio, comment, service order, or status before saving.")
+            flash("Choose a picture, audio, comment, or status before saving.")
             next_url = request.form.get("next")
             return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
         inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)

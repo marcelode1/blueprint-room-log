@@ -1,20 +1,16 @@
 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
     <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-    <label>Room name</label>
-    <select name="completion_room_id">
-        {% for room_option in t._project_rooms %}
-            <option value="{{ room_option.id }}" {% if r.id == room_option.id %}selected{% endif %}>{{ room_option.name }}</option>
-        {% endfor %}
-    </select>
+    <input type="hidden" name="completion_room_id" value="{{ r.id }}">
     <label>What is being done</label>
     <textarea name="completion_comment" rows="3" placeholder="Write what was done or what still needs to be done"></textarea>
     <label>Task Status</label>
     <select name="completion_task_status">
         {% for value, label in task_status_options.items() %}
-            <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+            {% if value not in ["sent_to_worker", "received"] %}
+                <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+            {% endif %}
         {% endfor %}
     </select>
-    <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
     {% if not t.supplier_id %}
     <div class="completionBlocks">
         <div class="completionBlock">

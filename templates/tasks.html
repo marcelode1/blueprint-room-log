@@ -232,10 +232,11 @@
                                 <label>Task Status</label>
                                 <select name="completion_task_status">
                                     {% for value, label in task_status_options.items() %}
-                                        <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+                                        {% if value not in ["sent_to_worker", "received"] %}
+                                            <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endif %}
                                     {% endfor %}
                                 </select>
-                                <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
                                 {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                                     <div class="completionBlocks">
                                         <div class="completionBlock">
@@ -328,10 +329,11 @@
                     <label>Task Status</label>
                     <select name="completion_task_status">
                         {% for value, label in task_status_options.items() %}
-                            <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+                            {% if value not in ["sent_to_worker", "received"] %}
+                                <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+                            {% endif %}
                         {% endfor %}
                     </select>
-                    <label class="serviceOrderCheck"><input type="checkbox" name="service_order_verified" value="1"> Verify Service Order</label>
                     {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
                         <div class="completionBlocks">
                             <div class="completionBlock">
@@ -425,5 +427,5 @@ document.querySelectorAll(".mobileRoomCompletionForm").forEach(form=>{
     });
 });
 </script>
-<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.todayTaskChoice{display:grid;gap:8px}.taskChoiceActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:stretch}.taskChoiceActions form{margin:0}.taskChoiceActions .btn-link,.taskChoiceActions button{width:100%;height:100%;margin:0}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.serviceOrderCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.serviceOrderCheck input{width:auto;min-height:auto}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
+<style>.taskDone{opacity:.82}.mobile-only-delete-note{display:none}.mobileRoomTaskGroup h4{margin-bottom:8px}.todayTaskChoice{display:grid;gap:8px}.taskChoiceActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:stretch}.taskChoiceActions form{margin:0}.taskChoiceActions .btn-link,.taskChoiceActions button{width:100%;height:100%;margin:0}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}@media(max-width:760px){.mobile-only-delete-note{display:block}}</style>
 {% endblock %}
