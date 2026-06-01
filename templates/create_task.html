@@ -323,7 +323,7 @@
         };
     }
     function hasTaskDraftContent(draft){
-        return Boolean((draft.title||"").trim()||(draft.instructions||"").trim()||(draft.task_start_time||"").trim());
+        return Boolean((draft.title||"").trim()||(draft.instructions||"").trim());
     }
     function renderTaskDrafts(){
         if(taskBatchJson)taskBatchJson.value=JSON.stringify(taskDrafts);
