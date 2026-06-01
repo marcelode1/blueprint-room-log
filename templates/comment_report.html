@@ -37,8 +37,10 @@
             </div>
         </div>
         <button type="submit">Show Comment Report</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', period=period, date=selected_date) }}">Export to CSV</a>
-        <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
+        {% if is_main_admin() %}
+            <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+            <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
+        {% endif %}
     </form>
     <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
 </div>

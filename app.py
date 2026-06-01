@@ -6700,6 +6700,8 @@ def my_tasks():
     conn = db()
     selected_task_id = request.args.get("task_id", type=int)
     from_notification = request.args.get("from_notification") == "1"
+    notification_task_id = request.args.get("notification_task_id", type=int)
+    notification_task_list = request.args.get("notification_tasks") == "1"
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
     selected_supplier_id = request.args.get("supplier_id", type=int)
@@ -6712,6 +6714,8 @@ def my_tasks():
     task_mode = request.args.get("mode", "")
     if open_only and not task_mode:
         task_mode = "search"
+    if notification_task_list and not task_mode:
+        task_mode = "notification_tasks"
     if selected_task_id and not task_mode:
         task_mode = "task"
     if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or selected_task_status) and not task_mode:
@@ -6835,7 +6839,7 @@ def my_tasks():
         if selected_task_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address, users.name AS assigned_user_name
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -6848,6 +6852,38 @@ def my_tasks():
             if tasks and not selected_project_id:
                 selected_project_id = tasks[0]["project_id"]
                 project_rooms = fetch_visible_project_rooms(conn, selected_project_id)
+        elif notification_task_list and selected_project_id:
+            if not user_can_access_project(conn, selected_project_id):
+                tasks = []
+                selected_project_id = None
+            else:
+                project_rooms = fetch_visible_project_rooms(conn, selected_project_id)
+                notification_task_day = ""
+                if notification_task_id:
+                    notification_source_task = conn.execute(
+                        """
+                        SELECT project_id, COALESCE(task_start_date, task_date) AS task_day
+                        FROM tasks
+                        WHERE id = %s AND assigned_user_id = %s
+                        """,
+                        (notification_task_id, session.get("user_id"))
+                    ).fetchone()
+                    if notification_source_task and notification_source_task.get("project_id") == selected_project_id:
+                        notification_task_day = notification_source_task.get("task_day") or ""
+                tasks = conn.execute(
+                    """
+                    SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                    FROM tasks
+                    LEFT JOIN rooms ON tasks.room_id = rooms.id
+                    LEFT JOIN projects ON tasks.project_id = projects.id
+                    LEFT JOIN users ON tasks.assigned_user_id = users.id
+                    JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                    WHERE tasks.project_id = %s AND tasks.assigned_user_id = %s
+                      AND (%s = '' OR COALESCE(tasks.task_start_date, tasks.task_date) = %s)
+                    ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
+                    """,
+                    (session.get("user_id"), selected_project_id, session.get("user_id"), notification_task_day, notification_task_day)
+                ).fetchall()
         elif task_mode == "search" and should_show_search:
             where = ["tasks.assigned_user_id = %s"]
             params = [session.get("user_id")]
@@ -6903,7 +6939,7 @@ def my_tasks():
         selected_project_id = None
         project_rooms = []
     tasks_by_room = {}
-    if task_mode in ["search", "task"] and selected_project_id:
+    if task_mode in ["search", "task", "notification_tasks"] and selected_project_id:
         project_level_tasks = []
         for room in project_rooms:
             room_tasks = []
@@ -6942,7 +6978,9 @@ def my_tasks():
         open_only=open_only,
         selected_task_status=selected_task_status,
         task_status_options=task_status_options,
-        from_notification=from_notification
+        from_notification=from_notification,
+        notification_task_id=notification_task_id,
+        notification_task_list=notification_task_list
     )
 
 
@@ -8223,20 +8261,6 @@ def open_notification(notification_id):
         flash("You do not have access to that notification.")
         return redirect(url_for("notifications"))
     target_url = notification_target_url(conn, event)
-    if event.get("event_type") == "task_assigned" and event.get("task_id") and not is_main_admin():
-        task = conn.execute(
-            """
-            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
-            FROM tasks
-            JOIN projects ON tasks.project_id = projects.id
-            LEFT JOIN users ON tasks.assigned_user_id = users.id
-            WHERE tasks.id = %s
-            """,
-            (event["task_id"],)
-        ).fetchone()
-        if task and task.get("assigned_user_id") == session.get("user_id") and user_can_access_project(conn, task["project_id"]):
-            if mark_task_received(conn, task):
-                flash("Task marked received. Admin was notified.")
     conn.execute("UPDATE login_events SET is_read = TRUE WHERE id = %s", (notification_id,))
     conn.commit()
     conn.close()

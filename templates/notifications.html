@@ -36,7 +36,7 @@
             {% if e.event_type == 'task_assigned' and e.task_id and not is_main_admin() %}
                 {% if not e.task_accepted_at %}
                     <form method="post" action="{{ url_for('receive_task', task_id=e.task_id) }}">
-                        <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=e.task_id) }}#task-{{ e.task_id }}">
+                        <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=e.task_id, from_notification=1) }}#task-{{ e.task_id }}">
                         <button type="submit">Confirm Received</button>
                     </form>
                 {% else %}
