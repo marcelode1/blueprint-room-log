@@ -6973,6 +6973,13 @@ def worker_assignment_task_rows(conn, source_task):
             for row in inferred_rows:
                 by_id[row["id"]] = row
             rows = list(by_id.values())
+    if len(rows) <= 1:
+        source_day = task_scheduled_date_value(source_task)
+        if source_day and source_task.get("project_id"):
+            by_id = {row["id"]: row for row in rows}
+            for row in worker_today_task_rows(conn, user_id=uid, target_date=source_day, target_project_id=source_task.get("project_id")):
+                by_id[row["id"]] = row
+            rows = list(by_id.values())
     if not rows:
         rows = [source_task]
     return sorted(rows, key=task_active_sort_key)
