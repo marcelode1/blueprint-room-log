@@ -552,6 +552,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS user_permissions (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        require_task_picture BOOLEAN NOT NULL DEFAULT FALSE,
         see_comments BOOLEAN NOT NULL DEFAULT TRUE,
         write_comments BOOLEAN NOT NULL DEFAULT FALSE,
         edit_comments BOOLEAN NOT NULL DEFAULT FALSE,
@@ -760,6 +761,7 @@ def init_db():
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS require_task_picture BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT NOT NULL, contact_name TEXT, email TEXT, phone TEXT, street TEXT, address TEXT, city TEXT, state TEXT, zip TEXT, website TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, task_number TEXT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number TEXT",
@@ -842,7 +844,7 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
-        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
     ]
@@ -1463,12 +1465,14 @@ def default_permissions_for_role(role):
         return {k: True for k in PERMISSION_KEYS}
     if role == "worker":
         return {
+            "require_task_picture": False,
             "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
             "see_pictures": True, "add_pictures": True, "delete_pictures": False,
             "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
             "view_inventory": False, "edit_inventory": False,
         }
     return {
+        "require_task_picture": False,
         "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
         "see_pictures": True, "add_pictures": False, "delete_pictures": False,
         "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
@@ -1477,6 +1481,7 @@ def default_permissions_for_role(role):
 
 
 PERMISSION_KEYS = [
+    "require_task_picture",
     "see_comments", "write_comments", "edit_comments", "delete_comments",
     "see_pictures", "add_pictures", "delete_pictures",
     "see_audio", "add_audio", "delete_audio", "create_rooms",
@@ -1501,6 +1506,17 @@ def get_user_permissions(user_id=None):
                 perms[k] = bool(row.get(k))
     except Exception as e:
         print("Permission lookup failed:", e)
+    return perms
+
+
+def permissions_for_user_record(conn, user):
+    perms = default_permissions_for_role(user.get("role") if user else "customer")
+    if not user:
+        return perms
+    row = conn.execute("SELECT * FROM user_permissions WHERE user_id = %s", (user["id"],)).fetchone()
+    if row:
+        for key in PERMISSION_KEYS:
+            perms[key] = bool(row.get(key))
     return perms
 
 
@@ -5656,10 +5672,6 @@ def clean_voice_task_payload(payload, projects_context, users_context, preferred
         "task_end_date": text_value("task_end_date") or task_start_date,
         "title": text_value("title"),
         "instructions": text_value("instructions"),
-        "require_picture": bool(payload.get("require_picture")),
-        "allow_picture_upload": payload.get("allow_picture_upload", True) is not False,
-        "allow_comment": payload.get("allow_comment", True) is not False,
-        "allow_audio": payload.get("allow_audio", True) is not False,
         "notes": text_value("notes"),
     }
 
@@ -5707,7 +5719,7 @@ def create_task_realtime_token():
             "Default task_start_date to today when no date is spoken.",
             "Default task_end_date to task_start_date.",
             "Make title short and put the full work description in instructions.",
-            "Default allow_picture_upload, allow_comment, and allow_audio to true unless the command says otherwise.",
+            "Do not decide picture, comment, upload, or audio permissions; those are controlled by each worker's user setup.",
             "Ignore confirmation phrases such as thank you, yes, correct, fill the form, finish the conversation, and other meta conversation. Use only the actual task details.",
             "Keep notes empty unless important task information is missing or unclear.",
             "When the admin asks to fill the task form or finish, say briefly that the form is being filled."
@@ -5799,16 +5811,11 @@ def create_task_realtime_draft():
                 "task_end_date": {"type": "string"},
                 "title": {"type": "string"},
                 "instructions": {"type": "string"},
-                "require_picture": {"type": "boolean"},
-                "allow_picture_upload": {"type": "boolean"},
-                "allow_comment": {"type": "boolean"},
-                "allow_audio": {"type": "boolean"},
                 "notes": {"type": "string"},
             },
             "required": [
                 "project_id", "room_id", "room_name", "user_ids", "task_start_date", "task_start_time",
-                "task_end_date", "title", "instructions", "require_picture",
-                "allow_picture_upload", "allow_comment", "allow_audio", "notes"
+                "task_end_date", "title", "instructions", "notes"
             ],
         },
     }
@@ -5965,6 +5972,9 @@ def create_global_task():
 
         for draft in task_drafts:
             for assigned in selected_users:
+                assigned_permissions = permissions_for_user_record(conn, assigned)
+                assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+                assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
                 grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
                 created_at = utc_now_iso()
                 task_number = next_task_number(conn, created_at)
@@ -5991,10 +6001,10 @@ def create_global_task():
                         None,
                         supplier["id"] if supplier else None,
                         supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
-                        "require_picture" in request.form,
-                        "allow_picture_upload" in request.form,
-                        "allow_comment" in request.form,
-                        "allow_audio" in request.form,
+                        assigned_require_picture,
+                        assigned_allow_picture,
+                        bool(assigned_permissions.get("write_comments")),
+                        bool(assigned_permissions.get("add_audio")),
                         "sent_to_worker",
                         created_at
                     )
@@ -8148,9 +8158,10 @@ def settings():
             conn.execute(
                 """
                 INSERT INTO user_permissions
-                (user_id, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (user_id, require_task_picture, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
+                    require_task_picture = EXCLUDED.require_task_picture,
                     see_comments = EXCLUDED.see_comments,
                     write_comments = EXCLUDED.write_comments,
                     edit_comments = EXCLUDED.edit_comments,

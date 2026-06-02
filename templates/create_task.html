@@ -75,7 +75,7 @@
             <select name="room_id" id="taskMainRoomSelect">
                 <option value="">Choose project first</option>
                 {% for r in rooms %}
-                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
+                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.name }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -126,12 +126,6 @@
         {% set attachment_project_select_id = "taskProjectSelect" %}
         {% include "_task_attachments_form.html" %}
 
-        <div class="grid taskOptions">
-            <label><input type="checkbox" name="require_picture"> Worker must take picture</label>
-            <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
-            <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
-            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
-        </div>
         <button type="submit">Save and Send</button>
     </form>
 </div>
@@ -161,8 +155,8 @@
 
 <style>
 .workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
-.workerList label,.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
-.workerList input,.taskOptions input{width:auto;min-height:auto;margin-right:8px}
+.workerList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+.workerList input{width:auto;min-height:auto;margin-right:8px}
 .supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
 .supplierItemActions{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(245,158,11,.08)}
 .supplierItemList{display:grid;gap:8px;margin-top:8px}
@@ -518,10 +512,6 @@
         select.value=value?String(value):"";
         select.dispatchEvent(new Event("change",{bubbles:true}));
     }
-    function setCheckbox(name,value){
-        const input=document.querySelector('input[name="'+name+'"]');
-        if(input)input.checked=Boolean(value);
-    }
     function appendRealtimeLine(existing,line){
         const clean=String(line||"").trim();
         if(!clean)return existing||"";
@@ -750,10 +740,6 @@
             task_end_date:normalizeRealtimeDate(normalized.task_end_date||normalized.task_start_date),
             title:title,
             instructions:instructions,
-            require_picture:Boolean(normalized.require_picture),
-            allow_picture_upload:normalized.allow_picture_upload!==false,
-            allow_comment:normalized.allow_comment!==false,
-            allow_audio:normalized.allow_audio!==false,
             notes:notes
         };
     }
@@ -780,10 +766,6 @@
         if(endDate)endDate.value=draft.task_end_date||draft.task_start_date||"";
         if(title)title.value=draft.title||"";
         if(instructions)instructions.value=draft.instructions||"";
-        setCheckbox("require_picture",draft.require_picture);
-        setCheckbox("allow_picture_upload",draft.allow_picture_upload!==false);
-        setCheckbox("allow_comment",draft.allow_comment!==false);
-        setCheckbox("allow_audio",draft.allow_audio!==false);
         if(realtimeVoiceTaskResult){
             realtimeVoiceTaskResult.hidden=false;
             realtimeVoiceTaskResult.textContent="Task form filled. Review the fields below before saving.";

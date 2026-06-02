@@ -134,16 +134,18 @@
             <form method="post">
                 <input type="hidden" name="action" value="permissions">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
+                {% set worker_defaults = u.role == "worker" %}
                 <div class="grid">
+                    <label><input type="checkbox" name="require_task_picture" {% if p and p.require_task_picture %}checked{% endif %}> Worker must take picture</label>
                     <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
-                    <label><input type="checkbox" name="write_comments" {% if p and p.write_comments %}checked{% endif %}> Write comments</label>
+                    <label><input type="checkbox" name="write_comments" {% if (p and p.write_comments) or (not p and worker_defaults) %}checked{% endif %}> Write comments</label>
                     <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>
                     <label><input type="checkbox" name="delete_comments" {% if p and p.delete_comments %}checked{% endif %}> Delete comments</label>
                     <label><input type="checkbox" name="see_pictures" {% if not p or p.see_pictures %}checked{% endif %}> See pictures</label>
-                    <label><input type="checkbox" name="add_pictures" {% if p and p.add_pictures %}checked{% endif %}> Add pictures</label>
+                    <label><input type="checkbox" name="add_pictures" {% if (p and p.add_pictures) or (not p and worker_defaults) %}checked{% endif %}> Add pictures</label>
                     <label><input type="checkbox" name="delete_pictures" {% if p and p.delete_pictures %}checked{% endif %}> Delete pictures</label>
                     <label><input type="checkbox" name="see_audio" {% if not p or p.see_audio %}checked{% endif %}> See audio</label>
-                    <label><input type="checkbox" name="add_audio" {% if p and p.add_audio %}checked{% endif %}> Add audio</label>
+                    <label><input type="checkbox" name="add_audio" {% if (p and p.add_audio) or (not p and worker_defaults) %}checked{% endif %}> Add audio</label>
                     <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
                     <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
                     <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>

@@ -278,7 +278,7 @@
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
         <a href="{{ url_for('index') }}#projects">Projects</a>
-        <a href="{{ url_for('create_global_task') }}">Create Task</a>
+        <a href="{{ url_for('create_global_task') }}">Create a Task</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Tasks</a>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
