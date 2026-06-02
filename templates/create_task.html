@@ -66,7 +66,7 @@
         <select name="project_id" id="taskProjectSelect" required>
             <option value="">Choose project</option>
             {% for p in projects %}
-                <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
 
@@ -75,7 +75,7 @@
             <select name="room_id" id="taskMainRoomSelect">
                 <option value="">Choose project first</option>
                 {% for r in rooms %}
-                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.name }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -260,6 +260,7 @@
         const mainRoomField=document.getElementById("mainRoomField");
         const taskBatchPanel=document.getElementById("taskBatchPanel");
         if(mainRoomField)mainRoomField.dataset.supplierMode=supplierMode?"1":"0";
+        if(roomSelect&&!supplierMode)roomSelect.value="";
         if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
         if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
         if(taskBatchPanel)taskBatchPanel.style.display=supplierMode?"none":"block";

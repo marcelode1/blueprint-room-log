@@ -1245,7 +1245,7 @@ def load_task_attachments(conn, task_id, room_id=None):
         params.append(room_id)
     return conn.execute(
         """
-        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name, users.role AS created_by_role
+        SELECT task_attachments.*, rooms.name AS room_name, users.name AS created_by_name
         FROM task_attachments
         LEFT JOIN rooms ON task_attachments.room_id = rooms.id
         LEFT JOIN users ON task_attachments.created_by = users.id
@@ -5866,24 +5866,6 @@ def create_task_realtime_draft():
 @admin_required
 def create_global_task():
     conn = db()
-    selected_project_id = request.args.get("project_id", type=int)
-    selected_room_id = request.args.get("room_id", type=int)
-    if selected_room_id and not selected_project_id:
-        selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
-        if selected_room:
-            selected_project_id = selected_room["project_id"]
-    if selected_project_id:
-        selected_project = conn.execute("SELECT id FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
-        if not selected_project:
-            selected_project_id = None
-            selected_room_id = None
-    if selected_project_id and selected_room_id:
-        selected_room = conn.execute(
-            "SELECT id FROM rooms WHERE id = %s AND project_id = %s",
-            (selected_room_id, selected_project_id)
-        ).fetchone()
-        if not selected_room:
-            selected_room_id = None
     if request.method == "POST":
         project_id = request.form.get("project_id", type=int)
         supplier_mode = request.form.get("supplier_enabled") == "1"
@@ -6067,16 +6049,7 @@ def create_global_task():
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     suppliers = fetch_suppliers(conn)
     conn.close()
-    return render_template(
-        "create_task.html",
-        projects=projects,
-        users=users,
-        rooms=rooms,
-        suppliers=suppliers,
-        today=local_now().date().isoformat(),
-        selected_project_id=selected_project_id,
-        selected_room_id=selected_room_id
-    )
+    return render_template("create_task.html", projects=projects, users=users, rooms=rooms, suppliers=suppliers, today=local_now().date().isoformat())
 
 
 @app.route("/tasks/<int:task_id>/edit", methods=["GET", "POST"])
@@ -6511,23 +6484,6 @@ def complete_task(task_id):
     requested_completion_status = normalize_task_status(posted_completion_status) if posted_completion_status else ""
     current_completion_status = normalize_task_status(task.get("status"))
     status_changed = bool(requested_completion_status and requested_completion_status != current_completion_status)
-    existing_worker_attachment_count = conn.execute(
-        """
-        SELECT COUNT(*) AS c
-        FROM task_attachments
-        LEFT JOIN users ON task_attachments.created_by = users.id
-        WHERE task_attachments.task_id = %s
-          AND COALESCE(users.role, '') <> 'admin'
-        """,
-        (task_id,)
-    ).fetchone()
-    had_worker_update = bool(
-        task.get("completion_comment")
-        or task.get("completion_photo_file")
-        or task.get("completion_audio_file")
-        or current_completion_status not in ["sent_to_worker", "received"]
-        or (existing_worker_attachment_count and existing_worker_attachment_count.get("c"))
-    )
 
     def completion_comment_with_service_order(base_comment=""):
         parts = []
@@ -6603,21 +6559,9 @@ def complete_task(task_id):
                 f"UPDATE tasks SET {', '.join(update_fields)} WHERE id = %s",
                 tuple(params)
             )
-        add_notification(
-            conn,
-            session.get("user_id"),
-            session.get("name"),
-            "",
-            session.get("role"),
-            "task_updated",
-            task.get("project_id"),
-            task.get("id"),
-            f"Task {'edited' if had_worker_update else 'saved'}: {task_display_name(task)}",
-            completion_room_id
-        )
         conn.commit()
         conn.close()
-        flash("Task successfully edited and sent to admin." if had_worker_update else "Task saved and sent to admin.")
+        flash("Saved. Add another picture, upload, comment, audio, or update another room.")
         next_url = request.form.get("next")
         return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)

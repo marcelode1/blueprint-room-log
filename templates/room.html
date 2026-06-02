@@ -19,8 +19,73 @@
 
 {% if is_main_admin() %}
 <div class="card">
-    <h3>Create a Task</h3>
-    <a class="btn-link" href="{{ url_for('create_global_task', project_id=project.id, room_id=room.id) }}">Create a Task</a>
+    <h3>Create Task</h3>
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('create_task', room_id=room.id) }}">
+        <div class="grid">
+            <div>
+                <label>Task Title</label>
+                <input name="title" placeholder="Take finish photo, verify wiring, install keypad" required>
+            </div>
+            <div>
+                <label>Assign To</label>
+                <select name="assigned_user_id" required>
+                    <option value="">Choose user</option>
+                    {% for u in users %}
+                        <option value="{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Due Date</label>
+                <input name="task_date" type="date" value="{{ selected_date or '' }}">
+            </div>
+            <div>
+                <label>Be There Time</label>
+                <input name="task_start_time" type="time" required>
+            </div>
+        </div>
+        <label>Instructions</label>
+        <textarea name="instructions" rows="4"></textarea>
+        <button type="button" class="btn-secondary roomSupplierBtn">Supplier</button>
+        <input type="hidden" name="supplier_enabled" class="roomSupplierEnabled" value="0">
+        <div class="roomSupplierPanel" style="display:none;">
+            <h3>Supplier Material</h3>
+            <div class="grid">
+                <div>
+                    <label>Existing Supplier</label>
+                    <select name="supplier_id">
+                        <option value="">Enter new supplier below</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name"></div>
+                <div><label>Brand</label><input name="supplier_brand"></div>
+                <div><label>Model Number</label><input name="supplier_model"></div>
+            </div>
+            <label>Purchase Note</label><textarea name="supplier_purchase_note" rows="2"></textarea>
+            <details>
+                <summary>Enter New Supplier</summary>
+                <div class="grid">
+                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
+                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
+                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
+                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
+                    <div><label>Street Address</label><input name="new_supplier_address"></div>
+                    <div><label>City</label><input name="new_supplier_city"></div>
+                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
+                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
+                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
+                </div>
+                <label>Supplier Notes</label><textarea name="new_supplier_notes" rows="2"></textarea>
+            </details>
+        </div>
+        {% include "_task_attachments_form.html" %}
+        <button type="submit">Assign Task</button>
+    </form>
 </div>
 {% endif %}
 
