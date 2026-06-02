@@ -127,7 +127,7 @@
 </div>
 {% endif %}
 <main>
-    {% set hide_back_button = request.endpoint in ['today_tasks', 'open_task_workspace'] and not is_main_admin() %}
+    {% set hide_back_button = request.endpoint in ['today_tasks', 'open_task_workspace', 'assignment_tasks'] and not is_main_admin() %}
     {% if session.get("user_id") %}
         {% if not hide_back_button %}<button type="button" class="backButton" onclick="goBackOnePage()">Back</button>{% endif %}
     {% endif %}

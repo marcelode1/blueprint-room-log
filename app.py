@@ -642,6 +642,7 @@ def init_db():
         allow_audio BOOLEAN NOT NULL DEFAULT TRUE,
         status TEXT NOT NULL DEFAULT 'open',
         accepted_at TEXT,
+        assignment_group_id TEXT,
         completion_comment TEXT,
         completion_photo_file TEXT,
         completion_audio_file TEXT,
@@ -803,6 +804,7 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completion_audio_file TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS accepted_at TEXT",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS assignment_group_id TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_start_date TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_start_time TEXT",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_end_date TEXT",
@@ -848,6 +850,7 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
         "ALTER TABLE task_attachments ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS tasks_assignment_group_id_idx ON tasks(assignment_group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
         INSERT INTO inventory_items
@@ -1783,9 +1786,10 @@ def notification_target_url(conn, event):
                 (event.get("task_id"),)
             ).fetchone()
             if not task or not task.get("accepted_at"):
-                anchor = f"#notification-{event.get('id')}" if event.get("id") else ""
-                return url_for("notifications") + anchor
-            return url_for("today_tasks", notification_task=event.get("task_id"))
+                if event.get("id"):
+                    return url_for("open_notification", notification_id=event.get("id"))
+                return url_for("assignment_tasks", task_id=event.get("task_id"), calendar_task=event.get("task_id"))
+            return url_for("assignment_tasks", task_id=event.get("task_id"))
         return url_for("open_task_workspace", task_id=event.get("task_id"))
 
     project_id = event.get("target_project_id") or event.get("project_id")
@@ -2063,6 +2067,19 @@ def mark_task_received(conn, task):
     actor = conn.execute("SELECT id, name, email, role FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
     notify_admins_task_received(conn, task, actor)
     return True
+
+
+def mark_task_assignment_received(conn, task):
+    rows = worker_assignment_task_rows(conn, task)
+    if not rows:
+        rows = [task]
+    received_any = False
+    for row in rows:
+        if row.get("accepted_at"):
+            continue
+        if mark_task_received(conn, row):
+            received_any = True
+    return received_any
 
 
 def can_add_notes():
@@ -5519,6 +5536,7 @@ def create_task(room_id):
     task_date = request.form.get("task_date") or local_now().date().isoformat()
     task_instructions = request.form.get("instructions", "").strip()
     created_at = utc_now_iso()
+    assignment_group_id = uuid.uuid4().hex
     task_number = next_task_number(conn, created_at)
     assigned_permissions = permissions_for_user_record(conn, assigned)
     assigned_require_picture = False
@@ -5527,8 +5545,8 @@ def create_task(room_id):
     task = conn.execute(
         """
         INSERT INTO tasks
-        (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
@@ -5551,6 +5569,7 @@ def create_task(room_id):
             bool(assigned_permissions.get("write_comments")),
             bool(assigned_permissions.get("add_audio")),
             "sent_to_worker",
+            assignment_group_id,
             created_at
         )
     ).fetchone()
@@ -6033,6 +6052,7 @@ def create_global_task():
                 draft["task_start_date"] = draft.get("task_start_date") or datetime.now().date().isoformat()
                 draft["task_end_date"] = draft.get("task_end_date") or draft["task_start_date"]
         created_tasks = []
+        assignment_group_id = uuid.uuid4().hex
 
         for draft in task_drafts:
             for assigned in selected_users:
@@ -6045,8 +6065,8 @@ def create_global_task():
                 task = conn.execute(
                     """
                     INSERT INTO tasks
-                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -6070,6 +6090,7 @@ def create_global_task():
                         bool(assigned_permissions.get("write_comments")),
                         bool(assigned_permissions.get("add_audio")),
                         "sent_to_worker",
+                        assignment_group_id,
                         created_at
                     )
                 ).fetchone()
@@ -6178,6 +6199,7 @@ def edit_task(task_id):
         assigned_permissions = permissions_for_user_record(conn, assigned)
         assigned_require_picture = False
         assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
+        assignment_group_id = uuid.uuid4().hex
         grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
         conn.execute(
             """
@@ -6195,6 +6217,7 @@ def edit_task(task_id):
                 allow_picture_upload = %s,
                 allow_comment = %s,
                 allow_audio = %s,
+                assignment_group_id = %s,
                 accepted_at = CASE WHEN %s THEN NULL ELSE accepted_at END
             WHERE id = %s
             """,
@@ -6212,6 +6235,7 @@ def edit_task(task_id):
                 assigned_allow_picture,
                 bool(assigned_permissions.get("write_comments")),
                 bool(assigned_permissions.get("add_audio")),
+                assignment_group_id,
                 reset_received,
                 task_id
             )
@@ -6662,7 +6686,7 @@ def complete_task(task_id):
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         if not is_main_admin():
-            return redirect(url_for("today_tasks", notification_task=task_id))
+            return redirect(url_for("open_task_workspace", task_id=task_id))
         return redirect(url_for("my_tasks"))
     inserted_attachments, _first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
     audio_file = first_audio or task.get("completion_audio_file")
@@ -6769,7 +6793,7 @@ def complete_task(task_id):
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
     if not is_main_admin():
-        return redirect(url_for("today_tasks", notification_task=task_id))
+        return redirect(url_for("open_task_workspace", task_id=task_id))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
     if task.get("room_id"):
@@ -6810,18 +6834,18 @@ def receive_task(task_id):
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         if not is_main_admin():
-            return redirect(url_for("today_tasks", notification_task=task_id))
+            return redirect(url_for("assignment_tasks", task_id=task_id))
         return redirect(url_for("my_tasks"))
 
-    mark_task_received(conn, task)
+    mark_task_assignment_received(conn, task)
     conn.close()
-    flash("Task marked received. Admin was notified.")
+    flash("Task assignment marked received. Admin was notified.")
     next_url = request.form.get("next")
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
-    calendar_args = {"notification_task": task_id} if not is_main_admin() else {}
+    calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
     if not is_main_admin():
-        return redirect(url_for("today_tasks", **calendar_args))
+        return redirect(url_for("assignment_tasks", task_id=task_id, **calendar_args))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"], **calendar_args))
     if task.get("room_id"):
@@ -6890,6 +6914,33 @@ def worker_today_task_rows(conn, user_id=None, target_date=None, target_project_
     return sorted(rows, key=task_active_sort_key)
 
 
+def worker_assignment_task_rows(conn, source_task):
+    if not source_task:
+        return []
+    uid = session.get("user_id")
+    group_id = str(source_task.get("assignment_group_id") or "").strip()
+    if not group_id:
+        rows = [source_task]
+    else:
+        rows = conn.execute(
+            """
+            SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
+                   projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                   projects.customer_address AS customer_address, users.name AS assigned_user_name
+            FROM tasks
+            LEFT JOIN rooms ON tasks.room_id = rooms.id
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+            WHERE tasks.assignment_group_id = %s
+              AND tasks.assigned_user_id = %s
+            ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
+            """,
+            (uid, group_id, uid)
+        ).fetchall()
+    return sorted(rows, key=task_active_sort_key)
+
+
 @app.route("/tasks/today")
 @login_required
 def today_tasks():
@@ -6915,6 +6966,47 @@ def today_tasks():
         tasks=tasks,
         task_status_options=TASK_STATUS_LABELS,
         today=task_day.isoformat()
+    )
+
+
+@app.route("/tasks/<int:task_id>/assignment")
+@login_required
+def assignment_tasks(task_id):
+    if is_main_admin():
+        return redirect(url_for("open_task_workspace", task_id=task_id))
+    conn = db()
+    source_task = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
+               projects.customer_name AS customer_name, projects.customer_address AS project_address,
+               projects.customer_address AS customer_address, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    if not source_task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("today_tasks"))
+    if not user_can_access_project(conn, source_task["project_id"]):
+        conn.close()
+        flash("You do not have access to that project.")
+        return redirect(url_for("today_tasks"))
+    if source_task.get("assigned_user_id") != session.get("user_id"):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("today_tasks"))
+    tasks = load_task_details(conn, worker_assignment_task_rows(conn, source_task))
+    conn.close()
+    return render_template(
+        "today_tasks.html",
+        tasks=tasks,
+        task_status_options=TASK_STATUS_LABELS,
+        today=(task_scheduled_date_value(source_task) or local_now().date()).isoformat()
     )
 
 
@@ -8527,6 +8619,28 @@ def open_notification(notification_id):
         conn.close()
         flash("You do not have access to that notification.")
         return redirect(url_for("notifications"))
+    if event.get("event_type") == "task_assigned" and event.get("task_id") and not is_main_admin():
+        task = conn.execute(
+            """
+            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+            FROM tasks
+            JOIN projects ON tasks.project_id = projects.id
+            LEFT JOIN users ON tasks.assigned_user_id = users.id
+            WHERE tasks.id = %s
+            """,
+            (event.get("task_id"),)
+        ).fetchone()
+        if not task or task.get("assigned_user_id") != session.get("user_id"):
+            conn.close()
+            flash("This task is assigned to another user.")
+            return redirect(url_for("notifications"))
+        received_now = mark_task_assignment_received(conn, task)
+        conn.execute("UPDATE login_events SET is_read = TRUE WHERE id = %s", (notification_id,))
+        conn.commit()
+        conn.close()
+        if received_now:
+            return redirect(url_for("assignment_tasks", task_id=event.get("task_id"), calendar_task=event.get("task_id")))
+        return redirect(url_for("assignment_tasks", task_id=event.get("task_id")))
     target_url = notification_target_url(conn, event)
     conn.execute("UPDATE login_events SET is_read = TRUE WHERE id = %s", (notification_id,))
     conn.commit()
