@@ -1,0 +1,48 @@
+{% set source_attachments = task_room_attachments(t, admin_room_id) if admin_room_id is defined and admin_room_id else t.get('_attachments', []) %}
+{% set admin_files = namespace(count=0) %}
+{% for attachment in source_attachments %}
+    {% if attachment.created_by_role == 'admin' %}
+        {% set admin_files.count = admin_files.count + 1 %}
+    {% endif %}
+{% endfor %}
+{% set show_legacy_admin_media = (t.task_photo_file or t.task_audio_file) and (admin_room_id is not defined or not admin_room_id or t.room_id == admin_room_id) %}
+{% if admin_files.count or show_legacy_admin_media %}
+    <div class="adminTaskAttachments">
+        <p><strong>Admin Attachments:</strong></p>
+        <div class="taskMediaList">
+            {% for attachment in source_attachments %}
+                {% if attachment.created_by_role == 'admin' %}
+                    <div class="taskMediaItem">
+                        {% if attachment.comment %}
+                            <div class="taskMediaComment"><strong>Comment:</strong> {{ attachment.comment }}</div>
+                        {% endif %}
+                        <p class="muted">
+                            {{ attachment.original_filename or 'Task file' }}
+                            {% if attachment.room_name %} - Room: {{ attachment.room_name }}{% endif %}
+                        </p>
+                        {% if attachment.file_type == 'photo' %}
+                            <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                        {% else %}
+                            <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}"></audio>
+                        {% endif %}
+                        {% include "_attachment_comment_editor.html" %}
+                    </div>
+                {% endif %}
+            {% endfor %}
+            {% if show_legacy_admin_media %}
+                {% if t.task_photo_file %}
+                    <div class="taskMediaItem">
+                        <p><strong>Picture</strong></p>
+                        <img class="photo" src="{{ url_for('storage_file', storage_path=t.task_photo_file) }}">
+                    </div>
+                {% endif %}
+                {% if t.task_audio_file %}
+                    <div class="taskMediaItem">
+                        <p><strong>Audio</strong></p>
+                        <audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.task_audio_file) }}"></audio>
+                    </div>
+                {% endif %}
+            {% endif %}
+        </div>
+    </div>
+{% endif %}

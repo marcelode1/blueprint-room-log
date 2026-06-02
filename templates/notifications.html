@@ -13,6 +13,8 @@
                 <strong>Task received</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'task_completed' %}
                 <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'task_updated' %}
+                <strong>Task updated</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'field_comment_added' %}
                 <strong>Comment added</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'field_picture_added' %}

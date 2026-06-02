@@ -1,0 +1,17 @@
+{% set display_room_name = task_room_name|default(t.room_name or 'Project general') %}
+{% set display_status = task_room_status_label|default(task_status_label(t)) %}
+<p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
+<p><strong>Room Name:</strong> {{ display_room_name }}</p>
+<p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
+<p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+{% set task_info = task_instruction_text(t) %}
+<p><strong>Task Information:</strong><br>{{ task_info or '-' }}</p>
+<p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_status_done|default(task_is_completed(t)) %}done{% endif %}">{{ display_status }}</span></p>
+{% include "_supplier_task_info.html" %}
+{% include "_task_admin_attachments.html" %}
+{% if show_worker_form|default(false) %}
+    <div class="workerInputFields">
+        {% include "_worker_task_update_form.html" %}
+    </div>
+{% endif %}
+{% include "_task_worker_updates.html" %}
