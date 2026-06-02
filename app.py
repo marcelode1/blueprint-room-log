@@ -1124,6 +1124,7 @@ def collect_completion_uploads(conn, project_id, default_room_id=None):
     uploads = []
     indexes = [idx for idx in request.form.getlist("completion_attachment_indexes") if str(idx).strip()]
     seen_files = set()
+    can_comment_upload = is_main_admin() or has_perm("write_comments") or has_perm("edit_comments")
 
     def add_upload(field_name, room_id, comment, file_type):
         uploaded = request.files.get(field_name)
@@ -1162,7 +1163,7 @@ def collect_completion_uploads(conn, project_id, default_room_id=None):
                 room_id = project_room_id_or_none(conn, project_id, requested_room)
                 if not room_id:
                     return "Choose a room that belongs to this project.", []
-            comment = request.form.get(f"completion_attachment_{idx}_comment", "").strip()
+            comment = request.form.get(f"completion_attachment_{idx}_comment", "").strip() if can_comment_upload else ""
             for field_name, file_type in [
                 (f"completion_attachment_{idx}_camera", "photo"),
                 (f"completion_attachment_{idx}_photo", "photo"),
@@ -1172,7 +1173,7 @@ def collect_completion_uploads(conn, project_id, default_room_id=None):
                 if error:
                     return error, []
     else:
-        comment = request.form.get("completion_comment", "").strip()
+        comment = request.form.get("completion_comment", "").strip() if can_comment_upload else ""
         for field_name, file_type in [
             ("completion_camera", "photo"),
             ("completion_photo", "photo"),
@@ -6418,7 +6419,12 @@ def delete_task_attachment(task_id, attachment_id):
     conn = db()
     task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
     attachment = conn.execute(
-        "SELECT * FROM task_attachments WHERE id = %s AND task_id = %s",
+        """
+        SELECT task_attachments.*, users.role AS created_by_role
+        FROM task_attachments
+        LEFT JOIN users ON task_attachments.created_by = users.id
+        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
+        """,
         (attachment_id, task_id)
     ).fetchone()
     if not task or not attachment:
@@ -6429,11 +6435,19 @@ def delete_task_attachment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if task_is_completed(task) and not is_main_admin():
-        conn.close()
-        flash("Completed task items can only be deleted by an admin.")
-        return redirect(next_url)
-    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id") or attachment.get("created_by") == session.get("user_id")):
+    worker_attachment = attachment.get("created_by_role") != "admin"
+    related_worker = attachment.get("created_by") == session.get("user_id") or (task.get("assigned_user_id") == session.get("user_id") and worker_attachment)
+    can_delete_media = (
+        is_main_admin()
+        or (
+            related_worker
+            and (
+                (attachment.get("file_type") == "photo" and has_perm("delete_pictures"))
+                or (attachment.get("file_type") == "audio" and has_perm("delete_audio"))
+            )
+        )
+    )
+    if not can_delete_media:
         conn.close()
         flash("You do not have permission to delete this picture or audio.")
         return redirect(next_url)
@@ -6458,10 +6472,6 @@ def delete_task_completion_item(task_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if task_is_completed(task) and not is_main_admin():
-        conn.close()
-        flash("Completed task items can only be deleted by an admin.")
-        return redirect(next_url)
     if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
         conn.close()
         flash("You do not have permission to delete this task item.")
@@ -6470,12 +6480,24 @@ def delete_task_completion_item(task_id):
     update_fields = []
     deleted_labels = []
     if request.form.get("delete_comment") == "1":
+        if not (is_main_admin() or has_perm("delete_comments") or has_perm("edit_comments")):
+            conn.close()
+            flash("You do not have permission to delete this comment.")
+            return redirect(next_url)
         update_fields.append("completion_comment = ''")
         deleted_labels.append("comment")
     if request.form.get("delete_photo") == "1":
+        if not (is_main_admin() or has_perm("delete_pictures")):
+            conn.close()
+            flash("You do not have permission to delete this picture.")
+            return redirect(next_url)
         update_fields.append("completion_photo_file = NULL")
         deleted_labels.append("picture")
     if request.form.get("delete_audio") == "1":
+        if not (is_main_admin() or has_perm("delete_audio")):
+            conn.close()
+            flash("You do not have permission to delete this audio.")
+            return redirect(next_url)
         update_fields.append("completion_audio_file = NULL")
         deleted_labels.append("audio")
 
@@ -6501,7 +6523,12 @@ def update_task_attachment_comment(task_id, attachment_id):
     conn = db()
     task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
     attachment = conn.execute(
-        "SELECT * FROM task_attachments WHERE id = %s AND task_id = %s",
+        """
+        SELECT task_attachments.*, users.role AS created_by_role
+        FROM task_attachments
+        LEFT JOIN users ON task_attachments.created_by = users.id
+        WHERE task_attachments.id = %s AND task_attachments.task_id = %s
+        """,
         (attachment_id, task_id)
     ).fetchone()
     if not task or not attachment:
@@ -6512,11 +6539,10 @@ def update_task_attachment_comment(task_id, attachment_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if task_is_completed(task) and not is_main_admin():
-        conn.close()
-        flash("Completed task comments can only be changed by an admin.")
-        return redirect(next_url)
-    if not (is_main_admin() or has_perm("edit_comments") or attachment.get("created_by") == session.get("user_id")):
+    worker_attachment = attachment.get("created_by_role") != "admin"
+    related_worker = attachment.get("created_by") == session.get("user_id") or (task.get("assigned_user_id") == session.get("user_id") and worker_attachment)
+    can_update_comment = is_main_admin() or has_perm("edit_comments") or (has_perm("write_comments") and related_worker)
+    if not can_update_comment:
         conn.close()
         flash("You do not have permission to edit this comment.")
         return redirect(next_url)
@@ -6572,7 +6598,13 @@ def complete_task(task_id):
         return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
     task_done_requested = request.form.get("task_done") == "1"
     save_media_only = request.form.get("completion_save_media_only") == "1" or not task_done_requested
-    completion_comment = request.form.get("completion_comment", "").strip()
+    posted_completion_comment = request.form.get("completion_comment", "").strip()
+    can_write_completion_comment = is_main_admin() or has_perm("write_comments") or has_perm("edit_comments")
+    if posted_completion_comment and not can_write_completion_comment:
+        conn.close()
+        flash("You do not have permission to add comments.")
+        return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
+    completion_comment = posted_completion_comment if can_write_completion_comment else ""
     service_order_verified = request.form.get("service_order_verified") == "1"
     posted_completion_status = request.form.get("completion_task_status", "").strip()
     requested_completion_status = normalize_task_status(posted_completion_status) if posted_completion_status else ""
