@@ -5477,6 +5477,9 @@ def create_task(room_id):
     task_instructions = request.form.get("instructions", "").strip()
     created_at = utc_now_iso()
     task_number = next_task_number(conn, created_at)
+    assigned_permissions = permissions_for_user_record(conn, assigned)
+    assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+    assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
 
     task = conn.execute(
         """
@@ -5500,10 +5503,10 @@ def create_task(room_id):
             None,
             supplier["id"] if supplier else None,
             supplier_inventory_item["id"] if supplier_inventory_item else None,
-            "require_picture" in request.form,
-            "allow_picture_upload" in request.form,
-            "allow_comment" in request.form,
-            "allow_audio" in request.form,
+            assigned_require_picture,
+            assigned_allow_picture,
+            bool(assigned_permissions.get("write_comments")),
+            bool(assigned_permissions.get("add_audio")),
             "sent_to_worker",
             created_at
         )
@@ -5863,6 +5866,24 @@ def create_task_realtime_draft():
 @admin_required
 def create_global_task():
     conn = db()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_room_id = request.args.get("room_id", type=int)
+    if selected_room_id and not selected_project_id:
+        selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
+        if selected_room:
+            selected_project_id = selected_room["project_id"]
+    if selected_project_id:
+        selected_project = conn.execute("SELECT id FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        if not selected_project:
+            selected_project_id = None
+            selected_room_id = None
+    if selected_project_id and selected_room_id:
+        selected_room = conn.execute(
+            "SELECT id FROM rooms WHERE id = %s AND project_id = %s",
+            (selected_room_id, selected_project_id)
+        ).fetchone()
+        if not selected_room:
+            selected_room_id = None
     if request.method == "POST":
         project_id = request.form.get("project_id", type=int)
         supplier_mode = request.form.get("supplier_enabled") == "1"
@@ -6046,7 +6067,16 @@ def create_global_task():
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     suppliers = fetch_suppliers(conn)
     conn.close()
-    return render_template("create_task.html", projects=projects, users=users, rooms=rooms, suppliers=suppliers, today=local_now().date().isoformat())
+    return render_template(
+        "create_task.html",
+        projects=projects,
+        users=users,
+        rooms=rooms,
+        suppliers=suppliers,
+        today=local_now().date().isoformat(),
+        selected_project_id=selected_project_id,
+        selected_room_id=selected_room_id
+    )
 
 
 @app.route("/tasks/<int:task_id>/edit", methods=["GET", "POST"])
@@ -6102,6 +6132,9 @@ def edit_task(task_id):
 
         assigned_changed = assigned_user_id != task.get("assigned_user_id")
         reset_received = (assigned_changed or requested_status == "sent_to_worker") and not task_is_completed(requested_status)
+        assigned_permissions = permissions_for_user_record(conn, assigned)
+        assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+        assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
         grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
         conn.execute(
             """
@@ -6132,10 +6165,10 @@ def edit_task(task_id):
                 end_date,
                 title,
                 request.form.get("instructions", "").strip(),
-                "require_picture" in request.form,
-                "allow_picture_upload" in request.form,
-                "allow_comment" in request.form,
-                "allow_audio" in request.form,
+                assigned_require_picture,
+                assigned_allow_picture,
+                bool(assigned_permissions.get("write_comments")),
+                bool(assigned_permissions.get("add_audio")),
                 reset_received,
                 task_id
             )

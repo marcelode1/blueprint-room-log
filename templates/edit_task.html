@@ -60,19 +60,8 @@
 
         {% include "_task_attachments_form.html" %}
 
-        <div class="grid taskOptions">
-            <label><input type="checkbox" name="require_picture" {% if task.require_picture %}checked{% endif %}> Worker must take picture</label>
-            <label><input type="checkbox" name="allow_picture_upload" {% if task.allow_picture_upload %}checked{% endif %}> Allow picture upload</label>
-            <label><input type="checkbox" name="allow_comment" {% if task.allow_comment %}checked{% endif %}> Allow comment</label>
-            <label><input type="checkbox" name="allow_audio" {% if task.allow_audio %}checked{% endif %}> Allow voice/audio</label>
-        </div>
         <button type="submit">Save Task</button>
         <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
     </form>
 </div>
-
-<style>
-.taskOptions label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
-.taskOptions input{width:auto;min-height:auto;margin-right:8px}
-</style>
 {% endblock %}
