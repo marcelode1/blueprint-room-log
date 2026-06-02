@@ -51,8 +51,12 @@
                 </div>
             </div>
         </div>
-        <label>Customer Phone</label>
-        <input name="customer_phone" value="{{ project.customer_phone or '' }}" autocomplete="tel">
+        <label>Customer Phone Number</label>
+        <input name="customer_phone" type="tel" value="{{ format_us_phone(project.customer_phone) }}" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
+        <label>Point of Contact</label>
+        <input name="point_of_contact_name" value="{{ project.point_of_contact_name or '' }}" autocomplete="name">
+        <label>Point of Contact Phone Number</label>
+        <input name="point_of_contact_phone" type="tel" value="{{ format_us_phone(project.point_of_contact_phone) }}" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
         <label>Customer Email</label>
         <input name="customer_email" type="email" value="{{ project.customer_email or '' }}" autocomplete="email">
         <button type="submit">Save Project</button>
@@ -95,6 +99,16 @@
     });
     if(same) same.addEventListener("change", syncBilling);
     syncBilling();
+    function formatPhone(value){
+        const digits=(value||"").replace(/\D/g,"").slice(0,11);
+        const local=digits.length===11&&digits[0]==="1"?digits.slice(1):digits;
+        if(local.length<=3)return local;
+        if(local.length<=6)return "(" + local.slice(0,3) + ") " + local.slice(3);
+        return "(" + local.slice(0,3) + ") " + local.slice(3,6) + "-" + local.slice(6,10);
+    }
+    document.querySelectorAll("[data-us-phone]").forEach(input=>{
+        input.addEventListener("input",()=>{ input.value=formatPhone(input.value); });
+    });
 })();
 </script>
 {% endblock %}

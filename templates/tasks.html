@@ -155,6 +155,7 @@
                             <p><strong>Room Name:</strong> {{ r.name }}</p>
                             <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
                             <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+                            {% include "_task_schedule_contact_info.html" %}
                             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
                             {% set task_info = task_instruction_text(t) %}
                             <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
@@ -181,6 +182,7 @@
                         <p><strong>Room Name:</strong> Project general</p>
                         <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
                         <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+                        {% include "_task_schedule_contact_info.html" %}
                         {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
                         {% set task_info = task_instruction_text(t) %}
                         <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
@@ -288,6 +290,7 @@
             <p><strong>Room Name:</strong> {{ t.room_name or 'Project general' }}</p>
             <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
             <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+            {% include "_task_schedule_contact_info.html" %}
             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
             {% set address = task_project_address(t) %}
             {% if address %}

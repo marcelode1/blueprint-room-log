@@ -5,13 +5,19 @@
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    {% if is_main_admin() or has_perm("view_contact_info") %}
     <div class="desktop-only">
-        <p><strong>Phone:</strong> {{ project.customer_phone or '-' }}</p>
+        <p><strong>Customer Phone Number:</strong> {{ format_us_phone(project.customer_phone) or '-' }}</p>
+        <p><strong>Point of Contact:</strong> {{ project.point_of_contact_name or '-' }}</p>
+        <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(project.point_of_contact_phone) or '-' }}</p>
         <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
         {% if is_main_admin() %}
             <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
         {% endif %}
     </div>
+    {% elif is_main_admin() %}
+        <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+    {% endif %}
 
     <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id, next=request.full_path) }}">Clock In / Clock Out</a>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>

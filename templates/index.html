@@ -36,13 +36,17 @@
             <h3>{{ p.name }}</h3>
             <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
             <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            {% if is_main_admin() or has_perm("view_contact_info") %}
             <div class="desktop-only">
-                <p><strong>Phone:</strong> {{ p.customer_phone or '-' }}</p>
+                <p><strong>Customer Phone Number:</strong> {{ format_us_phone(p.customer_phone) or '-' }}</p>
+                <p><strong>Point of Contact:</strong> {{ p.point_of_contact_name or '-' }}</p>
+                <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(p.point_of_contact_phone) or '-' }}</p>
                 <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
                 {% if is_main_admin() %}
                     <p><strong>Billing Address:</strong> {{ p.billing_address or p.customer_address or '-' }}</p>
                 {% endif %}
             </div>
+            {% endif %}
             <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
             {% if is_main_admin() %}
                 <a class="btn-link btn-secondary desktop-only" href="{{ url_for('edit_project', project_id=p.id) }}">Edit Project</a>

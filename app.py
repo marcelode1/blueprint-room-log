@@ -245,6 +245,26 @@ def build_full_address(street, city, state, zip_code):
     return street, ", ".join(part for part in [street, city_state] if part), city, state, zip_code
 
 
+def format_us_phone(value):
+    raw = str(value or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 11 and digits.startswith("1"):
+        local = digits[1:]
+        return f"+1 ({local[:3]}) {local[3:6]}-{local[6:]}"
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    return raw
+
+
+def tel_phone_number(value):
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 10:
+        return "+1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    return digits
+
+
 def project_address_from_form():
     return build_full_address(
         request.form.get("customer_address", "").strip(),
@@ -445,6 +465,8 @@ def init_db():
         dtools_cloud_project_ref TEXT,
         customer_phone TEXT,
         customer_email TEXT,
+        point_of_contact_name TEXT,
+        point_of_contact_phone TEXT,
         blueprint_file TEXT,
         blueprint_preview_file TEXT,
         created_at TEXT NOT NULL
@@ -583,6 +605,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS user_permissions (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         require_task_picture BOOLEAN NOT NULL DEFAULT FALSE,
+        view_contact_info BOOLEAN NOT NULL DEFAULT FALSE,
         see_comments BOOLEAN NOT NULL DEFAULT TRUE,
         write_comments BOOLEAN NOT NULL DEFAULT FALSE,
         edit_comments BOOLEAN NOT NULL DEFAULT FALSE,
@@ -775,6 +798,8 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS dtools_cloud_project_ref TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS point_of_contact_name TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS point_of_contact_phone TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN NOT NULL DEFAULT FALSE",
@@ -792,6 +817,11 @@ def init_db():
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_contact_info BOOLEAN",
+        "UPDATE user_permissions SET view_contact_info = TRUE WHERE view_contact_info IS NULL AND user_id IN (SELECT id FROM users WHERE role = 'worker')",
+        "UPDATE user_permissions SET view_contact_info = FALSE WHERE view_contact_info IS NULL",
+        "ALTER TABLE user_permissions ALTER COLUMN view_contact_info SET DEFAULT FALSE",
+        "ALTER TABLE user_permissions ALTER COLUMN view_contact_info SET NOT NULL",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS require_task_picture BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT NOT NULL, contact_name TEXT, email TEXT, phone TEXT, street TEXT, address TEXT, city TEXT, state TEXT, zip TEXT, website TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, task_number TEXT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
@@ -877,7 +907,7 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
-        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, view_contact_info BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "UPDATE tasks SET require_picture = FALSE WHERE COALESCE(require_picture, FALSE) = TRUE",
         "UPDATE user_permissions SET require_task_picture = FALSE WHERE COALESCE(require_task_picture, FALSE) = TRUE",
@@ -1507,6 +1537,7 @@ def default_permissions_for_role(role):
     if role == "worker":
         return {
             "require_task_picture": False,
+            "view_contact_info": True,
             "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
             "see_pictures": True, "add_pictures": True, "delete_pictures": False,
             "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
@@ -1514,6 +1545,7 @@ def default_permissions_for_role(role):
         }
     return {
         "require_task_picture": False,
+        "view_contact_info": False,
         "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
         "see_pictures": True, "add_pictures": False, "delete_pictures": False,
         "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
@@ -1523,6 +1555,7 @@ def default_permissions_for_role(role):
 
 PERMISSION_KEYS = [
     "require_task_picture",
+    "view_contact_info",
     "see_comments", "write_comments", "edit_comments", "delete_comments",
     "see_pictures", "add_pictures", "delete_pictures",
     "see_audio", "add_audio", "delete_audio", "create_rooms",
@@ -2433,8 +2466,11 @@ def fetch_visible_projects(conn, q=""):
            OR projects.billing_city ILIKE %s
            OR projects.billing_state ILIKE %s
            OR projects.billing_zip ILIKE %s
+           OR projects.customer_phone ILIKE %s
+           OR projects.point_of_contact_name ILIKE %s
+           OR projects.point_of_contact_phone ILIKE %s
         """
-        params.extend([like, like, like, like, like, like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like, like, like])
 
     return conn.execute(
         f"SELECT projects.* FROM projects {join_sql} {where_sql} ORDER BY projects.created_at DESC",
@@ -3388,6 +3424,8 @@ def utility_processor():
         get_app_setting=get_app_setting,
         format_time=format_time,
         format_task_time=format_task_time,
+        format_us_phone=format_us_phone,
+        tel_phone_number=tel_phone_number,
         format_date=format_date,
         format_datetime=format_datetime,
         task_schedule_text=task_schedule_text,
@@ -4202,8 +4240,10 @@ def new_project():
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
         billing_same_as_customer, billing_street, billing_address, billing_city, billing_state, billing_zip = billing_address_from_form(customer_address_parts)
-        customer_phone = request.form.get("customer_phone", "").strip()
+        customer_phone = format_us_phone(request.form.get("customer_phone"))
         customer_email = request.form.get("customer_email", "").strip()
+        point_of_contact_name = request.form.get("point_of_contact_name", "").strip()
+        point_of_contact_phone = format_us_phone(request.form.get("point_of_contact_phone"))
         file = request.files.get("blueprint")
         blueprint_file = None
         blueprint_preview_file = None
@@ -4220,8 +4260,8 @@ def new_project():
         cur.execute(
             """
             INSERT INTO projects
-            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, blueprint_file, blueprint_preview_file, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -4240,6 +4280,8 @@ def new_project():
                 billing_same_as_customer,
                 customer_phone,
                 customer_email,
+                point_of_contact_name,
+                point_of_contact_phone,
                 blueprint_file,
                 blueprint_preview_file,
                 datetime.now().isoformat()
@@ -4290,7 +4332,9 @@ def edit_project(project_id):
                 billing_zip = %s,
                 billing_same_as_customer = %s,
                 customer_phone = %s,
-                customer_email = %s
+                customer_email = %s,
+                point_of_contact_name = %s,
+                point_of_contact_phone = %s
             WHERE id = %s
             """,
             (
@@ -4307,8 +4351,10 @@ def edit_project(project_id):
                 billing_state,
                 billing_zip,
                 billing_same_as_customer,
-                request.form.get("customer_phone", "").strip(),
+                format_us_phone(request.form.get("customer_phone")),
                 request.form.get("customer_email", "").strip(),
+                request.form.get("point_of_contact_name", "").strip(),
+                format_us_phone(request.form.get("point_of_contact_phone")),
                 project_id
             )
         )
@@ -6839,7 +6885,11 @@ def receive_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+        SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address,
+               projects.customer_phone AS customer_phone,
+               projects.point_of_contact_name AS point_of_contact_name,
+               projects.point_of_contact_phone AS point_of_contact_phone,
+               users.name AS assigned_user_name
         FROM tasks
         JOIN projects ON tasks.project_id = projects.id
         LEFT JOIN users ON tasks.assigned_user_id = users.id
@@ -6891,7 +6941,10 @@ def task_calendar_file(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+               projects.customer_phone AS customer_phone,
+               projects.point_of_contact_name AS point_of_contact_name,
+               projects.point_of_contact_phone AS point_of_contact_phone
         FROM tasks
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         JOIN projects ON tasks.project_id = projects.id
@@ -6927,7 +6980,10 @@ def worker_today_task_rows(conn, user_id=None, target_date=None, target_project_
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
                projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, users.name AS assigned_user_name
+               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.point_of_contact_name AS point_of_contact_name,
+               projects.point_of_contact_phone AS point_of_contact_phone,
+               users.name AS assigned_user_name
         FROM tasks
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN projects ON tasks.project_id = projects.id
@@ -6957,7 +7013,10 @@ def worker_assignment_task_rows(conn, source_task):
             """
             SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
                    projects.customer_name AS customer_name, projects.customer_address AS project_address,
-                   projects.customer_address AS customer_address, users.name AS assigned_user_name
+                   projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+                   projects.point_of_contact_name AS point_of_contact_name,
+                   projects.point_of_contact_phone AS point_of_contact_phone,
+                   users.name AS assigned_user_name
             FROM tasks
             LEFT JOIN rooms ON tasks.room_id = rooms.id
             LEFT JOIN projects ON tasks.project_id = projects.id
@@ -6978,7 +7037,10 @@ def worker_assignment_task_rows(conn, source_task):
                 """
                 SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
                        projects.customer_name AS customer_name, projects.customer_address AS project_address,
-                       projects.customer_address AS customer_address, users.name AS assigned_user_name
+                       projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7055,7 +7117,10 @@ def assignment_tasks(task_id):
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
                projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, users.name AS assigned_user_name
+               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.point_of_contact_name AS point_of_contact_name,
+               projects.point_of_contact_phone AS point_of_contact_phone,
+               users.name AS assigned_user_name
         FROM tasks
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7094,7 +7159,10 @@ def open_task_workspace(task_id):
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
                projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, users.name AS assigned_user_name
+               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.point_of_contact_name AS point_of_contact_name,
+               projects.point_of_contact_phone AS point_of_contact_phone,
+               users.name AS assigned_user_name
         FROM tasks
         LEFT JOIN rooms ON tasks.room_id = rooms.id
         LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7203,7 +7271,11 @@ def my_tasks():
         if selected_task_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name, users.email AS assigned_user_email
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                       projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name, users.email AS assigned_user_email
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7234,7 +7306,11 @@ def my_tasks():
             where_sql = " AND ".join(where) if where else "1=1"
             tasks = conn.execute(
                 f"""
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name, users.email AS assigned_user_email
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                       projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name, users.email AS assigned_user_email
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7274,7 +7350,11 @@ def my_tasks():
         if selected_task_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                       projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7307,7 +7387,11 @@ def my_tasks():
                         notification_task_day = notification_source_task.get("task_day") or ""
                 tasks = conn.execute(
                     """
-                    SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                    SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                           projects.customer_phone AS customer_phone,
+                           projects.point_of_contact_name AS point_of_contact_name,
+                           projects.point_of_contact_phone AS point_of_contact_phone,
+                           users.name AS assigned_user_name
                     FROM tasks
                     LEFT JOIN rooms ON tasks.room_id = rooms.id
                     LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7334,7 +7418,11 @@ def my_tasks():
             add_task_status_filter(where, params)
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                       projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -7352,7 +7440,11 @@ def my_tasks():
         else:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                       projects.customer_phone AS customer_phone,
+                       projects.point_of_contact_name AS point_of_contact_name,
+                       projects.point_of_contact_phone AS point_of_contact_phone,
+                       users.name AS assigned_user_name
                 FROM tasks
                 LEFT JOIN rooms ON tasks.room_id = rooms.id
                 LEFT JOIN projects ON tasks.project_id = projects.id
@@ -8523,10 +8615,11 @@ def settings():
             conn.execute(
                 """
                 INSERT INTO user_permissions
-                (user_id, require_task_picture, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (user_id, require_task_picture, view_contact_info, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
                     require_task_picture = EXCLUDED.require_task_picture,
+                    view_contact_info = EXCLUDED.view_contact_info,
                     see_comments = EXCLUDED.see_comments,
                     write_comments = EXCLUDED.write_comments,
                     edit_comments = EXCLUDED.edit_comments,
@@ -8698,7 +8791,11 @@ def open_notification(notification_id):
     if event.get("event_type") == "task_assigned" and event.get("task_id") and not is_main_admin():
         task = conn.execute(
             """
-            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address, users.name AS assigned_user_name
+            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address,
+                   projects.customer_phone AS customer_phone,
+                   projects.point_of_contact_name AS point_of_contact_name,
+                   projects.point_of_contact_phone AS point_of_contact_phone,
+                   users.name AS assigned_user_name
             FROM tasks
             JOIN projects ON tasks.project_id = projects.id
             LEFT JOIN users ON tasks.assigned_user_id = users.id
