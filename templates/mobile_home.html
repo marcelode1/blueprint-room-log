@@ -6,14 +6,14 @@
         <a class="btn-link" href="{{ url_for('mobile_projects') }}">Projects</a>
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
         <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
-        <a class="btn-link" href="{{ url_for('my_tasks', work_view=1) }}">Today's Tasks</a>
+        <a class="btn-link" href="{{ url_for('today_tasks') }}">Today's Tasks</a>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a class="btn-link" href="{{ url_for('my_time_report') }}">Time Report</a>
         <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>
     {% else %}
         <a class="btn-link" href="{{ url_for('mobile_projects') }}">Projects</a>
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_search') }}">Search Projects</a>
-        <a class="btn-link" href="{{ url_for('my_tasks', work_view=1) }}">Today's Tasks</a>
+        <a class="btn-link" href="{{ url_for('today_tasks') }}">Today's Tasks</a>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a class="btn-link" href="{{ url_for('my_time_report') }}">Time Report</a>
         <a class="btn-link" href="{{ url_for('mobile_inventory') }}">Inventory</a>

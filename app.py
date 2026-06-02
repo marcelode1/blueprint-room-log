@@ -1759,10 +1759,7 @@ def notification_target_url(conn, event):
     if not event:
         return url_for("notifications")
     if event.get("task_id"):
-        args = {"task_id": event.get("task_id")}
-        if event.get("event_type") == "task_assigned":
-            args["from_notification"] = "1"
-        return url_for("my_tasks", **args) + f"#task-{event.get('task_id')}"
+        return url_for("open_task_workspace", task_id=event.get("task_id"))
 
     project_id = event.get("target_project_id") or event.get("project_id")
     room_id = event.get("room_id")
@@ -1948,7 +1945,7 @@ def task_email_body(task, assigned=None, project=None):
         "",
         "You now have access to this project until the admin revokes it on the Project Access page.",
         "Open your ProjectONus app and press Received after you review the task.",
-        external_url("my_tasks")
+        external_url("open_task_workspace", task_id=task.get("id"))
     ])
     return "\n".join(lines)
 
@@ -1988,7 +1985,7 @@ def send_task_assignment_sms(task, assigned, project):
     route_text = f" Route: {route}" if route else ""
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('my_tasks', task_id=task.get('id'))}"
+        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('open_task_workspace', task_id=task.get('id'))}"
     )
 
 
@@ -2015,7 +2012,7 @@ def notify_admins_task_received(conn, task, actor):
         f"Project: {task.get('project_name') or '-'}",
         f"Received: {format_datetime(task.get('accepted_at') or utc_now_iso())}",
         "",
-        external_url("my_tasks")
+        external_url("open_task_workspace", task_id=task.get("id"))
     ])
     for admin in admin_email_rows(conn):
         if admin.get("email"):
@@ -5091,7 +5088,7 @@ def project_timeline(project_id):
     ).fetchall()
     for task in task_rows:
         scheduled_dt = parse_timeline_date(task.get("task_start_date") or task.get("task_date"), task.get("task_start_time"))
-        task_url = url_for("my_tasks", task_id=task["id"]) + f"#task-{task['id']}"
+        task_url = url_for("open_task_workspace", task_id=task["id"])
         if include_dt(scheduled_dt):
             details = []
             if task.get("assigned_user_name"):
@@ -5162,7 +5159,7 @@ def project_timeline(project_id):
                 "body": attachment.get("comment") or "",
                 "photo_file": attachment.get("storage_path") if attachment.get("file_type") == "photo" else "",
                 "audio_file": attachment.get("storage_path") if attachment.get("file_type") == "audio" else "",
-                "url": url_for("my_tasks", task_id=attachment["task_id"]) + f"#task-{attachment['task_id']}",
+                "url": url_for("open_task_workspace", task_id=attachment["task_id"]),
             })
 
     inventory_rows = conn.execute(
@@ -6638,7 +6635,11 @@ def complete_task(task_id):
         conn.close()
         flash("Task successfully edited and sent to admin." if had_worker_update else "Task saved and sent to admin.")
         next_url = request.form.get("next")
-        return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
+        if next_url and next_url.startswith("/"):
+            return redirect(next_url)
+        if not is_main_admin():
+            return redirect(url_for("open_task_workspace", task_id=task_id))
+        return redirect(url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
     if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
         conn.close()
@@ -6753,6 +6754,8 @@ def complete_task(task_id):
     next_url = request.form.get("next")
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
+    if not is_main_admin():
+        return redirect(url_for("open_task_workspace", task_id=task_id))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
     if task.get("room_id"):
@@ -6792,6 +6795,8 @@ def receive_task(task_id):
         flash("Task was already marked received.")
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
+        if not is_main_admin():
+            return redirect(url_for("open_task_workspace", task_id=task_id))
         return redirect(url_for("my_tasks"))
 
     mark_task_received(conn, task)
@@ -6801,6 +6806,8 @@ def receive_task(task_id):
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
     calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
+    if not is_main_admin():
+        return redirect(url_for("open_task_workspace", task_id=task_id, **calendar_args))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"], **calendar_args))
     if task.get("room_id"):
@@ -6843,37 +6850,84 @@ def task_calendar_file(task_id):
     )
 
 
+def worker_today_task_rows(conn, user_id=None):
+    uid = user_id or session.get("user_id")
+    today = local_now().date()
+    rows = conn.execute(
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
+               projects.customer_name AS customer_name, projects.customer_address AS project_address,
+               projects.customer_address AS customer_address, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+        WHERE tasks.assigned_user_id = %s
+        ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
+        """,
+        (uid, uid)
+    ).fetchall()
+    rows = [
+        task for task in rows
+        if (task_scheduled_date_value(task) or today) == today
+    ]
+    return sorted(rows, key=task_active_sort_key)
+
+
+@app.route("/tasks/today")
+@login_required
+def today_tasks():
+    if is_main_admin():
+        return redirect(url_for("my_tasks", mode="search"))
+    conn = db()
+    tasks = load_task_details(conn, worker_today_task_rows(conn))
+    conn.close()
+    return render_template(
+        "today_tasks.html",
+        tasks=tasks,
+        task_status_options=TASK_STATUS_LABELS,
+        today=local_now().date().isoformat()
+    )
+
+
 @app.route("/tasks/<int:task_id>/work")
 @login_required
 def open_task_workspace(task_id):
     conn = db()
     task = conn.execute(
-        "SELECT id, project_id, room_id, assigned_user_id FROM tasks WHERE id = %s",
+        """
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
+               projects.customer_name AS customer_name, projects.customer_address AS project_address,
+               projects.customer_address AS customer_address, users.name AS assigned_user_name
+        FROM tasks
+        LEFT JOIN rooms ON tasks.room_id = rooms.id
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE tasks.id = %s
+        """,
         (task_id,)
     ).fetchone()
     if not task:
         conn.close()
         flash("Task not found.")
-        return redirect(url_for("my_tasks"))
+        return redirect(url_for("today_tasks" if not is_main_admin() else "my_tasks"))
     if not user_can_access_project(conn, task["project_id"]):
         conn.close()
         flash("You do not have access to that project.")
-        return redirect(url_for("my_tasks"))
+        return redirect(url_for("today_tasks" if not is_main_admin() else "my_tasks"))
     if not is_main_admin() and task.get("assigned_user_id") != session.get("user_id"):
         conn.close()
         flash("This task is assigned to another user.")
-        return redirect(url_for("my_tasks"))
+        return redirect(url_for("today_tasks"))
+    task = load_task_details(conn, [task], task.get("room_id"))[0]
     conn.close()
-
-    args = {
-        "mode": "search",
-        "project_id": task["project_id"],
-        "task_id": task["id"],
-        "work_view": "1",
-    }
-    if task.get("room_id"):
-        args["room_id"] = task["room_id"]
-    return redirect(url_for("my_tasks", **args) + f"#task-{task['id']}")
+    return render_template(
+        "task_work.html",
+        t=task,
+        task_status_options=TASK_STATUS_LABELS,
+        today=local_now().date().isoformat()
+    )
 
 
 @app.route("/tasks")
@@ -6894,6 +6948,9 @@ def my_tasks():
         selected_task_status = ""
     open_only = request.args.get("open_only") == "1"
     task_mode = request.args.get("mode", "")
+    if not is_main_admin() and not request.args:
+        conn.close()
+        return redirect(url_for("today_tasks"))
     if open_only and not task_mode:
         task_mode = "search"
     if notification_task_list and not task_mode:
@@ -7457,7 +7514,7 @@ def comment_record_sort_value(record):
 
 def comment_report_context_url(record):
     if record.get("task_id"):
-        return url_for("my_tasks", task_id=record["task_id"]) + f"#task-{record['task_id']}"
+        return url_for("open_task_workspace", task_id=record["task_id"])
     if record.get("room_id"):
         return url_for("room", room_id=record["room_id"])
     if record.get("project_id"):
