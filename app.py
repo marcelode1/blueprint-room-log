@@ -1767,6 +1767,7 @@ def notification_target_url(conn, event):
             if not task or not task.get("accepted_at"):
                 anchor = f"#notification-{event.get('id')}" if event.get("id") else ""
                 return url_for("notifications") + anchor
+            return url_for("today_tasks", calendar_task=event.get("task_id"))
         return url_for("open_task_workspace", task_id=event.get("task_id"))
 
     project_id = event.get("target_project_id") or event.get("project_id")
@@ -6646,7 +6647,7 @@ def complete_task(task_id):
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         if not is_main_admin():
-            return redirect(url_for("open_task_workspace", task_id=task_id))
+            return redirect(url_for("today_tasks", calendar_task=task_id))
         return redirect(url_for("my_tasks"))
     wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
     if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
@@ -6815,7 +6816,7 @@ def receive_task(task_id):
         return redirect(next_url)
     calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
     if not is_main_admin():
-        return redirect(url_for("open_task_workspace", task_id=task_id, **calendar_args))
+        return redirect(url_for("today_tasks", **calendar_args))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"], **calendar_args))
     if task.get("room_id"):
@@ -6858,9 +6859,9 @@ def task_calendar_file(task_id):
     )
 
 
-def worker_today_task_rows(conn, user_id=None):
+def worker_today_task_rows(conn, user_id=None, target_date=None):
     uid = user_id or session.get("user_id")
-    today = local_now().date()
+    task_day = target_date or local_now().date()
     rows = conn.execute(
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
@@ -6878,7 +6879,7 @@ def worker_today_task_rows(conn, user_id=None):
     ).fetchall()
     rows = [
         task for task in rows
-        if (task_scheduled_date_value(task) or today) == today
+        if (task_scheduled_date_value(task) or task_day) == task_day
     ]
     return sorted(rows, key=task_active_sort_key)
 
@@ -6889,13 +6890,21 @@ def today_tasks():
     if is_main_admin():
         return redirect(url_for("my_tasks", mode="search"))
     conn = db()
-    tasks = load_task_details(conn, worker_today_task_rows(conn))
+    task_day = local_now().date()
+    calendar_task_id = request.args.get("calendar_task", type=int)
+    if calendar_task_id:
+        calendar_task = conn.execute(
+            "SELECT task_start_date, task_date FROM tasks WHERE id = %s AND assigned_user_id = %s",
+            (calendar_task_id, session.get("user_id"))
+        ).fetchone()
+        task_day = task_scheduled_date_value(calendar_task) or task_day
+    tasks = load_task_details(conn, worker_today_task_rows(conn, target_date=task_day))
     conn.close()
     return render_template(
         "today_tasks.html",
         tasks=tasks,
         task_status_options=TASK_STATUS_LABELS,
-        today=local_now().date().isoformat()
+        today=task_day.isoformat()
     )
 
 
