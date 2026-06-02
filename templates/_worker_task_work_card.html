@@ -28,12 +28,7 @@
     {% set admin_room_id = work_room_id %}
     {% include "_task_admin_attachments.html" %}
 
-    {% if not t.accepted_at and not task_is_completed(t) %}
-        <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}" class="workerTaskReceiveForm">
-            <input type="hidden" name="next" value="{{ url_for('open_task_workspace', task_id=t.id, calendar_task=t.id) }}">
-            <button type="submit">Received</button>
-        </form>
-    {% else %}
+    {% if t.accepted_at or task_is_completed(t) %}
         <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm workerTaskSaveForm" data-task-id="{{ t.id }}">
             <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
             {% if work_room_id %}<input type="hidden" name="completion_room_id" value="{{ work_room_id }}">{% endif %}

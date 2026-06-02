@@ -1759,6 +1759,14 @@ def notification_target_url(conn, event):
     if not event:
         return url_for("notifications")
     if event.get("task_id"):
+        if event.get("event_type") == "task_assigned" and not is_main_admin():
+            task = conn.execute(
+                "SELECT accepted_at FROM tasks WHERE id = %s",
+                (event.get("task_id"),)
+            ).fetchone()
+            if not task or not task.get("accepted_at"):
+                anchor = f"#notification-{event.get('id')}" if event.get("id") else ""
+                return url_for("notifications") + anchor
         return url_for("open_task_workspace", task_id=event.get("task_id"))
 
     project_id = event.get("target_project_id") or event.get("project_id")
@@ -1944,8 +1952,8 @@ def task_email_body(task, assigned=None, project=None):
         f"Allows voice/audio: {'Yes' if task.get('allow_audio') else 'No'}",
         "",
         "You now have access to this project until the admin revokes it on the Project Access page.",
-        "Open your ProjectONus app and press Received after you review the task.",
-        external_url("open_task_workspace", task_id=task.get("id"))
+        "Open your ProjectONus app notification and press Received after you review the task.",
+        external_url("notifications")
     ])
     return "\n".join(lines)
 
@@ -1985,7 +1993,7 @@ def send_task_assignment_sms(task, assigned, project):
     route_text = f" Route: {route}" if route else ""
     return send_sms(
         assigned["phone_number"],
-        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app and press Received: {external_url('open_task_workspace', task_id=task.get('id'))}"
+        f"ProjectONus task assigned: {task_display_name(task)} for {project_name or 'your project'} at {task_schedule_text(task)}.{route_text} Open the app notification and press Received: {external_url('notifications')}"
     )
 
 
