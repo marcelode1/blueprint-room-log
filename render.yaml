@@ -2,11 +2,15 @@ services:
   - type: web
     name: blueprint-room-log-v2
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: python -m pip install --upgrade pip setuptools wheel && python -m pip install --no-cache-dir --only-binary=:all: -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
       - key: SECRET_KEY
         generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: PIP_NO_CACHE_DIR
+        value: "1"
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL
