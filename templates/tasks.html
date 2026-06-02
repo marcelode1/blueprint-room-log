@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
+{% set task_work_view = task_work_view|default(false) %}
+{% if not task_work_view %}
 <div class="card">
     {% if is_main_admin() %}
         <h2>Tasks</h2>
@@ -19,8 +21,9 @@
         {% endif %}
     {% endif %}
 </div>
+{% endif %}
 
-{% if task_mode == "search" %}
+{% if task_mode == "search" and not task_work_view %}
 <div class="card">
     <h2>Search Task</h2>
     <form method="get">
@@ -100,8 +103,8 @@
 {% endif %}
 
 {% if not is_main_admin() or task_mode == "search" %}
-<div class="card">
-    {% if task_mode == "search" and (selected_project_id or selected_supplier_id or selected_user_id or selected_task_status or task_date_filter) %}
+<div class="{% if task_work_view %}taskWorkShell{% else %}card{% endif %}">
+    {% if not task_work_view and task_mode == "search" and (selected_project_id or selected_supplier_id or selected_user_id or selected_task_status or task_date_filter) %}
         <p class="muted taskScopeSummary">
             Showing {{ tasks|length }} {% if open_only %}open {% endif %}task{{ '' if tasks|length == 1 else 's' }} for
             {% if selected_task_status %}
@@ -137,7 +140,7 @@
                 {% if address %}
                     <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
                 {% endif %}
-                <a class="btn-link" href="{{ url_for('my_tasks', project_id=t.project_id, notification_task_id=t.id, notification_tasks=1) }}">Open Task</a>
+                <a class="btn-link" href="{{ url_for('my_tasks', project_id=t.project_id, notification_task_id=t.id, notification_tasks=1, work_view=1) }}">Open Task</a>
             {% endif %}
         </div>
     {% elif is_mobile_request() and task_mode in ["search", "task", "notification_tasks"] and selected_project_id %}
@@ -145,7 +148,7 @@
             {% set room_tasks = tasks_by_room.get(r.id, []) %}
             {% if room_tasks and (not selected_room_id or selected_room_id == r.id) %}
                 <div class="card mobileRoomTaskGroup">
-                    <h3>{{ r.name }}</h3>
+                    {% if not task_work_view %}<h3>{{ r.name }}</h3>{% endif %}
                     {% for t in room_tasks %}
                         {% set room_state = namespace(done=false) %}
                         {% for status in t.get('_room_statuses', []) %}
@@ -183,7 +186,7 @@
         {% set project_level_tasks = tasks_by_room.get(0, []) %}
         {% if project_level_tasks and not selected_room_id %}
             <div class="card mobileRoomTaskGroup">
-                <h3>Full Project</h3>
+                {% if not task_work_view %}<h3>Full Project</h3>{% endif %}
                 {% for t in project_level_tasks %}
                     {% if selected_task_id == t.id %}<span id="task-{{ t.id }}"></span>{% endif %}
                     <div id="task-{{ t.id }}-project" class="card {% if task_is_completed(t) %}taskDone{% endif %}">
@@ -278,7 +281,7 @@
             <p>No tasks found.</p>
         {% endif %}
     {% else %}
-    {% if not is_main_admin() and task_mode != "search" and not selected_task_id %}
+    {% if not is_main_admin() and task_mode != "search" and not selected_task_id and not task_work_view %}
     {% for t in tasks %}
         <div id="task-{{ t.id }}" class="card todayTaskChoice {% if task_is_completed(t) %}taskDone{% endif %}">
             <strong>{{ task_display_name(t) }}</strong>

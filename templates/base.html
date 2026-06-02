@@ -90,7 +90,7 @@
         <a href="{{ url_for('mobile_home') }}">Home</a>
         <a href="{{ url_for('mobile_projects') }}">Projects</a>
         <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
-        <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
+        <a href="{{ url_for('my_tasks', work_view=1) }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('my_time_report') }}">Time Report</a>
         <a href="{{ url_for('comment_report') }}">Comment Report</a>
@@ -127,8 +127,9 @@
 </div>
 {% endif %}
 <main>
+    {% set hide_back_button = request.endpoint == 'my_tasks' and not is_main_admin() and (request.args.get('work_view') == '1' or not request.args.get('mode')) %}
     {% if session.get("user_id") %}
-        <button type="button" class="backButton" onclick="goBackOnePage()">Back</button>
+        {% if not hide_back_button %}<button type="button" class="backButton" onclick="goBackOnePage()">Back</button>{% endif %}
     {% endif %}
     {% with messages=get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
     {% block content %}{% endblock %}
@@ -269,7 +270,7 @@
         <a href="{{ url_for('mobile_home') }}">Home</a>
         <a href="{{ url_for('mobile_projects') }}">Projects</a>
         <a href="{{ url_for('mobile_project_search') }}">Search Projects</a>
-        <a href="{{ url_for('my_tasks') }}">Today's Tasks</a>
+        <a href="{{ url_for('my_tasks', work_view=1) }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('my_time_report') }}">Time Report</a>
         <a href="{{ url_for('comment_report') }}">Comment Report</a>

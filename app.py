@@ -6869,6 +6869,7 @@ def open_task_workspace(task_id):
         "mode": "search",
         "project_id": task["project_id"],
         "task_id": task["id"],
+        "work_view": "1",
     }
     if task.get("room_id"):
         args["room_id"] = task["room_id"]
@@ -6901,6 +6902,7 @@ def my_tasks():
         task_mode = "task"
     if (selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or selected_task_status) and not task_mode:
         task_mode = "search"
+    task_work_view = request.args.get("work_view") == "1" or (not is_main_admin() and not task_mode)
     has_filter_selection = bool(selected_project_id or selected_room_id or selected_supplier_id or selected_user_id or selected_task_status)
     task_period = request.args.get("period", "day")
     if task_period not in ["day", "week", "month"]:
@@ -7158,7 +7160,8 @@ def my_tasks():
         task_status_options=task_status_options,
         from_notification=from_notification,
         notification_task_id=notification_task_id,
-        notification_task_list=notification_task_list
+        notification_task_list=notification_task_list,
+        task_work_view=task_work_view
     )
 
 
