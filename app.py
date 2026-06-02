@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib
 import psycopg
 from psycopg.rows import dict_row
 
@@ -192,6 +192,17 @@ def safe_next_url(default_endpoint="index", **values):
     if target and target.startswith(request.host_url):
         return target
     return url_for(default_endpoint, **values)
+
+
+def remove_query_param_from_local_url(target, name):
+    if not target or not target.startswith("/") or target.startswith("//"):
+        return target
+    parsed = urllib.parse.urlparse(target)
+    query = urllib.parse.urlencode(
+        [(key, value) for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True) if key != name],
+        doseq=True
+    )
+    return urllib.parse.urlunparse(("", "", parsed.path, parsed.params, query, parsed.fragment))
 
 
 def mobile_time_clock_return_url(project_id):
@@ -865,6 +876,8 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
+        "UPDATE tasks SET require_picture = FALSE WHERE COALESCE(require_picture, FALSE) = TRUE",
+        "UPDATE user_permissions SET require_task_picture = FALSE WHERE COALESCE(require_task_picture, FALSE) = TRUE",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
     ]
     for sql in migrations:
@@ -1107,6 +1120,7 @@ def collect_task_attachment_uploads(conn, project_id, default_room_id=None):
 def collect_completion_uploads(conn, project_id, default_room_id=None):
     uploads = []
     indexes = [idx for idx in request.form.getlist("completion_attachment_indexes") if str(idx).strip()]
+    seen_files = set()
 
     def add_upload(field_name, room_id, comment, file_type):
         uploaded = request.files.get(field_name)
@@ -1119,6 +1133,10 @@ def collect_completion_uploads(conn, project_id, default_room_id=None):
         data = uploaded.read()
         if not data:
             return None
+        duplicate_key = (file_type, len(data), hashlib.sha256(data).hexdigest())
+        if duplicate_key in seen_files:
+            return None
+        seen_files.add(duplicate_key)
         display_name = task_attachment_display_filename(uploaded, field_name, file_type)
         uploads.append({
             "room_id": room_id,
@@ -1767,7 +1785,7 @@ def notification_target_url(conn, event):
             if not task or not task.get("accepted_at"):
                 anchor = f"#notification-{event.get('id')}" if event.get("id") else ""
                 return url_for("notifications") + anchor
-            return url_for("today_tasks", calendar_task=event.get("task_id"))
+            return url_for("today_tasks", notification_task=event.get("task_id"))
         return url_for("open_task_workspace", task_id=event.get("task_id"))
 
     project_id = event.get("target_project_id") or event.get("project_id")
@@ -5503,7 +5521,7 @@ def create_task(room_id):
     created_at = utc_now_iso()
     task_number = next_task_number(conn, created_at)
     assigned_permissions = permissions_for_user_record(conn, assigned)
-    assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+    assigned_require_picture = False
     assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
 
     task = conn.execute(
@@ -6019,7 +6037,7 @@ def create_global_task():
         for draft in task_drafts:
             for assigned in selected_users:
                 assigned_permissions = permissions_for_user_record(conn, assigned)
-                assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+                assigned_require_picture = False
                 assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
                 grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
                 created_at = utc_now_iso()
@@ -6158,7 +6176,7 @@ def edit_task(task_id):
         assigned_changed = assigned_user_id != task.get("assigned_user_id")
         reset_received = (assigned_changed or requested_status == "sent_to_worker") and not task_is_completed(requested_status)
         assigned_permissions = permissions_for_user_record(conn, assigned)
-        assigned_require_picture = bool(assigned_permissions.get("require_task_picture"))
+        assigned_require_picture = False
         assigned_allow_picture = bool(assigned_permissions.get("add_pictures") or assigned_require_picture)
         grant_project_access(conn, assigned_user_id, task["project_id"], assigned.get("role"))
         conn.execute(
@@ -6569,9 +6587,9 @@ def complete_task(task_id):
         if not completion_uploads and not completion_comment and not service_order_verified and not status_changed:
             conn.close()
             flash("Choose a picture, audio, comment, or status before saving.")
-            next_url = request.form.get("next")
+            next_url = remove_query_param_from_local_url(request.form.get("next"), "calendar_task")
             return redirect(next_url if next_url and next_url.startswith("/") else url_for("my_tasks"))
-        inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
+        inserted_attachments, _first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
         completed_at = datetime.now().isoformat()
         mark_entire_task_done = False
         if requested_completion_status == "completed":
@@ -6597,9 +6615,6 @@ def complete_task(task_id):
                 mark_entire_task_done = True
         update_fields = []
         params = []
-        if first_photo and not task.get("completion_photo_file"):
-            update_fields.append("completion_photo_file = %s")
-            params.append(first_photo)
         if first_audio and not task.get("completion_audio_file"):
             update_fields.append("completion_audio_file = %s")
             params.append(first_audio)
@@ -6643,22 +6658,13 @@ def complete_task(task_id):
         conn.commit()
         conn.close()
         flash("Task successfully edited and sent to admin." if had_worker_update else "Task saved and sent to admin.")
-        next_url = request.form.get("next")
+        next_url = remove_query_param_from_local_url(request.form.get("next"), "calendar_task")
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         if not is_main_admin():
-            return redirect(url_for("today_tasks", calendar_task=task_id))
+            return redirect(url_for("today_tasks", notification_task=task_id))
         return redirect(url_for("my_tasks"))
-    wants_photo = any(item.get("file_type") == "photo" for item in completion_uploads)
-    if task.get("require_picture") and not wants_photo and not task.get("completion_photo_file"):
-        conn.close()
-        flash("This task requires a picture before it can be completed.")
-        if task.get("room_id"):
-            return redirect(url_for("room", room_id=task["room_id"]))
-        return redirect(url_for("my_tasks"))
-
-    inserted_attachments, first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
-    photo_file = first_photo or task.get("completion_photo_file")
+    inserted_attachments, _first_photo, first_audio, saved_room_ids = insert_task_attachments(conn, task_id, completion_uploads)
     audio_file = first_audio or task.get("completion_audio_file")
     completed_at = datetime.now().isoformat()
     mark_entire_task_done = True
@@ -6682,12 +6688,10 @@ def complete_task(task_id):
             mark_entire_task_done = all_task_rooms_done(conn, task_id, related_room_ids)
     update_fields = [
         "completion_comment = %s",
-        "completion_photo_file = %s",
         "completion_audio_file = %s",
     ]
     params = [
         completion_comment_with_service_order(),
-        photo_file,
         audio_file,
     ]
     if mark_entire_task_done:
@@ -6761,10 +6765,11 @@ def complete_task(task_id):
     else:
         flash("Task updated. Admin notification could not be sent.")
     next_url = request.form.get("next")
+    next_url = remove_query_param_from_local_url(next_url, "calendar_task")
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
     if not is_main_admin():
-        return redirect(url_for("open_task_workspace", task_id=task_id))
+        return redirect(url_for("today_tasks", notification_task=task_id))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
         return redirect(url_for("mobile_room", room_id=task["room_id"]))
     if task.get("room_id"):
@@ -6805,7 +6810,7 @@ def receive_task(task_id):
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         if not is_main_admin():
-            return redirect(url_for("open_task_workspace", task_id=task_id))
+            return redirect(url_for("today_tasks", notification_task=task_id))
         return redirect(url_for("my_tasks"))
 
     mark_task_received(conn, task)
@@ -6814,7 +6819,7 @@ def receive_task(task_id):
     next_url = request.form.get("next")
     if next_url and next_url.startswith("/"):
         return redirect(next_url)
-    calendar_args = {"calendar_task": task_id} if not is_main_admin() else {}
+    calendar_args = {"notification_task": task_id} if not is_main_admin() else {}
     if not is_main_admin():
         return redirect(url_for("today_tasks", **calendar_args))
     if task.get("room_id") and "/mobile/" in (request.referrer or ""):
@@ -6859,7 +6864,7 @@ def task_calendar_file(task_id):
     )
 
 
-def worker_today_task_rows(conn, user_id=None, target_date=None):
+def worker_today_task_rows(conn, user_id=None, target_date=None, target_project_id=None):
     uid = user_id or session.get("user_id")
     task_day = target_date or local_now().date()
     rows = conn.execute(
@@ -6880,6 +6885,7 @@ def worker_today_task_rows(conn, user_id=None, target_date=None):
     rows = [
         task for task in rows
         if (task_scheduled_date_value(task) or task_day) == task_day
+        and (not target_project_id or task.get("project_id") == target_project_id)
     ]
     return sorted(rows, key=task_active_sort_key)
 
@@ -6891,14 +6897,18 @@ def today_tasks():
         return redirect(url_for("my_tasks", mode="search"))
     conn = db()
     task_day = local_now().date()
+    target_project_id = None
     calendar_task_id = request.args.get("calendar_task", type=int)
-    if calendar_task_id:
-        calendar_task = conn.execute(
-            "SELECT task_start_date, task_date FROM tasks WHERE id = %s AND assigned_user_id = %s",
-            (calendar_task_id, session.get("user_id"))
+    notification_task_id = request.args.get("notification_task", type=int)
+    context_task_id = calendar_task_id or notification_task_id
+    if context_task_id:
+        context_task = conn.execute(
+            "SELECT project_id, task_start_date, task_date FROM tasks WHERE id = %s AND assigned_user_id = %s",
+            (context_task_id, session.get("user_id"))
         ).fetchone()
-        task_day = task_scheduled_date_value(calendar_task) or task_day
-    tasks = load_task_details(conn, worker_today_task_rows(conn, target_date=task_day))
+        task_day = task_scheduled_date_value(context_task) or task_day
+        target_project_id = context_task.get("project_id") if context_task else None
+    tasks = load_task_details(conn, worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id))
     conn.close()
     return render_template(
         "today_tasks.html",

@@ -136,7 +136,6 @@
                 <input type="hidden" name="user_id" value="{{ u.id }}">
                 {% set worker_defaults = u.role == "worker" %}
                 <div class="grid">
-                    <label><input type="checkbox" name="require_task_picture" {% if p and p.require_task_picture %}checked{% endif %}> Worker must take picture</label>
                     <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
                     <label><input type="checkbox" name="write_comments" {% if (p and p.write_comments) or (not p and worker_defaults) %}checked{% endif %}> Write comments</label>
                     <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>

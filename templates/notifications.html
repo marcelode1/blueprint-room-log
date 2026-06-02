@@ -39,13 +39,15 @@
                 {% if not e.task_accepted_at %}
                     <form method="post" action="{{ url_for('receive_task', task_id=e.task_id) }}">
                         <input type="hidden" name="next" value="{{ url_for('today_tasks', calendar_task=e.task_id) }}">
-                        <button type="submit">Confirm Received</button>
+                        <button type="submit">Received</button>
                     </form>
                 {% else %}
                     <p class="muted">Confirmed {{ format_datetime(e.task_accepted_at) }}</p>
+                    <a class="btn-link btn-secondary" href="{{ url_for('today_tasks', notification_task=e.task_id) }}">Open Tasks</a>
                 {% endif %}
+            {% else %}
+                <a class="btn-link btn-secondary" href="{{ url_for('open_notification', notification_id=e.id) }}">Open Notification</a>
             {% endif %}
-            <a class="btn-link btn-secondary" href="{{ url_for('open_notification', notification_id=e.id) }}">Open Notification</a>
         </div>
     {% else %}
         <p>No notifications yet.</p>
