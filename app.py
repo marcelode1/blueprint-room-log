@@ -6843,6 +6843,38 @@ def task_calendar_file(task_id):
     )
 
 
+@app.route("/tasks/<int:task_id>/work")
+@login_required
+def open_task_workspace(task_id):
+    conn = db()
+    task = conn.execute(
+        "SELECT id, project_id, room_id, assigned_user_id FROM tasks WHERE id = %s",
+        (task_id,)
+    ).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("my_tasks"))
+    if not user_can_access_project(conn, task["project_id"]):
+        conn.close()
+        flash("You do not have access to that project.")
+        return redirect(url_for("my_tasks"))
+    if not is_main_admin() and task.get("assigned_user_id") != session.get("user_id"):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("my_tasks"))
+    conn.close()
+
+    args = {
+        "mode": "search",
+        "project_id": task["project_id"],
+        "task_id": task["id"],
+    }
+    if task.get("room_id"):
+        args["room_id"] = task["room_id"]
+    return redirect(url_for("my_tasks", **args) + f"#task-{task['id']}")
+
+
 @app.route("/tasks")
 @login_required
 def my_tasks():
@@ -7084,9 +7116,6 @@ def my_tasks():
             ]
             tasks = sorted(tasks, key=task_active_sort_key)
     tasks = load_task_details(conn, tasks, selected_room_id)
-    if selected_task_id and tasks and not tasks[0].get("room_id") and not tasks[0].get("_room_statuses"):
-        selected_project_id = None
-        project_rooms = []
     tasks_by_room = {}
     if task_mode in ["search", "task", "notification_tasks"] and selected_project_id:
         project_level_tasks = []
