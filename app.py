@@ -7,7 +7,6 @@ from zoneinfo import ZoneInfo
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re
 import psycopg
 from psycopg.rows import dict_row
-from supabase import create_client
 
 try:
     import fitz
@@ -111,20 +110,37 @@ def db():
     return psycopg.connect(normalize_database_url(DATABASE_URL), row_factory=dict_row)
 
 
-def get_supabase():
+def supabase_storage_url(path, public=False):
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("SUPABASE_URL or SUPABASE_KEY is missing.")
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    base_url = SUPABASE_URL.rstrip("/")
+    visibility = "public/" if public else ""
+    bucket = urllib.parse.quote(SUPABASE_BUCKET, safe="")
+    storage_path = urllib.parse.quote(path or "", safe="/")
+    return f"{base_url}/storage/v1/object/{visibility}{bucket}/{storage_path}"
+
+
+def supabase_headers(content_type=None):
+    headers = {
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_KEY,
+    }
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
 
 
 def upload_bytes_to_storage(data, filename, content_type="application/octet-stream"):
     safe_name = secure_filename(filename)
     unique_path = f"{datetime.now().strftime('%Y/%m')}/{uuid.uuid4().hex}_{safe_name}"
-    get_supabase().storage.from_(SUPABASE_BUCKET).upload(
-        unique_path,
+    request_obj = urllib.request.Request(
+        supabase_storage_url(unique_path),
         data,
-        file_options={"content-type": content_type, "upsert": "false"}
+        headers={**supabase_headers(content_type), "x-upsert": "false"},
+        method="POST",
     )
+    with urllib.request.urlopen(request_obj, timeout=60):
+        pass
     return unique_path
 
 
@@ -147,15 +163,18 @@ def first_uploaded_file(*field_names):
 def file_url(path):
     if not path:
         return ""
-    try:
-        return get_supabase().storage.from_(SUPABASE_BUCKET).get_public_url(path)
-    except Exception:
-        return ""
+    return supabase_storage_url(path, public=True)
 
 
 def download_storage_file(path):
     try:
-        return get_supabase().storage.from_(SUPABASE_BUCKET).download(path)
+        request_obj = urllib.request.Request(
+            supabase_storage_url(path),
+            headers=supabase_headers(),
+            method="GET",
+        )
+        with urllib.request.urlopen(request_obj, timeout=60) as response:
+            return response.read()
     except Exception:
         return b""
 
