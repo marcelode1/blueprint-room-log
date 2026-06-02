@@ -22,6 +22,7 @@
     {% if address %}
         <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
     {% endif %}
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
 
     {% include "_supplier_task_info.html" %}
     {% set admin_room_id = work_room_id %}
@@ -33,7 +34,7 @@
             <button type="submit">Received</button>
         </form>
     {% else %}
-        <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm workerTaskSaveForm">
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm workerTaskSaveForm" data-task-id="{{ t.id }}">
             <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
             {% if work_room_id %}<input type="hidden" name="completion_room_id" value="{{ work_room_id }}">{% endif %}
             <label>Work Description</label>
@@ -63,6 +64,7 @@
                         {% include "_mobile_media_bar.html" %}
                     </div>
                 </div>
+                <button type="button" class="btn-secondary addCompletionBlock">Add More</button>
             {% endif %}
             <button type="submit" name="completion_save_media_only" value="1">Save</button>
         </form>

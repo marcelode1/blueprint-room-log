@@ -1,0 +1,49 @@
+<template id="workerCompletionBlockTemplate">
+    <div class="completionBlock">
+        <input type="hidden" name="completion_attachment_indexes" value="__INDEX__">
+        {% set media_id = 'task___TASK___work_media___INDEX__' %}
+        {% set media_camera_name = 'completion_attachment___INDEX___camera' if has_perm("add_pictures") else '' %}
+        {% set media_upload_name = 'completion_attachment___INDEX___photo' if has_perm("add_pictures") else '' %}
+        {% set media_audio_name = 'completion_attachment___INDEX___audio' if has_perm("add_audio") else '' %}
+        {% set media_comment_name = 'completion_attachment___INDEX___comment' if has_perm("write_comments") else '' %}
+        {% set media_comment_label = 'Comments' %}
+        {% set media_comment_placeholder = 'Details regarding this uploaded media' %}
+        {% set media_save_label = 'Attach to Task' %}
+        <p><strong>Attachments:</strong></p>
+        {% include "_mobile_media_bar.html" %}
+        <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
+    </div>
+</template>
+<script>
+document.addEventListener("click",event=>{
+    const addButton=event.target.closest(".addCompletionBlock");
+    if(addButton){
+        const form=addButton.closest(".workerTaskSaveForm");
+        const blocks=form&&form.querySelector(".completionBlocks");
+        const template=document.getElementById("workerCompletionBlockTemplate");
+        if(!form||!blocks||!template)return;
+        const nextIndex=parseInt(form.dataset.nextIndex||"1",10);
+        form.dataset.nextIndex=String(nextIndex+1);
+        const taskId=form.dataset.taskId||"task";
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML
+            .split("__TASK__").join(taskId)
+            .split("__INDEX__").join(String(nextIndex))
+            .trim();
+        const block=wrapper.firstElementChild;
+        blocks.appendChild(block);
+        if(window.ProjectONusMobileMedia)window.ProjectONusMobileMedia.init(block);
+        const firstComment=block.querySelector("[data-media-comment]");
+        if(firstComment)firstComment.focus();
+        return;
+    }
+    const removeButton=event.target.closest(".removeCompletionBlock");
+    if(removeButton){
+        const block=removeButton.closest(".completionBlock");
+        if(block)block.remove();
+    }
+});
+</script>
+<style>
+.workerTaskCard{display:grid;gap:12px}.workerTaskInfo p{margin:0 0 16px}.workerTaskInfo p:last-child{margin-bottom:0}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb;display:inline-flex}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock,.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.taskMediaList,.workerTaskUpdates{display:grid;gap:12px}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskDone{opacity:.86}.addCompletionBlock,.removeCompletionBlock{margin-top:8px!important}
+</style>

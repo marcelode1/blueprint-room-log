@@ -11,7 +11,5 @@
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
     </div>
 {% endfor %}
-<style>
-.workerTaskCard{display:grid;gap:12px}.workerTaskInfo p{margin:0 0 16px}.workerTaskInfo p:last-child{margin-bottom:0}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb;display:inline-flex}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock,.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.taskMediaList,.workerTaskUpdates{display:grid;gap:12px}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskDone{opacity:.86}
-</style>
+{% include "_worker_task_work_assets.html" %}
 {% endblock %}
