@@ -6919,9 +6919,8 @@ def worker_assignment_task_rows(conn, source_task):
         return []
     uid = session.get("user_id")
     group_id = str(source_task.get("assignment_group_id") or "").strip()
-    if not group_id:
-        rows = [source_task]
-    else:
+    rows = []
+    if group_id:
         rows = conn.execute(
             """
             SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
@@ -6938,6 +6937,44 @@ def worker_assignment_task_rows(conn, source_task):
             """,
             (uid, group_id, uid)
         ).fetchall()
+    if not group_id or not rows:
+        source_created = parse_iso_datetime(source_task.get("created_at"))
+        if source_created:
+            window_start = (source_created - timedelta(minutes=3)).replace(tzinfo=None).isoformat()
+            window_end = (source_created + timedelta(minutes=3)).replace(tzinfo=None).isoformat()
+            inferred_rows = conn.execute(
+                """
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
+                       projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                       projects.customer_address AS customer_address, users.name AS assigned_user_name
+                FROM tasks
+                LEFT JOIN rooms ON tasks.room_id = rooms.id
+                LEFT JOIN projects ON tasks.project_id = projects.id
+                LEFT JOIN users ON tasks.assigned_user_id = users.id
+                JOIN project_permissions ON project_permissions.project_id = tasks.project_id AND project_permissions.user_id = %s
+                WHERE tasks.assigned_user_id = %s
+                  AND tasks.project_id = %s
+                  AND (tasks.created_by = %s OR (tasks.created_by IS NULL AND %s IS NULL))
+                  AND tasks.created_at >= %s
+                  AND tasks.created_at <= %s
+                ORDER BY COALESCE(tasks.task_start_date, tasks.task_date), COALESCE(tasks.task_start_time, '23:59'), tasks.created_at, tasks.id
+                """,
+                (
+                    uid,
+                    source_task.get("assigned_user_id"),
+                    source_task.get("project_id"),
+                    source_task.get("created_by"),
+                    source_task.get("created_by"),
+                    window_start,
+                    window_end,
+                )
+            ).fetchall()
+            by_id = {row["id"]: row for row in rows}
+            for row in inferred_rows:
+                by_id[row["id"]] = row
+            rows = list(by_id.values())
+    if not rows:
+        rows = [source_task]
     return sorted(rows, key=task_active_sort_key)
 
 
