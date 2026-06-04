@@ -1979,6 +1979,7 @@ def record_login_notification(user, area="app"):
             None,
             message
         )
+        send_admin_app_open_email(conn, user, area, force=True)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -2040,6 +2041,37 @@ def storage_attachment(path, display_name=None):
 
 def admin_email_rows(conn):
     return conn.execute("SELECT email FROM users WHERE role = 'admin' ORDER BY id").fetchall()
+
+
+def send_admin_app_open_email(conn, user, area="mobile", force=False):
+    if not user or user.get("role") == "admin":
+        return False
+    now = datetime.now(timezone.utc)
+    throttle_key = f"admin_app_open_email_at_{user.get('id')}"
+    if not force:
+        last_sent = parse_iso_datetime(session.get(throttle_key))
+        if last_sent and now - last_sent < timedelta(minutes=30):
+            return False
+    session[throttle_key] = now.replace(tzinfo=None).isoformat()
+    name = user.get("name") or "User"
+    email = user.get("email") or "-"
+    area_label = area or "mobile"
+    opened_at = local_now().strftime("%m/%d/%Y %I:%M %p")
+    body = "\n".join([
+        "A ProjectONus user opened the app.",
+        "",
+        f"User: {name}",
+        f"Email: {email}",
+        f"Role: {user.get('role') or '-'}",
+        f"Area: {area_label}",
+        f"Time: {opened_at}",
+    ])
+    sent = False
+    for admin in admin_email_rows(conn):
+        admin_email = admin.get("email")
+        if admin_email:
+            sent = send_email(admin_email, f"ProjectONus app opened - {name}", body) or sent
+    return sent
 
 
 def notify_admins_of_field_note(conn, project, room, comment, photo_file, audio_file, note_date):
@@ -3656,6 +3688,11 @@ def desktop_home():
 @login_required
 def mobile_home():
     conn = db()
+    user = conn.execute(
+        "SELECT id, name, email, role FROM users WHERE id = %s",
+        (session.get("user_id"),)
+    ).fetchone()
+    send_admin_app_open_email(conn, user, "mobile app opened")
     project_count = len(fetch_visible_projects(conn))
     conn.close()
     return render_template("mobile_home.html", project_count=project_count)
