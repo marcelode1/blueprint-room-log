@@ -5136,94 +5136,58 @@ def project_files(project_id):
         flash("You do not have permission to view project files.")
         return redirect(url_for("project", project_id=project_id))
 
-    project_file_users = []
-    if is_main_admin():
-        project_file_users = conn.execute(
-            """
-            SELECT users.id, users.name, users.email
-            FROM users
-            JOIN project_permissions ON project_permissions.user_id = users.id
-            WHERE project_permissions.project_id = %s
-              AND users.role <> 'admin'
-            ORDER BY users.name, users.email
-            """,
-            (project_id,)
-        ).fetchall()
-
     if request.method == "POST":
         if not is_main_admin():
             conn.close()
-            flash("Only the main admin can manage project file access.")
+            flash("Only the main admin can upload project files.")
             return redirect(url_for("project_files", project_id=project_id))
         now = utc_now_iso()
-        valid_user_ids = {user["id"] for user in project_file_users}
         uploaded_count = 0
         skipped_files = []
         target_folder_key = request.form.get("folder_key", "").strip()
-        folders_to_save = [
-            folder for folder in PROJECT_FILE_FOLDERS
-            if not target_folder_key or folder["key"] == target_folder_key
-        ]
-        if target_folder_key and not folders_to_save:
+        valid_folder_keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+        if target_folder_key not in valid_folder_keys:
             conn.close()
             flash("File folder not found.")
             return redirect(url_for("project_files", project_id=project_id))
-        for folder in folders_to_save:
-            key = folder["key"]
-            selected_user_ids = set()
-            for raw_user_id in request.form.getlist(f"{key}_user_ids"):
-                try:
-                    selected_user_ids.add(int(raw_user_id))
-                except Exception:
-                    continue
-            conn.execute(
-                "DELETE FROM project_file_permissions WHERE project_id = %s AND folder_key = %s",
-                (project_id, key)
+
+        uploads = request.files.getlist("project_files")
+        if not uploads:
+            uploads = request.files.getlist(f"{target_folder_key}_files")
+        for uploaded in uploads:
+            if not uploaded or not uploaded.filename:
+                continue
+            if not allowed_project_file(uploaded.filename):
+                skipped_files.append(uploaded.filename)
+                continue
+            raw = uploaded.read()
+            if not raw:
+                continue
+            storage_path = upload_bytes_to_storage(
+                raw,
+                uploaded.filename,
+                upload_content_type(uploaded.filename, uploaded.content_type)
             )
-            for user_id in sorted(selected_user_ids & valid_user_ids):
-                conn.execute(
-                    """
-                    INSERT INTO project_file_permissions
-                    (project_id, user_id, folder_key, can_view, created_at, updated_at)
-                    VALUES (%s, %s, %s, TRUE, %s, %s)
-                    ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
-                        can_view = TRUE,
-                        updated_at = EXCLUDED.updated_at
-                    """,
-                    (project_id, user_id, key, now, now)
-                )
-            for uploaded in request.files.getlist(f"{key}_files"):
-                if not uploaded or not uploaded.filename:
-                    continue
-                if not allowed_project_file(uploaded.filename):
-                    skipped_files.append(uploaded.filename)
-                    continue
-                raw = uploaded.read()
-                if not raw:
-                    continue
-                storage_path = upload_bytes_to_storage(
-                    raw,
-                    uploaded.filename,
-                    upload_content_type(uploaded.filename, uploaded.content_type)
-                )
-                conn.execute(
-                    """
-                    INSERT INTO project_files
-                    (project_id, folder_key, storage_path, original_filename, file_size, uploaded_by, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (project_id, key, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
-                )
-                uploaded_count += 1
+            conn.execute(
+                """
+                INSERT INTO project_files
+                (project_id, folder_key, storage_path, original_filename, file_size, uploaded_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (project_id, target_folder_key, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
+            )
+            uploaded_count += 1
         conn.commit()
         conn.close()
-        message = "Project file folder access saved."
+        message = "Project files updated."
         if uploaded_count:
             message += f" {uploaded_count} file(s) uploaded."
+        elif not skipped_files:
+            message += " Choose at least one file to upload."
         if skipped_files:
             message += " Unsupported file(s) skipped: " + ", ".join(skipped_files[:5])
         flash(message)
-        return redirect(url_for("project_files", project_id=project_id))
+        return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key))
 
     file_rows = conn.execute(
         """
@@ -5235,34 +5199,33 @@ def project_files(project_id):
         """,
         (project_id,)
     ).fetchall()
-    permission_rows = conn.execute(
-        """
-        SELECT folder_key, user_id
-        FROM project_file_permissions
-        WHERE project_id = %s
-          AND COALESCE(can_view, TRUE) = TRUE
-        """,
-        (project_id,)
-    ).fetchall()
     conn.close()
     files_by_folder = {}
     for row in file_rows:
-        files_by_folder.setdefault(row["folder_key"], []).append(row)
-    folder_access = {}
-    for row in permission_rows:
-        folder_access.setdefault(row["folder_key"], []).append(row["user_id"])
+        if row["folder_key"] in allowed_folder_keys:
+            files_by_folder.setdefault(row["folder_key"], []).append(row)
     visible_folders = [
         folder for folder in PROJECT_FILE_FOLDERS
         if folder["key"] in allowed_folder_keys
     ]
+    selected_folder_key = request.args.get("folder", "").strip()
+    if not visible_folders:
+        selected_folder_key = ""
+    elif selected_folder_key not in {folder["key"] for folder in visible_folders}:
+        selected_folder_key = visible_folders[0]["key"]
+    selected_folder = next((folder for folder in visible_folders if folder["key"] == selected_folder_key), None)
+    folder_file_counts = {
+        folder["key"]: len(files_by_folder.get(folder["key"], []))
+        for folder in visible_folders
+    }
     return render_template(
         "project_files.html",
         project=project,
         project_file_folders=visible_folders,
-        project_file_providers=PROJECT_FILE_PROVIDERS,
-        project_file_users=project_file_users,
-        folder_access=folder_access,
-        files_by_folder=files_by_folder
+        files_by_folder=files_by_folder,
+        selected_folder=selected_folder,
+        selected_folder_key=selected_folder_key,
+        folder_file_counts=folder_file_counts
     )
 
 
@@ -5282,11 +5245,12 @@ def delete_project_file(project_id, file_id):
         conn.close()
         flash("Project file not found.")
         return redirect(url_for("project_files", project_id=project_id))
+    folder_key = request.form.get("folder_key") or file_row.get("folder_key") or ""
     conn.execute("DELETE FROM project_files WHERE id = %s", (file_id,))
     conn.commit()
     conn.close()
     flash("Project file removed from ProjectONus.")
-    return redirect(url_for("project_files", project_id=project_id))
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
 
 
 
@@ -9075,7 +9039,22 @@ def settings():
                 flash("D-Tools Cloud API settings saved.")
         elif action == "permissions":
             user_id = int(request.form.get("user_id"))
+            user = conn.execute("SELECT id, role FROM users WHERE id = %s", (user_id,)).fetchone()
+            accessible_project_rows = conn.execute(
+                "SELECT project_id FROM project_permissions WHERE user_id = %s",
+                (user_id,)
+            ).fetchall()
+            accessible_project_ids = {row["project_id"] for row in accessible_project_rows}
+            valid_folder_keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+            selected_file_access = []
+            if user and user.get("role") != "admin":
+                for project_id in accessible_project_ids:
+                    for folder_key in request.form.getlist(f"project_file_folders_{project_id}"):
+                        if folder_key in valid_folder_keys:
+                            selected_file_access.append((project_id, folder_key))
             values = {k: (k in request.form) for k in PERMISSION_KEYS}
+            if "view_project_files" in values:
+                values["view_project_files"] = bool(selected_file_access)
             conn.execute(
                 """
                 INSERT INTO user_permissions
@@ -9101,8 +9080,22 @@ def settings():
                 """,
                 (user_id, *[values[k] for k in PERMISSION_KEYS])
             )
+            conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
+            now = utc_now_iso()
+            for project_id, folder_key in selected_file_access:
+                conn.execute(
+                    """
+                    INSERT INTO project_file_permissions
+                    (project_id, user_id, folder_key, can_view, created_at, updated_at)
+                    VALUES (%s, %s, %s, TRUE, %s, %s)
+                    ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
+                        can_view = TRUE,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (project_id, user_id, folder_key, now, now)
+                )
             conn.commit()
-            flash("User permissions updated.")
+            flash("User permissions and project file folder access updated.")
         elif action == "project_access":
             redirect_tab = "project_access"
             user_id = int(request.form.get("user_id"))
@@ -9134,6 +9127,14 @@ def settings():
                         """,
                         (user_id, project_id, datetime.now().isoformat())
                     )
+                if selected_project_ids:
+                    placeholders = ", ".join(["%s"] * len(selected_project_ids))
+                    conn.execute(
+                        f"DELETE FROM project_file_permissions WHERE user_id = %s AND project_id NOT IN ({placeholders})",
+                        (user_id, *selected_project_ids)
+                    )
+                else:
+                    conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
                 conn.commit()
                 flash("Project access updated.")
         if redirect_tab:
@@ -9147,17 +9148,37 @@ def settings():
     projects = conn.execute("SELECT id, name, customer_name, customer_address FROM projects ORDER BY name").fetchall()
     permissions = conn.execute("SELECT * FROM user_permissions").fetchall()
     project_permissions = conn.execute("SELECT user_id, project_id FROM project_permissions").fetchall()
+    project_file_permissions = conn.execute(
+        """
+        SELECT user_id, project_id, folder_key
+        FROM project_file_permissions
+        WHERE COALESCE(can_view, TRUE) = TRUE
+        """
+    ).fetchall()
     conn.close()
     perm_map = {p["user_id"]: p for p in permissions}
     project_access_map = {}
     for row in project_permissions:
         project_access_map.setdefault(row["user_id"], set()).add(row["project_id"])
+    project_file_access_map = {}
+    for row in project_file_permissions:
+        project_file_access_map.setdefault(row["user_id"], {}).setdefault(row["project_id"], set()).add(row["folder_key"])
+    file_project_map = {}
+    for u in users:
+        if u["role"] == "admin":
+            file_project_map[u["id"]] = projects
+        else:
+            allowed_projects = project_access_map.get(u["id"], set())
+            file_project_map[u["id"]] = [project for project in projects if project["id"] in allowed_projects]
     return render_template(
         "settings.html",
         users=users,
         projects=projects,
         perm_map=perm_map,
         project_access_map=project_access_map,
+        project_file_access_map=project_file_access_map,
+        file_project_map=file_project_map,
+        project_file_folders=PROJECT_FILE_FOLDERS,
         active_tab=active_tab,
         permission_keys=PERMISSION_KEYS
     )

@@ -11,6 +11,11 @@
         .settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
         .projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
         .projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+        .fileAccessSection{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+        .fileAccessProject{border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;background:rgba(255,255,255,.03)}
+        .fileAccessProject h5{margin:0 0 10px;font-size:1rem}
+        .fileAccessFolders{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+        .fileAccessFolders label{border:1px solid var(--border);border-radius:8px;padding:9px;background:var(--card);font-weight:700}
         @media(max-width:760px){.settingsTabs{display:none}}
     </style>
     <div class="settingsTabs desktop-only">
@@ -150,6 +155,34 @@
                     <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
                     <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
                     <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
+                </div>
+                <div class="fileAccessSection">
+                    <h5>Project Files Access</h5>
+                    <p class="muted">Choose which project folders this user can open. Add project access first if a project is not listed here.</p>
+                    {% if u.role == "admin" %}
+                        <p class="muted">Admin accounts can see every project file folder.</p>
+                    {% else %}
+                        {% set file_projects = file_project_map.get(u.id, []) %}
+                        {% set user_file_access = project_file_access_map.get(u.id, {}) %}
+                        {% if file_projects %}
+                            {% for project in file_projects %}
+                                {% set selected_folders = user_file_access.get(project.id, []) %}
+                                <div class="fileAccessProject">
+                                    <h5>{{ project.name }}</h5>
+                                    <div class="fileAccessFolders">
+                                        {% for folder in project_file_folders %}
+                                            <label>
+                                                <input type="checkbox" name="project_file_folders_{{ project.id }}" value="{{ folder.key }}" {% if folder.key in selected_folders %}checked{% endif %}>
+                                                {{ folder.label }}
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p class="muted">No project access yet. Add this user to a project under the Project Access tab first.</p>
+                        {% endif %}
+                    {% endif %}
                 </div>
                 <button type="submit">Save Permissions for {{ u.name }}</button>
             </form>
