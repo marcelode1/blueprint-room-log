@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:420px;margin:auto;">
+    <h2>Reset Mobile PIN</h2>
+    <form method="post">
+        <label>Email</label>
+        <input name="email" type="email" required>
+        <button type="submit">Send Reset Link</button>
+    </form>
+    {% if reset_link %}
+        <p class="muted">Email is not configured, so use this reset link:</p>
+        <a class="btn-link" href="{{ reset_link }}">Create New PIN</a>
+    {% endif %}
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_login') }}">Back to Mobile Login</a>
+</div>
+{% endblock %}

@@ -4029,6 +4029,9 @@ def mobile_login():
         email = request.form["email"].strip().lower()
         pin = request.form["pin"].strip()
         stay_logged_in = request.form.get("stay_logged_in") == "on"
+        if not re.fullmatch(r"\d{4}", pin):
+            flash("PIN must be exactly 4 digits.")
+            return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
         conn = db()
         user = conn.execute(
             "SELECT * FROM users WHERE email = %s AND role <> 'admin'",
@@ -4043,7 +4046,123 @@ def mobile_login():
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
         return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
+    invite_token = request.args.get("invite", "").strip()
+    if invite_token:
+        return redirect(url_for("mobile_create_pin", token=invite_token))
     return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower(), stay_logged_in=True)
+
+
+@app.route("/mobile/create-pin/<token>", methods=["GET", "POST"])
+def mobile_create_pin(token):
+    conn = db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE role <> 'admin' AND invite_token = %s",
+        (token,)
+    ).fetchone()
+    if not user:
+        conn.close()
+        flash("This invitation link is invalid or has already been used.")
+        return redirect(url_for("mobile_login"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+        stay_logged_in = request.form.get("stay_logged_in") == "on"
+        if not re.fullmatch(r"\d{4}", pin):
+            flash("PIN must be exactly 4 digits.")
+        elif pin != confirm_pin:
+            flash("PINs do not match.")
+        else:
+            conn.execute(
+                """
+                UPDATE users
+                SET pin_hash = %s,
+                    invite_token = NULL,
+                    invite_sent_at = NULL,
+                    reset_token = NULL,
+                    reset_created_at = NULL
+                WHERE id = %s
+                """,
+                (generate_password_hash(pin), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            session.permanent = stay_logged_in
+            session["user_id"] = user["id"]
+            session["name"] = user["name"]
+            session["role"] = user["role"]
+            flash("Your mobile PIN was created.")
+            return redirect(url_for("mobile_home"))
+    conn.close()
+    return render_template("mobile_create_pin.html", user=user, token=token, stay_logged_in=True)
+
+
+@app.route("/mobile/forgot-pin", methods=["GET", "POST"])
+def mobile_forgot_pin():
+    reset_link = ""
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        token = new_token()
+        conn = db()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = %s AND role <> 'admin'",
+            (email,)
+        ).fetchone()
+        if user:
+            conn.execute(
+                "UPDATE users SET reset_token = %s, reset_created_at = %s WHERE id = %s",
+                (token, datetime.now().isoformat(), user["id"])
+            )
+            conn.commit()
+            reset_link = external_url("mobile_reset_pin", token=token)
+            sent = send_email(
+                user["email"],
+                "Reset your ProjectONus mobile PIN",
+                "Use this link to create a new 4-digit mobile PIN:\n\n" + reset_link
+            )
+            if sent:
+                flash("PIN reset email sent.")
+            else:
+                flash("Email could not be sent because SMTP is not configured or failed.")
+        else:
+            flash("If that mobile user exists, a PIN reset email will be sent.")
+        conn.close()
+    return render_template("mobile_forgot_pin.html", reset_link=reset_link)
+
+
+@app.route("/mobile/reset-pin/<token>", methods=["GET", "POST"])
+def mobile_reset_pin(token):
+    conn = db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE role <> 'admin' AND reset_token = %s",
+        (token,)
+    ).fetchone()
+    if not user:
+        conn.close()
+        flash("This PIN reset link is invalid or has already been used.")
+        return redirect(url_for("mobile_login"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+        stay_logged_in = request.form.get("stay_logged_in") == "on"
+        if not re.fullmatch(r"\d{4}", pin):
+            flash("PIN must be exactly 4 digits.")
+        elif pin != confirm_pin:
+            flash("PINs do not match.")
+        else:
+            conn.execute(
+                "UPDATE users SET pin_hash = %s, reset_token = NULL, reset_created_at = NULL WHERE id = %s",
+                (generate_password_hash(pin), user["id"])
+            )
+            conn.commit()
+            conn.close()
+            session.permanent = stay_logged_in
+            session["user_id"] = user["id"]
+            session["name"] = user["name"]
+            session["role"] = user["role"]
+            flash("Your mobile PIN was updated.")
+            return redirect(url_for("mobile_home"))
+    conn.close()
+    return render_template("mobile_reset_pin.html", user=user, token=token, stay_logged_in=True)
 
 
 @app.route("/admin/setup", methods=["GET", "POST"])
@@ -4196,13 +4315,8 @@ def users():
             role = request.form.get("role", "worker")
             if role not in ["customer", "worker"]:
                 role = "worker"
-            pin = request.form["pin"].strip()
             phone_number = request.form.get("phone_number", "").strip()
             sms_enabled = "sms_enabled" in request.form
-            if len(pin) < 4:
-                conn.close()
-                flash("PIN must be at least 4 digits.")
-                return redirect(url_for("users"))
 
             invite_token = new_token()
             conn.execute(
@@ -4213,7 +4327,7 @@ def users():
                     phone_number,
                     sms_enabled,
                     unusable_password_hash(),
-                    generate_password_hash(pin),
+                    None,
                     invite_token,
                     datetime.now().isoformat(),
                     role,
@@ -4221,16 +4335,16 @@ def users():
                 )
             ).fetchone()
             conn.commit()
-            invite_link = external_url("mobile_login", email=email, invite=invite_token)
+            invite_link = external_url("mobile_create_pin", token=invite_token)
             sent = send_email(
                 email,
                 "You are invited to ProjectONus",
-                "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+                "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
             )
             if sent:
-                flash("User added and mobile invitation email sent. Share the PIN with the user.")
+                flash("User added and mobile invitation email sent.")
             else:
-                flash("User added. Email could not be sent, so share the mobile link and PIN with the user: " + invite_link)
+                flash("User added. Email could not be sent, so share this setup link with the user: " + invite_link)
         except Exception:
             conn.rollback()
             flash("That email may already exist.")
@@ -4243,33 +4357,29 @@ def users():
 @app.route("/users/<int:user_id>/pin", methods=["POST"])
 @admin_required
 def update_user_pin(user_id):
-    pin = request.form.get("pin", "").strip()
-    if len(pin) < 4:
-        flash("PIN must be at least 4 digits.")
-        return redirect(url_for("users"))
     conn = db()
     user = conn.execute("SELECT * FROM users WHERE id = %s AND role <> 'admin'", (user_id,)).fetchone()
     if not user:
         conn.close()
         flash("User not found.")
         return redirect(url_for("users"))
-    invite_token = user.get("invite_token") or new_token()
+    invite_token = new_token()
     conn.execute(
-        "UPDATE users SET pin_hash = %s, invite_token = %s, invite_sent_at = %s WHERE id = %s",
-        (generate_password_hash(pin), invite_token, datetime.now().isoformat(), user_id)
+        "UPDATE users SET invite_token = %s, invite_sent_at = %s WHERE id = %s",
+        (invite_token, datetime.now().isoformat(), user_id)
     )
     conn.commit()
-    invite_link = external_url("mobile_login", email=user["email"], invite=invite_token)
+    invite_link = external_url("mobile_create_pin", token=invite_token)
     sent = send_email(
         user["email"],
-        "Your ProjectONus mobile invitation",
-        "Open this mobile link and sign in with your email and the PIN provided by the admin:\n\n" + invite_link
+        "Create your ProjectONus mobile PIN",
+        "Open this mobile link to create or replace your own 4-digit ProjectONus PIN:\n\n" + invite_link
     )
     conn.close()
     if sent:
-        flash("PIN updated and invitation email sent. Share the PIN with the user.")
+        flash("PIN setup invitation sent.")
     else:
-        flash("PIN updated. Email could not be sent, so share this mobile link with the user: " + invite_link)
+        flash("Email could not be sent, so share this PIN setup link with the user: " + invite_link)
     return redirect(url_for("users"))
 
 
