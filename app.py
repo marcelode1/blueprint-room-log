@@ -69,6 +69,7 @@ PROJECT_FILE_FOLDERS = [
     {"key": "invoices", "label": "Invoices"},
     {"key": "proposal", "label": "Proposal"},
     {"key": "notes", "label": "Notes"},
+    {"key": "equipment_specs", "label": "Equipment Specs"},
 ]
 PROJECT_FILE_PROVIDERS = {
     "onedrive": "OneDrive / SharePoint",
@@ -960,7 +961,7 @@ def init_db():
                 SELECT project_permissions.project_id, project_permissions.user_id, folders.folder_key, TRUE, CURRENT_TIMESTAMP::text, CURRENT_TIMESTAMP::text
                 FROM project_permissions
                 JOIN user_permissions ON user_permissions.user_id = project_permissions.user_id
-                CROSS JOIN (VALUES ('plans'), ('invoices'), ('proposal'), ('notes')) AS folders(folder_key)
+                CROSS JOIN (VALUES ('plans'), ('invoices'), ('proposal'), ('notes'), ('equipment_specs')) AS folders(folder_key)
                 WHERE COALESCE(user_permissions.view_project_files, FALSE) = TRUE
                 ON CONFLICT (project_id, user_id, folder_key) DO NOTHING;
 
