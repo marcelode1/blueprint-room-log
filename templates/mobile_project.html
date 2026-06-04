@@ -16,11 +16,11 @@
     {% endif %}
     <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id, next=request.full_path) }}">Clock In / Clock Out</a>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
-    {% if can_view_project_files() %}
-        <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
-    {% endif %}
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
+    {% endif %}
+    {% if can_view_project_files(project.id) %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
     {% endif %}
     <a class="btn-link" href="{{ url_for('my_tasks', mode='search', project_id=project.id, open_only=1) }}">Open Tasks</a>
     {% if is_main_admin() %}

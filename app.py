@@ -657,6 +657,18 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_file_permissions (
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        folder_key TEXT NOT NULL,
+        can_view BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        PRIMARY KEY (project_id, user_id, folder_key)
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notes (
         id SERIAL PRIMARY KEY,
         room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -939,6 +951,25 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, view_contact_info BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE, view_project_files BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
+        "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'project_file_permissions_backfilled_v1') THEN
+                INSERT INTO project_file_permissions (project_id, user_id, folder_key, can_view, created_at, updated_at)
+                SELECT project_permissions.project_id, project_permissions.user_id, folders.folder_key, TRUE, CURRENT_TIMESTAMP::text, CURRENT_TIMESTAMP::text
+                FROM project_permissions
+                JOIN user_permissions ON user_permissions.user_id = project_permissions.user_id
+                CROSS JOIN (VALUES ('plans'), ('invoices'), ('proposal'), ('notes')) AS folders(folder_key)
+                WHERE COALESCE(user_permissions.view_project_files, FALSE) = TRUE
+                ON CONFLICT (project_id, user_id, folder_key) DO NOTHING;
+
+                INSERT INTO app_settings (key, value)
+                VALUES ('project_file_permissions_backfilled_v1', 'true')
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+            END IF;
+        END $$;
+        """,
         "UPDATE tasks SET require_picture = FALSE WHERE COALESCE(require_picture, FALSE) = TRUE",
         "UPDATE user_permissions SET require_task_picture = FALSE WHERE COALESCE(require_task_picture, FALSE) = TRUE",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -1630,8 +1661,39 @@ def has_perm(permission):
     return bool(get_user_permissions().get(permission))
 
 
-def can_view_project_files():
-    return is_main_admin() or has_perm("view_project_files")
+def project_file_access_keys(conn, project_id, user_id=None):
+    if is_main_admin():
+        return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+    uid = user_id or session.get("user_id")
+    if not uid or not project_id:
+        return set()
+    rows = conn.execute(
+        """
+        SELECT folder_key
+        FROM project_file_permissions
+        WHERE project_id = %s
+          AND user_id = %s
+          AND COALESCE(can_view, TRUE) = TRUE
+        """,
+        (project_id, uid)
+    ).fetchall()
+    valid = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+    return {row["folder_key"] for row in rows if row.get("folder_key") in valid}
+
+
+def can_view_project_files(project_id=None):
+    if is_main_admin():
+        return True
+    if not project_id:
+        return False
+    try:
+        conn = db()
+        allowed = bool(project_file_access_keys(conn, project_id))
+        conn.close()
+        return allowed
+    except Exception as e:
+        print("Project file permission lookup failed:", e)
+        return False
 
 
 def project_file_provider_label(provider):
@@ -4888,17 +4950,33 @@ def project_files(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
-    if not can_view_project_files():
+    allowed_folder_keys = project_file_access_keys(conn, project_id)
+    if not allowed_folder_keys:
         conn.close()
         flash("You do not have permission to view project files.")
         return redirect(url_for("project", project_id=project_id))
 
+    project_file_users = []
+    if is_main_admin():
+        project_file_users = conn.execute(
+            """
+            SELECT users.id, users.name, users.email
+            FROM users
+            JOIN project_permissions ON project_permissions.user_id = users.id
+            WHERE project_permissions.project_id = %s
+              AND users.role <> 'admin'
+            ORDER BY users.name, users.email
+            """,
+            (project_id,)
+        ).fetchall()
+
     if request.method == "POST":
         if not is_main_admin():
             conn.close()
-            flash("Only the main admin can manage project file links.")
+            flash("Only the main admin can manage project file access.")
             return redirect(url_for("project_files", project_id=project_id))
         now = utc_now_iso()
+        valid_user_ids = {user["id"] for user in project_file_users}
         for folder in PROJECT_FILE_FOLDERS:
             key = folder["key"]
             provider = request.form.get(f"{key}_provider", "other").strip()
@@ -4906,6 +4984,28 @@ def project_files(project_id):
                 provider = "other"
             folder_url = normalize_project_file_url(request.form.get(f"{key}_url"))
             notes = request.form.get(f"{key}_notes", "").strip()
+            selected_user_ids = set()
+            for raw_user_id in request.form.getlist(f"{key}_user_ids"):
+                try:
+                    selected_user_ids.add(int(raw_user_id))
+                except Exception:
+                    continue
+            conn.execute(
+                "DELETE FROM project_file_permissions WHERE project_id = %s AND folder_key = %s",
+                (project_id, key)
+            )
+            for user_id in sorted(selected_user_ids & valid_user_ids):
+                conn.execute(
+                    """
+                    INSERT INTO project_file_permissions
+                    (project_id, user_id, folder_key, can_view, created_at, updated_at)
+                    VALUES (%s, %s, %s, TRUE, %s, %s)
+                    ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
+                        can_view = TRUE,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (project_id, user_id, key, now, now)
+                )
             if not folder_url:
                 conn.execute(
                     "DELETE FROM project_file_links WHERE project_id = %s AND folder_key = %s",
@@ -4927,20 +5027,38 @@ def project_files(project_id):
             )
         conn.commit()
         conn.close()
-        flash("Project file links saved.")
+        flash("Project file links and folder access saved.")
         return redirect(url_for("project_files", project_id=project_id))
 
     rows = conn.execute(
         "SELECT * FROM project_file_links WHERE project_id = %s ORDER BY folder_key",
         (project_id,)
     ).fetchall()
+    permission_rows = conn.execute(
+        """
+        SELECT folder_key, user_id
+        FROM project_file_permissions
+        WHERE project_id = %s
+          AND COALESCE(can_view, TRUE) = TRUE
+        """,
+        (project_id,)
+    ).fetchall()
     conn.close()
     file_links = {row["folder_key"]: row for row in rows}
+    folder_access = {}
+    for row in permission_rows:
+        folder_access.setdefault(row["folder_key"], []).append(row["user_id"])
+    visible_folders = [
+        folder for folder in PROJECT_FILE_FOLDERS
+        if folder["key"] in allowed_folder_keys
+    ]
     return render_template(
         "project_files.html",
         project=project,
-        project_file_folders=PROJECT_FILE_FOLDERS,
+        project_file_folders=visible_folders,
         project_file_providers=PROJECT_FILE_PROVIDERS,
+        project_file_users=project_file_users,
+        folder_access=folder_access,
         file_links=file_links
     )
 

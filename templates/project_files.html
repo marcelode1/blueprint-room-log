@@ -3,8 +3,8 @@
 <div class="card">
     <h2>Files</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
-    <p class="muted">Open the linked cloud folders for this project.</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+    <p class="muted">Open the cloud folders you have permission to view.</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
 </div>
 
 <div class="card">
@@ -17,7 +17,7 @@
                 {% if link and link.folder_url %}
                     <p><strong>Provider:</strong> {{ project_file_provider_label(link.provider) }}</p>
                     {% if link.notes %}<p class="muted">{{ link.notes }}</p>{% endif %}
-                    <a class="btn-link" target="_blank" rel="noopener" href="{{ link.folder_url }}">Open {{ folder.label }}</a>
+                    <a class="btn-link" target="_blank" rel="noopener" href="{{ link.folder_url }}">Open Folder</a>
                 {% else %}
                     <p class="muted">No folder link has been added yet.</p>
                     {% if is_main_admin() %}
@@ -49,6 +49,20 @@
                     <label>Notes</label>
                     <textarea name="{{ folder.key }}_notes" rows="2" placeholder="Optional note for this folder">{{ link.notes if link else '' }}</textarea>
                     <p class="muted">Leave the link blank and save to remove this folder link.</p>
+                    <div class="projectFileAccess">
+                        <strong>Allowed Users</strong>
+                        {% if project_file_users %}
+                            {% set allowed_users = folder_access.get(folder.key, []) %}
+                            {% for user in project_file_users %}
+                                <label class="fileUserCheck">
+                                    <input type="checkbox" name="{{ folder.key }}_user_ids" value="{{ user.id }}" {% if user.id in allowed_users %}checked{% endif %}>
+                                    <span>{{ user.name }}{% if user.email %} - {{ user.email }}{% endif %}</span>
+                                </label>
+                            {% endfor %}
+                        {% else %}
+                            <p class="muted">No workers have project access yet. Add them under Settings > Project Access first.</p>
+                        {% endif %}
+                    </div>
                 </section>
             {% endfor %}
         </div>
@@ -58,7 +72,7 @@
 {% endif %}
 
 <style>
-.projectFileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.projectFilePanel{border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.03)}.projectFilePanel h4{margin:0 0 10px}.projectFilePanel p{margin:0 0 10px}
+.projectFileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.projectFilePanel{border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.03)}.projectFilePanel h4{margin:0 0 10px}.projectFilePanel p{margin:0 0 10px}.projectFileAccess{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}.fileUserCheck{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-weight:700}.fileUserCheck input{width:auto;min-height:auto;margin:3px 0 0}
 @media(max-width:760px){.projectFileGrid{grid-template-columns:1fr}.projectFilePanel{padding:12px}}
 </style>
 {% endblock %}
