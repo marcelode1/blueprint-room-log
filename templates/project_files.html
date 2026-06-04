@@ -68,9 +68,14 @@
             {% if is_main_admin() %}
                 <form method="post" enctype="multipart/form-data" class="projectFileUploadBox">
                     <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
-                    <label>Add Files to {{ selected_folder.label }}</label>
-                    <input id="projectFilesInput" name="project_files" type="file" multiple>
-                    <p class="muted" id="projectFilesChosen">No files selected.</p>
+                    <p class="projectFileUploadTitle">Add Files to {{ selected_folder.label }}</p>
+                    <div class="projectFileDropZone" id="projectFileDropZone" tabindex="0" role="button" aria-controls="projectFilesInput">
+                        <strong>Drag files here</strong>
+                        <span>or</span>
+                        <label class="btn-link btn-secondary projectFileChooseButton" for="projectFilesInput">Choose your files</label>
+                        <input id="projectFilesInput" class="projectFileInput" name="project_files" type="file" multiple>
+                    </div>
+                    <div class="projectFileChosenList muted" id="projectFilesChosen">No files selected.</div>
                     <button type="submit">Upload Files</button>
                 </form>
             {% endif %}
@@ -84,17 +89,57 @@
 </div>
 
 <style>
-.projectFileExplorer{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}.projectFileFolders{display:grid}.projectFileFolder{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 16px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);font-weight:700}.projectFileFolder:last-child{border-bottom:0}.projectFileFolder small{min-width:32px;text-align:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--card)}.projectFileFolder.active{background:var(--primary);color:white}.projectFileFolder.active small{background:white;color:var(--primary);border-color:white}.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadBox button{max-width:260px}
-@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileTree{border:0;background:transparent}.projectFileRoot{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;background:rgba(255,255,255,.03)}.projectFileFolders{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.projectFileFolder{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px}.projectFilePaneHeader{display:grid}.projectFilePaneHeader .btn-link{width:100%;margin:0}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileUploadBox button{max-width:none}}
+.projectFileExplorer{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}.projectFileFolders{display:grid}.projectFileFolder{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 16px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);font-weight:700}.projectFileFolder:last-child{border-bottom:0}.projectFileFolder small{min-width:32px;text-align:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--card)}.projectFileFolder.active{background:var(--primary);color:white}.projectFileFolder.active small{background:white;color:var(--primary);border-color:white}.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
+@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileTree{border:0;background:transparent}.projectFileRoot{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;background:rgba(255,255,255,.03)}.projectFileFolders{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.projectFileFolder{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px}.projectFilePaneHeader{display:grid}.projectFilePaneHeader .btn-link{width:100%;margin:0}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
 </style>
 
 <script>
 const projectFilesInput=document.getElementById("projectFilesInput");
 const projectFilesChosen=document.getElementById("projectFilesChosen");
-if(projectFilesInput&&projectFilesChosen){
-    projectFilesInput.addEventListener("change",()=>{
+const projectFileDropZone=document.getElementById("projectFileDropZone");
+function updateProjectFilesChosen(){
+    if(projectFilesInput&&projectFilesChosen){
         const files=Array.from(projectFilesInput.files||[]);
         projectFilesChosen.textContent=files.length ? files.map(file=>file.name).join(", ") : "No files selected.";
+    }
+}
+if(projectFilesInput&&projectFilesChosen){
+    projectFilesInput.addEventListener("change",updateProjectFilesChosen);
+}
+if(projectFileDropZone&&projectFilesInput){
+    projectFileDropZone.addEventListener("click",event=>{
+        if(event.target.tagName!=="LABEL")projectFilesInput.click();
+    });
+    projectFileDropZone.addEventListener("keydown",event=>{
+        if(event.key==="Enter"||event.key===" "){
+            event.preventDefault();
+            projectFilesInput.click();
+        }
+    });
+    ["dragenter","dragover"].forEach(eventName=>{
+        projectFileDropZone.addEventListener(eventName,event=>{
+            event.preventDefault();
+            projectFileDropZone.classList.add("dragging");
+        });
+    });
+    ["dragleave","drop"].forEach(eventName=>{
+        projectFileDropZone.addEventListener(eventName,event=>{
+            event.preventDefault();
+            projectFileDropZone.classList.remove("dragging");
+        });
+    });
+    projectFileDropZone.addEventListener("drop",event=>{
+        const files=event.dataTransfer&&event.dataTransfer.files;
+        if(!files||!files.length)return;
+        try{
+            const transfer=new DataTransfer();
+            Array.from(projectFilesInput.files||[]).forEach(file=>transfer.items.add(file));
+            Array.from(files).forEach(file=>transfer.items.add(file));
+            projectFilesInput.files=transfer.files;
+        }catch(error){
+            projectFilesInput.files=files;
+        }
+        updateProjectFilesChosen();
     });
 }
 </script>
