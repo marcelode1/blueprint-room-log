@@ -60,6 +60,7 @@ ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg", "mp4", "mpeg", "mpga", "fla
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
 ALLOWED_VENDOR_DOCUMENTS = {"pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "png", "jpg", "jpeg", "webp"}
+ALLOWED_PROJECT_FILES = ALLOWED_VENDOR_DOCUMENTS | {"ppt", "pptx", "rtf", "dwg", "zip"}
 CONTENT_TYPES_BY_EXT = {
     "heic": "image/heic",
     "heif": "image/heif",
@@ -102,6 +103,10 @@ def allowed_logo(filename):
 
 def allowed_vendor_document(filename):
     return file_ext(filename) in ALLOWED_VENDOR_DOCUMENTS
+
+
+def allowed_project_file(filename):
+    return file_ext(filename) in ALLOWED_PROJECT_FILES
 
 
 def upload_content_type(filename, fallback="application/octet-stream"):
@@ -670,6 +675,19 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_files (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        folder_key TEXT NOT NULL,
+        storage_path TEXT NOT NULL,
+        original_filename TEXT,
+        file_size INTEGER,
+        uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS notes (
         id SERIAL PRIMARY KEY,
         room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -953,6 +971,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
+        "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         """
         DO $$
         BEGIN
@@ -1702,6 +1721,22 @@ def project_file_provider_label(provider):
     return PROJECT_FILE_PROVIDERS.get(key, "Other Link")
 
 
+def format_file_size(size):
+    try:
+        value = float(size or 0)
+    except Exception:
+        return ""
+    units = ["B", "KB", "MB", "GB"]
+    unit = units[0]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            break
+        value /= 1024
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.1f} {unit}"
+
+
 def normalize_project_file_url(value):
     text = str(value or "").strip()
     if not text:
@@ -1803,7 +1838,7 @@ def admin_unread_count():
         return 0
     try:
         conn = db()
-        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')").fetchone()
+        row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'task_assigned'").fetchone()
         conn.close()
         return row["c"] if row else 0
     except Exception:
@@ -1816,7 +1851,7 @@ def unread_notification_count():
     try:
         conn = db()
         if session.get("role") == "admin":
-            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')").fetchone()
+            row = conn.execute("SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'task_assigned'").fetchone()
         else:
             row = conn.execute(
                 """
@@ -1842,7 +1877,7 @@ def notification_summary():
     conn = db()
     if session.get("role") == "admin":
         count_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')"
+            "SELECT COUNT(*) AS c FROM login_events WHERE is_read = FALSE AND event_type <> 'task_assigned'"
         ).fetchone()
         latest = conn.execute(
             """
@@ -1855,7 +1890,7 @@ def notification_summary():
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
             LEFT JOIN rooms ON login_events.room_id = rooms.id
             WHERE login_events.is_read = FALSE
-              AND login_events.event_type NOT IN ('login', 'task_assigned')
+              AND login_events.event_type <> 'task_assigned'
             ORDER BY login_events.id DESC
             LIMIT 1
             """
@@ -1919,6 +1954,35 @@ def add_notification(conn, user_id, user_name, user_email, role, event_type, pro
         """,
         (user_id, project_id, task_id, room_id, user_name, user_email, role, event_type, message, utc_now_iso())
     )
+
+
+def record_login_notification(user, area="app"):
+    if not user:
+        return
+    try:
+        conn = db()
+        role = user.get("role") or ""
+        name = user.get("name") or user.get("email") or "User"
+        message = f"{name} logged in to ProjectONus"
+        if area:
+            message += f" ({area})."
+        else:
+            message += "."
+        add_notification(
+            conn,
+            user.get("id"),
+            user.get("name"),
+            user.get("email"),
+            role,
+            "login",
+            None,
+            None,
+            message
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Login notification skipped:", e)
 
 
 def notification_target_url(conn, event):
@@ -3556,6 +3620,7 @@ def utility_processor():
         can_edit_inventory=can_edit_inventory,
         can_view_project_files=can_view_project_files,
         project_file_provider_label=project_file_provider_label,
+        format_file_size=format_file_size,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
@@ -4018,6 +4083,7 @@ def login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            record_login_notification(user, "admin")
             return redirect(url_for("index"))
         flash("Invalid admin login.")
     return render_template("login.html", admin_exists=admin_exists)
@@ -4043,6 +4109,7 @@ def mobile_login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            record_login_notification(user, "mobile")
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
         return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
@@ -4090,6 +4157,7 @@ def mobile_create_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            record_login_notification(user, "mobile PIN setup")
             flash("Your mobile PIN was created.")
             return redirect(url_for("mobile_home"))
     conn.close()
@@ -4159,6 +4227,7 @@ def mobile_reset_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            record_login_notification(user, "mobile PIN reset")
             flash("Your mobile PIN was updated.")
             return redirect(url_for("mobile_home"))
     conn.close()
@@ -5088,13 +5157,19 @@ def project_files(project_id):
             return redirect(url_for("project_files", project_id=project_id))
         now = utc_now_iso()
         valid_user_ids = {user["id"] for user in project_file_users}
-        for folder in PROJECT_FILE_FOLDERS:
+        uploaded_count = 0
+        skipped_files = []
+        target_folder_key = request.form.get("folder_key", "").strip()
+        folders_to_save = [
+            folder for folder in PROJECT_FILE_FOLDERS
+            if not target_folder_key or folder["key"] == target_folder_key
+        ]
+        if target_folder_key and not folders_to_save:
+            conn.close()
+            flash("File folder not found.")
+            return redirect(url_for("project_files", project_id=project_id))
+        for folder in folders_to_save:
             key = folder["key"]
-            provider = request.form.get(f"{key}_provider", "other").strip()
-            if provider not in PROJECT_FILE_PROVIDERS:
-                provider = "other"
-            folder_url = normalize_project_file_url(request.form.get(f"{key}_url"))
-            notes = request.form.get(f"{key}_notes", "").strip()
             selected_user_ids = set()
             for raw_user_id in request.form.getlist(f"{key}_user_ids"):
                 try:
@@ -5117,32 +5192,47 @@ def project_files(project_id):
                     """,
                     (project_id, user_id, key, now, now)
                 )
-            if not folder_url:
-                conn.execute(
-                    "DELETE FROM project_file_links WHERE project_id = %s AND folder_key = %s",
-                    (project_id, key)
+            for uploaded in request.files.getlist(f"{key}_files"):
+                if not uploaded or not uploaded.filename:
+                    continue
+                if not allowed_project_file(uploaded.filename):
+                    skipped_files.append(uploaded.filename)
+                    continue
+                raw = uploaded.read()
+                if not raw:
+                    continue
+                storage_path = upload_bytes_to_storage(
+                    raw,
+                    uploaded.filename,
+                    upload_content_type(uploaded.filename, uploaded.content_type)
                 )
-                continue
-            conn.execute(
-                """
-                INSERT INTO project_file_links
-                (project_id, folder_key, provider, folder_url, notes, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (project_id, folder_key) DO UPDATE SET
-                    provider = EXCLUDED.provider,
-                    folder_url = EXCLUDED.folder_url,
-                    notes = EXCLUDED.notes,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                (project_id, key, provider, folder_url, notes, now, now)
-            )
+                conn.execute(
+                    """
+                    INSERT INTO project_files
+                    (project_id, folder_key, storage_path, original_filename, file_size, uploaded_by, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (project_id, key, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
+                )
+                uploaded_count += 1
         conn.commit()
         conn.close()
-        flash("Project file links and folder access saved.")
+        message = "Project file folder access saved."
+        if uploaded_count:
+            message += f" {uploaded_count} file(s) uploaded."
+        if skipped_files:
+            message += " Unsupported file(s) skipped: " + ", ".join(skipped_files[:5])
+        flash(message)
         return redirect(url_for("project_files", project_id=project_id))
 
-    rows = conn.execute(
-        "SELECT * FROM project_file_links WHERE project_id = %s ORDER BY folder_key",
+    file_rows = conn.execute(
+        """
+        SELECT project_files.*, users.name AS uploaded_by_name
+        FROM project_files
+        LEFT JOIN users ON project_files.uploaded_by = users.id
+        WHERE project_files.project_id = %s
+        ORDER BY project_files.created_at DESC, project_files.id DESC
+        """,
         (project_id,)
     ).fetchall()
     permission_rows = conn.execute(
@@ -5155,7 +5245,9 @@ def project_files(project_id):
         (project_id,)
     ).fetchall()
     conn.close()
-    file_links = {row["folder_key"]: row for row in rows}
+    files_by_folder = {}
+    for row in file_rows:
+        files_by_folder.setdefault(row["folder_key"], []).append(row)
     folder_access = {}
     for row in permission_rows:
         folder_access.setdefault(row["folder_key"], []).append(row["user_id"])
@@ -5170,8 +5262,31 @@ def project_files(project_id):
         project_file_providers=PROJECT_FILE_PROVIDERS,
         project_file_users=project_file_users,
         folder_access=folder_access,
-        file_links=file_links
+        files_by_folder=files_by_folder
     )
+
+
+@app.route("/project/<int:project_id>/files/<int:file_id>/delete", methods=["POST"])
+@admin_required
+def delete_project_file(project_id, file_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not file_row:
+        conn.close()
+        flash("Project file not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+    conn.execute("DELETE FROM project_files WHERE id = %s", (file_id,))
+    conn.commit()
+    conn.close()
+    flash("Project file removed from ProjectONus.")
+    return redirect(url_for("project_files", project_id=project_id))
 
 
 
@@ -9054,7 +9169,7 @@ def notifications():
     conn = db()
     if request.method == "POST":
         if is_main_admin():
-            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type NOT IN ('login', 'task_assigned')")
+            conn.execute("UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND event_type <> 'task_assigned'")
         else:
             conn.execute(
                 "UPDATE login_events SET is_read = TRUE WHERE is_read = FALSE AND user_id = %s AND event_type = 'task_assigned'",
@@ -9073,7 +9188,7 @@ def notifications():
             LEFT JOIN tasks ON login_events.task_id = tasks.id
             LEFT JOIN projects ON COALESCE(login_events.project_id, tasks.project_id) = projects.id
             LEFT JOIN rooms ON login_events.room_id = rooms.id
-            WHERE login_events.event_type NOT IN ('login', 'task_assigned')
+            WHERE login_events.event_type <> 'task_assigned'
             ORDER BY login_events.created_at DESC
             LIMIT 100
             """
@@ -9240,6 +9355,9 @@ def backup():
         ("task_delete_codes", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
+        ("project_file_links", "id"),
+        ("project_file_permissions", "project_id, user_id, folder_key"),
+        ("project_files", "id"),
         ("app_settings", "key"),
         ("push_subscriptions", "id"),
     ]
@@ -9302,6 +9420,12 @@ def backup():
         conn.rollback()
         task_attachment_files = []
         backup_warnings.append(f"Task attachment files could not be listed: {e}")
+    try:
+        managed_project_files = conn.execute("SELECT storage_path FROM project_files WHERE storage_path IS NOT NULL").fetchall()
+    except Exception as e:
+        conn.rollback()
+        managed_project_files = []
+        backup_warnings.append(f"Project files could not be listed: {e}")
     conn.close()
 
     backup_name = f"blueprint_room_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -9340,6 +9464,8 @@ def backup():
             add_storage_file(task.get("completion_audio_file"), "task_completion_files")
         for attachment in task_attachment_files:
             add_storage_file(attachment.get("storage_path"), "task_attachments")
+        for managed_file in managed_project_files:
+            add_storage_file(managed_file.get("storage_path"), "project_files")
         z.writestr("README_BACKUP.txt", "Portable backup: JSON table exports plus uploaded files.")
         if backup_warnings:
             z.writestr("BACKUP_WARNINGS.txt", "\n".join(backup_warnings))
@@ -9356,6 +9482,35 @@ def storage_file(storage_path):
     This avoids browser/public-url problems and makes PDF/image display more reliable.
     """
     conn = db()
+    project_file = conn.execute(
+        """
+        SELECT project_id, folder_key
+        FROM project_files
+        WHERE storage_path = %s
+        LIMIT 1
+        """,
+        (storage_path,)
+    ).fetchone()
+    if project_file:
+        project_id = project_file.get("project_id")
+        folder_key = project_file.get("folder_key")
+        if not user_can_access_project(conn, project_id):
+            conn.close()
+            return "You do not have access to this project file.", 403
+        if not is_main_admin() and folder_key not in project_file_access_keys(conn, project_id):
+            conn.close()
+            return "You do not have permission to view this project folder.", 403
+        conn.close()
+        data = download_storage_file(storage_path)
+        if not data:
+            return "File not found or storage permission denied.", 404
+        mime_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+        response = Response(data, mimetype=mime_type)
+        response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     owner = conn.execute(
         """
         SELECT id AS project_id FROM projects WHERE blueprint_file = %s OR blueprint_preview_file = %s

@@ -27,6 +27,7 @@ begin
         'project_delete_codes',
         'project_file_links',
         'project_file_permissions',
+        'project_files',
         'project_permissions',
         'projects',
         'push_subscriptions',

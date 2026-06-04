@@ -3,76 +3,75 @@
 <div class="card">
     <h2>Files</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
-    <p class="muted">Open the cloud folders you have permission to view.</p>
+    <p class="muted">Files are stored inside ProjectONus. Users only see folders they have permission to view.</p>
     <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
 </div>
 
-<div class="card">
-    <h3>Project Folders</h3>
-    <div class="projectFileGrid">
-        {% for folder in project_file_folders %}
-            {% set link = file_links.get(folder.key) %}
-            <section class="projectFilePanel">
-                <h4>{{ folder.label }}</h4>
-                {% if link and link.folder_url %}
-                    <p><strong>Provider:</strong> {{ project_file_provider_label(link.provider) }}</p>
-                    {% if link.notes %}<p class="muted">{{ link.notes }}</p>{% endif %}
-                    <a class="btn-link" target="_blank" rel="noopener" href="{{ link.folder_url }}">Open Folder</a>
-                {% else %}
-                    <p class="muted">No folder link has been added yet.</p>
-                    {% if is_main_admin() %}
-                        <p class="muted">Add the {{ folder.label }} link below.</p>
-                    {% endif %}
-                {% endif %}
-            </section>
-        {% endfor %}
-    </div>
-</div>
-
-{% if is_main_admin() %}
-<div class="card">
-    <h3>Manage Folder Links</h3>
-    <form method="post">
+    <div class="card">
+        <h3>Project Folders</h3>
         <div class="projectFileGrid">
             {% for folder in project_file_folders %}
-                {% set link = file_links.get(folder.key) %}
+                {% set files = files_by_folder.get(folder.key, []) %}
                 <section class="projectFilePanel">
                     <h4>{{ folder.label }}</h4>
-                    <label>Provider</label>
-                    <select name="{{ folder.key }}_provider">
-                        {% for provider_key, provider_label in project_file_providers.items() %}
-                            <option value="{{ provider_key }}" {% if link and link.provider == provider_key %}selected{% endif %}>{{ provider_label }}</option>
-                        {% endfor %}
-                    </select>
-                    <label>Folder Link</label>
-                    <input name="{{ folder.key }}_url" value="{{ link.folder_url if link else '' }}" placeholder="https://..." inputmode="url">
-                    <label>Notes</label>
-                    <textarea name="{{ folder.key }}_notes" rows="2" placeholder="Optional note for this folder">{{ link.notes if link else '' }}</textarea>
-                    <p class="muted">Leave the link blank and save to remove this folder link.</p>
-                    <div class="projectFileAccess">
-                        <strong>Allowed Users</strong>
-                        {% if project_file_users %}
-                            {% set allowed_users = folder_access.get(folder.key, []) %}
-                            {% for user in project_file_users %}
-                                <label class="fileUserCheck">
-                                    <input type="checkbox" name="{{ folder.key }}_user_ids" value="{{ user.id }}" {% if user.id in allowed_users %}checked{% endif %}>
-                                    <span>{{ user.name }}{% if user.email %} - {{ user.email }}{% endif %}</span>
-                                </label>
+                    {% if files %}
+                        <div class="managedFileList">
+                            {% for file in files %}
+                                <div class="managedFileRow">
+                                    <div>
+                                        <strong>{{ file.original_filename or 'Project file' }}</strong>
+                                        <p class="muted">
+                                            {{ format_file_size(file.file_size) }}
+                                            {% if file.uploaded_by_name %} - Uploaded by {{ file.uploaded_by_name }}{% endif %}
+                                            {% if file.created_at %} - {{ format_datetime(file.created_at) }}{% endif %}
+                                        </p>
+                                    </div>
+                                    <div class="managedFileActions">
+                                        <a class="btn-link btn-secondary" target="_blank" rel="noopener" href="{{ url_for('storage_file', storage_path=file.storage_path) }}">Open</a>
+                                        {% if is_main_admin() %}
+                                            <form method="post" action="{{ url_for('delete_project_file', project_id=project.id, file_id=file.id) }}" onsubmit="return confirm('Remove this file from ProjectONus?');">
+                                                <button type="submit" class="btn-danger">Delete</button>
+                                            </form>
+                                        {% endif %}
+                                    </div>
+                                </div>
                             {% endfor %}
-                        {% else %}
-                            <p class="muted">No workers have project access yet. Add them under Settings > Project Access first.</p>
-                        {% endif %}
-                    </div>
+                        </div>
+                    {% else %}
+                        <p class="muted">No files saved in this folder yet.</p>
+                    {% endif %}
+
+                    {% if is_main_admin() %}
+                        <form method="post" enctype="multipart/form-data" class="projectFileManageForm">
+                        <input type="hidden" name="folder_key" value="{{ folder.key }}">
+                        <div class="projectFileUpload">
+                            <label>Add Files</label>
+                            <input name="{{ folder.key }}_files" type="file" multiple>
+                        </div>
+                        <div class="projectFileAccess">
+                            <strong>Allowed Users</strong>
+                            {% if project_file_users %}
+                                {% set allowed_users = folder_access.get(folder.key, []) %}
+                                {% for user in project_file_users %}
+                                    <label class="fileUserCheck">
+                                        <input type="checkbox" name="{{ folder.key }}_user_ids" value="{{ user.id }}" {% if user.id in allowed_users %}checked{% endif %}>
+                                        <span>{{ user.name }}{% if user.email %} - {{ user.email }}{% endif %}</span>
+                                    </label>
+                                {% endfor %}
+                            {% else %}
+                                <p class="muted">No workers have project access yet. Add them under Settings > Project Access first.</p>
+                            {% endif %}
+                        </div>
+                        <button type="submit">Save {{ folder.label }}</button>
+                        </form>
+                    {% endif %}
                 </section>
             {% endfor %}
         </div>
-        <button type="submit">Save File Links</button>
-    </form>
-</div>
-{% endif %}
+    </div>
 
 <style>
-.projectFileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.projectFilePanel{border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.03)}.projectFilePanel h4{margin:0 0 10px}.projectFilePanel p{margin:0 0 10px}.projectFileAccess{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}.fileUserCheck{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-weight:700}.fileUserCheck input{width:auto;min-height:auto;margin:3px 0 0}
-@media(max-width:760px){.projectFileGrid{grid-template-columns:1fr}.projectFilePanel{padding:12px}}
+.projectFileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}.projectFilePanel{border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.03)}.projectFilePanel h4{margin:0 0 10px}.projectFilePanel p{margin:0 0 10px}.projectFileManageForm{margin-top:12px}.projectFileUpload,.projectFileAccess{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}.fileUserCheck{display:flex;gap:8px;align-items:flex-start;margin:8px 0;font-weight:700}.fileUserCheck input{width:auto;min-height:auto;margin:3px 0 0}.managedFileList{display:grid;gap:10px}.managedFileRow{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card)}.managedFileActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.managedFileActions form{margin:0}.managedFileActions .btn-link,.managedFileActions button{margin:0;width:100%}
+@media(max-width:760px){.projectFileGrid{grid-template-columns:1fr}.projectFilePanel{padding:12px}.managedFileActions{grid-template-columns:1fr}}
 </style>
 {% endblock %}
