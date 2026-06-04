@@ -150,6 +150,7 @@
                     <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
                     <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
                     <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
+                    <label><input type="checkbox" name="view_project_files" {% if p and p.view_project_files %}checked{% endif %}> View project files</label>
                 </div>
                 <button type="submit">Save Permissions for {{ u.name }}</button>
             </form>

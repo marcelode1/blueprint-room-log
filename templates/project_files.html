@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Files</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
+    <p class="muted">Open the linked cloud folders for this project.</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+</div>
+
+<div class="card">
+    <h3>Project Folders</h3>
+    <div class="projectFileGrid">
+        {% for folder in project_file_folders %}
+            {% set link = file_links.get(folder.key) %}
+            <section class="projectFilePanel">
+                <h4>{{ folder.label }}</h4>
+                {% if link and link.folder_url %}
+                    <p><strong>Provider:</strong> {{ project_file_provider_label(link.provider) }}</p>
+                    {% if link.notes %}<p class="muted">{{ link.notes }}</p>{% endif %}
+                    <a class="btn-link" target="_blank" rel="noopener" href="{{ link.folder_url }}">Open {{ folder.label }}</a>
+                {% else %}
+                    <p class="muted">No folder link has been added yet.</p>
+                    {% if is_main_admin() %}
+                        <p class="muted">Add the {{ folder.label }} link below.</p>
+                    {% endif %}
+                {% endif %}
+            </section>
+        {% endfor %}
+    </div>
+</div>
+
+{% if is_main_admin() %}
+<div class="card">
+    <h3>Manage Folder Links</h3>
+    <form method="post">
+        <div class="projectFileGrid">
+            {% for folder in project_file_folders %}
+                {% set link = file_links.get(folder.key) %}
+                <section class="projectFilePanel">
+                    <h4>{{ folder.label }}</h4>
+                    <label>Provider</label>
+                    <select name="{{ folder.key }}_provider">
+                        {% for provider_key, provider_label in project_file_providers.items() %}
+                            <option value="{{ provider_key }}" {% if link and link.provider == provider_key %}selected{% endif %}>{{ provider_label }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Folder Link</label>
+                    <input name="{{ folder.key }}_url" value="{{ link.folder_url if link else '' }}" placeholder="https://..." inputmode="url">
+                    <label>Notes</label>
+                    <textarea name="{{ folder.key }}_notes" rows="2" placeholder="Optional note for this folder">{{ link.notes if link else '' }}</textarea>
+                    <p class="muted">Leave the link blank and save to remove this folder link.</p>
+                </section>
+            {% endfor %}
+        </div>
+        <button type="submit">Save File Links</button>
+    </form>
+</div>
+{% endif %}
+
+<style>
+.projectFileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.projectFilePanel{border:1px solid var(--border);border-radius:8px;padding:14px;background:rgba(255,255,255,.03)}.projectFilePanel h4{margin:0 0 10px}.projectFilePanel p{margin:0 0 10px}
+@media(max-width:760px){.projectFileGrid{grid-template-columns:1fr}.projectFilePanel{padding:12px}}
+</style>
+{% endblock %}

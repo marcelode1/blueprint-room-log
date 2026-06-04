@@ -25,6 +25,7 @@ begin
         'notes',
         'project_blueprints',
         'project_delete_codes',
+        'project_file_links',
         'project_permissions',
         'projects',
         'push_subscriptions',
@@ -47,4 +48,3 @@ begin
         execute format('alter table if exists public.%I enable row level security', table_name);
     end loop;
 end $$;
-

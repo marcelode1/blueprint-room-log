@@ -64,6 +64,19 @@ CONTENT_TYPES_BY_EXT = {
     "heic": "image/heic",
     "heif": "image/heif",
 }
+PROJECT_FILE_FOLDERS = [
+    {"key": "plans", "label": "Plans"},
+    {"key": "invoices", "label": "Invoices"},
+    {"key": "proposal", "label": "Proposal"},
+    {"key": "notes", "label": "Notes"},
+]
+PROJECT_FILE_PROVIDERS = {
+    "onedrive": "OneDrive / SharePoint",
+    "google_drive": "Google Drive",
+    "dropbox": "Dropbox",
+    "box": "Box",
+    "other": "Other Link",
+}
 
 
 def file_ext(filename):
@@ -615,7 +628,8 @@ def init_db():
         delete_pictures BOOLEAN NOT NULL DEFAULT FALSE,
         see_audio BOOLEAN NOT NULL DEFAULT TRUE,
         add_audio BOOLEAN NOT NULL DEFAULT FALSE,
-        delete_audio BOOLEAN NOT NULL DEFAULT FALSE
+        delete_audio BOOLEAN NOT NULL DEFAULT FALSE,
+        view_project_files BOOLEAN NOT NULL DEFAULT FALSE
     )
     """)
 
@@ -625,6 +639,20 @@ def init_db():
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         created_at TEXT NOT NULL,
         PRIMARY KEY (user_id, project_id)
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_file_links (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        folder_key TEXT NOT NULL,
+        provider TEXT,
+        folder_url TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        UNIQUE(project_id, folder_key)
     )
     """)
 
@@ -822,6 +850,7 @@ def init_db():
         "UPDATE user_permissions SET view_contact_info = FALSE WHERE view_contact_info IS NULL",
         "ALTER TABLE user_permissions ALTER COLUMN view_contact_info SET DEFAULT FALSE",
         "ALTER TABLE user_permissions ALTER COLUMN view_contact_info SET NOT NULL",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_project_files BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS require_task_picture BOOLEAN NOT NULL DEFAULT FALSE",
         "CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT NOT NULL, contact_name TEXT, email TEXT, phone TEXT, street TEXT, address TEXT, city TEXT, state TEXT, zip TEXT, website TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, task_number TEXT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
@@ -907,8 +936,9 @@ def init_db():
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS message TEXT",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS is_read BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE login_events ADD COLUMN IF NOT EXISTS created_at TEXT",
-        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, view_contact_info BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE)",
+        "CREATE TABLE IF NOT EXISTS user_permissions (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, require_task_picture BOOLEAN NOT NULL DEFAULT FALSE, view_contact_info BOOLEAN NOT NULL DEFAULT FALSE, see_comments BOOLEAN NOT NULL DEFAULT TRUE, write_comments BOOLEAN NOT NULL DEFAULT FALSE, edit_comments BOOLEAN NOT NULL DEFAULT FALSE, delete_comments BOOLEAN NOT NULL DEFAULT FALSE, see_pictures BOOLEAN NOT NULL DEFAULT TRUE, add_pictures BOOLEAN NOT NULL DEFAULT FALSE, delete_pictures BOOLEAN NOT NULL DEFAULT FALSE, see_audio BOOLEAN NOT NULL DEFAULT TRUE, add_audio BOOLEAN NOT NULL DEFAULT FALSE, delete_audio BOOLEAN NOT NULL DEFAULT FALSE, create_rooms BOOLEAN NOT NULL DEFAULT FALSE, view_project_files BOOLEAN NOT NULL DEFAULT FALSE)",
         "CREATE TABLE IF NOT EXISTS project_permissions (user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (user_id, project_id))",
+        "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "UPDATE tasks SET require_picture = FALSE WHERE COALESCE(require_picture, FALSE) = TRUE",
         "UPDATE user_permissions SET require_task_picture = FALSE WHERE COALESCE(require_task_picture, FALSE) = TRUE",
         "DELETE FROM users WHERE lower(email) = 'admin@example.com'"
@@ -1541,7 +1571,7 @@ def default_permissions_for_role(role):
             "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
             "see_pictures": True, "add_pictures": True, "delete_pictures": False,
             "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
-            "view_inventory": False, "edit_inventory": False,
+            "view_inventory": False, "edit_inventory": False, "view_project_files": False,
         }
     return {
         "require_task_picture": False,
@@ -1549,7 +1579,7 @@ def default_permissions_for_role(role):
         "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
         "see_pictures": True, "add_pictures": False, "delete_pictures": False,
         "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
-        "view_inventory": False, "edit_inventory": False,
+        "view_inventory": False, "edit_inventory": False, "view_project_files": False,
     }
 
 
@@ -1559,7 +1589,7 @@ PERMISSION_KEYS = [
     "see_comments", "write_comments", "edit_comments", "delete_comments",
     "see_pictures", "add_pictures", "delete_pictures",
     "see_audio", "add_audio", "delete_audio", "create_rooms",
-    "view_inventory", "edit_inventory"
+    "view_inventory", "edit_inventory", "view_project_files"
 ]
 
 
@@ -1598,6 +1628,24 @@ def has_perm(permission):
     if session.get("role") == "admin":
         return True
     return bool(get_user_permissions().get(permission))
+
+
+def can_view_project_files():
+    return is_main_admin() or has_perm("view_project_files")
+
+
+def project_file_provider_label(provider):
+    key = str(provider or "").strip()
+    return PROJECT_FILE_PROVIDERS.get(key, "Other Link")
+
+
+def normalize_project_file_url(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not re.match(r"^https?://", text, flags=re.I):
+        text = "https://" + text
+    return text
 
 
 def get_app_setting(key, default=""):
@@ -3443,6 +3491,8 @@ def utility_processor():
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
         can_edit_inventory=can_edit_inventory,
+        can_view_project_files=can_view_project_files,
+        project_file_provider_label=project_file_provider_label,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
@@ -4822,6 +4872,76 @@ def project(project_id):
         rooms=rooms,
         blueprints=blueprints,
         active_blueprint=active_blueprint
+    )
+
+
+@app.route("/project/<int:project_id>/files", methods=["GET", "POST"])
+@login_required
+def project_files(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not can_view_project_files():
+        conn.close()
+        flash("You do not have permission to view project files.")
+        return redirect(url_for("project", project_id=project_id))
+
+    if request.method == "POST":
+        if not is_main_admin():
+            conn.close()
+            flash("Only the main admin can manage project file links.")
+            return redirect(url_for("project_files", project_id=project_id))
+        now = utc_now_iso()
+        for folder in PROJECT_FILE_FOLDERS:
+            key = folder["key"]
+            provider = request.form.get(f"{key}_provider", "other").strip()
+            if provider not in PROJECT_FILE_PROVIDERS:
+                provider = "other"
+            folder_url = normalize_project_file_url(request.form.get(f"{key}_url"))
+            notes = request.form.get(f"{key}_notes", "").strip()
+            if not folder_url:
+                conn.execute(
+                    "DELETE FROM project_file_links WHERE project_id = %s AND folder_key = %s",
+                    (project_id, key)
+                )
+                continue
+            conn.execute(
+                """
+                INSERT INTO project_file_links
+                (project_id, folder_key, provider, folder_url, notes, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (project_id, folder_key) DO UPDATE SET
+                    provider = EXCLUDED.provider,
+                    folder_url = EXCLUDED.folder_url,
+                    notes = EXCLUDED.notes,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (project_id, key, provider, folder_url, notes, now, now)
+            )
+        conn.commit()
+        conn.close()
+        flash("Project file links saved.")
+        return redirect(url_for("project_files", project_id=project_id))
+
+    rows = conn.execute(
+        "SELECT * FROM project_file_links WHERE project_id = %s ORDER BY folder_key",
+        (project_id,)
+    ).fetchall()
+    conn.close()
+    file_links = {row["folder_key"]: row for row in rows}
+    return render_template(
+        "project_files.html",
+        project=project,
+        project_file_folders=PROJECT_FILE_FOLDERS,
+        project_file_providers=PROJECT_FILE_PROVIDERS,
+        file_links=file_links
     )
 
 
@@ -8615,8 +8735,8 @@ def settings():
             conn.execute(
                 """
                 INSERT INTO user_permissions
-                (user_id, require_task_picture, view_contact_info, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (user_id, require_task_picture, view_contact_info, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory, view_project_files)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
                     require_task_picture = EXCLUDED.require_task_picture,
                     view_contact_info = EXCLUDED.view_contact_info,
@@ -8632,7 +8752,8 @@ def settings():
                     delete_audio = EXCLUDED.delete_audio,
                     create_rooms = EXCLUDED.create_rooms,
                     view_inventory = EXCLUDED.view_inventory,
-                    edit_inventory = EXCLUDED.edit_inventory
+                    edit_inventory = EXCLUDED.edit_inventory,
+                    view_project_files = EXCLUDED.view_project_files
                 """,
                 (user_id, *[values[k] for k in PERMISSION_KEYS])
             )
