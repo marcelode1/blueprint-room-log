@@ -4,6 +4,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from html.parser import HTMLParser
+import html as html_lib
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib
 import psycopg
 from psycopg.rows import dict_row
@@ -6781,6 +6783,195 @@ def translate_batch():
         if conn:
             conn.close()
     return json_response({"language": target_language, "translations": translations})
+
+
+HTML_TRANSLATION_SKIP_TAGS = {"script", "style", "noscript", "template", "textarea", "code", "pre", "svg", "canvas", "audio", "video"}
+HTML_TRANSLATION_ATTRS = {"placeholder", "title", "aria-label"}
+
+
+def html_translation_skip_attrs(attrs):
+    attr_map = {str(name or "").lower(): str(value or "") for name, value in attrs if name}
+    classes = set(re.split(r"\s+", attr_map.get("class", "").strip()))
+    return (
+        attr_map.get("translate", "").lower() == "no"
+        or "notranslate" in classes
+        or "projectonusNoTranslate" in classes
+    )
+
+
+def html_escape_attr(value):
+    return html_lib.escape(str(value), quote=True)
+
+
+def html_render_tag(tag, attrs, closing=False):
+    parts = [f"<{tag}"]
+    for name, value in attrs:
+        if value is None:
+            parts.append(f" {name}")
+        else:
+            parts.append(f' {name}="{html_escape_attr(value)}"')
+    parts.append(" />" if closing else ">")
+    return "".join(parts)
+
+
+class HtmlTranslationCollector(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.skip_depth = 0
+        self.texts = []
+
+    def add_text(self, text):
+        clean = str(text or "").strip()
+        if should_translate_text(clean):
+            self.texts.append(clean)
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        skip = self.skip_depth > 0 or tag in HTML_TRANSLATION_SKIP_TAGS or html_translation_skip_attrs(attrs)
+        if not skip:
+            for name, value in attrs:
+                name = str(name or "").lower()
+                if name in HTML_TRANSLATION_ATTRS and value:
+                    self.add_text(value)
+                elif name == "value" and tag == "input":
+                    input_type = next((str(v or "").lower() for n, v in attrs if str(n or "").lower() == "type"), "")
+                    if input_type in {"submit", "button", "reset"}:
+                        self.add_text(value)
+        if skip:
+            self.skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if self.skip_depth:
+            self.skip_depth -= 1
+
+    def handle_data(self, data):
+        if not self.skip_depth:
+            self.add_text(data)
+
+
+class HtmlTranslationRenderer(HTMLParser):
+    def __init__(self, translations):
+        super().__init__(convert_charrefs=False)
+        self.translations = translations or {}
+        self.skip_depth = 0
+        self.output = []
+
+    def translate(self, text):
+        original = str(text or "")
+        clean = original.strip()
+        if not should_translate_text(clean):
+            return original
+        translated = self.translations.get(clean) or clean
+        leading = (re.match(r"^\s*", original).group(0) if original else "")
+        trailing = (re.search(r"\s*$", original).group(0) if original else "")
+        return leading + translated + trailing
+
+    def translate_attrs(self, tag, attrs):
+        updated = []
+        input_type = next((str(v or "").lower() for n, v in attrs if str(n or "").lower() == "type"), "")
+        for name, value in attrs:
+            attr_name = str(name or "")
+            lower = attr_name.lower()
+            if value is not None and not self.skip_depth:
+                if lower in HTML_TRANSLATION_ATTRS:
+                    value = self.translate(value).strip()
+                elif lower == "value" and tag == "input" and input_type in {"submit", "button", "reset"}:
+                    value = self.translate(value).strip()
+            updated.append((attr_name, value))
+        return updated
+
+    def handle_starttag(self, tag, attrs):
+        lower_tag = tag.lower()
+        skip = self.skip_depth > 0 or lower_tag in HTML_TRANSLATION_SKIP_TAGS or html_translation_skip_attrs(attrs)
+        attrs = self.translate_attrs(lower_tag, attrs)
+        self.output.append(html_render_tag(tag, attrs))
+        if skip:
+            self.skip_depth += 1
+
+    def handle_startendtag(self, tag, attrs):
+        lower_tag = tag.lower()
+        attrs = self.translate_attrs(lower_tag, attrs)
+        self.output.append(html_render_tag(tag, attrs, closing=True))
+
+    def handle_endtag(self, tag):
+        self.output.append(f"</{tag}>")
+        if self.skip_depth:
+            self.skip_depth -= 1
+
+    def handle_data(self, data):
+        self.output.append(data if self.skip_depth else self.translate(data))
+
+    def handle_entityref(self, name):
+        self.output.append(f"&{name};")
+
+    def handle_charref(self, name):
+        self.output.append(f"&#{name};")
+
+    def handle_comment(self, data):
+        self.output.append(f"<!--{data}-->")
+
+    def handle_decl(self, decl):
+        self.output.append(f"<!{decl}>")
+
+    def handle_pi(self, data):
+        self.output.append(f"<?{data}>")
+
+    def translated_html(self):
+        return "".join(self.output)
+
+
+def translate_html_for_language(html_text, target_language):
+    target_language = normalize_language(target_language)
+    if target_language == DEFAULT_LANGUAGE or not html_text:
+        return html_text
+    collector = HtmlTranslationCollector()
+    collector.feed(html_text)
+    unique = []
+    seen = set()
+    for text in collector.texts:
+        if text not in seen:
+            unique.append(text)
+            seen.add(text)
+    translations = {}
+    misses = []
+    for text in unique:
+        builtin = builtin_translate_text(text, target_language)
+        if builtin != text:
+            translations[text] = builtin
+        else:
+            misses.append(text)
+    if misses:
+        conn = None
+        try:
+            conn = db()
+            translations.update(translate_texts_for_language(conn, misses, target_language))
+        except Exception as e:
+            print("Server HTML translation fallback:", e)
+            for text in misses:
+                translations.setdefault(text, text)
+        finally:
+            if conn:
+                conn.close()
+    renderer = HtmlTranslationRenderer(translations)
+    renderer.feed(html_text)
+    return renderer.translated_html()
+
+
+@app.after_request
+def translate_html_response(response):
+    try:
+        if "user_id" not in session or current_language() == DEFAULT_LANGUAGE:
+            return response
+        if request.endpoint in {"static", "translate_batch"}:
+            return response
+        if response.direct_passthrough or "text/html" not in response.headers.get("Content-Type", ""):
+            return response
+        body = response.get_data(as_text=True)
+        translated = translate_html_for_language(body, current_language())
+        response.set_data(translated)
+    except Exception as e:
+        print("HTML response translation skipped:", e)
+    return response
 
 
 @app.route("/tasks/create/realtime-token", methods=["POST"])
