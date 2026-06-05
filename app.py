@@ -158,6 +158,34 @@ APP_TRANSLATIONS = {
         "Waiting on material": "Esperando material",
         "Where Is My Team": "Donde esta mi equipo",
         "Work Description": "Descripcion del trabajo",
+        "Logout": "Cerrar sesion",
+        "Add Field Note": "Agregar nota de campo",
+        "History": "Historial",
+        "Back to Rooms": "Volver a habitaciones",
+        "Date": "Fecha",
+        "Comment": "Comentario",
+        "Save Note": "Guardar nota",
+        "No history for this room.": "No hay historial para esta habitacion.",
+        "Attach to Note": "Adjuntar a la nota",
+        "Attach to Task": "Adjuntar a la tarea",
+        "Attachment ready": "Adjunto listo",
+        "Picture ready": "Foto lista",
+        "Audio ready": "Audio listo",
+        "Ready for the main save button": "Listo para el boton principal de guardar",
+        "Attached": "Adjuntado",
+        "Take picture": "Tomar foto",
+        "Attach picture": "Adjuntar foto",
+        "Record or attach audio": "Grabar o adjuntar audio",
+        "Open menu": "Abrir menu",
+        "New Notification": "Nueva notificacion",
+        "Close": "Cerrar",
+        "Alerts": "Alertas",
+        "Create a Task": "Crear una tarea",
+        "Classic UI": "Interfaz clasica",
+        "Pro Test UI": "Interfaz de prueba Pro",
+        "Add Task to Calendar?": "Agregar tarea al calendario?",
+        "Yes, Add to Calendar": "Si, agregar al calendario",
+        "No": "No",
     },
     "pt": {
         "Add More": "Adicionar mais",
@@ -230,6 +258,34 @@ APP_TRANSLATIONS = {
         "Waiting on material": "Aguardando material",
         "Where Is My Team": "Onde esta minha equipe",
         "Work Description": "Descricao do trabalho",
+        "Logout": "Sair",
+        "Add Field Note": "Adicionar nota de campo",
+        "History": "Historico",
+        "Back to Rooms": "Voltar aos ambientes",
+        "Date": "Data",
+        "Comment": "Comentario",
+        "Save Note": "Salvar nota",
+        "No history for this room.": "Sem historico para este ambiente.",
+        "Attach to Note": "Anexar a nota",
+        "Attach to Task": "Anexar a tarefa",
+        "Attachment ready": "Anexo pronto",
+        "Picture ready": "Foto pronta",
+        "Audio ready": "Audio pronto",
+        "Ready for the main save button": "Pronto para o botao principal de salvar",
+        "Attached": "Anexado",
+        "Take picture": "Tirar foto",
+        "Attach picture": "Anexar foto",
+        "Record or attach audio": "Gravar ou anexar audio",
+        "Open menu": "Abrir menu",
+        "New Notification": "Nova notificacao",
+        "Close": "Fechar",
+        "Alerts": "Alertas",
+        "Create a Task": "Criar uma tarefa",
+        "Classic UI": "Interface classica",
+        "Pro Test UI": "Interface de teste Pro",
+        "Add Task to Calendar?": "Adicionar tarefa ao calendario?",
+        "Yes, Add to Calendar": "Sim, adicionar ao calendario",
+        "No": "Nao",
     },
 }
 
@@ -3826,6 +3882,7 @@ def utility_processor():
         supported_languages=SUPPORTED_LANGUAGES,
         current_language=current_language,
         language_label=language_label,
+        builtin_translations_for_language=builtin_translations_for_language,
         speech_recognition_language=speech_recognition_language,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
@@ -6507,6 +6564,10 @@ def builtin_translate_text(text, target_language):
     return clean
 
 
+def builtin_translations_for_language(language=None):
+    return APP_TRANSLATIONS.get(normalize_language(language), {})
+
+
 def translation_hash(text):
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
@@ -6676,7 +6737,12 @@ def set_language():
         conn.close()
     except Exception as e:
         print("Language preference save skipped:", e)
-    flash(f"Language changed to {language_label(language)}.")
+    language_flash = {
+        "en": f"Language changed to {language_label(language)}.",
+        "es": f"Idioma cambiado a {language_label(language)}.",
+        "pt": f"Idioma alterado para {language_label(language)}.",
+    }
+    flash(language_flash.get(language, language_flash["en"]))
     return redirect(safe_next_url("index"))
 
 
@@ -6693,9 +6759,16 @@ def translate_batch():
     texts = texts[:140]
     if target_language == DEFAULT_LANGUAGE or not texts:
         return json_response({"language": target_language, "translations": {text: text for text in texts}})
-    conn = db()
-    translations = translate_texts_for_language(conn, texts, target_language)
-    conn.close()
+    conn = None
+    try:
+        conn = db()
+        translations = translate_texts_for_language(conn, texts, target_language)
+    except Exception as e:
+        print("Translation batch fallback:", e)
+        translations = {text: builtin_translate_text(text, target_language) for text in texts}
+    finally:
+        if conn:
+            conn.close()
     return json_response({"language": target_language, "translations": translations})
 
 

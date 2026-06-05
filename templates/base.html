@@ -322,6 +322,7 @@
 (function(){
     const targetLanguage="{{ current_language() }}";
     const translateUrl="{{ url_for('translate_batch') }}";
+    const builtinTranslations={{ builtin_translations_for_language(current_language())|tojson }};
     const skipSelector="script,style,noscript,template,textarea,input,code,pre,svg,canvas,audio,video,.notranslate,[translate='no'],.projectonusNoTranslate";
     const attributeSkipSelector="script,style,noscript,template,code,pre,svg,canvas,audio,video,.notranslate,[translate='no'],.projectonusNoTranslate";
     const sourceToTargets=new Map();
@@ -349,6 +350,20 @@
         if(!shouldTranslate(key))return;
         if(!sourceToTargets.has(key))sourceToTargets.set(key,[]);
         sourceToTargets.get(key).push(apply);
+    }
+
+    function builtinTranslate(source){
+        const key=(source||"").trim();
+        if(Object.prototype.hasOwnProperty.call(builtinTranslations,key))return builtinTranslations[key];
+        if(key.endsWith(":")){
+            const base=key.slice(0,-1).trim();
+            if(Object.prototype.hasOwnProperty.call(builtinTranslations,base))return builtinTranslations[base]+":";
+        }
+        return "";
+    }
+
+    function applyTranslation(source,translated){
+        (sourceToTargets.get(source)||[]).forEach(apply=>apply(translated||source));
     }
 
     function collectTextNodes(root){
@@ -392,9 +407,22 @@
             document.body.classList.remove("projectonusTranslating");
             return;
         }
+        const misses=[];
+        texts.forEach(source=>{
+            const translated=builtinTranslate(source);
+            if(translated){
+                applyTranslation(source,translated);
+            }else{
+                misses.push(source);
+            }
+        });
+        if(!misses.length){
+            document.body.classList.remove("projectonusTranslating");
+            return;
+        }
         try{
-            for(let start=0;start<texts.length;start+=100){
-                const chunk=texts.slice(start,start+100);
+            for(let start=0;start<misses.length;start+=100){
+                const chunk=misses.slice(start,start+100);
                 const response=await fetch(translateUrl,{
                     method:"POST",
                     credentials:"same-origin",
@@ -405,8 +433,8 @@
                 const data=await response.json();
                 const translations=data.translations||{};
                 chunk.forEach(source=>{
-                    const translated=translations[source]||source;
-                    (sourceToTargets.get(source)||[]).forEach(apply=>apply(translated));
+                    const translated=translations[source]||builtinTranslate(source)||source;
+                    applyTranslation(source,translated);
                 });
             }
         }catch(error){
