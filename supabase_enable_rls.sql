@@ -42,7 +42,6 @@ begin
         'task_supplier_items',
         'task_updates',
         'tasks',
-        'translation_cache',
         'user_permissions',
         'users',
         'worker_location_pings'

@@ -4,8 +4,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from html.parser import HTMLParser
-import html as html_lib
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib
 import psycopg
 from psycopg.rows import dict_row
@@ -43,7 +41,6 @@ APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 OPENAI_TASK_PARSE_MODEL = os.environ.get("OPENAI_TASK_PARSE_MODEL", "gpt-4.1-mini")
-OPENAI_TRANSLATION_MODEL = os.environ.get("OPENAI_TRANSLATION_MODEL", OPENAI_TASK_PARSE_MODEL)
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -81,220 +78,6 @@ PROJECT_FILE_PROVIDERS = {
     "dropbox": "Dropbox",
     "box": "Box",
     "other": "Other Link",
-}
-SUPPORTED_LANGUAGES = {
-    "en": {"label": "English", "openai_name": "English"},
-    "es": {"label": "Espa\u00f1ol", "openai_name": "Spanish"},
-    "pt": {"label": "Portugu\u00eas", "openai_name": "Brazilian Portuguese"},
-}
-DEFAULT_LANGUAGE = "en"
-APP_TRANSLATIONS = {
-    "es": {
-        "Add More": "Agregar mas",
-        "Add more": "Agregar mas",
-        "Address": "Direccion",
-        "Admin Attachments": "Archivos adjuntos del administrador",
-        "Alerts": "Alertas",
-        "All Projects": "Todos los proyectos",
-        "All Suppliers": "Todos los proveedores",
-        "Attach": "Adjuntar",
-        "Attachments": "Archivos adjuntos",
-        "Back": "Atras",
-        "Backup": "Copia de seguridad",
-        "Cancel": "Cancelar",
-        "Clear Search": "Limpiar busqueda",
-        "Clock In": "Marcar entrada",
-        "Clock Out": "Marcar salida",
-        "Comment Report": "Reporte de comentarios",
-        "Comments": "Comentarios",
-        "Completed": "Completado",
-        "Create Task": "Crear tarea",
-        "Create a Task": "Crear una tarea",
-        "Customer Name": "Nombre del cliente",
-        "Dark": "Oscuro",
-        "Delete": "Eliminar",
-        "Edit": "Editar",
-        "Home": "Inicio",
-        "In progress": "En progreso",
-        "Inventory": "Inventario",
-        "Language": "Idioma",
-        "New": "Nuevo",
-        "No files": "Sin archivos",
-        "Notifications": "Notificaciones",
-        "Open": "Abrir",
-        "Open Route in Google Maps": "Abrir ruta en Google Maps",
-        "Open Task": "Abrir tarea",
-        "Privacy": "Privacidad",
-        "Project": "Proyecto",
-        "Project Name": "Nombre del proyecto",
-        "Projects": "Proyectos",
-        "Received": "Recibido",
-        "Room": "Habitacion",
-        "Room Name": "Nombre de la habitacion",
-        "Room Task Status": "Estado de la tarea de la habitacion",
-        "Save": "Guardar",
-        "Save and Send": "Guardar y enviar",
-        "Search": "Buscar",
-        "Search Projects": "Buscar proyectos",
-        "Search Task": "Buscar tarea",
-        "Search my Tasks": "Buscar mis tareas",
-        "Sent to worker": "Enviado al trabajador",
-        "Settings": "Configuracion",
-        "Show By": "Mostrar por",
-        "Show Tasks": "Mostrar tareas",
-        "Supplier": "Proveedor",
-        "Suppliers": "Proveedores",
-        "Task Date": "Fecha de la tarea",
-        "Task Information": "Informacion de la tarea",
-        "Task Number": "Numero de tarea",
-        "Task Received On": "Tarea recibida el",
-        "Task Report": "Reporte de tareas",
-        "Task Status": "Estado de la tarea",
-        "Tasks": "Tareas",
-        "Team": "Equipo",
-        "Time Report": "Reporte de tiempo",
-        "Today's Tasks": "Tareas de hoy",
-        "Users": "Usuarios",
-        "View Scope": "Ver alcance",
-        "Waiting for RFI": "Esperando RFI",
-        "Waiting on material": "Esperando material",
-        "Where Is My Team": "Donde esta mi equipo",
-        "Work Description": "Descripcion del trabajo",
-        "Logout": "Cerrar sesion",
-        "Add Field Note": "Agregar nota de campo",
-        "History": "Historial",
-        "Back to Rooms": "Volver a habitaciones",
-        "Date": "Fecha",
-        "Comment": "Comentario",
-        "Save Note": "Guardar nota",
-        "No history for this room.": "No hay historial para esta habitacion.",
-        "Attach to Note": "Adjuntar a la nota",
-        "Attach to Task": "Adjuntar a la tarea",
-        "Attachment ready": "Adjunto listo",
-        "Picture ready": "Foto lista",
-        "Audio ready": "Audio listo",
-        "Ready for the main save button": "Listo para el boton principal de guardar",
-        "Attached": "Adjuntado",
-        "Take picture": "Tomar foto",
-        "Attach picture": "Adjuntar foto",
-        "Record or attach audio": "Grabar o adjuntar audio",
-        "Open menu": "Abrir menu",
-        "New Notification": "Nueva notificacion",
-        "New Task Assigned": "Nueva tarea asignada",
-        "Open notifications to review it.": "Abra las notificaciones para revisarla.",
-        "Close": "Cerrar",
-        "Alerts": "Alertas",
-        "Create a Task": "Crear una tarea",
-        "Classic UI": "Interfaz clasica",
-        "Pro Test UI": "Interfaz de prueba Pro",
-        "Add Task to Calendar?": "Agregar tarea al calendario?",
-        "The task was received. Add it to this phone calendar using the be-there date and time?": "La tarea fue recibida. Agreguela al calendario del telefono con la fecha y hora de llegada.",
-        "Yes, Add to Calendar": "Si, agregar al calendario",
-        "No": "No",
-    },
-    "pt": {
-        "Add More": "Adicionar mais",
-        "Add more": "Adicionar mais",
-        "Address": "Endereco",
-        "Admin Attachments": "Anexos do administrador",
-        "Alerts": "Alertas",
-        "All Projects": "Todos os projetos",
-        "All Suppliers": "Todos os fornecedores",
-        "Attach": "Anexar",
-        "Attachments": "Anexos",
-        "Back": "Voltar",
-        "Backup": "Backup",
-        "Cancel": "Cancelar",
-        "Clear Search": "Limpar busca",
-        "Clock In": "Registrar entrada",
-        "Clock Out": "Registrar saida",
-        "Comment Report": "Relatorio de comentarios",
-        "Comments": "Comentarios",
-        "Completed": "Concluido",
-        "Create Task": "Criar tarefa",
-        "Create a Task": "Criar uma tarefa",
-        "Customer Name": "Nome do cliente",
-        "Dark": "Escuro",
-        "Delete": "Excluir",
-        "Edit": "Editar",
-        "Home": "Inicio",
-        "In progress": "Em andamento",
-        "Inventory": "Inventario",
-        "Language": "Idioma",
-        "New": "Novo",
-        "No files": "Sem arquivos",
-        "Notifications": "Notificacoes",
-        "Open": "Abrir",
-        "Open Route in Google Maps": "Abrir rota no Google Maps",
-        "Open Task": "Abrir tarefa",
-        "Privacy": "Privacidade",
-        "Project": "Projeto",
-        "Project Name": "Nome do projeto",
-        "Projects": "Projetos",
-        "Received": "Recebido",
-        "Room": "Ambiente",
-        "Room Name": "Nome do ambiente",
-        "Room Task Status": "Status da tarefa do ambiente",
-        "Save": "Salvar",
-        "Save and Send": "Salvar e enviar",
-        "Search": "Buscar",
-        "Search Projects": "Buscar projetos",
-        "Search Task": "Buscar tarefa",
-        "Search my Tasks": "Buscar minhas tarefas",
-        "Sent to worker": "Enviado ao trabalhador",
-        "Settings": "Configuracoes",
-        "Show By": "Mostrar por",
-        "Show Tasks": "Mostrar tarefas",
-        "Supplier": "Fornecedor",
-        "Suppliers": "Fornecedores",
-        "Task Date": "Data da tarefa",
-        "Task Information": "Informacoes da tarefa",
-        "Task Number": "Numero da tarefa",
-        "Task Received On": "Tarefa recebida em",
-        "Task Report": "Relatorio de tarefas",
-        "Task Status": "Status da tarefa",
-        "Tasks": "Tarefas",
-        "Team": "Equipe",
-        "Time Report": "Relatorio de tempo",
-        "Today's Tasks": "Tarefas de hoje",
-        "Users": "Usuarios",
-        "View Scope": "Ver escopo",
-        "Waiting for RFI": "Aguardando RFI",
-        "Waiting on material": "Aguardando material",
-        "Where Is My Team": "Onde esta minha equipe",
-        "Work Description": "Descricao do trabalho",
-        "Logout": "Sair",
-        "Add Field Note": "Adicionar nota de campo",
-        "History": "Historico",
-        "Back to Rooms": "Voltar aos ambientes",
-        "Date": "Data",
-        "Comment": "Comentario",
-        "Save Note": "Salvar nota",
-        "No history for this room.": "Sem historico para este ambiente.",
-        "Attach to Note": "Anexar a nota",
-        "Attach to Task": "Anexar a tarefa",
-        "Attachment ready": "Anexo pronto",
-        "Picture ready": "Foto pronta",
-        "Audio ready": "Audio pronto",
-        "Ready for the main save button": "Pronto para o botao principal de salvar",
-        "Attached": "Anexado",
-        "Take picture": "Tirar foto",
-        "Attach picture": "Anexar foto",
-        "Record or attach audio": "Gravar ou anexar audio",
-        "Open menu": "Abrir menu",
-        "New Notification": "Nova notificacao",
-        "New Task Assigned": "Nova tarefa atribuida",
-        "Open notifications to review it.": "Abra as notificacoes para revisar.",
-        "Close": "Fechar",
-        "Alerts": "Alertas",
-        "Create a Task": "Criar uma tarefa",
-        "Classic UI": "Interface classica",
-        "Pro Test UI": "Interface de teste Pro",
-        "Add Task to Calendar?": "Adicionar tarefa ao calendario?",
-        "The task was received. Add it to this phone calendar using the be-there date and time?": "A tarefa foi recebida. Adicione ao calendario deste telefone usando a data e hora de chegada.",
-        "Yes, Add to Calendar": "Sim, adicionar ao calendario",
-        "No": "Nao",
-    },
 }
 
 
@@ -677,7 +460,6 @@ def init_db():
         reset_created_at TEXT,
         setup_token TEXT,
         setup_created_at TEXT,
-        preferred_language TEXT NOT NULL DEFAULT 'en',
         role TEXT NOT NULL DEFAULT 'worker',
         created_at TEXT NOT NULL
     )
@@ -811,20 +593,6 @@ def init_db():
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         subscription_json TEXT NOT NULL,
         created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS translation_cache (
-        id SERIAL PRIMARY KEY,
-        source_hash TEXT NOT NULL,
-        source_text TEXT NOT NULL,
-        target_language TEXT NOT NULL,
-        translated_text TEXT NOT NULL,
-        model TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT,
-        UNIQUE(source_hash, target_language)
     )
     """)
 
@@ -1101,7 +869,6 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_created_at TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_token TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_created_at TEXT",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT NOT NULL DEFAULT 'en'",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
         "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
@@ -1205,7 +972,6 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS translation_cache (id SERIAL PRIMARY KEY, source_hash TEXT NOT NULL, source_text TEXT NOT NULL, target_language TEXT NOT NULL, translated_text TEXT NOT NULL, model TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(source_hash, target_language))",
         """
         DO $$
         BEGIN
@@ -3887,12 +3653,6 @@ def utility_processor():
         can_view_project_files=can_view_project_files,
         project_file_provider_label=project_file_provider_label,
         format_file_size=format_file_size,
-        supported_languages=SUPPORTED_LANGUAGES,
-        current_language=current_language,
-        language_label=language_label,
-        builtin_translations_for_language=builtin_translations_for_language,
-        ui_text=ui_text,
-        speech_recognition_language=speech_recognition_language,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
@@ -4360,8 +4120,6 @@ def login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            session["language"] = normalize_language(user.get("preferred_language"))
-            session["preferred_language"] = session["language"]
             record_login_notification(user, "admin")
             return redirect(url_for("index"))
         flash("Invalid admin login.")
@@ -4388,8 +4146,6 @@ def mobile_login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            session["language"] = normalize_language(user.get("preferred_language"))
-            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile")
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
@@ -4438,8 +4194,6 @@ def mobile_create_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            session["language"] = normalize_language(user.get("preferred_language"))
-            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile PIN setup")
             flash("Your mobile PIN was created.")
             return redirect(url_for("mobile_home"))
@@ -4510,8 +4264,6 @@ def mobile_reset_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
-            session["language"] = normalize_language(user.get("preferred_language"))
-            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile PIN reset")
             flash("Your mobile PIN was updated.")
             return redirect(url_for("mobile_home"))
@@ -6513,465 +6265,6 @@ def openai_api_post_json(url, payload, timeout=60):
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
-
-
-def normalize_language(value):
-    text = str(value or "").strip().lower().replace("_", "-")
-    aliases = {
-        "english": "en",
-        "en-us": "en",
-        "spanish": "es",
-        "espa\u00f1ol": "es",
-        "espanol": "es",
-        "portuguese": "pt",
-        "portugues": "pt",
-        "portugu\u00eas": "pt",
-        "pt-br": "pt",
-        "pt-pt": "pt",
-    }
-    text = aliases.get(text, text)
-    return text if text in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
-
-
-def current_language():
-    return normalize_language(session.get("language") or session.get("preferred_language") or DEFAULT_LANGUAGE)
-
-
-def language_label(language=None):
-    return SUPPORTED_LANGUAGES.get(normalize_language(language), SUPPORTED_LANGUAGES[DEFAULT_LANGUAGE])["label"]
-
-
-def speech_recognition_language(language=None):
-    return {"en": "en-US", "es": "es-ES", "pt": "pt-BR"}.get(normalize_language(language), "en-US")
-
-
-def should_translate_text(text):
-    text = str(text or "").strip()
-    if not text or len(text) > 1200:
-        return False
-    if not any(ch.isalpha() for ch in text):
-        return False
-    if text.startswith(("http://", "https://", "mailto:", "tel:")):
-        return False
-    if re.fullmatch(r"[\d\s:/.,#()$+-]+", text):
-        return False
-    return True
-
-
-def builtin_translate_text(text, target_language):
-    target_language = normalize_language(target_language)
-    clean = str(text or "").strip()
-    if target_language == DEFAULT_LANGUAGE or not clean:
-        return clean
-    translations = APP_TRANSLATIONS.get(target_language, {})
-    if clean in translations:
-        return translations[clean]
-    if clean.endswith(":"):
-        base = clean[:-1].strip()
-        if base in translations:
-            return translations[base] + ":"
-    return clean
-
-
-def builtin_translations_for_language(language=None):
-    return APP_TRANSLATIONS.get(normalize_language(language), {})
-
-
-def ui_text(text, language=None):
-    return builtin_translate_text(text, language or current_language())
-
-
-def translation_hash(text):
-    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
-
-
-def openai_translate_texts(texts, target_language):
-    target_language = normalize_language(target_language)
-    if target_language == DEFAULT_LANGUAGE or not texts:
-        return list(texts)
-    if not OPENAI_API_KEY:
-        return None
-    target_name = SUPPORTED_LANGUAGES[target_language]["openai_name"]
-    schema = {
-        "name": "projectonus_translations",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "translations": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "index": {"type": "integer"},
-                            "translation": {"type": "string"},
-                        },
-                        "required": ["index", "translation"],
-                    },
-                }
-            },
-            "required": ["translations"],
-        },
-    }
-    payload_base = {
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Translate ProjectONus app labels and construction/project communication into the target language. "
-                    "Preserve names, company names, ProjectONus, IDs, task numbers, dates, times, phone numbers, URLs, and file names. "
-                    "Do not add explanations. Return one concise translation for every input index."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps({
-                    "target_language": target_name,
-                    "items": [{"index": idx, "text": text} for idx, text in enumerate(texts)],
-                }, ensure_ascii=False),
-            },
-        ],
-        "response_format": {"type": "json_schema", "json_schema": schema},
-    }
-    models = []
-    for model in [OPENAI_TRANSLATION_MODEL, OPENAI_TASK_PARSE_MODEL]:
-        if model and model not in models:
-            models.append(model)
-    last_error = None
-    for model in models:
-        payload = {**payload_base, "model": model}
-        try:
-            parsed = openai_api_post_json("https://api.openai.com/v1/chat/completions", payload, timeout=45)
-            content = parsed["choices"][0]["message"]["content"]
-            data = json.loads(content)
-            output = list(texts)
-            for item in data.get("translations") or []:
-                try:
-                    index = int(item.get("index"))
-                except Exception:
-                    continue
-                if 0 <= index < len(output):
-                    output[index] = str(item.get("translation") or texts[index]).strip() or texts[index]
-            return output
-        except urllib.error.HTTPError as exc:
-            last_error = exc
-            if exc.code in (400, 404):
-                continue
-            break
-        except Exception as exc:
-            last_error = exc
-            break
-    if last_error:
-        print("OpenAI translation skipped:", last_error)
-    return None
-
-
-def translate_texts_for_language(conn, texts, target_language):
-    target_language = normalize_language(target_language)
-    unique = []
-    seen = set()
-    for text in texts or []:
-        clean = str(text or "").strip()
-        if clean and clean not in seen and should_translate_text(clean):
-            unique.append(clean)
-            seen.add(clean)
-    if target_language == DEFAULT_LANGUAGE:
-        return {text: text for text in unique}
-    translations = {}
-    misses = []
-    for text in unique:
-        source_hash = translation_hash(text)
-        row = conn.execute(
-            "SELECT translated_text FROM translation_cache WHERE source_hash = %s AND target_language = %s",
-            (source_hash, target_language)
-        ).fetchone()
-        if row and row.get("translated_text"):
-            translations[text] = row["translated_text"]
-        else:
-            misses.append(text)
-    for start in range(0, len(misses), 40):
-        chunk = misses[start:start + 40]
-        translated = openai_translate_texts(chunk, target_language)
-        if translated is None:
-            for source in chunk:
-                translations[source] = builtin_translate_text(source, target_language)
-            continue
-        now = utc_now_iso()
-        for source, output in zip(chunk, translated):
-            output = str(output or builtin_translate_text(source, target_language)).strip() or source
-            fallback_output = builtin_translate_text(source, target_language)
-            if output == source and fallback_output != source:
-                output = fallback_output
-            translations[source] = output
-            conn.execute(
-                """
-                INSERT INTO translation_cache
-                (source_hash, source_text, target_language, translated_text, model, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (source_hash, target_language) DO UPDATE SET
-                    source_text = EXCLUDED.source_text,
-                    translated_text = EXCLUDED.translated_text,
-                    model = EXCLUDED.model,
-                    updated_at = EXCLUDED.updated_at
-                """,
-                (translation_hash(source), source, target_language, output, OPENAI_TRANSLATION_MODEL, now, now)
-            )
-    if misses:
-        conn.commit()
-    return translations
-
-
-@app.before_request
-def load_user_language_preference():
-    if "user_id" not in session or session.get("language"):
-        return
-    try:
-        conn = db()
-        row = conn.execute("SELECT preferred_language FROM users WHERE id = %s", (session.get("user_id"),)).fetchone()
-        conn.close()
-        session["language"] = normalize_language(row.get("preferred_language") if row else DEFAULT_LANGUAGE)
-    except Exception as e:
-        print("Language preference load skipped:", e)
-        session["language"] = DEFAULT_LANGUAGE
-
-
-@app.route("/language", methods=["POST"])
-@login_required
-def set_language():
-    language = normalize_language(request.form.get("language"))
-    session["language"] = language
-    session["preferred_language"] = language
-    try:
-        conn = db()
-        conn.execute("UPDATE users SET preferred_language = %s WHERE id = %s", (language, session.get("user_id")))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print("Language preference save skipped:", e)
-    language_flash = {
-        "en": f"Language changed to {language_label(language)}.",
-        "es": f"Idioma cambiado a {language_label(language)}.",
-        "pt": f"Idioma alterado para {language_label(language)}.",
-    }
-    flash(language_flash.get(language, language_flash["en"]))
-    return redirect(safe_next_url("index"))
-
-
-@app.route("/translate/batch", methods=["POST"])
-@login_required
-def translate_batch():
-    try:
-        payload = json.loads(request.data.decode("utf-8") or "{}")
-    except Exception:
-        payload = {}
-    target_language = normalize_language(payload.get("language") or current_language())
-    raw_texts = payload.get("texts") if isinstance(payload.get("texts"), list) else []
-    texts = [str(text or "").strip() for text in raw_texts if should_translate_text(text)]
-    texts = texts[:140]
-    if target_language == DEFAULT_LANGUAGE or not texts:
-        return json_response({"language": target_language, "translations": {text: text for text in texts}})
-    conn = None
-    try:
-        conn = db()
-        translations = translate_texts_for_language(conn, texts, target_language)
-    except Exception as e:
-        print("Translation batch fallback:", e)
-        translations = {text: builtin_translate_text(text, target_language) for text in texts}
-    finally:
-        if conn:
-            conn.close()
-    return json_response({"language": target_language, "translations": translations})
-
-
-HTML_TRANSLATION_SKIP_TAGS = {"script", "style", "noscript", "template", "textarea", "code", "pre", "svg", "canvas", "audio", "video"}
-HTML_TRANSLATION_ATTRS = {"placeholder", "title", "aria-label"}
-
-
-def html_translation_skip_attrs(attrs):
-    attr_map = {str(name or "").lower(): str(value or "") for name, value in attrs if name}
-    classes = set(re.split(r"\s+", attr_map.get("class", "").strip()))
-    return (
-        attr_map.get("translate", "").lower() == "no"
-        or "notranslate" in classes
-        or "projectonusNoTranslate" in classes
-    )
-
-
-def html_escape_attr(value):
-    return html_lib.escape(str(value), quote=True)
-
-
-def html_render_tag(tag, attrs, closing=False):
-    parts = [f"<{tag}"]
-    for name, value in attrs:
-        if value is None:
-            parts.append(f" {name}")
-        else:
-            parts.append(f' {name}="{html_escape_attr(value)}"')
-    parts.append(" />" if closing else ">")
-    return "".join(parts)
-
-
-class HtmlTranslationCollector(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=False)
-        self.skip_depth = 0
-        self.texts = []
-
-    def add_text(self, text):
-        clean = str(text or "").strip()
-        if should_translate_text(clean):
-            self.texts.append(clean)
-
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-        skip = self.skip_depth > 0 or tag in HTML_TRANSLATION_SKIP_TAGS or html_translation_skip_attrs(attrs)
-        if not skip:
-            for name, value in attrs:
-                name = str(name or "").lower()
-                if name in HTML_TRANSLATION_ATTRS and value:
-                    self.add_text(value)
-                elif name == "value" and tag == "input":
-                    input_type = next((str(v or "").lower() for n, v in attrs if str(n or "").lower() == "type"), "")
-                    if input_type in {"submit", "button", "reset"}:
-                        self.add_text(value)
-        if skip:
-            self.skip_depth += 1
-
-    def handle_endtag(self, tag):
-        if self.skip_depth:
-            self.skip_depth -= 1
-
-    def handle_data(self, data):
-        if not self.skip_depth:
-            self.add_text(data)
-
-
-class HtmlTranslationRenderer(HTMLParser):
-    def __init__(self, translations):
-        super().__init__(convert_charrefs=False)
-        self.translations = translations or {}
-        self.skip_depth = 0
-        self.output = []
-
-    def translate(self, text):
-        original = str(text or "")
-        clean = original.strip()
-        if not should_translate_text(clean):
-            return original
-        translated = self.translations.get(clean) or clean
-        leading = (re.match(r"^\s*", original).group(0) if original else "")
-        trailing = (re.search(r"\s*$", original).group(0) if original else "")
-        return leading + translated + trailing
-
-    def translate_attrs(self, tag, attrs):
-        updated = []
-        input_type = next((str(v or "").lower() for n, v in attrs if str(n or "").lower() == "type"), "")
-        for name, value in attrs:
-            attr_name = str(name or "")
-            lower = attr_name.lower()
-            if value is not None and not self.skip_depth:
-                if lower in HTML_TRANSLATION_ATTRS:
-                    value = self.translate(value).strip()
-                elif lower == "value" and tag == "input" and input_type in {"submit", "button", "reset"}:
-                    value = self.translate(value).strip()
-            updated.append((attr_name, value))
-        return updated
-
-    def handle_starttag(self, tag, attrs):
-        lower_tag = tag.lower()
-        skip = self.skip_depth > 0 or lower_tag in HTML_TRANSLATION_SKIP_TAGS or html_translation_skip_attrs(attrs)
-        attrs = self.translate_attrs(lower_tag, attrs)
-        self.output.append(html_render_tag(tag, attrs))
-        if skip:
-            self.skip_depth += 1
-
-    def handle_startendtag(self, tag, attrs):
-        lower_tag = tag.lower()
-        attrs = self.translate_attrs(lower_tag, attrs)
-        self.output.append(html_render_tag(tag, attrs, closing=True))
-
-    def handle_endtag(self, tag):
-        self.output.append(f"</{tag}>")
-        if self.skip_depth:
-            self.skip_depth -= 1
-
-    def handle_data(self, data):
-        self.output.append(data if self.skip_depth else self.translate(data))
-
-    def handle_entityref(self, name):
-        self.output.append(f"&{name};")
-
-    def handle_charref(self, name):
-        self.output.append(f"&#{name};")
-
-    def handle_comment(self, data):
-        self.output.append(f"<!--{data}-->")
-
-    def handle_decl(self, decl):
-        self.output.append(f"<!{decl}>")
-
-    def handle_pi(self, data):
-        self.output.append(f"<?{data}>")
-
-    def translated_html(self):
-        return "".join(self.output)
-
-
-def translate_html_for_language(html_text, target_language):
-    target_language = normalize_language(target_language)
-    if target_language == DEFAULT_LANGUAGE or not html_text:
-        return html_text
-    collector = HtmlTranslationCollector()
-    collector.feed(html_text)
-    unique = []
-    seen = set()
-    for text in collector.texts:
-        if text not in seen:
-            unique.append(text)
-            seen.add(text)
-    translations = {}
-    misses = []
-    for text in unique:
-        builtin = builtin_translate_text(text, target_language)
-        if builtin != text:
-            translations[text] = builtin
-        else:
-            misses.append(text)
-    if misses:
-        conn = None
-        try:
-            conn = db()
-            translations.update(translate_texts_for_language(conn, misses, target_language))
-        except Exception as e:
-            print("Server HTML translation fallback:", e)
-            for text in misses:
-                translations.setdefault(text, text)
-        finally:
-            if conn:
-                conn.close()
-    renderer = HtmlTranslationRenderer(translations)
-    renderer.feed(html_text)
-    return renderer.translated_html()
-
-
-@app.after_request
-def translate_html_response(response):
-    try:
-        if "user_id" not in session or current_language() == DEFAULT_LANGUAGE:
-            return response
-        if request.endpoint in {"static", "translate_batch"}:
-            return response
-        if response.direct_passthrough or "text/html" not in response.headers.get("Content-Type", ""):
-            return response
-        body = response.get_data(as_text=True)
-        translated = translate_html_for_language(body, current_language())
-        response.set_data(translated)
-    except Exception as e:
-        print("HTML response translation skipped:", e)
-    return response
 
 
 @app.route("/tasks/create/realtime-token", methods=["POST"])
@@ -10118,7 +9411,6 @@ def backup():
         ("login_events", "id"),
         ("task_number_counters", "month_key"),
         ("task_delete_codes", "id"),
-        ("translation_cache", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
         ("project_file_links", "id"),
