@@ -86,6 +86,152 @@ SUPPORTED_LANGUAGES = {
     "pt": {"label": "Portugu\u00eas", "openai_name": "Brazilian Portuguese"},
 }
 DEFAULT_LANGUAGE = "en"
+APP_TRANSLATIONS = {
+    "es": {
+        "Add More": "Agregar mas",
+        "Add more": "Agregar mas",
+        "Address": "Direccion",
+        "Admin Attachments": "Archivos adjuntos del administrador",
+        "Alerts": "Alertas",
+        "All Projects": "Todos los proyectos",
+        "All Suppliers": "Todos los proveedores",
+        "Attach": "Adjuntar",
+        "Attachments": "Archivos adjuntos",
+        "Back": "Atras",
+        "Backup": "Copia de seguridad",
+        "Cancel": "Cancelar",
+        "Clear Search": "Limpiar busqueda",
+        "Clock In": "Marcar entrada",
+        "Clock Out": "Marcar salida",
+        "Comment Report": "Reporte de comentarios",
+        "Comments": "Comentarios",
+        "Completed": "Completado",
+        "Create Task": "Crear tarea",
+        "Create a Task": "Crear una tarea",
+        "Customer Name": "Nombre del cliente",
+        "Dark": "Oscuro",
+        "Delete": "Eliminar",
+        "Edit": "Editar",
+        "Home": "Inicio",
+        "In progress": "En progreso",
+        "Inventory": "Inventario",
+        "Language": "Idioma",
+        "New": "Nuevo",
+        "No files": "Sin archivos",
+        "Notifications": "Notificaciones",
+        "Open": "Abrir",
+        "Open Route in Google Maps": "Abrir ruta en Google Maps",
+        "Open Task": "Abrir tarea",
+        "Privacy": "Privacidad",
+        "Project": "Proyecto",
+        "Project Name": "Nombre del proyecto",
+        "Projects": "Proyectos",
+        "Received": "Recibido",
+        "Room": "Habitacion",
+        "Room Name": "Nombre de la habitacion",
+        "Room Task Status": "Estado de la tarea de la habitacion",
+        "Save": "Guardar",
+        "Save and Send": "Guardar y enviar",
+        "Search": "Buscar",
+        "Search Projects": "Buscar proyectos",
+        "Search Task": "Buscar tarea",
+        "Search my Tasks": "Buscar mis tareas",
+        "Sent to worker": "Enviado al trabajador",
+        "Settings": "Configuracion",
+        "Show By": "Mostrar por",
+        "Show Tasks": "Mostrar tareas",
+        "Supplier": "Proveedor",
+        "Suppliers": "Proveedores",
+        "Task Date": "Fecha de la tarea",
+        "Task Information": "Informacion de la tarea",
+        "Task Number": "Numero de tarea",
+        "Task Received On": "Tarea recibida el",
+        "Task Report": "Reporte de tareas",
+        "Task Status": "Estado de la tarea",
+        "Tasks": "Tareas",
+        "Team": "Equipo",
+        "Time Report": "Reporte de tiempo",
+        "Today's Tasks": "Tareas de hoy",
+        "Users": "Usuarios",
+        "View Scope": "Ver alcance",
+        "Waiting for RFI": "Esperando RFI",
+        "Waiting on material": "Esperando material",
+        "Where Is My Team": "Donde esta mi equipo",
+        "Work Description": "Descripcion del trabajo",
+    },
+    "pt": {
+        "Add More": "Adicionar mais",
+        "Add more": "Adicionar mais",
+        "Address": "Endereco",
+        "Admin Attachments": "Anexos do administrador",
+        "Alerts": "Alertas",
+        "All Projects": "Todos os projetos",
+        "All Suppliers": "Todos os fornecedores",
+        "Attach": "Anexar",
+        "Attachments": "Anexos",
+        "Back": "Voltar",
+        "Backup": "Backup",
+        "Cancel": "Cancelar",
+        "Clear Search": "Limpar busca",
+        "Clock In": "Registrar entrada",
+        "Clock Out": "Registrar saida",
+        "Comment Report": "Relatorio de comentarios",
+        "Comments": "Comentarios",
+        "Completed": "Concluido",
+        "Create Task": "Criar tarefa",
+        "Create a Task": "Criar uma tarefa",
+        "Customer Name": "Nome do cliente",
+        "Dark": "Escuro",
+        "Delete": "Excluir",
+        "Edit": "Editar",
+        "Home": "Inicio",
+        "In progress": "Em andamento",
+        "Inventory": "Inventario",
+        "Language": "Idioma",
+        "New": "Novo",
+        "No files": "Sem arquivos",
+        "Notifications": "Notificacoes",
+        "Open": "Abrir",
+        "Open Route in Google Maps": "Abrir rota no Google Maps",
+        "Open Task": "Abrir tarefa",
+        "Privacy": "Privacidade",
+        "Project": "Projeto",
+        "Project Name": "Nome do projeto",
+        "Projects": "Projetos",
+        "Received": "Recebido",
+        "Room": "Ambiente",
+        "Room Name": "Nome do ambiente",
+        "Room Task Status": "Status da tarefa do ambiente",
+        "Save": "Salvar",
+        "Save and Send": "Salvar e enviar",
+        "Search": "Buscar",
+        "Search Projects": "Buscar projetos",
+        "Search Task": "Buscar tarefa",
+        "Search my Tasks": "Buscar minhas tarefas",
+        "Sent to worker": "Enviado ao trabalhador",
+        "Settings": "Configuracoes",
+        "Show By": "Mostrar por",
+        "Show Tasks": "Mostrar tarefas",
+        "Supplier": "Fornecedor",
+        "Suppliers": "Fornecedores",
+        "Task Date": "Data da tarefa",
+        "Task Information": "Informacoes da tarefa",
+        "Task Number": "Numero da tarefa",
+        "Task Received On": "Tarefa recebida em",
+        "Task Report": "Relatorio de tarefas",
+        "Task Status": "Status da tarefa",
+        "Tasks": "Tarefas",
+        "Team": "Equipe",
+        "Time Report": "Relatorio de tempo",
+        "Today's Tasks": "Tarefas de hoje",
+        "Users": "Usuarios",
+        "View Scope": "Ver escopo",
+        "Waiting for RFI": "Aguardando RFI",
+        "Waiting on material": "Aguardando material",
+        "Where Is My Team": "Onde esta minha equipe",
+        "Work Description": "Descricao do trabalho",
+    },
+}
 
 
 def file_ext(filename):
@@ -6346,6 +6492,21 @@ def should_translate_text(text):
     return True
 
 
+def builtin_translate_text(text, target_language):
+    target_language = normalize_language(target_language)
+    clean = str(text or "").strip()
+    if target_language == DEFAULT_LANGUAGE or not clean:
+        return clean
+    translations = APP_TRANSLATIONS.get(target_language, {})
+    if clean in translations:
+        return translations[clean]
+    if clean.endswith(":"):
+        base = clean[:-1].strip()
+        if base in translations:
+            return translations[base] + ":"
+    return clean
+
+
 def translation_hash(text):
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
@@ -6461,11 +6622,14 @@ def translate_texts_for_language(conn, texts, target_language):
         translated = openai_translate_texts(chunk, target_language)
         if translated is None:
             for source in chunk:
-                translations[source] = source
+                translations[source] = builtin_translate_text(source, target_language)
             continue
         now = utc_now_iso()
         for source, output in zip(chunk, translated):
-            output = str(output or source).strip() or source
+            output = str(output or builtin_translate_text(source, target_language)).strip() or source
+            fallback_output = builtin_translate_text(source, target_language)
+            if output == source and fallback_output != source:
+                output = fallback_output
             translations[source] = output
             conn.execute(
                 """
@@ -6512,6 +6676,7 @@ def set_language():
         conn.close()
     except Exception as e:
         print("Language preference save skipped:", e)
+    flash(f"Language changed to {language_label(language)}.")
     return redirect(safe_next_url("index"))
 
 
