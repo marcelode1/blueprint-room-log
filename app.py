@@ -41,6 +41,7 @@ APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 OPENAI_TASK_PARSE_MODEL = os.environ.get("OPENAI_TASK_PARSE_MODEL", "gpt-4.1-mini")
+OPENAI_TRANSLATION_MODEL = os.environ.get("OPENAI_TRANSLATION_MODEL", OPENAI_TASK_PARSE_MODEL)
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
 
 COMMON_TIMEZONES = [
@@ -79,6 +80,12 @@ PROJECT_FILE_PROVIDERS = {
     "box": "Box",
     "other": "Other Link",
 }
+SUPPORTED_LANGUAGES = {
+    "en": {"label": "English", "openai_name": "English"},
+    "es": {"label": "Espa\u00f1ol", "openai_name": "Spanish"},
+    "pt": {"label": "Portugu\u00eas", "openai_name": "Brazilian Portuguese"},
+}
+DEFAULT_LANGUAGE = "en"
 
 
 def file_ext(filename):
@@ -460,6 +467,7 @@ def init_db():
         reset_created_at TEXT,
         setup_token TEXT,
         setup_created_at TEXT,
+        preferred_language TEXT NOT NULL DEFAULT 'en',
         role TEXT NOT NULL DEFAULT 'worker',
         created_at TEXT NOT NULL
     )
@@ -593,6 +601,20 @@ def init_db():
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         subscription_json TEXT NOT NULL,
         created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS translation_cache (
+        id SERIAL PRIMARY KEY,
+        source_hash TEXT NOT NULL,
+        source_text TEXT NOT NULL,
+        target_language TEXT NOT NULL,
+        translated_text TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        UNIQUE(source_hash, target_language)
     )
     """)
 
@@ -869,6 +891,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_created_at TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_token TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS setup_created_at TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language TEXT NOT NULL DEFAULT 'en'",
         "ALTER TABLE notes ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS blueprint_id INTEGER REFERENCES project_blueprints(id) ON DELETE SET NULL",
         "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
@@ -972,6 +995,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS translation_cache (id SERIAL PRIMARY KEY, source_hash TEXT NOT NULL, source_text TEXT NOT NULL, target_language TEXT NOT NULL, translated_text TEXT NOT NULL, model TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(source_hash, target_language))",
         """
         DO $$
         BEGIN
@@ -3653,6 +3677,10 @@ def utility_processor():
         can_view_project_files=can_view_project_files,
         project_file_provider_label=project_file_provider_label,
         format_file_size=format_file_size,
+        supported_languages=SUPPORTED_LANGUAGES,
+        current_language=current_language,
+        language_label=language_label,
+        speech_recognition_language=speech_recognition_language,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
@@ -4120,6 +4148,8 @@ def login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            session["language"] = normalize_language(user.get("preferred_language"))
+            session["preferred_language"] = session["language"]
             record_login_notification(user, "admin")
             return redirect(url_for("index"))
         flash("Invalid admin login.")
@@ -4146,6 +4176,8 @@ def mobile_login():
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            session["language"] = normalize_language(user.get("preferred_language"))
+            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile")
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
@@ -4194,6 +4226,8 @@ def mobile_create_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            session["language"] = normalize_language(user.get("preferred_language"))
+            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile PIN setup")
             flash("Your mobile PIN was created.")
             return redirect(url_for("mobile_home"))
@@ -4264,6 +4298,8 @@ def mobile_reset_pin(token):
             session["user_id"] = user["id"]
             session["name"] = user["name"]
             session["role"] = user["role"]
+            session["language"] = normalize_language(user.get("preferred_language"))
+            session["preferred_language"] = session["language"]
             record_login_notification(user, "mobile PIN reset")
             flash("Your mobile PIN was updated.")
             return redirect(url_for("mobile_home"))
@@ -6265,6 +6301,237 @@ def openai_api_post_json(url, payload, timeout=60):
     )
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def normalize_language(value):
+    text = str(value or "").strip().lower().replace("_", "-")
+    aliases = {
+        "english": "en",
+        "en-us": "en",
+        "spanish": "es",
+        "espa\u00f1ol": "es",
+        "espanol": "es",
+        "portuguese": "pt",
+        "portugues": "pt",
+        "portugu\u00eas": "pt",
+        "pt-br": "pt",
+        "pt-pt": "pt",
+    }
+    text = aliases.get(text, text)
+    return text if text in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+
+
+def current_language():
+    return normalize_language(session.get("language") or session.get("preferred_language") or DEFAULT_LANGUAGE)
+
+
+def language_label(language=None):
+    return SUPPORTED_LANGUAGES.get(normalize_language(language), SUPPORTED_LANGUAGES[DEFAULT_LANGUAGE])["label"]
+
+
+def speech_recognition_language(language=None):
+    return {"en": "en-US", "es": "es-ES", "pt": "pt-BR"}.get(normalize_language(language), "en-US")
+
+
+def should_translate_text(text):
+    text = str(text or "").strip()
+    if not text or len(text) > 1200:
+        return False
+    if not any(ch.isalpha() for ch in text):
+        return False
+    if text.startswith(("http://", "https://", "mailto:", "tel:")):
+        return False
+    if re.fullmatch(r"[\d\s:/.,#()$+-]+", text):
+        return False
+    return True
+
+
+def translation_hash(text):
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+
+
+def openai_translate_texts(texts, target_language):
+    target_language = normalize_language(target_language)
+    if target_language == DEFAULT_LANGUAGE or not texts:
+        return list(texts)
+    if not OPENAI_API_KEY:
+        return None
+    target_name = SUPPORTED_LANGUAGES[target_language]["openai_name"]
+    schema = {
+        "name": "projectonus_translations",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "translations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "index": {"type": "integer"},
+                            "translation": {"type": "string"},
+                        },
+                        "required": ["index", "translation"],
+                    },
+                }
+            },
+            "required": ["translations"],
+        },
+    }
+    payload_base = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Translate ProjectONus app labels and construction/project communication into the target language. "
+                    "Preserve names, company names, ProjectONus, IDs, task numbers, dates, times, phone numbers, URLs, and file names. "
+                    "Do not add explanations. Return one concise translation for every input index."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "target_language": target_name,
+                    "items": [{"index": idx, "text": text} for idx, text in enumerate(texts)],
+                }, ensure_ascii=False),
+            },
+        ],
+        "response_format": {"type": "json_schema", "json_schema": schema},
+    }
+    models = []
+    for model in [OPENAI_TRANSLATION_MODEL, OPENAI_TASK_PARSE_MODEL]:
+        if model and model not in models:
+            models.append(model)
+    last_error = None
+    for model in models:
+        payload = {**payload_base, "model": model}
+        try:
+            parsed = openai_api_post_json("https://api.openai.com/v1/chat/completions", payload, timeout=45)
+            content = parsed["choices"][0]["message"]["content"]
+            data = json.loads(content)
+            output = list(texts)
+            for item in data.get("translations") or []:
+                try:
+                    index = int(item.get("index"))
+                except Exception:
+                    continue
+                if 0 <= index < len(output):
+                    output[index] = str(item.get("translation") or texts[index]).strip() or texts[index]
+            return output
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code in (400, 404):
+                continue
+            break
+        except Exception as exc:
+            last_error = exc
+            break
+    if last_error:
+        print("OpenAI translation skipped:", last_error)
+    return None
+
+
+def translate_texts_for_language(conn, texts, target_language):
+    target_language = normalize_language(target_language)
+    unique = []
+    seen = set()
+    for text in texts or []:
+        clean = str(text or "").strip()
+        if clean and clean not in seen and should_translate_text(clean):
+            unique.append(clean)
+            seen.add(clean)
+    if target_language == DEFAULT_LANGUAGE:
+        return {text: text for text in unique}
+    translations = {}
+    misses = []
+    for text in unique:
+        source_hash = translation_hash(text)
+        row = conn.execute(
+            "SELECT translated_text FROM translation_cache WHERE source_hash = %s AND target_language = %s",
+            (source_hash, target_language)
+        ).fetchone()
+        if row and row.get("translated_text"):
+            translations[text] = row["translated_text"]
+        else:
+            misses.append(text)
+    for start in range(0, len(misses), 40):
+        chunk = misses[start:start + 40]
+        translated = openai_translate_texts(chunk, target_language)
+        if translated is None:
+            for source in chunk:
+                translations[source] = source
+            continue
+        now = utc_now_iso()
+        for source, output in zip(chunk, translated):
+            output = str(output or source).strip() or source
+            translations[source] = output
+            conn.execute(
+                """
+                INSERT INTO translation_cache
+                (source_hash, source_text, target_language, translated_text, model, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_hash, target_language) DO UPDATE SET
+                    source_text = EXCLUDED.source_text,
+                    translated_text = EXCLUDED.translated_text,
+                    model = EXCLUDED.model,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (translation_hash(source), source, target_language, output, OPENAI_TRANSLATION_MODEL, now, now)
+            )
+    if misses:
+        conn.commit()
+    return translations
+
+
+@app.before_request
+def load_user_language_preference():
+    if "user_id" not in session or session.get("language"):
+        return
+    try:
+        conn = db()
+        row = conn.execute("SELECT preferred_language FROM users WHERE id = %s", (session.get("user_id"),)).fetchone()
+        conn.close()
+        session["language"] = normalize_language(row.get("preferred_language") if row else DEFAULT_LANGUAGE)
+    except Exception as e:
+        print("Language preference load skipped:", e)
+        session["language"] = DEFAULT_LANGUAGE
+
+
+@app.route("/language", methods=["POST"])
+@login_required
+def set_language():
+    language = normalize_language(request.form.get("language"))
+    session["language"] = language
+    session["preferred_language"] = language
+    try:
+        conn = db()
+        conn.execute("UPDATE users SET preferred_language = %s WHERE id = %s", (language, session.get("user_id")))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Language preference save skipped:", e)
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/translate/batch", methods=["POST"])
+@login_required
+def translate_batch():
+    try:
+        payload = json.loads(request.data.decode("utf-8") or "{}")
+    except Exception:
+        payload = {}
+    target_language = normalize_language(payload.get("language") or current_language())
+    raw_texts = payload.get("texts") if isinstance(payload.get("texts"), list) else []
+    texts = [str(text or "").strip() for text in raw_texts if should_translate_text(text)]
+    texts = texts[:140]
+    if target_language == DEFAULT_LANGUAGE or not texts:
+        return json_response({"language": target_language, "translations": {text: text for text in texts}})
+    conn = db()
+    translations = translate_texts_for_language(conn, texts, target_language)
+    conn.close()
+    return json_response({"language": target_language, "translations": translations})
 
 
 @app.route("/tasks/create/realtime-token", methods=["POST"])
@@ -9411,6 +9678,7 @@ def backup():
         ("login_events", "id"),
         ("task_number_counters", "month_key"),
         ("task_delete_codes", "id"),
+        ("translation_cache", "id"),
         ("user_permissions", "user_id"),
         ("project_permissions", "user_id, project_id"),
         ("project_file_links", "id"),

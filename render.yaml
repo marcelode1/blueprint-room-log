@@ -19,3 +19,5 @@ services:
         sync: false
       - key: SUPABASE_BUCKET
         value: blueprint-files
+      - key: OPENAI_API_KEY
+        sync: false
