@@ -178,12 +178,15 @@ APP_TRANSLATIONS = {
         "Record or attach audio": "Grabar o adjuntar audio",
         "Open menu": "Abrir menu",
         "New Notification": "Nueva notificacion",
+        "New Task Assigned": "Nueva tarea asignada",
+        "Open notifications to review it.": "Abra las notificaciones para revisarla.",
         "Close": "Cerrar",
         "Alerts": "Alertas",
         "Create a Task": "Crear una tarea",
         "Classic UI": "Interfaz clasica",
         "Pro Test UI": "Interfaz de prueba Pro",
         "Add Task to Calendar?": "Agregar tarea al calendario?",
+        "The task was received. Add it to this phone calendar using the be-there date and time?": "La tarea fue recibida. Agreguela al calendario del telefono con la fecha y hora de llegada.",
         "Yes, Add to Calendar": "Si, agregar al calendario",
         "No": "No",
     },
@@ -278,12 +281,15 @@ APP_TRANSLATIONS = {
         "Record or attach audio": "Gravar ou anexar audio",
         "Open menu": "Abrir menu",
         "New Notification": "Nova notificacao",
+        "New Task Assigned": "Nova tarefa atribuida",
+        "Open notifications to review it.": "Abra as notificacoes para revisar.",
         "Close": "Fechar",
         "Alerts": "Alertas",
         "Create a Task": "Criar uma tarefa",
         "Classic UI": "Interface classica",
         "Pro Test UI": "Interface de teste Pro",
         "Add Task to Calendar?": "Adicionar tarefa ao calendario?",
+        "The task was received. Add it to this phone calendar using the be-there date and time?": "A tarefa foi recebida. Adicione ao calendario deste telefone usando a data e hora de chegada.",
         "Yes, Add to Calendar": "Sim, adicionar ao calendario",
         "No": "Nao",
     },
@@ -3883,6 +3889,7 @@ def utility_processor():
         current_language=current_language,
         language_label=language_label,
         builtin_translations_for_language=builtin_translations_for_language,
+        ui_text=ui_text,
         speech_recognition_language=speech_recognition_language,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
@@ -6566,6 +6573,10 @@ def builtin_translate_text(text, target_language):
 
 def builtin_translations_for_language(language=None):
     return APP_TRANSLATIONS.get(normalize_language(language), {})
+
+
+def ui_text(text, language=None):
+    return builtin_translate_text(text, language or current_language())
 
 
 def translation_hash(text):
