@@ -683,23 +683,13 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
         if(!form||!form.matches||!form.matches('form[method="post"],form[method="POST"]'))return;
         if(!form.enctype||!form.enctype.includes("multipart/form-data"))return;
         if(!hasSelectedFile(form))return;
+        if(!uploadSignalIsWeak())return;
         event.preventDefault();
         const submitter=event.submitter;
         if(submitter)submitter.disabled=true;
         try{
-            if(uploadSignalIsWeak()){
-                await queueForm(form,navigator.onLine?"Signal is too weak for upload right now.":"No signal right now.");
-                form.reset();
-                return;
-            }
-            try{
-                const entry=entryFromForm(form);
-                const response=await sendEntry(entry);
-                window.location.href=response.url||form.action||window.location.href;
-            }catch(e){
-                await queueForm(form,"Upload could not reach the cloud right now.");
-                form.reset();
-            }
+            await queueForm(form,navigator.onLine?"Signal is too weak for upload right now.":"No signal right now.");
+            form.reset();
         }finally{
             if(submitter)submitter.disabled=false;
         }
