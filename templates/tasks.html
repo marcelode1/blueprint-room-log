@@ -151,6 +151,7 @@
                         {% endfor %}
                         {% if selected_task_id == t.id %}<span id="task-{{ t.id }}"></span>{% endif %}
                         <div id="task-{{ t.id }}-room-{{ r.id }}" class="card {% if room_state.done or task_is_completed(t) %}taskDone{% endif %}">
+                            <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
                             <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
                             <p><strong>Room Name:</strong> {{ r.name }}</p>
                             <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
@@ -158,9 +159,11 @@
                             {% include "_task_schedule_contact_info.html" %}
                             {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
                             {% set task_info = task_instruction_text(t) %}
-                            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+                            {% if not t.supplier_id %}
+                                <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+                                <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or task_is_completed(t) %}done{% endif %}">{{ 'Completed' if room_state.done or task_is_completed(t) else task_status_label(t) }}</span></p>
+                            {% endif %}
                             {% include "_supplier_task_info.html" %}
-                            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or task_is_completed(t) %}done{% endif %}">{{ 'Completed' if room_state.done or task_is_completed(t) else task_status_label(t) }}</span></p>
                             {% set admin_room_id = r.id %}
                             {% include "_task_admin_attachments.html" %}
                             {% if (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
@@ -178,6 +181,7 @@
                 {% for t in project_level_tasks %}
                     {% if selected_task_id == t.id %}<span id="task-{{ t.id }}"></span>{% endif %}
                     <div id="task-{{ t.id }}-project" class="card {% if task_is_completed(t) %}taskDone{% endif %}">
+                        <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
                         <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
                         <p><strong>Room Name:</strong> Project general</p>
                         <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
@@ -185,12 +189,14 @@
                         {% include "_task_schedule_contact_info.html" %}
                         {% if is_main_admin() %}<p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}{% if t.assigned_user_email %} - {{ t.assigned_user_email }}{% endif %}</p>{% endif %}
                         {% set task_info = task_instruction_text(t) %}
-                        <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
-                        <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
+                        {% if not t.supplier_id %}
+                            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+                            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
+                        {% endif %}
                         {% include "_supplier_task_info.html" %}
                         {% set admin_room_id = none %}
                         {% include "_task_admin_attachments.html" %}
-                        {% if (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+                        {% if not t.supplier_id and (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                                 <input type="hidden" name="next" value="{{ request.full_path if notification_task_list else url_for('open_task_workspace', task_id=t.id) }}">
                                 {% if t.allow_comment %}<label>Work Description</label><textarea name="completion_comment" rows="3" placeholder="Describe what is being done"></textarea>{% endif %}
@@ -286,6 +292,7 @@
     {% else %}
     {% for t in tasks %}
         <div id="task-{{ t.id }}" class="card {% if task_is_completed(t) %}taskDone{% endif %}">
+            <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
             <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
             <p><strong>Room Name:</strong> {{ t.room_name or 'Project general' }}</p>
             <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
@@ -299,12 +306,14 @@
             {% endif %}
             {% if t.completed_at %}<p class="muted">Completed {{ format_datetime(t.completed_at) }}</p>{% endif %}
             {% set task_info = task_instruction_text(t) %}
-            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
-            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
+            {% if not t.supplier_id %}
+                <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+                <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
+            {% endif %}
             {% include "_supplier_task_info.html" %}
             {% set admin_room_id = t.room_id %}
             {% include "_task_admin_attachments.html" %}
-            {% if (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+            {% if not t.supplier_id and (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
                 <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
                     <input type="hidden" name="next" value="{{ url_for('open_task_workspace', task_id=t.id) }}">
                     {% if t.allow_comment %}<label>Work Description</label><textarea name="completion_comment" rows="3" placeholder="Describe what is being done"></textarea>{% endif %}

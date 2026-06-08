@@ -11,13 +11,16 @@
 {% endif %}
 <div id="task-{{ t.id }}" class="card workerTaskCard {% if task_is_completed(t) or room_state.done %}taskDone{% endif %}">
     <div class="workerTaskInfo">
+        <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
         <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
         <p><strong>Room Name:</strong> {{ work_room_name }}</p>
         <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
         <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
         {% include "_task_schedule_contact_info.html" %}
-        <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
-        <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
+        {% if not t.supplier_id %}
+            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
+        {% endif %}
     </div>
 
     {% if address %}
@@ -29,7 +32,7 @@
     {% set admin_room_id = work_room_id %}
     {% include "_task_admin_attachments.html" %}
 
-    {% if t.accepted_at or task_is_completed(t) %}
+    {% if not t.supplier_id and (t.accepted_at or task_is_completed(t)) %}
         <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm workerTaskSaveForm" data-task-id="{{ t.id }}">
             <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
             {% if work_room_id %}<input type="hidden" name="completion_room_id" value="{{ work_room_id }}">{% endif %}

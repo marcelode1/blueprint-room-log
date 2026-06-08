@@ -1,17 +1,17 @@
-<form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
-    <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-    <input type="hidden" name="completion_room_id" value="{{ r.id }}">
-    <label>Work Description</label>
-    <textarea name="completion_comment" rows="3" placeholder="Describe what is being done"></textarea>
-    <label>Task Status</label>
-    <select name="completion_task_status">
-        {% for value, label in task_status_options.items() %}
-            {% if value not in ["sent_to_worker", "received"] %}
-                <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
-            {% endif %}
-        {% endfor %}
-    </select>
-    {% if not t.supplier_id %}
+{% if not t.supplier_id %}
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
+        <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
+        <input type="hidden" name="completion_room_id" value="{{ r.id }}">
+        <label>Work Description</label>
+        <textarea name="completion_comment" rows="3" placeholder="Describe what is being done"></textarea>
+        <label>Task Status</label>
+        <select name="completion_task_status">
+            {% for value, label in task_status_options.items() %}
+                {% if value not in ["sent_to_worker", "received"] %}
+                    <option value="{{ value }}" {% if normalize_task_status(t.status) == value %}selected{% endif %}>{{ label }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
     <div class="completionBlocks">
         <div class="completionBlock">
             <input type="hidden" name="completion_attachment_indexes" value="0">
@@ -27,6 +27,6 @@
             {% include "_mobile_media_bar.html" %}
         </div>
     </div>
-    {% endif %}
-    <button type="submit" name="completion_save_media_only" value="1">Save</button>
-</form>
+        <button type="submit" name="completion_save_media_only" value="1">Save</button>
+    </form>
+{% endif %}
