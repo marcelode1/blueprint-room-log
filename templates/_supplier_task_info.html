@@ -62,10 +62,11 @@
                 {% if can_pickup_supplier_item %}
                     <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
                         <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
-                        <label>Supplier Status</label>
-                        <select name="supplier_status" onchange="this.form.submit()" {% if item.status == 'used' %}disabled{% endif %}>
+                        <label>Task Status</label>
+                        <select name="supplier_status" onchange="if(this.value)this.form.submit()" required {% if item.status == 'used' %}disabled{% endif %}>
+                            <option value="" selected>Choose task status</option>
                             {% for value, label in supplier_task_status_options.items() %}
-                                <option value="{{ value }}" {% if item.status == value or (value == 'picked_up' and item.supplier_picked_up) %}selected{% endif %}>{{ label }}</option>
+                                <option value="{{ value }}">{{ label }}</option>
                             {% endfor %}
                         </select>
                         <div class="supplierItemPhotoBlocks">
@@ -114,10 +115,11 @@
                             <input name="item_date" type="date" value="{{ item.item_date or '' }}">
                             <label>Pickup Time</label>
                             <input name="supplier_pickup_time" type="time" value="{{ item.supplier_pickup_time or '' }}">
-                            <label>Status</label>
-                            <select name="supplier_status">
+                            <label>Task Status</label>
+                            <select name="supplier_status" required>
+                                <option value="" selected>Choose task status</option>
                                 {% for value, label in supplier_task_status_options.items() %}
-                                    <option value="{{ value }}" {% if item.status == value or (value == 'picked_up' and item.supplier_picked_up) %}selected{% endif %}>{{ label }}</option>
+                                    <option value="{{ value }}">{{ label }}</option>
                                 {% endfor %}
                             </select>
                             <label>Note</label>
@@ -150,10 +152,11 @@
                     <input name="item_date" type="date">
                     <label>Pickup Time</label>
                     <input name="supplier_pickup_time" type="time">
-                    <label>Status</label>
-                    <select name="supplier_status">
+                    <label>Task Status</label>
+                    <select name="supplier_status" required>
+                        <option value="" selected>Choose task status</option>
                         {% for value, label in supplier_task_status_options.items() %}
-                            <option value="{{ value }}" {% if value == 'backordered' %}selected{% endif %}>{{ label }}</option>
+                            <option value="{{ value }}">{{ label }}</option>
                         {% endfor %}
                     </select>
                     <label>Note</label>

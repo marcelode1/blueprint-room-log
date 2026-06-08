@@ -2371,8 +2371,8 @@ def clean_inventory_status(value):
 
 
 def clean_supplier_task_status(value):
-    value = (value or "backordered").strip()
-    return value if value in SUPPLIER_TASK_STATUS_LABELS else "backordered"
+    value = (value or "").strip()
+    return value if value in SUPPLIER_TASK_STATUS_LABELS else ""
 
 
 def clean_inventory_location(value):
@@ -6905,6 +6905,10 @@ def add_task_supplier_item(task_id):
         flash("Enter a material name and quantity greater than zero.")
         return redirect(next_url)
     status = clean_supplier_task_status(request.form.get("supplier_status"))
+    if not status:
+        conn.close()
+        flash("Choose the supplier task status.")
+        return redirect(next_url)
     now = utc_now_iso()
     item = conn.execute(
         """
@@ -6939,7 +6943,7 @@ def add_task_supplier_item(task_id):
         conn.execute("UPDATE tasks SET supplier_inventory_item_id = %s WHERE id = %s", (item["id"], task_id))
     conn.commit()
     conn.close()
-    flash("Supplier material added.")
+    flash("Supplier material added and project inventory updated.")
     return redirect(next_url)
 
 
@@ -6962,6 +6966,10 @@ def update_task_supplier_item(task_id, item_id):
         flash("Enter a supplier material quantity greater than zero.")
         return redirect(next_url)
     status = clean_supplier_task_status(request.form.get("supplier_status"))
+    if not status:
+        conn.close()
+        flash("Choose the supplier task status.")
+        return redirect(next_url)
     now = utc_now_iso()
     conn.execute(
         """
@@ -7000,7 +7008,7 @@ def update_task_supplier_item(task_id, item_id):
     )
     conn.commit()
     conn.close()
-    flash("Supplier material updated.")
+    flash("Supplier material updated and project inventory updated.")
     return redirect(next_url)
 
 
@@ -7056,7 +7064,11 @@ def pickup_task_supplier_item(task_id, item_id):
         flash(upload_error)
         return redirect(next_url)
 
-    supplier_status = clean_supplier_task_status(request.form.get("supplier_status") or ("picked_up" if request.form.get("picked_up") == "1" else item.get("status")))
+    supplier_status = clean_supplier_task_status(request.form.get("supplier_status"))
+    if not supplier_status:
+        conn.close()
+        flash("Choose the supplier task status.")
+        return redirect(next_url)
     picked_up = supplier_status == "picked_up"
     now = utc_now_iso()
     conn.execute(
@@ -7083,7 +7095,7 @@ def pickup_task_supplier_item(task_id, item_id):
     )
     if supplier_uploads:
         insert_task_attachments(conn, task_id, supplier_uploads)
-    flash("Material saved and inventory status updated.")
+    flash("Task status saved and project inventory updated.")
     conn.commit()
     conn.close()
     return redirect(next_url)
