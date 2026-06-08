@@ -12,6 +12,14 @@
     {% include "_task_media.html" %}
 </div>
 
+{% if task.supplier_id %}
+<div class="card">
+    <h3>Supplier Task Materials</h3>
+    {% set t = task %}
+    {% include "_supplier_task_info.html" %}
+</div>
+{% endif %}
+
 <div class="card">
     <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="next" value="{{ next_url }}">

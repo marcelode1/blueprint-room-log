@@ -31,6 +31,9 @@
                 <p><strong>Project:</strong> {{ item.project_name or '-' }}</p>
                 <p><strong>Room:</strong> {{ item.room_name or '-' }}</p>
                 <p><strong>Status:</strong> {{ inventory_status_label(item.status) }}</p>
+                {% if item.used_note %}
+                    <p><strong>Note:</strong><br>{{ item.used_note }}</p>
+                {% endif %}
                 {% if item.pickup_comment %}
                     <p><strong>Comment:</strong><br>{{ item.pickup_comment }}</p>
                 {% endif %}
@@ -59,10 +62,12 @@
                 {% if can_pickup_supplier_item %}
                     <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
                         <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
-                        <label class="supplierPickupCheck">
-                            <input type="checkbox" name="picked_up" value="1" onchange="this.form.submit()" {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %} {% if item.status == 'used' %}disabled{% endif %}>
-                            Picked up
-                        </label>
+                        <label>Supplier Status</label>
+                        <select name="supplier_status" onchange="this.form.submit()" {% if item.status == 'used' %}disabled{% endif %}>
+                            {% for value, label in supplier_task_status_options.items() %}
+                                <option value="{{ value }}" {% if item.status == value or (value == 'picked_up' and item.supplier_picked_up) %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
                         <div class="supplierItemPhotoBlocks">
                             <div class="supplierItemPhotoBlock">
                                 <input type="hidden" name="supplier_item_attachment_indexes" value="0">
@@ -93,15 +98,70 @@
                         <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
                         <button type="submit">Save Item</button>
                     </form>
+                    <details class="supplierEditDetails">
+                        <summary>Edit Material Details</summary>
+                        <form method="post" action="{{ url_for('update_task_supplier_item', task_id=t.id, item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                            <label>Material / Item</label>
+                            <input name="item_name" value="{{ item.item_name or '' }}" required>
+                            <label>Quantity</label>
+                            <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity or '' }}" required>
+                            <label>Brand</label>
+                            <input name="brand" value="{{ item.brand or '' }}">
+                            <label>Model Number</label>
+                            <input name="item_model" value="{{ item.item_model or '' }}">
+                            <label>Pickup Date</label>
+                            <input name="item_date" type="date" value="{{ item.item_date or '' }}">
+                            <label>Pickup Time</label>
+                            <input name="supplier_pickup_time" type="time" value="{{ item.supplier_pickup_time or '' }}">
+                            <label>Status</label>
+                            <select name="supplier_status">
+                                {% for value, label in supplier_task_status_options.items() %}
+                                    <option value="{{ value }}" {% if item.status == value or (value == 'picked_up' and item.supplier_picked_up) %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <label>Note</label>
+                            <textarea name="used_note" rows="2">{{ item.used_note or '' }}</textarea>
+                            <button type="submit" class="btn-secondary">Save Material Details</button>
+                        </form>
+                    </details>
                 {% else %}
                     <label class="supplierPickupCheck supplierPickupCheckReadOnly">
-                        <input type="checkbox" disabled {% if item.supplier_picked_up or item.status in ['available', 'used'] %}checked{% endif %}>
-                        Picked up
+                        {{ inventory_status_label(item.status) }}
                     </label>
                 {% endif %}
             </div>
         {% endfor %}
         </div>
+        {% if can_pickup_supplier_item %}
+            <details class="supplierEditDetails">
+                <summary>Add Material to Supplier Task</summary>
+                <form method="post" action="{{ url_for('add_task_supplier_item', task_id=t.id) }}">
+                    <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                    <label>Material / Item</label>
+                    <input name="item_name" required>
+                    <label>Quantity</label>
+                    <input name="quantity" type="number" step="0.01" min="0.01" required>
+                    <label>Brand</label>
+                    <input name="brand">
+                    <label>Model Number</label>
+                    <input name="item_model">
+                    <label>Pickup Date</label>
+                    <input name="item_date" type="date">
+                    <label>Pickup Time</label>
+                    <input name="supplier_pickup_time" type="time">
+                    <label>Status</label>
+                    <select name="supplier_status">
+                        {% for value, label in supplier_task_status_options.items() %}
+                            <option value="{{ value }}" {% if value == 'backordered' %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Note</label>
+                    <textarea name="used_note" rows="2"></textarea>
+                    <button type="submit">Add Material</button>
+                </form>
+            </details>
+        {% endif %}
     </div>
 {% endif %}
 
@@ -165,6 +225,8 @@ if(!window.supplierItemPhotoControlsReady){
 .supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;font-weight:800;background:rgba(255,255,255,.18)}
 .supplierPickupCheck input{width:auto;min-height:auto}
 .supplierPickupCheckReadOnly{opacity:.8}
+.supplierEditDetails{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.18)}
+.supplierEditDetails summary{font-weight:800;cursor:pointer}
 .supplierItemPhotoBlocks{display:grid;gap:10px}
 .supplierItemPhotoBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;background:rgba(255,255,255,.18)}
 .supplierItemPhotoList{display:grid;gap:10px;margin:10px 0}

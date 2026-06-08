@@ -133,6 +133,9 @@
     <h3>Inventory List</h3>
     <div class="inventoryLegend">
         <span class="legendDot availableDot"></span> Available
+        <span class="legendDot pickedUpDot"></span> Picked up
+        <span class="legendDot unavailableDot"></span> Unavailable
+        <span class="legendDot backorderedDot"></span> Backordered
         <span class="legendDot purchaseDot"></span> Needs purchase
         <span class="legendDot usedDot"></span> Used
     </div>
@@ -241,16 +244,22 @@
 .inventoryTable th,.inventoryTable td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}
 .inventoryTable th{background:#eef2f7}
 .inventoryStatus.inventory-available{background:#dcfce7}
+.inventoryStatus.inventory-picked_up{background:#dbeafe}
+.inventoryStatus.inventory-unavailable{background:#f1f5f9}
+.inventoryStatus.inventory-backordered{background:#fef3c7}
 .inventoryStatus.inventory-used{background:#fee2e2}
 .inventoryStatus.inventory-needs_purchase{background:#ffedd5}
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}
 .inventory-available .statusBadge{background:#16a34a}
+.inventory-picked_up .statusBadge{background:#2563eb}
+.inventory-unavailable .statusBadge{background:#64748b}
+.inventory-backordered .statusBadge{background:#d97706}
 .inventory-used .statusBadge{background:#dc2626}
 .inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:25px;border-radius:8px;border:1px solid var(--border)}
 .inventoryLegend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .legendDot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:4px}
-.availableDot{background:#16a34a}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
+.availableDot{background:#16a34a}.pickedUpDot{background:#2563eb}.unavailableDot{background:#64748b}.backorderedDot{background:#d97706}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 </style>
 <script>

@@ -2337,8 +2337,17 @@ def can_edit_inventory():
 
 INVENTORY_STATUS_LABELS = {
     "available": "Available",
+    "picked_up": "Picked up",
+    "unavailable": "Unavailable",
+    "backordered": "Backordered",
     "used": "Used",
     "needs_purchase": "Needs purchase"
+}
+
+SUPPLIER_TASK_STATUS_LABELS = {
+    "picked_up": "Picked up",
+    "unavailable": "Unavailable",
+    "backordered": "Backordered"
 }
 
 INVENTORY_LOCATION_LABELS = {
@@ -2359,6 +2368,11 @@ DTOOLS_CLOUD_DEFAULT_AUTH = "Basic RFRDbG91ZEFQSVVzZXI6MyNRdVkrMkR1QCV3Kk15JTU8Y
 def clean_inventory_status(value):
     value = (value or "available").strip()
     return value if value in INVENTORY_STATUS_LABELS else "available"
+
+
+def clean_supplier_task_status(value):
+    value = (value or "backordered").strip()
+    return value if value in SUPPLIER_TASK_STATUS_LABELS else "backordered"
 
 
 def clean_inventory_location(value):
@@ -2761,9 +2775,12 @@ def inventory_select_query(where_sql):
         {where_sql}
         ORDER BY CASE inventory_items.status
                     WHEN 'available' THEN 0
-                    WHEN 'needs_purchase' THEN 1
-                    WHEN 'used' THEN 2
-                    ELSE 3
+                    WHEN 'picked_up' THEN 1
+                    WHEN 'backordered' THEN 2
+                    WHEN 'unavailable' THEN 3
+                    WHEN 'needs_purchase' THEN 4
+                    WHEN 'used' THEN 5
+                    ELSE 6
                  END,
                  inventory_items.item_date DESC,
                  inventory_items.created_at DESC,
@@ -3657,6 +3674,7 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
+        supplier_task_status_options=SUPPLIER_TASK_STATUS_LABELS,
         inventory_condition_label=inventory_condition_label,
         task_status_label=task_status_label,
         task_is_completed=task_is_completed,
@@ -6828,6 +6846,164 @@ def update_task_room_status(task_id, room_id):
     return redirect(safe_next_url("my_tasks", project_id=task["project_id"]))
 
 
+def load_supplier_task_item_for_update(conn, task_id, item_id=None):
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task:
+        return None, None, "Task not found."
+    if not user_can_access_project(conn, task["project_id"]):
+        return task, None, "You do not have access to this project."
+    if not (is_main_admin() or task.get("assigned_user_id") == session.get("user_id")):
+        return task, None, "This task is assigned to another user."
+    if not task.get("supplier_id"):
+        return task, None, "This is not a supplier task."
+    if item_id is None:
+        return task, None, ""
+    item = conn.execute(
+        """
+        SELECT *
+        FROM inventory_items
+        WHERE id = %s
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM task_supplier_items
+                  WHERE task_supplier_items.task_id = %s
+                    AND task_supplier_items.inventory_item_id = inventory_items.id
+              )
+              OR inventory_items.id = (
+                  SELECT supplier_inventory_item_id
+                  FROM tasks
+                  WHERE tasks.id = %s
+                    AND supplier_inventory_item_id IS NOT NULL
+              )
+          )
+        """,
+        (item_id, task_id, task_id)
+    ).fetchone()
+    if not item:
+        return task, None, "Supplier material was not found for this task."
+    return task, item, ""
+
+
+@app.route("/tasks/<int:task_id>/supplier-items/add", methods=["POST"])
+@login_required
+def add_task_supplier_item(task_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task, _item, error = load_supplier_task_item_for_update(conn, task_id)
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(next_url if task else url_for("my_tasks"))
+    item_name = request.form.get("item_name", "").strip()
+    try:
+        quantity = float(request.form.get("quantity") or 0)
+    except Exception:
+        quantity = 0
+    if not item_name or quantity <= 0:
+        conn.close()
+        flash("Enter a material name and quantity greater than zero.")
+        return redirect(next_url)
+    status = clean_supplier_task_status(request.form.get("supplier_status"))
+    now = utc_now_iso()
+    item = conn.execute(
+        """
+        INSERT INTO inventory_items
+        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, supplier_picked_up, purchased_by, purchased_at, used_note, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            request.form.get("item_date") or local_now().date().isoformat(),
+            quantity,
+            item_name,
+            request.form.get("item_model", "").strip(),
+            request.form.get("brand", "").strip(),
+            "Supplier task material",
+            task["project_id"],
+            task.get("room_id"),
+            request.form.get("supplier_pickup_time", "").strip(),
+            status,
+            session.get("user_id"),
+            task["supplier_id"],
+            status == "picked_up",
+            session.get("user_id") if status == "picked_up" else None,
+            now if status == "picked_up" else None,
+            request.form.get("used_note", "").strip(),
+            now,
+            now
+        )
+    ).fetchone()
+    link_supplier_items_to_task(conn, task_id, [item])
+    if not task.get("supplier_inventory_item_id"):
+        conn.execute("UPDATE tasks SET supplier_inventory_item_id = %s WHERE id = %s", (item["id"], task_id))
+    conn.commit()
+    conn.close()
+    flash("Supplier material added.")
+    return redirect(next_url)
+
+
+@app.route("/tasks/<int:task_id>/supplier-items/<int:item_id>/update", methods=["POST"])
+@login_required
+def update_task_supplier_item(task_id, item_id):
+    next_url = safe_next_url("my_tasks", task_id=task_id)
+    conn = db()
+    task, item, error = load_supplier_task_item_for_update(conn, task_id, item_id)
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(next_url if task else url_for("my_tasks"))
+    try:
+        quantity = float(request.form.get("quantity") or item.get("quantity") or 0)
+    except Exception:
+        quantity = 0
+    if quantity <= 0:
+        conn.close()
+        flash("Enter a supplier material quantity greater than zero.")
+        return redirect(next_url)
+    status = clean_supplier_task_status(request.form.get("supplier_status"))
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE inventory_items
+        SET item_date = %s,
+            quantity = %s,
+            item_name = %s,
+            item_model = %s,
+            brand = %s,
+            supplier_pickup_time = %s,
+            status = %s,
+            supplier_picked_up = %s,
+            purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
+            purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
+            used_note = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            request.form.get("item_date") or item.get("item_date") or local_now().date().isoformat(),
+            quantity,
+            request.form.get("item_name", "").strip() or item.get("item_name"),
+            request.form.get("item_model", "").strip(),
+            request.form.get("brand", "").strip(),
+            request.form.get("supplier_pickup_time", "").strip(),
+            status,
+            status == "picked_up",
+            status == "picked_up",
+            session.get("user_id"),
+            status == "picked_up",
+            now,
+            request.form.get("used_note", "").strip(),
+            now,
+            item_id
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash("Supplier material updated.")
+    return redirect(next_url)
+
+
 @app.route("/tasks/<int:task_id>/supplier-items/<int:item_id>/picked-up", methods=["POST"])
 @login_required
 def pickup_task_supplier_item(task_id, item_id):
@@ -6880,44 +7056,34 @@ def pickup_task_supplier_item(task_id, item_id):
         flash(upload_error)
         return redirect(next_url)
 
-    picked_up = True if item.get("status") == "used" else request.form.get("picked_up") == "1"
+    supplier_status = clean_supplier_task_status(request.form.get("supplier_status") or ("picked_up" if request.form.get("picked_up") == "1" else item.get("status")))
+    picked_up = supplier_status == "picked_up"
     now = utc_now_iso()
     conn.execute(
-        "UPDATE inventory_items SET supplier_picked_up = %s, updated_at = %s WHERE id = %s",
-        (picked_up, now, item_id)
+        """
+        UPDATE inventory_items
+        SET supplier_picked_up = %s,
+            status = %s,
+            location_type = 'job_site',
+            purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
+            purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            picked_up,
+            supplier_status,
+            picked_up,
+            session.get("user_id"),
+            picked_up,
+            now,
+            now,
+            item_id
+        )
     )
     if supplier_uploads:
         insert_task_attachments(conn, task_id, supplier_uploads)
-
-    if task.get("status") == "done" and item.get("status") != "used":
-        if picked_up:
-            conn.execute(
-                """
-                UPDATE inventory_items
-                SET status = 'available',
-                    location_type = 'job_site',
-                    purchased_by = COALESCE(purchased_by, %s),
-                    purchased_at = COALESCE(purchased_at, %s),
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (session.get("user_id"), now, now, item_id)
-            )
-        else:
-            conn.execute(
-                """
-                UPDATE inventory_items
-                SET status = 'needs_purchase',
-                    purchased_by = NULL,
-                    purchased_at = NULL,
-                    updated_at = %s
-                WHERE id = %s AND status = 'available'
-                """,
-                (now, item_id)
-            )
-        flash("Material saved and inventory status updated.")
-    else:
-        flash("Material saved. Inventory status will update when the task is completed.")
+    flash("Material saved and inventory status updated.")
     conn.commit()
     conn.close()
     return redirect(next_url)
@@ -7275,12 +7441,12 @@ def complete_task(task_id):
         conn.execute(
             """
             UPDATE inventory_items
-            SET status = 'available',
+            SET status = 'picked_up',
                 location_type = 'job_site',
                 purchased_by = COALESCE(purchased_by, %s),
                 purchased_at = COALESCE(purchased_at, %s),
                 updated_at = %s
-            WHERE status <> 'used'
+            WHERE status NOT IN ('used', 'unavailable', 'backordered')
               AND COALESCE(supplier_picked_up, FALSE) = TRUE
               AND id IN (
                   SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
@@ -7289,23 +7455,6 @@ def complete_task(task_id):
               )
             """,
             (session.get("user_id"), now, now, task_id, task_id)
-        )
-        conn.execute(
-            """
-            UPDATE inventory_items
-            SET status = 'needs_purchase',
-                purchased_by = NULL,
-                purchased_at = NULL,
-                updated_at = %s
-            WHERE status <> 'used'
-              AND COALESCE(supplier_picked_up, FALSE) = FALSE
-              AND id IN (
-                  SELECT inventory_item_id FROM task_supplier_items WHERE task_id = %s
-                  UNION
-                  SELECT supplier_inventory_item_id FROM tasks WHERE id = %s AND supplier_inventory_item_id IS NOT NULL
-              )
-            """,
-            (now, task_id, task_id)
         )
     conn.commit()
     notification_ok = True
