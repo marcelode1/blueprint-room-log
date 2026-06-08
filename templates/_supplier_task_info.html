@@ -58,7 +58,7 @@
                     <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
                         <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
                         <label>Task Status</label>
-                        <select name="supplier_status" onchange="if(this.value)this.form.submit()" required {% if item.status == 'used' %}disabled{% endif %}>
+                        <select name="supplier_status" required {% if item.status == 'used' %}disabled{% endif %}>
                             <option value="" selected>Choose task status</option>
                             {% for value, label in supplier_task_status_options.items() %}
                                 <option value="{{ value }}">{{ label }}</option>
@@ -92,7 +92,7 @@
                             </div>
                         </template>
                         <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
-                        <button type="submit">Save Item</button>
+                        <button type="submit">Save and Send to Admin</button>
                     </form>
                     <details class="supplierEditDetails">
                         <summary>Edit Material Details</summary>

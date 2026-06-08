@@ -224,6 +224,12 @@ def remove_query_param_from_local_url(target, name):
     return urllib.parse.urlunparse(("", "", parsed.path, parsed.params, query, parsed.fragment))
 
 
+def remove_query_param_from_next_url(target, name):
+    if target and target.startswith(request.host_url):
+        target = "/" + target[len(request.host_url):]
+    return remove_query_param_from_local_url(target, name)
+
+
 def mobile_time_clock_return_url(project_id):
     fallback = url_for("mobile_project", project_id=project_id)
     clock_paths = {
@@ -6885,10 +6891,25 @@ def load_supplier_task_item_for_update(conn, task_id, item_id=None):
     return task, item, ""
 
 
+def notify_supplier_task_saved(conn, task, message):
+    add_notification(
+        conn,
+        session.get("user_id"),
+        session.get("name"),
+        "",
+        session.get("role"),
+        "task_updated",
+        task.get("project_id"),
+        task.get("id"),
+        message,
+        task.get("room_id")
+    )
+
+
 @app.route("/tasks/<int:task_id>/supplier-items/add", methods=["POST"])
 @login_required
 def add_task_supplier_item(task_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
+    next_url = remove_query_param_from_next_url(safe_next_url("my_tasks", task_id=task_id), "calendar_task")
     conn = db()
     task, _item, error = load_supplier_task_item_for_update(conn, task_id)
     if error:
@@ -6941,16 +6962,17 @@ def add_task_supplier_item(task_id):
     link_supplier_items_to_task(conn, task_id, [item])
     if not task.get("supplier_inventory_item_id"):
         conn.execute("UPDATE tasks SET supplier_inventory_item_id = %s WHERE id = %s", (item["id"], task_id))
+    notify_supplier_task_saved(conn, task, f"Supplier material added: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
-    flash("Supplier material added and project inventory updated.")
+    flash("Supplier material added, project inventory updated, and admin notified.")
     return redirect(next_url)
 
 
 @app.route("/tasks/<int:task_id>/supplier-items/<int:item_id>/update", methods=["POST"])
 @login_required
 def update_task_supplier_item(task_id, item_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
+    next_url = remove_query_param_from_next_url(safe_next_url("my_tasks", task_id=task_id), "calendar_task")
     conn = db()
     task, item, error = load_supplier_task_item_for_update(conn, task_id, item_id)
     if error:
@@ -7006,16 +7028,18 @@ def update_task_supplier_item(task_id, item_id):
             item_id
         )
     )
+    item_name = request.form.get("item_name", "").strip() or item.get("item_name") or "Material"
+    notify_supplier_task_saved(conn, task, f"Supplier material updated: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
-    flash("Supplier material updated and project inventory updated.")
+    flash("Supplier material updated, project inventory updated, and admin notified.")
     return redirect(next_url)
 
 
 @app.route("/tasks/<int:task_id>/supplier-items/<int:item_id>/picked-up", methods=["POST"])
 @login_required
 def pickup_task_supplier_item(task_id, item_id):
-    next_url = safe_next_url("my_tasks", task_id=task_id)
+    next_url = remove_query_param_from_next_url(safe_next_url("my_tasks", task_id=task_id), "calendar_task")
     conn = db()
     task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
     if not task:
@@ -7095,7 +7119,12 @@ def pickup_task_supplier_item(task_id, item_id):
     )
     if supplier_uploads:
         insert_task_attachments(conn, task_id, supplier_uploads)
-    flash("Task status saved and project inventory updated.")
+    notify_supplier_task_saved(
+        conn,
+        task,
+        f"Supplier task status saved: {inventory_status_label(supplier_status)} - {item.get('item_name') or 'Material'} - {task_display_name(task)}"
+    )
+    flash("Task status saved, project inventory updated, and admin notified.")
     conn.commit()
     conn.close()
     return redirect(next_url)
