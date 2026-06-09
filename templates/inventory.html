@@ -199,7 +199,7 @@
                                 <select name="room_id" class="inventoryRoomSelect">
                                     <option value="" data-project-id="">No room</option>
                                     {% for r in rooms %}
-                                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <button type="submit" class="btn-secondary">Save Project / Room</button>
