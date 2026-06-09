@@ -172,7 +172,22 @@
                         {% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Map</a>{% endif %}
                     </td>
                     <td>{{ inventory_condition_label(item.item_condition) }}</td>
-                    <td>{{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}</td>
+                    <td>
+                        {% if can_edit_inventory() %}
+                            <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryLocationForm">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <select name="location_type">
+                                    {% for value, label in location_options.items() %}
+                                        <option value="{{ value }}" {% if item.location_type == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <input name="location_detail" value="{{ item.location_detail or '' }}" placeholder="Location detail">
+                                <button type="submit" class="btn-secondary">Save Location</button>
+                            </form>
+                        {% else %}
+                            {{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}
+                        {% endif %}
+                    </td>
                     <td>
                         {% if can_edit_inventory() %}
                             <form method="post" action="{{ url_for('update_inventory_allocation', item_id=item.id) }}" class="inventoryAllocationForm">
@@ -248,9 +263,9 @@
 .inventoryLegend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .legendDot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:4px}
 .availableDot{background:#16a34a}.pickedUpDot{background:#2563eb}.unavailableDot{background:#64748b}.backorderedDot{background:#d97706}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
-.inventoryAllocationForm,.inventoryStatusForm{display:grid;gap:6px;min-width:180px}
-.inventoryAllocationForm select,.inventoryStatusForm select{min-width:180px}
-.inventoryAllocationForm button{margin:0!important;width:auto!important}
+.inventoryAllocationForm,.inventoryLocationForm,.inventoryStatusForm{display:grid;gap:6px;min-width:180px}
+.inventoryAllocationForm select,.inventoryLocationForm select,.inventoryStatusForm select,.inventoryLocationForm input{min-width:180px}
+.inventoryAllocationForm button,.inventoryLocationForm button{margin:0!important;width:auto!important}
 </style>
 <script>
 function filterInventoryRooms(projectSelect){
