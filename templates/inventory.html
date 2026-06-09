@@ -173,51 +173,39 @@
                     </td>
                     <td>{{ inventory_condition_label(item.item_condition) }}</td>
                     <td>{{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}</td>
-                    <td>{{ item.project_name or 'Unallocated' }}{% if item.room_name %}<br><span class="muted">{{ item.room_name }}</span>{% endif %}</td>
+                    <td>
+                        {% if can_edit_inventory() %}
+                            <form method="post" action="{{ url_for('update_inventory_allocation', item_id=item.id) }}" class="inventoryAllocationForm">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <select name="project_id" class="inventoryProjectSelect">
+                                    <option value="">No project</option>
+                                    {% for p in projects %}
+                                        <option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <select name="room_id" class="inventoryRoomSelect">
+                                    <option value="" data-project-id="">No room</option>
+                                    {% for r in rooms %}
+                                        <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" class="btn-secondary">Save Project / Room</button>
+                            </form>
+                        {% else %}
+                            {{ item.project_name or 'Unallocated' }}{% if item.room_name %}<br><span class="muted">{{ item.room_name }}</span>{% endif %}
+                        {% endif %}
+                    </td>
                     <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.purchased_by_name %}<br><span class="muted">Purchased by {{ item.purchased_by_name }}</span>{% endif %}{% if item.used_by_name %}<br><span class="muted">Used by {{ item.used_by_name }}</span>{% endif %}</td>
                     <td>{% if item.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
                     <td>
-                        {% if item.status == "needs_purchase" %}
-                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}" class="inventoryStatusForm">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
-                            <input type="hidden" name="status" value="available">
-                            <input type="hidden" name="project_id" value="{{ item.project_id or '' }}">
-                            <input type="hidden" name="room_id" value="{{ item.room_id or '' }}">
-                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased</label>
-                        </form>
-                        {% elif item.status == "available" %}
-                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
-                            <input type="hidden" name="next" value="{{ request.full_path }}">
-                            <input type="hidden" name="status" value="used">
-                            <input type="hidden" name="project_id" value="{{ item.project_id or '' }}">
-                            <input type="hidden" name="room_id" value="{{ item.room_id or '' }}">
-                            <input name="used_note" value="{{ item.used_note or '' }}" placeholder="Used note">
-                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Used</label>
-                        </form>
-                        {% endif %}
-                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
-                            <input type="hidden" name="next" value="{{ request.full_path }}">
-                            <select name="status">
+                            <select name="status" onchange="this.form.submit()">
                                 {% for value, label in status_options.items() %}
                                     <option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
-                            <select name="project_id" class="inventoryProjectSelect">
-                                <option value="">No project</option>
-                                {% for p in projects %}
-                                    <option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
-                                {% endfor %}
-                            </select>
-                            <select name="room_id" class="inventoryRoomSelect">
-                                <option value="" data-project-id="">No room</option>
-                                {% for r in rooms %}
-                                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
-                                {% endfor %}
-                            </select>
-                            <input name="location_detail" value="{{ item.location_detail or '' }}" placeholder="Location detail">
-                            <input name="used_note" value="{{ item.used_note or '' }}" placeholder="Used or purchase note">
-                            <button type="submit">Save</button>
                         </form>
                     </td>
                     {% endif %}
@@ -260,7 +248,9 @@
 .inventoryLegend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .legendDot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:4px}
 .availableDot{background:#16a34a}.pickedUpDot{background:#2563eb}.unavailableDot{background:#64748b}.backorderedDot{background:#d97706}.purchaseDot{background:#f59e0b}.usedDot{background:#dc2626}
-.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
+.inventoryAllocationForm,.inventoryStatusForm{display:grid;gap:6px;min-width:180px}
+.inventoryAllocationForm select,.inventoryStatusForm select{min-width:180px}
+.inventoryAllocationForm button{margin:0!important;width:auto!important}
 </style>
 <script>
 function filterInventoryRooms(projectSelect){

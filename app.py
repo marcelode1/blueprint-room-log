@@ -4962,6 +4962,48 @@ def update_inventory_status(item_id):
     return redirect(safe_next_url("inventory"))
 
 
+@app.route("/inventory/<int:item_id>/allocation", methods=["POST"])
+@login_required
+def update_inventory_allocation(item_id):
+    if not can_edit_inventory():
+        flash("You do not have permission to update inventory.")
+        return redirect(safe_next_url("inventory"))
+
+    project_id = optional_int(request.form.get("project_id"))
+    room_id = optional_int(request.form.get("room_id"))
+    conn = db()
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(safe_next_url("inventory"))
+    if not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("You do not have access to that inventory item.")
+        return redirect(url_for("inventory"))
+
+    project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(safe_next_url("inventory"))
+
+    conn.execute(
+        """
+        UPDATE inventory_items
+        SET project_id = %s,
+            room_id = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (project_id, room_id, utc_now_iso(), item_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Inventory project and room updated.")
+    return redirect(safe_next_url("inventory"))
+
+
 @app.route("/inventory/<int:item_id>/delete", methods=["POST"])
 @admin_required
 def delete_inventory_item(item_id):
