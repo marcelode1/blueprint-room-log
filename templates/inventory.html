@@ -173,6 +173,7 @@
                     </td>
                     <td>{{ inventory_condition_label(item.item_condition) }}</td>
                     <td>
+                        {% set visible_location_detail = '' if item.location_detail == 'Needs purchase from supplier' else (item.location_detail or '') %}
                         {% if can_edit_inventory() %}
                             <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryLocationForm">
                                 <input type="hidden" name="next" value="{{ request.full_path }}">
@@ -181,11 +182,11 @@
                                         <option value="{{ value }}" {% if item.location_type == value %}selected{% endif %}>{{ label }}</option>
                                     {% endfor %}
                                 </select>
-                                <input name="location_detail" value="{{ item.location_detail or '' }}" placeholder="Location detail">
+                                <input name="location_detail" value="{{ visible_location_detail }}" placeholder="Location detail">
                                 <button type="submit" class="btn-secondary">Save Location</button>
                             </form>
                         {% else %}
-                            {{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}
+                            {{ inventory_location_label(item.location_type) }}{% if visible_location_detail %}<br><span class="muted">{{ visible_location_detail }}</span>{% endif %}
                         {% endif %}
                     </td>
                     <td>
