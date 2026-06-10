@@ -63,9 +63,6 @@
         .projectReportText{white-space:pre-wrap;min-width:240px}
         .projectReportType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
         .projectReportActions{min-width:220px}
-        .projectReportActions details{border:1px solid var(--border);border-radius:8px;padding:6px;margin:0 0 8px;background:rgba(255,255,255,.05)}
-        .projectReportActions summary{font-weight:900;cursor:pointer}
-        .projectReportActions textarea{min-height:80px}
         .projectReportActions input,.projectReportActions textarea,.projectReportActions button{font-size:14px;min-height:42px;padding:9px;margin:5px 0}
         .statusPill{display:inline-block;padding:4px 8px;border-radius:999px;background:#e2e8f0;font-weight:800;font-size:12px}
         @page{size:letter landscape;margin:.35in}
@@ -103,7 +100,7 @@
                     <td>{{ event.room_name or "-" }}</td>
                     <td>
                         {% if event.task_id %}
-                            #{{ event.task_number or event.task_id }}<br>
+                            <a href="{{ url_for('open_task_workspace', task_id=event.task_id) }}">#{{ event.task_number or event.task_id }}</a><br>
                             <strong>{{ event.task_title or event.summary }}</strong>
                         {% else %}
                             -
@@ -123,46 +120,23 @@
                     </td>
                     <td class="projectReportActions">
                         {% if event.row_type == "task" and event.task_id %}
-                            <details>
-                                <summary>Edit Task</summary>
-                                <form method="post" action="{{ url_for('project_report_task_edit', task_id=event.task_id) }}">
-                                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                                    <label>Admin PIN</label>
-                                    <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
-                                    <button type="submit" class="btn-secondary">Open Edit</button>
-                                </form>
-                            </details>
-                            <details>
-                                <summary>Delete Task</summary>
-                                <form method="post" action="{{ url_for('project_report_task_delete', task_id=event.task_id) }}" onsubmit="return confirm('Delete this task?');">
-                                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                                    <label>Admin PIN</label>
-                                    <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
-                                    <button type="submit" class="btn-danger">Delete Task</button>
-                                </form>
-                            </details>
+                            <form method="post" action="{{ url_for('project_report_task_action_request', task_id=event.task_id, action='edit') }}">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <button type="submit" class="btn-secondary">Edit</button>
+                            </form>
+                            <form method="post" action="{{ url_for('project_report_task_action_request', task_id=event.task_id, action='delete') }}" onsubmit="return confirm('Send a delete PIN to your admin email?');">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <button type="submit" class="btn-danger">Delete</button>
+                            </form>
                         {% elif event.row_type == "comment" and event.source_type and event.source_id %}
-                            <details>
-                                <summary>Edit Comment</summary>
-                                <form method="post" action="{{ url_for('project_report_comment_action', source_type=comment_route_source_type(event.source_type), source_id=event.source_id) }}">
-                                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                                    <input type="hidden" name="action" value="save">
-                                    <textarea name="comment" rows="3">{{ event.comment or '' }}</textarea>
-                                    <label>Admin PIN</label>
-                                    <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
-                                    <button type="submit" class="btn-secondary">Save Comment</button>
-                                </form>
-                            </details>
-                            <details>
-                                <summary>Delete Comment / Media</summary>
-                                <form method="post" action="{{ url_for('project_report_comment_action', source_type=comment_route_source_type(event.source_type), source_id=event.source_id) }}" onsubmit="return confirm('Delete this comment/media?');">
-                                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                                    <input type="hidden" name="action" value="delete">
-                                    <label>Admin PIN</label>
-                                    <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,6}" required>
-                                    <button type="submit" class="btn-danger">Delete Comment / Media</button>
-                                </form>
-                            </details>
+                            <form method="post" action="{{ url_for('project_report_comment_action_request', source_type=comment_route_source_type(event.source_type), source_id=event.source_id, action='edit') }}">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <button type="submit" class="btn-secondary">Edit</button>
+                            </form>
+                            <form method="post" action="{{ url_for('project_report_comment_action_request', source_type=comment_route_source_type(event.source_type), source_id=event.source_id, action='delete') }}" onsubmit="return confirm('Send a delete PIN to your admin email?');">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <button type="submit" class="btn-danger">Delete</button>
+                            </form>
                         {% else %}
                             -
                         {% endif %}

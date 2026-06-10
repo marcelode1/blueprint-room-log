@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card desktop-only">
+    <h2>Confirm Project Report Action</h2>
+    <p><strong>Action:</strong> {{ action_label|title }}</p>
+    <p><strong>Item:</strong> {{ target_label or '-' }}</p>
+    <p class="muted">Project: {{ project_name or '-' }}</p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to continue.</p>
+    <form method="post">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label>Email PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit">{{ 'Delete' if 'delete' in action_label else 'Continue' }}</button>
+        <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
+    </form>
+</div>
+<div class="card mobileDeleteNotice">
+    <p class="muted">Project Report actions are available on the admin desktop version only.</p>
+</div>
+<style>
+.mobileDeleteNotice{display:none}
+@media(max-width:760px){.mobileDeleteNotice{display:block}}
+</style>
+{% endblock %}

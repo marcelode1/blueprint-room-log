@@ -830,6 +830,21 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS project_report_action_codes (
+        id SERIAL PRIMARY KEY,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+        source_type TEXT,
+        source_id INTEGER,
+        next_url TEXT,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS worker_location_pings (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -915,6 +930,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_report_action_codes (id SERIAL PRIMARY KEY, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, action TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, source_type TEXT, source_id INTEGER, next_url TEXT, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
@@ -2642,18 +2658,6 @@ def optional_int(value):
 def is_mobile_request():
     user_agent = request.headers.get("User-Agent", "").lower()
     return any(token in user_agent for token in ["mobi", "android", "iphone", "ipad"])
-
-
-def verify_admin_pin(conn, pin):
-    admin = conn.execute(
-        "SELECT id, pin_hash FROM users WHERE id = %s AND role = 'admin'",
-        (session.get("user_id"),)
-    ).fetchone()
-    if not admin or not admin.get("pin_hash"):
-        return "Admin PIN is not set. Create or reset your admin mobile PIN first."
-    if not check_password_hash(admin["pin_hash"], (pin or "").strip()):
-        return "Invalid admin PIN."
-    return ""
 
 
 def user_can_access_project(conn, project_id, user_id=None):
@@ -9058,78 +9062,248 @@ def project_report_export():
     )
 
 
-@app.route("/projects/report/tasks/<int:task_id>/edit", methods=["POST"])
+PROJECT_REPORT_ACTION_LABELS = {
+    "task_edit": "edit task",
+    "task_delete": "delete task",
+    "comment_edit": "edit comment/media",
+    "comment_delete": "delete comment/media",
+}
+
+
+def project_report_action_label(action):
+    return PROJECT_REPORT_ACTION_LABELS.get(action, "continue")
+
+
+def send_project_report_action_pin(conn, admin, action, target_label, task_id=None, source_type=None, source_id=None, next_url=""):
+    if not admin or not admin.get("email"):
+        return None, "Your admin account needs an email before a PIN can be sent."
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute(
+        """
+        DELETE FROM project_report_action_codes
+        WHERE admin_id = %s
+          AND action = %s
+          AND COALESCE(task_id, 0) = COALESCE(%s, 0)
+          AND COALESCE(source_type, '') = COALESCE(%s, '')
+          AND COALESCE(source_id, 0) = COALESCE(%s, 0)
+        """,
+        (admin["id"], action, task_id, source_type, source_id)
+    )
+    code = conn.execute(
+        """
+        INSERT INTO project_report_action_codes
+        (admin_id, action, task_id, source_type, source_id, next_url, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            admin["id"],
+            action,
+            task_id,
+            source_type,
+            source_id,
+            next_url,
+            generate_password_hash(pin),
+            utc_future_iso(10),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        f"ProjectONus Project Report PIN - {project_report_action_label(action).title()}",
+        "\n".join([
+            f"Your 6-digit PIN to {project_report_action_label(action)} is:",
+            "",
+            pin,
+            "",
+            f"Item: {target_label or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email.",
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM project_report_action_codes WHERE id = %s", (code["id"],))
+        conn.commit()
+        return None, "PIN could not be sent. Check SMTP email settings first."
+    return code["id"], ""
+
+
+@app.route("/projects/report/tasks/<int:task_id>/<action>", methods=["POST"])
 @admin_required
-def project_report_task_edit(task_id):
+def project_report_task_action_request(task_id, action):
     if is_mobile_request():
         flash("Project Report is available on the admin desktop only.")
         return redirect(url_for("index"))
+    if action not in ["edit", "delete"]:
+        flash("Choose edit or delete.")
+        return redirect(url_for("project_report"))
     next_url = safe_next_url("project_report")
     conn = db()
-    error = verify_admin_pin(conn, request.form.get("pin"))
-    conn.close()
-    if error:
-        flash(error)
-        return redirect(next_url)
-    return redirect(url_for("edit_task", task_id=task_id, next=next_url))
-
-
-@app.route("/projects/report/tasks/<int:task_id>/delete", methods=["POST"])
-@admin_required
-def project_report_task_delete(task_id):
-    if is_mobile_request():
-        flash("Project Report is available on the admin desktop only.")
-        return redirect(url_for("index"))
-    next_url = safe_next_url("project_report")
-    conn = db()
-    error = verify_admin_pin(conn, request.form.get("pin"))
-    if error:
-        conn.close()
-        flash(error)
-        return redirect(next_url)
-    task = conn.execute("SELECT id FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    task = conn.execute(
+        """
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.project_id, projects.name AS project_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.id = %s
+        """,
+        (task_id,)
+    ).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
     if not task:
         conn.close()
         flash("Task not found.")
         return redirect(next_url)
-    conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
-    conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
-    conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
-    conn.commit()
+    code_id, error = send_project_report_action_pin(
+        conn,
+        admin,
+        f"task_{action}",
+        f"{task_display_name(task)} - {task.get('project_name') or '-'}",
+        task_id=task_id,
+        next_url=next_url,
+    )
     conn.close()
-    flash("Task deleted from Project Report.")
-    return redirect(next_url)
+    if error or not code_id:
+        flash(error)
+        return redirect(next_url)
+    flash("A 6-digit PIN was sent to your admin email.")
+    return redirect(url_for("project_report_confirm_action", code_id=code_id))
 
 
-@app.route("/projects/report/comments/<source_type>/<int:source_id>", methods=["POST"])
+@app.route("/projects/report/comments/<source_type>/<int:source_id>/<action>", methods=["POST"])
 @admin_required
-def project_report_comment_action(source_type, source_id):
+def project_report_comment_action_request(source_type, source_id, action):
     if is_mobile_request():
         flash("Project Report is available on the admin desktop only.")
         return redirect(url_for("index"))
+    if action not in ["edit", "delete"]:
+        flash("Choose edit or delete.")
+        return redirect(url_for("project_report"))
     next_url = safe_next_url("project_report")
     source_type = comment_db_source_type(source_type)
     conn = db()
-    error = verify_admin_pin(conn, request.form.get("pin"))
-    if error:
-        conn.close()
-        flash(error)
-        return redirect(next_url)
     record = load_comment_detail_record(conn, source_type, source_id)
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
     if not record:
         conn.close()
         flash("Comment/media was not found.")
         return redirect(next_url)
-    action = request.form.get("action")
-    if action == "delete":
-        delete_comment_detail_record(conn, source_type, source_id)
-        flash("Comment/media deleted from Project Report.")
-    else:
-        update_comment_detail_record(conn, source_type, source_id, request.form.get("comment", "").strip())
-        flash("Comment updated from Project Report.")
-    conn.commit()
+    code_id, error = send_project_report_action_pin(
+        conn,
+        admin,
+        f"comment_{action}",
+        f"{record.get('source_label') or 'Comment'} - {record.get('project_name') or '-'}",
+        source_type=source_type,
+        source_id=source_id,
+        next_url=next_url,
+    )
     conn.close()
-    return redirect(next_url)
+    if error or not code_id:
+        flash(error)
+        return redirect(next_url)
+    flash("A 6-digit PIN was sent to your admin email.")
+    return redirect(url_for("project_report_confirm_action", code_id=code_id))
+
+
+@app.route("/projects/report/action/<int:code_id>/confirm", methods=["GET", "POST"])
+@admin_required
+def project_report_confirm_action(code_id):
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    conn = db()
+    code = conn.execute(
+        """
+        SELECT * FROM project_report_action_codes
+        WHERE id = %s AND admin_id = %s
+        """,
+        (code_id, session.get("user_id"))
+    ).fetchone()
+    if not code:
+        conn.close()
+        flash("PIN request was not found. Press the action button again.")
+        return redirect(url_for("project_report"))
+
+    next_url = code.get("next_url") or url_for("project_report")
+    action = code.get("action")
+    target = None
+    if action in ["task_edit", "task_delete"]:
+        target = conn.execute(
+            """
+            SELECT tasks.id, tasks.task_number, tasks.title, projects.name AS project_name
+            FROM tasks
+            LEFT JOIN projects ON tasks.project_id = projects.id
+            WHERE tasks.id = %s
+            """,
+            (code.get("task_id"),)
+        ).fetchone()
+    elif action in ["comment_edit", "comment_delete"]:
+        target = load_comment_detail_record(conn, code.get("source_type"), code.get("source_id"))
+    if not target:
+        conn.execute("DELETE FROM project_report_action_codes WHERE id = %s", (code_id,))
+        conn.commit()
+        conn.close()
+        flash("The linked item no longer exists.")
+        return redirect(next_url)
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        expires_at = parse_iso_datetime(code.get("expires_at"))
+        if not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.execute("DELETE FROM project_report_action_codes WHERE id = %s", (code_id,))
+            conn.commit()
+            conn.close()
+            flash("PIN expired. Press the action button again to get a new PIN.")
+            return redirect(next_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid PIN.")
+            return redirect(url_for("project_report_confirm_action", code_id=code_id))
+
+        conn.execute("DELETE FROM project_report_action_codes WHERE id = %s", (code_id,))
+        if action == "task_edit":
+            conn.commit()
+            conn.close()
+            return redirect(url_for("edit_task", task_id=code.get("task_id"), next=next_url))
+        if action == "task_delete":
+            conn.execute("DELETE FROM login_events WHERE task_id = %s", (code.get("task_id"),))
+            conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (code.get("task_id"),))
+            conn.execute("DELETE FROM tasks WHERE id = %s", (code.get("task_id"),))
+            conn.commit()
+            conn.close()
+            flash("Task deleted from Project Report.")
+            return redirect(next_url)
+        if action == "comment_edit":
+            conn.commit()
+            conn.close()
+            return redirect(url_for(
+                "comment_detail",
+                source_type=comment_route_source_type(code.get("source_type")),
+                source_id=code.get("source_id"),
+                next=next_url,
+            ))
+        if action == "comment_delete":
+            delete_comment_detail_record(conn, code.get("source_type"), code.get("source_id"))
+            conn.commit()
+            conn.close()
+            flash("Comment/media deleted from Project Report.")
+            return redirect(next_url)
+        conn.commit()
+        conn.close()
+        flash("Action completed.")
+        return redirect(next_url)
+
+    target_label = task_display_name(target) if action in ["task_edit", "task_delete"] else target.get("source_label")
+    project_name = target.get("project_name") or "-"
+    conn.close()
+    return render_template(
+        "project_report_action_confirm.html",
+        code=code,
+        action_label=project_report_action_label(action),
+        target_label=target_label,
+        project_name=project_name,
+        next_url=next_url,
+    )
 
 
 @app.route("/comments/<source_type>/<int:source_id>", methods=["GET", "POST"])
