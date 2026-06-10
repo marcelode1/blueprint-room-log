@@ -1,5 +1,6 @@
 {% if work_room_id is not defined %}{% set work_room_id = t.room_id %}{% endif %}
 {% if work_room_name is not defined %}{% set work_room_name = t.room_name or 'Project general' %}{% endif %}
+{% set show_worker_task_actions = show_worker_task_actions|default(true) %}
 {% set address = task_project_address(t) %}
 {% set room_state = namespace(done=false) %}
 {% if work_room_id %}
@@ -23,10 +24,12 @@
         {% endif %}
     </div>
 
-    {% if address %}
-        <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
+    {% if show_worker_task_actions %}
+        {% if address %}
+            <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
+        {% endif %}
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
     {% endif %}
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
 
     {% include "_supplier_task_info.html" %}
     {% set admin_room_id = work_room_id %}

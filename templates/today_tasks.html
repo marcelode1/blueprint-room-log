@@ -1,15 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
-{% for t in tasks %}
-    {% set work_room_id = t.room_id %}
-    {% set work_room_name = t.room_name or 'Project general' %}
-    {% include "_worker_task_work_card.html" %}
+{% if tasks %}
+    {% for project_group in tasks|groupby('project_id') %}
+        {% set project_task = project_group.list[0] %}
+        {% set project_address = task_project_address(project_task) %}
+        <section class="workerProjectTaskGroup" id="project-{{ project_group.grouper }}">
+            <div class="card workerProjectTaskHeader">
+                <h2>{{ project_task.project_name or 'Project' }}</h2>
+                {% if project_task.customer_name %}<p><strong>Customer:</strong> {{ project_task.customer_name }}</p>{% endif %}
+                {% if project_address %}<p><strong>Address:</strong> {{ project_address }}</p>{% endif %}
+                <div class="workerProjectActions">
+                    {% if project_address %}
+                        <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project_address) }}">Open Route in Google Maps</a>
+                    {% endif %}
+                    <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=project_task.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
+                </div>
+            </div>
+            {% for t in project_group.list %}
+                {% set work_room_id = t.room_id %}
+                {% set work_room_name = t.room_name or 'Project general' %}
+                {% set show_worker_task_actions = false %}
+                {% include "_worker_task_work_card.html" %}
+            {% endfor %}
+        </section>
+    {% endfor %}
 {% else %}
     <div class="card">
         <h2>Today's Tasks</h2>
         <p>No tasks scheduled for today.</p>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
     </div>
-{% endfor %}
+{% endif %}
 {% include "_worker_task_work_assets.html" %}
+<style>
+.workerProjectTaskGroup{margin-bottom:18px}
+.workerProjectTaskHeader{margin-bottom:12px}
+.workerProjectTaskHeader h2{margin-top:0}
+.workerProjectActions{display:grid;gap:10px}
+</style>
 {% endblock %}
