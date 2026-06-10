@@ -7833,7 +7833,14 @@ def today_tasks():
         ).fetchone()
         task_day = task_scheduled_date_value(context_task) or task_day
         target_project_id = context_task.get("project_id") if context_task else None
-    tasks = load_task_details(conn, worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id))
+    task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+    received_any = False
+    for task_row in task_rows:
+        if not task_row.get("accepted_at"):
+            received_any = mark_task_assignment_received(conn, task_row) or received_any
+    if received_any:
+        task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+    tasks = load_task_details(conn, task_rows)
     conn.close()
     return render_template(
         "today_tasks.html",
