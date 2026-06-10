@@ -52,7 +52,6 @@
                     <div class="navDropdownMenu">
                         <a href="{{ url_for('create_global_task') }}">Create a Task</a>
                         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
-                        <a href="{{ url_for('project_report') }}">Project Report</a>
                     </div>
                 </div>
             {% else %}
@@ -68,6 +67,7 @@
                 <a href="{{ url_for('suppliers') }}">Suppliers</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
+                <a href="{{ url_for('project_report') }}">Project Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
                 {% if session.get("ui_theme") == "pro_test" %}

@@ -9435,15 +9435,18 @@ def attendance_report():
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_user_id = request.args.get("user_id", type=int)
-    report = attendance_report_data(period, selected_date, selected_user_id)
+    selected_project_id = request.args.get("project_id", type=int)
+    report = attendance_report_data(period, selected_date, selected_user_id, selected_project_id)
     return render_template(
         "attendance_report.html",
         users=report["users"],
+        projects=report["projects"],
         pairs=report["pairs"],
         summary=report["summary"].values(),
         period=report["period"],
         selected_date=selected_date,
         selected_user_id=selected_user_id,
+        selected_project_id=selected_project_id,
         start=report["start"],
         end=report["end"],
         duration_text=duration_text,
@@ -9460,15 +9463,24 @@ def my_time_report():
     if period not in ["day", "week", "month"]:
         period = "day"
     selected_date = request.args.get("date") or local_now().date().isoformat()
-    report = attendance_report_data(period, selected_date, session.get("user_id"))
+    selected_project_id = request.args.get("project_id", type=int)
+    if selected_project_id:
+        conn = db()
+        if not user_can_access_project(conn, selected_project_id):
+            selected_project_id = None
+            flash("You do not have access to that project.")
+        conn.close()
+    report = attendance_report_data(period, selected_date, session.get("user_id"), selected_project_id)
     return render_template(
         "attendance_report.html",
         users=[],
+        projects=report["projects"],
         pairs=report["pairs"],
         summary=report["summary"].values(),
         period=report["period"],
         selected_date=selected_date,
         selected_user_id=session.get("user_id"),
+        selected_project_id=selected_project_id,
         start=report["start"],
         end=report["end"],
         duration_text=duration_text,
@@ -9479,10 +9491,11 @@ def my_time_report():
     )
 
 
-def attendance_report_data(period, selected_date, selected_user_id=None):
+def attendance_report_data(period, selected_date, selected_user_id=None, selected_project_id=None):
     period, start, end = attendance_range(period, selected_date)
     conn = db()
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    projects = fetch_visible_projects(conn)
     query = """
         SELECT attendance_events.*, users.name AS user_name, users.email AS user_email, projects.name AS project_name
         FROM attendance_events
@@ -9497,6 +9510,9 @@ def attendance_report_data(period, selected_date, selected_user_id=None):
     if selected_user_id:
         query += " AND attendance_events.user_id = %s"
         params.append(selected_user_id)
+    if selected_project_id:
+        query += " AND attendance_events.project_id = %s"
+        params.append(selected_project_id)
     query += " ORDER BY attendance_events.created_at ASC, attendance_events.user_id, attendance_events.project_id, attendance_events.id"
     events = conn.execute(query, tuple(params)).fetchall()
     conn.close()
@@ -9517,7 +9533,7 @@ def attendance_report_data(period, selected_date, selected_user_id=None):
                 "minutes": 0
             }
         summary[uid]["minutes"] += duration_minutes(ci.get("created_at"), co.get("created_at"))
-    return {"users": users, "pairs": pairs, "summary": summary, "period": period, "start": start, "end": end}
+    return {"users": users, "projects": projects, "pairs": pairs, "summary": summary, "period": period, "start": start, "end": end}
 
 
 @app.route("/attendance/report/export")
@@ -9526,7 +9542,8 @@ def attendance_report_export():
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_user_id = request.args.get("user_id", type=int)
-    report = attendance_report_data(period, selected_date, selected_user_id)
+    selected_project_id = request.args.get("project_id", type=int)
+    report = attendance_report_data(period, selected_date, selected_user_id, selected_project_id)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["User", "Email", "Project", "Date", "Time Zone", "Clock In", "Clock In Location", "Clock Out", "Clock Out Location", "Total Minutes", "Total"])
