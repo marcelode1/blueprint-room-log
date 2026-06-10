@@ -32,7 +32,7 @@
         <button type="submit">Show Report</button>
         {% if not my_report %}
         <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('task_report') }}">Task Report</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('project_report', user_id=selected_user_id or '', period=period, date=selected_date) }}">Project Report</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
         {% endif %}
     </form>

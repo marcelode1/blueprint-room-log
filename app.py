@@ -2644,6 +2644,18 @@ def is_mobile_request():
     return any(token in user_agent for token in ["mobi", "android", "iphone", "ipad"])
 
 
+def verify_admin_pin(conn, pin):
+    admin = conn.execute(
+        "SELECT id, pin_hash FROM users WHERE id = %s AND role = 'admin'",
+        (session.get("user_id"),)
+    ).fetchone()
+    if not admin or not admin.get("pin_hash"):
+        return "Admin PIN is not set. Create or reset your admin mobile PIN first."
+    if not check_password_hash(admin["pin_hash"], (pin or "").strip()):
+        return "Invalid admin PIN."
+    return ""
+
+
 def user_can_access_project(conn, project_id, user_id=None):
     if is_main_admin():
         return True
@@ -3684,7 +3696,8 @@ def utility_processor():
         inventory_condition_label=inventory_condition_label,
         task_status_label=task_status_label,
         task_is_completed=task_is_completed,
-        normalize_task_status=normalize_task_status
+        normalize_task_status=normalize_task_status,
+        comment_route_source_type=comment_route_source_type
     )
 
 
@@ -8445,63 +8458,25 @@ def task_report_data(period, selected_date, selected_project_id=None, selected_u
 @app.route("/tasks/report")
 @admin_required
 def task_report():
-    period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or local_now().date().isoformat()
-    selected_project_id = request.args.get("project_id", type=int)
-    selected_user_id = request.args.get("user_id", type=int)
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
-    return render_template(
-        "task_report.html",
-        report=report,
-        period=report["period"],
-        selected_date=selected_date,
-        selected_project_id=selected_project_id,
-        selected_user_id=selected_user_id,
-        task_report_status=task_report_status
-    )
+    return redirect(url_for(
+        "project_report",
+        project_id=request.args.get("project_id", ""),
+        user_id=request.args.get("user_id", ""),
+        period=request.args.get("period", "day"),
+        date=request.args.get("date") or local_now().date().isoformat()
+    ))
 
 
 @app.route("/tasks/report/export")
 @admin_required
 def task_report_export():
-    period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or local_now().date().isoformat()
-    selected_project_id = request.args.get("project_id", type=int)
-    selected_user_id = request.args.get("user_id", type=int)
-    report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
-        "Task #", "Project", "Room", "Task", "Assigned Worker", "Worker Email", "Created By",
-        "Created Date", "Scheduled Date", "Be There Time", "End Date", "Seen By Worker", "Received At",
-        "Done", "Completed At", "Status", "Instructions"
-    ])
-    for task in report["tasks"]:
-        writer.writerow([
-            task.get("task_number") or "",
-            task.get("project_name") or "",
-            task.get("room_name") or "",
-            task.get("title") or "",
-            task.get("assigned_user_name") or "",
-            task.get("assigned_user_email") or "",
-            task.get("created_by_name") or "",
-            format_datetime(task.get("created_at")),
-            format_date(task.get("task_start_date") or task.get("task_date")),
-            format_task_time(task.get("task_start_time")),
-            format_date(task.get("task_end_date") or task.get("task_date")),
-            "Yes" if task.get("accepted_at") else "No",
-            format_datetime(task.get("accepted_at")) if task.get("accepted_at") else "",
-            "Yes" if task.get("status") == "done" else "No",
-            format_datetime(task.get("completed_at")) if task.get("completed_at") else "",
-            task_report_status(task),
-            task_instruction_text(task)
-        ])
-    filename = f"projectonus_task_report_{report['period']}_{selected_date}.csv"
-    return Response(
-        output.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return redirect(url_for(
+        "project_report_export",
+        project_id=request.args.get("project_id", ""),
+        user_id=request.args.get("user_id", ""),
+        period=request.args.get("period", "day"),
+        date=request.args.get("date") or local_now().date().isoformat()
+    ))
 
 
 def comment_report_source_label(source_type):
@@ -8893,54 +8868,268 @@ def comment_report_data(period, selected_date, selected_project_id=None, selecte
 @app.route("/comments/report")
 @login_required
 def comment_report():
-    period = request.args.get("period", "day")
-    selected_date = request.args.get("date") or local_now().date().isoformat()
-    selected_project_id = request.args.get("project_id", type=int)
-    selected_room_id = request.args.get("room_id", type=int)
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
-    return render_template(
-        "comment_report.html",
-        report=report,
-        period=report["period"],
-        selected_date=selected_date,
-        selected_project_id=report["selected_project_id"],
-        selected_room_id=report["selected_room_id"]
-    )
+    if not is_main_admin():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    return redirect(url_for(
+        "project_report",
+        project_id=request.args.get("project_id", ""),
+        room_id=request.args.get("room_id", ""),
+        period=request.args.get("period", "day"),
+        date=request.args.get("date") or local_now().date().isoformat()
+    ))
 
 
 @app.route("/comments/report/export")
 @login_required
 def comment_report_export():
+    if not is_main_admin():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    return redirect(url_for(
+        "project_report_export",
+        project_id=request.args.get("project_id", ""),
+        room_id=request.args.get("room_id", ""),
+        period=request.args.get("period", "day"),
+        date=request.args.get("date") or local_now().date().isoformat()
+    ))
+
+
+def project_report_event_sort_value(event):
+    dt = local_datetime(event.get("event_at"))
+    if dt:
+        return dt
+    return datetime.min.replace(tzinfo=app_timezone())
+
+
+def add_project_report_task_event(events, task, event_kind, event_at, details):
+    if not event_at:
+        return
+    events.append({
+        "row_type": "task",
+        "event_kind": event_kind,
+        "event_at": event_at,
+        "project_id": task.get("project_id"),
+        "project_name": task.get("project_name"),
+        "room_id": task.get("room_id"),
+        "room_name": task.get("room_name"),
+        "task_id": task.get("id"),
+        "task_number": task.get("task_number"),
+        "task_title": task.get("title"),
+        "task_status": task_report_status(task),
+        "summary": task_display_name(task),
+        "details": details,
+        "worker_name": task.get("assigned_user_name"),
+        "worker_email": task.get("assigned_user_email"),
+        "source_type": "",
+        "source_id": "",
+        "comment": "",
+        "photo_file": "",
+        "audio_file": "",
+        "sort_dt": project_report_event_sort_value({"event_at": event_at}),
+    })
+
+
+def project_report_data(period, selected_date, selected_project_id=None, selected_room_id=None, selected_user_id=None):
+    task_report = task_report_data(period, selected_date, selected_project_id, selected_user_id)
+    comment_report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    tasks = task_report["tasks"]
+    if selected_room_id:
+        tasks = [task for task in tasks if task.get("room_id") == selected_room_id]
+
+    events = []
+    for task in tasks:
+        details = "\n".join([
+            f"Scheduled: {task_schedule_text(task)}",
+            f"Status: {task_report_status(task)}",
+            f"Created by: {task.get('created_by_name') or '-'}",
+            f"Instructions: {task_instruction_text(task) or '-'}",
+        ])
+        add_project_report_task_event(events, task, "Task Created", task.get("created_at"), details)
+        if task.get("accepted_at"):
+            add_project_report_task_event(events, task, "Task Received", task.get("accepted_at"), details)
+        if task_is_completed(task) or task.get("completed_at"):
+            add_project_report_task_event(events, task, "Task Completed", task.get("completed_at") or task.get("created_at"), details)
+
+    for record in comment_report["records"]:
+        if selected_user_id and record.get("created_by") != selected_user_id:
+            continue
+        events.append({
+            "row_type": "comment",
+            "event_kind": record.get("source_label"),
+            "event_at": record.get("created_at") or record.get("record_date"),
+            "project_id": record.get("project_id"),
+            "project_name": record.get("project_name"),
+            "room_id": record.get("room_id"),
+            "room_name": record.get("room_name"),
+            "task_id": record.get("task_id"),
+            "task_number": record.get("task_number"),
+            "task_title": record.get("task_title"),
+            "task_status": "",
+            "summary": record.get("source_label"),
+            "details": record.get("media_filename") or "",
+            "worker_name": record.get("created_by_name"),
+            "worker_email": record.get("created_by_email"),
+            "source_type": record.get("source_type"),
+            "source_id": record.get("source_id"),
+            "comment": record.get("comment") or "",
+            "photo_file": record.get("photo_file") or "",
+            "audio_file": record.get("audio_file") or "",
+            "sort_dt": record.get("sort_dt") or project_report_event_sort_value({"event_at": record.get("created_at")}),
+        })
+
+    events.sort(key=lambda event: event["sort_dt"], reverse=True)
+    return {
+        "period": task_report["period"],
+        "start": task_report["start"],
+        "end": task_report["end"],
+        "projects": task_report["projects"],
+        "rooms": comment_report["rooms"],
+        "users": task_report["users"],
+        "events": events,
+        "selected_project_id": selected_project_id,
+        "selected_room_id": comment_report["selected_room_id"],
+        "selected_user_id": selected_user_id,
+    }
+
+
+@app.route("/projects/report")
+@admin_required
+def project_report():
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
     period = request.args.get("period", "day")
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
-    report = comment_report_data(period, selected_date, selected_project_id, selected_room_id)
+    selected_user_id = request.args.get("user_id", type=int)
+    report = project_report_data(period, selected_date, selected_project_id, selected_room_id, selected_user_id)
+    return render_template(
+        "project_report.html",
+        report=report,
+        period=report["period"],
+        selected_date=selected_date,
+        selected_project_id=report["selected_project_id"],
+        selected_room_id=report["selected_room_id"],
+        selected_user_id=report["selected_user_id"]
+    )
+
+
+@app.route("/projects/report/export")
+@admin_required
+def project_report_export():
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    period = request.args.get("period", "day")
+    selected_date = request.args.get("date") or local_now().date().isoformat()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_room_id = request.args.get("room_id", type=int)
+    selected_user_id = request.args.get("user_id", type=int)
+    report = project_report_data(period, selected_date, selected_project_id, selected_room_id, selected_user_id)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Date", "Created At", "Project", "Room", "Type", "Comment", "Created By",
-        "Created By Email", "Task #", "Task"
+        "Date", "Type", "Project", "Room", "Task #", "Task", "Status", "Details", "Comment",
+        "Created/Handled By", "Email", "Picture", "Audio"
     ])
-    for record in report["records"]:
+    for event in report["events"]:
         writer.writerow([
-            format_date(record.get("record_date")),
-            format_datetime(record.get("created_at")),
-            record.get("project_name") or "",
-            record.get("room_name") or "",
-            record.get("source_label") or "",
-            record.get("comment") or "",
-            record.get("created_by_name") or "",
-            record.get("created_by_email") or "",
-            record.get("task_number") or "",
-            record.get("task_title") or "",
+            format_datetime(event.get("event_at")),
+            event.get("event_kind") or "",
+            event.get("project_name") or "",
+            event.get("room_name") or "",
+            event.get("task_number") or "",
+            event.get("task_title") or "",
+            event.get("task_status") or "",
+            event.get("details") or "",
+            event.get("comment") or "",
+            event.get("worker_name") or "",
+            event.get("worker_email") or "",
+            event.get("photo_file") or "",
+            event.get("audio_file") or "",
         ])
-    filename = f"projectonus_comment_report_{report['period']}_{selected_date}.csv"
+    filename = f"projectonus_project_report_{report['period']}_{selected_date}.csv"
     return Response(
         output.getvalue(),
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@app.route("/projects/report/tasks/<int:task_id>/edit", methods=["POST"])
+@admin_required
+def project_report_task_edit(task_id):
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    next_url = safe_next_url("project_report")
+    conn = db()
+    error = verify_admin_pin(conn, request.form.get("pin"))
+    conn.close()
+    if error:
+        flash(error)
+        return redirect(next_url)
+    return redirect(url_for("edit_task", task_id=task_id, next=next_url))
+
+
+@app.route("/projects/report/tasks/<int:task_id>/delete", methods=["POST"])
+@admin_required
+def project_report_task_delete(task_id):
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    next_url = safe_next_url("project_report")
+    conn = db()
+    error = verify_admin_pin(conn, request.form.get("pin"))
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(next_url)
+    task = conn.execute("SELECT id FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task:
+        conn.close()
+        flash("Task not found.")
+        return redirect(next_url)
+    conn.execute("DELETE FROM login_events WHERE task_id = %s", (task_id,))
+    conn.execute("DELETE FROM task_delete_codes WHERE task_id = %s", (task_id,))
+    conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+    conn.commit()
+    conn.close()
+    flash("Task deleted from Project Report.")
+    return redirect(next_url)
+
+
+@app.route("/projects/report/comments/<source_type>/<int:source_id>", methods=["POST"])
+@admin_required
+def project_report_comment_action(source_type, source_id):
+    if is_mobile_request():
+        flash("Project Report is available on the admin desktop only.")
+        return redirect(url_for("index"))
+    next_url = safe_next_url("project_report")
+    source_type = comment_db_source_type(source_type)
+    conn = db()
+    error = verify_admin_pin(conn, request.form.get("pin"))
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(next_url)
+    record = load_comment_detail_record(conn, source_type, source_id)
+    if not record:
+        conn.close()
+        flash("Comment/media was not found.")
+        return redirect(next_url)
+    action = request.form.get("action")
+    if action == "delete":
+        delete_comment_detail_record(conn, source_type, source_id)
+        flash("Comment/media deleted from Project Report.")
+    else:
+        update_comment_detail_record(conn, source_type, source_id, request.form.get("comment", "").strip())
+        flash("Comment updated from Project Report.")
+    conn.commit()
+    conn.close()
+    return redirect(next_url)
 
 
 @app.route("/comments/<source_type>/<int:source_id>", methods=["GET", "POST"])
@@ -9026,7 +9215,7 @@ def team_map():
                         <a href="/users">Users</a>
                         <a href="/settings">Settings</a>
                         <a href="/attendance/report">Time Report</a>
-                        <a href="/tasks/report">Task Report</a>
+                        <a href="/projects/report">Project Report</a>
                         <a href="/team-map">Where Is My Team</a>
                         <a href="/backup">Backup</a>
                     </nav>
