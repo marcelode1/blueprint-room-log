@@ -60,16 +60,9 @@
         <select id="mobileProjectRoomSelect">
             <option value="">Choose a Room</option>
             {% for r in rooms %}
-                <option value="{{ url_for('mobile_room', room_id=r.id) }}" {% if is_main_admin() %}data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"{% endif %}>{{ r.name }}</option>
+                <option value="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</option>
             {% endfor %}
         </select>
-        <a class="btn-link" id="mobileOpenRoomBtn" href="#" aria-disabled="true">Open Room</a>
-        {% if is_main_admin() %}
-        <form method="post" id="mobileDeleteSelectedRoomForm" action="" style="display:none;" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-            <input type="hidden" name="next" value="{{ request.full_path }}">
-            <button type="submit" class="btn-danger">Delete Selected Room</button>
-        </form>
-        {% endif %}
     </div>
     {% else %}
         <p>No rooms created yet.</p>
@@ -123,32 +116,13 @@ if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
     });
 }
 const mobileProjectRoomSelect=document.getElementById("mobileProjectRoomSelect");
-const mobileOpenRoomBtn=document.getElementById("mobileOpenRoomBtn");
-const mobileDeleteSelectedRoomForm=document.getElementById("mobileDeleteSelectedRoomForm");
-function updateMobileRoomChoice(){
-    if(!mobileProjectRoomSelect||!mobileOpenRoomBtn)return;
-    const option=mobileProjectRoomSelect.options[mobileProjectRoomSelect.selectedIndex];
-    const roomUrl=mobileProjectRoomSelect.value;
-    mobileOpenRoomBtn.href=roomUrl||"#";
-    mobileOpenRoomBtn.setAttribute("aria-disabled",roomUrl?"false":"true");
-    mobileOpenRoomBtn.classList.toggle("btn-secondary",!roomUrl);
-    if(mobileDeleteSelectedRoomForm){
-        const deleteUrl=option?option.dataset.deleteUrl:"";
-        mobileDeleteSelectedRoomForm.action=deleteUrl||"";
-        mobileDeleteSelectedRoomForm.style.display=deleteUrl?"block":"none";
-    }
-}
 if(mobileProjectRoomSelect){
-    mobileProjectRoomSelect.addEventListener("change",updateMobileRoomChoice);
-    updateMobileRoomChoice();
-}
-if(mobileOpenRoomBtn){
-    mobileOpenRoomBtn.addEventListener("click",event=>{
-        if(!mobileProjectRoomSelect||!mobileProjectRoomSelect.value)event.preventDefault();
+    mobileProjectRoomSelect.addEventListener("change",()=>{
+        if(mobileProjectRoomSelect.value)window.location.href=mobileProjectRoomSelect.value;
     });
 }
 </script>
 <style>
-.mobileBlueprintTabs{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomChooser{display:grid;gap:8px}.mobileRoomChooser select,.mobileRoomChooser .btn-link,.mobileRoomChooser button{margin:0}.mobileRoomChooser a[aria-disabled="true"]{opacity:.62}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+.mobileBlueprintTabs{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomChooser{display:grid;gap:8px}.mobileRoomChooser select{margin:0}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
 </style>
 {% endblock %}

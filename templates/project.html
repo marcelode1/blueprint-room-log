@@ -100,16 +100,9 @@
         <select id="projectMobileRoomSelect">
             <option value="">Choose a Room</option>
             {% for r in rooms %}
-                <option value="{{ url_for('room', room_id=r.id) }}" {% if is_main_admin() %}data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"{% endif %}>{{ r.name }}</option>
+                <option value="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</option>
             {% endfor %}
         </select>
-        <a class="btn-link" id="projectMobileOpenRoomBtn" href="#" aria-disabled="true">Open Room</a>
-        {% if is_main_admin() %}
-        <form method="post" id="projectMobileDeleteRoomForm" action="" style="display:none;" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-            <input type="hidden" name="next" value="{{ request.full_path }}">
-            <button type="submit" class="btn-danger">Delete Selected Room</button>
-        </form>
-        {% endif %}
     </div>
     {% else %}
         <p>No rooms created yet.</p>
@@ -257,7 +250,7 @@
 .projectAdminActions form{margin:0}
 .projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
 .mobileBlueprintNotice{display:none}
-.roomChooser{display:grid;gap:8px}.roomChooser select,.roomChooser .btn-link,.roomChooser button{margin:0}.roomChooser a[aria-disabled="true"]{opacity:.62}
+.roomChooser{display:grid;gap:8px}.roomChooser select{margin:0}
 @media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}}
 </style>
 
@@ -275,28 +268,9 @@ const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitl
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 
 const projectMobileRoomSelect=document.getElementById("projectMobileRoomSelect");
-const projectMobileOpenRoomBtn=document.getElementById("projectMobileOpenRoomBtn");
-const projectMobileDeleteRoomForm=document.getElementById("projectMobileDeleteRoomForm");
-function updateProjectMobileRoomChoice(){
-    if(!projectMobileRoomSelect||!projectMobileOpenRoomBtn)return;
-    const option=projectMobileRoomSelect.options[projectMobileRoomSelect.selectedIndex];
-    const roomUrl=projectMobileRoomSelect.value;
-    projectMobileOpenRoomBtn.href=roomUrl||"#";
-    projectMobileOpenRoomBtn.setAttribute("aria-disabled",roomUrl?"false":"true");
-    projectMobileOpenRoomBtn.classList.toggle("btn-secondary",!roomUrl);
-    if(projectMobileDeleteRoomForm){
-        const deleteUrl=option?option.dataset.deleteUrl:"";
-        projectMobileDeleteRoomForm.action=deleteUrl||"";
-        projectMobileDeleteRoomForm.style.display=deleteUrl?"block":"none";
-    }
-}
 if(projectMobileRoomSelect){
-    projectMobileRoomSelect.addEventListener("change",updateProjectMobileRoomChoice);
-    updateProjectMobileRoomChoice();
-}
-if(projectMobileOpenRoomBtn){
-    projectMobileOpenRoomBtn.addEventListener("click",event=>{
-        if(!projectMobileRoomSelect||!projectMobileRoomSelect.value)event.preventDefault();
+    projectMobileRoomSelect.addEventListener("change",()=>{
+        if(projectMobileRoomSelect.value)window.location.href=projectMobileRoomSelect.value;
     });
 }
 
