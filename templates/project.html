@@ -109,6 +109,25 @@
             <p>No rooms created yet.</p>
         {% endfor %}
     </div>
+    {% if not rooms %}<p class="mobileNoRooms">No rooms created yet.</p>{% endif %}
+    {% if rooms %}
+    <div class="mobileRoomChooser">
+        <label for="projectMobileRoomSelect">Choose a Room</label>
+        <select id="projectMobileRoomSelect">
+            <option value="">Choose a Room</option>
+            {% for r in rooms %}
+                <option value="{{ url_for('room', room_id=r.id) }}" {% if is_main_admin() %}data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+        </select>
+        <a class="btn-link" id="projectMobileOpenRoomBtn" href="#" aria-disabled="true">Open Room</a>
+        {% if is_main_admin() %}
+        <form method="post" id="projectMobileDeleteRoomForm" action="" style="display:none;" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="btn-danger">Delete Selected Room</button>
+        </form>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 
 {% if is_main_admin() or has_perm("create_rooms") %}
@@ -252,8 +271,9 @@
 .projectAdminActions{display:flex!important;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .projectAdminActions form{margin:0}
 .projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
-.mobileBlueprintNotice{display:none}
-@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}.roomScroller{display:block;max-height:420px;overflow-y:auto;overflow-x:hidden}.roomChipWrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:8px 0}.roomChip{display:flex;width:100%;border-radius:14px;justify-content:center}.roomDeleteButton{border-radius:14px!important;min-height:58px!important}}
+.mobileBlueprintNotice,.mobileRoomChooser,.mobileNoRooms{display:none}
+.mobileRoomChooser{gap:8px}.mobileRoomChooser select,.mobileRoomChooser .btn-link,.mobileRoomChooser button{margin:0}.mobileRoomChooser a[aria-disabled="true"]{opacity:.62}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice,.mobileNoRooms{display:block!important}.roomScroller{display:none!important}.mobileRoomChooser{display:grid}.roomDeleteButton{border-radius:14px!important;min-height:58px!important}}
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
@@ -268,6 +288,32 @@ const currentLine=document.getElementById("currentLine"),currentPolygon=document
 const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.getElementById("snapSize"),drawingMode=document.getElementById("drawingMode"),drawStatus=document.getElementById("drawStatus");
 const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitle=document.getElementById("roomContextTitle"),roomContextDeleteForm=document.getElementById("roomContextDeleteForm");
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
+
+const projectMobileRoomSelect=document.getElementById("projectMobileRoomSelect");
+const projectMobileOpenRoomBtn=document.getElementById("projectMobileOpenRoomBtn");
+const projectMobileDeleteRoomForm=document.getElementById("projectMobileDeleteRoomForm");
+function updateProjectMobileRoomChoice(){
+    if(!projectMobileRoomSelect||!projectMobileOpenRoomBtn)return;
+    const option=projectMobileRoomSelect.options[projectMobileRoomSelect.selectedIndex];
+    const roomUrl=projectMobileRoomSelect.value;
+    projectMobileOpenRoomBtn.href=roomUrl||"#";
+    projectMobileOpenRoomBtn.setAttribute("aria-disabled",roomUrl?"false":"true");
+    projectMobileOpenRoomBtn.classList.toggle("btn-secondary",!roomUrl);
+    if(projectMobileDeleteRoomForm){
+        const deleteUrl=option?option.dataset.deleteUrl:"";
+        projectMobileDeleteRoomForm.action=deleteUrl||"";
+        projectMobileDeleteRoomForm.style.display=deleteUrl?"block":"none";
+    }
+}
+if(projectMobileRoomSelect){
+    projectMobileRoomSelect.addEventListener("change",updateProjectMobileRoomChoice);
+    updateProjectMobileRoomChoice();
+}
+if(projectMobileOpenRoomBtn){
+    projectMobileOpenRoomBtn.addEventListener("click",event=>{
+        if(!projectMobileRoomSelect||!projectMobileRoomSelect.value)event.preventDefault();
+    });
+}
 
 let pdfDocCached = null;
 let pdfPageCached = null;

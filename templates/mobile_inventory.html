@@ -13,7 +13,7 @@
                 <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
-        <label>Room</label>
+        <label>Choose a Room</label>
         <select name="room_id">
             <option value="">All Rooms</option>
             {% for r in rooms %}

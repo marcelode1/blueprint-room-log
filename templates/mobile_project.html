@@ -54,21 +54,26 @@
 {% endif %}
 <div class="card">
     <h3>Rooms</h3>
-    <div class="mobileRoomList">
-    {% for r in rooms %}
-        <div class="mobileRoomRow">
-            <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
-            {% if is_main_admin() %}
-                <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                    <button type="submit" class="btn-danger mobileRoomDeleteButton" aria-label="Delete {{ r.name }}">Delete</button>
-                </form>
-            {% endif %}
-        </div>
+    {% if rooms %}
+    <div class="mobileRoomChooser">
+        <label for="mobileProjectRoomSelect">Choose a Room</label>
+        <select id="mobileProjectRoomSelect">
+            <option value="">Choose a Room</option>
+            {% for r in rooms %}
+                <option value="{{ url_for('mobile_room', room_id=r.id) }}" {% if is_main_admin() %}data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+        </select>
+        <a class="btn-link" id="mobileOpenRoomBtn" href="#" aria-disabled="true">Open Room</a>
+        {% if is_main_admin() %}
+        <form method="post" id="mobileDeleteSelectedRoomForm" action="" style="display:none;" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="btn-danger">Delete Selected Room</button>
+        </form>
+        {% endif %}
+    </div>
     {% else %}
         <p>No rooms created yet.</p>
-    {% endfor %}
-    </div>
+    {% endif %}
     {% if is_main_admin() or has_perm("create_rooms") %}
         <div class="mobileCreateRoomArea">
             <button type="button" id="showCreateRoomBtn">Create Room</button>
@@ -117,8 +122,33 @@ if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
         showCreateRoomBtn.style.display="inline-flex";
     });
 }
+const mobileProjectRoomSelect=document.getElementById("mobileProjectRoomSelect");
+const mobileOpenRoomBtn=document.getElementById("mobileOpenRoomBtn");
+const mobileDeleteSelectedRoomForm=document.getElementById("mobileDeleteSelectedRoomForm");
+function updateMobileRoomChoice(){
+    if(!mobileProjectRoomSelect||!mobileOpenRoomBtn)return;
+    const option=mobileProjectRoomSelect.options[mobileProjectRoomSelect.selectedIndex];
+    const roomUrl=mobileProjectRoomSelect.value;
+    mobileOpenRoomBtn.href=roomUrl||"#";
+    mobileOpenRoomBtn.setAttribute("aria-disabled",roomUrl?"false":"true");
+    mobileOpenRoomBtn.classList.toggle("btn-secondary",!roomUrl);
+    if(mobileDeleteSelectedRoomForm){
+        const deleteUrl=option?option.dataset.deleteUrl:"";
+        mobileDeleteSelectedRoomForm.action=deleteUrl||"";
+        mobileDeleteSelectedRoomForm.style.display=deleteUrl?"block":"none";
+    }
+}
+if(mobileProjectRoomSelect){
+    mobileProjectRoomSelect.addEventListener("change",updateMobileRoomChoice);
+    updateMobileRoomChoice();
+}
+if(mobileOpenRoomBtn){
+    mobileOpenRoomBtn.addEventListener("click",event=>{
+        if(!mobileProjectRoomSelect||!mobileProjectRoomSelect.value)event.preventDefault();
+    });
+}
 </script>
 <style>
-.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}.mobileRoomRow .btn-link,.mobileRoomRow button{margin:0}.mobileRoomRow form{margin:0}.mobileRoomDeleteButton{width:auto!important;min-width:88px!important;padding:12px!important;border-radius:14px!important}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+.mobileBlueprintTabs{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomChooser{display:grid;gap:8px}.mobileRoomChooser select,.mobileRoomChooser .btn-link,.mobileRoomChooser button{margin:0}.mobileRoomChooser a[aria-disabled="true"]{opacity:.62}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
 </style>
 {% endblock %}

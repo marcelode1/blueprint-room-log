@@ -22,7 +22,7 @@
         <input name="brand">
         <label>New or Used</label>
         <select name="item_condition">{% for value, label in condition_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
-        <label>Room Allocation</label>
+        <label>Choose a Room</label>
         <select name="room_id">
             <option value="">Project general</option>
             {% for r in rooms %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
@@ -83,7 +83,7 @@
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <label>Update Status</label>
                 <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-                <label>Room</label>
+                <label>Choose a Room</label>
                 <select name="room_id">
                     <option value="">Project general</option>
                     {% for r in rooms %}<option value="{{ r.id }}" {% if m.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}

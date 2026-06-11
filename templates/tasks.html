@@ -49,7 +49,7 @@
                 </select>
             </div>
             <div>
-                <label>View Scope</label>
+                <label>Choose a Room</label>
                 <select name="room_id" {% if not selected_project_id %}disabled{% endif %} onchange="this.form.submit()">
                     <option value="">Full Project</option>
                     {% for r in project_rooms %}
