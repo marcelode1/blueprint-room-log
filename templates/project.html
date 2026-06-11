@@ -94,24 +94,8 @@
     {% if is_main_admin() or has_perm("create_rooms") %}
         <button type="button" id="showDesktopCreateRoomBtn">Create Room</button>
     {% endif %}
-    <div class="roomScroller">
-        {% for r in rooms %}
-            <div class="roomChipWrap">
-                <a class="roomChip" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
-                {% if is_main_admin() %}
-                    <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-                        <input type="hidden" name="next" value="{{ request.full_path }}">
-                        <button type="submit" class="roomDeleteButton btn-danger" aria-label="Delete {{ r.name }}">Delete</button>
-                    </form>
-                {% endif %}
-            </div>
-        {% else %}
-            <p>No rooms created yet.</p>
-        {% endfor %}
-    </div>
-    {% if not rooms %}<p class="mobileNoRooms">No rooms created yet.</p>{% endif %}
     {% if rooms %}
-    <div class="mobileRoomChooser">
+    <div class="roomChooser">
         <label for="projectMobileRoomSelect">Choose a Room</label>
         <select id="projectMobileRoomSelect">
             <option value="">Choose a Room</option>
@@ -127,6 +111,8 @@
         </form>
         {% endif %}
     </div>
+    {% else %}
+        <p>No rooms created yet.</p>
     {% endif %}
 </div>
 
@@ -259,7 +245,6 @@
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
-.roomScroller{display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scroll-snap-type:x mandatory}.roomChipWrap{flex:0 0 auto;scroll-snap-align:start;display:flex;align-items:stretch;gap:6px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:999px;text-decoration:none;font-weight:800;min-width:130px;text-align:center}.roomChipWrap form{margin:0}.roomDeleteButton{width:auto!important;min-width:74px!important;min-height:48px!important;padding:10px 12px!important;border-radius:999px!important;font-size:13px!important;margin:0!important}
 .roomContextMenu{position:absolute;z-index:60;width:190px;background:white;border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.28);padding:10px}.roomContextTitle{font-weight:800;margin-bottom:8px;color:#0f172a;word-break:break-word}.roomContextMenu form{margin:0}.roomContextDeleteButton{width:100%!important;min-height:42px!important;border-radius:8px!important;margin:0!important;padding:8px 10px!important}
 .blueprintTabs{display:flex;gap:10px;flex-wrap:wrap}
 .blueprintTab{border:1px solid #ddd;border-radius:10px;padding:10px;background:#f8fafc;min-width:190px}
@@ -271,9 +256,9 @@
 .projectAdminActions{display:flex!important;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .projectAdminActions form{margin:0}
 .projectSmallButton{width:auto!important;min-height:36px!important;padding:8px 12px!important;border-radius:8px!important;font-size:13px!important;margin:0!important}
-.mobileBlueprintNotice,.mobileRoomChooser,.mobileNoRooms{display:none}
-.mobileRoomChooser{gap:8px}.mobileRoomChooser select,.mobileRoomChooser .btn-link,.mobileRoomChooser button{margin:0}.mobileRoomChooser a[aria-disabled="true"]{opacity:.62}
-@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice,.mobileNoRooms{display:block!important}.roomScroller{display:none!important}.mobileRoomChooser{display:grid}.roomDeleteButton{border-radius:14px!important;min-height:58px!important}}
+.mobileBlueprintNotice{display:none}
+.roomChooser{display:grid;gap:8px}.roomChooser select,.roomChooser .btn-link,.roomChooser button{margin:0}.roomChooser a[aria-disabled="true"]{opacity:.62}
+@media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}}
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>

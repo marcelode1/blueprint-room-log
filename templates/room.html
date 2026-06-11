@@ -7,22 +7,16 @@
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Timeline</a>
 </div>
 
-<div class="card" id="roomSwipeArea">
+<div class="card">
     <h3>Switch Rooms</h3>
-    <div class="roomScroller">
-        {% for r in rooms %}
-            <a class="roomChip {% if r.id == room.id %}activeRoom{% endif %}" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
-        {% endfor %}
-    </div>
-    <div class="mobileRoomChooser">
+    <div class="roomChooser">
         <label for="roomSwitchSelect">Choose a Room</label>
         <select id="roomSwitchSelect">
-            {% for r in rooms %}
-                <option value="{{ url_for('room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
-            {% endfor %}
+        {% for r in rooms %}
+            <option value="{{ url_for('room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
         </select>
     </div>
-    <p class="muted roomScrollHint">Scroll up/down here to move between rooms.</p>
 </div>
 
 {% if is_main_admin() %}
@@ -199,7 +193,7 @@
 </div>
 
 <style>
-.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}.mobileRoomChooser{display:none;gap:8px}.mobileRoomChooser select{margin:0}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomScroller,.roomScrollHint{display:none!important}.mobileRoomChooser{display:grid}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}
+.roomChooser{display:grid;gap:8px}.roomChooser select{margin:0}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -235,6 +229,5 @@ document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhoto
 document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}
 const roomSwitchSelect=document.getElementById("roomSwitchSelect");if(roomSwitchSelect){roomSwitchSelect.addEventListener("change",()=>{if(roomSwitchSelect.value)window.location.href=roomSwitchSelect.value})}
-const swipeArea=document.getElementById("roomSwipeArea");if(swipeArea){let sx=0,sy=0;swipeArea.addEventListener("touchstart",e=>{sx=e.changedTouches[0].screenX;sy=e.changedTouches[0].screenY},{passive:true});swipeArea.addEventListener("touchend",e=>{const dx=e.changedTouches[0].screenX-sx,dy=e.changedTouches[0].screenY-sy;if(Math.abs(dx)<60||Math.abs(dy)>80)return;const links=Array.from(document.querySelectorAll(".roomChip")),active=links.findIndex(a=>a.classList.contains("activeRoom")),next=dx<0?active+1:active-1;if(links[next])window.location.href=links[next].href},{passive:true})}
 </script>
 {% endblock %}
