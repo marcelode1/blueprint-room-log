@@ -57,7 +57,7 @@
     {% if rooms %}
     <div class="mobileRoomChooser">
         <label for="mobileProjectRoomSelect">Choose a Room</label>
-        <select id="mobileProjectRoomSelect">
+        <select id="mobileProjectRoomSelect" onchange="if(this.value) window.location.href=this.value;">
             <option value="">Choose a Room</option>
             {% for r in rooms %}
                 <option value="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</option>

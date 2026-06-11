@@ -96,8 +96,8 @@
     {% endif %}
     {% if rooms %}
     <div class="roomChooser">
-        <label for="projectMobileRoomSelect">Choose a Room</label>
-        <select id="projectMobileRoomSelect">
+        <label for="projectRoomSelect">Choose a Room</label>
+        <select id="projectRoomSelect" onchange="if(this.value) window.location.href=this.value;">
             <option value="">Choose a Room</option>
             {% for r in rooms %}
                 <option value="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</option>
@@ -267,10 +267,10 @@ const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.ge
 const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitle=document.getElementById("roomContextTitle"),roomContextDeleteForm=document.getElementById("roomContextDeleteForm");
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 
-const projectMobileRoomSelect=document.getElementById("projectMobileRoomSelect");
-if(projectMobileRoomSelect){
-    projectMobileRoomSelect.addEventListener("change",()=>{
-        if(projectMobileRoomSelect.value)window.location.href=projectMobileRoomSelect.value;
+const projectRoomSelect=document.getElementById("projectRoomSelect");
+if(projectRoomSelect){
+    projectRoomSelect.addEventListener("change",()=>{
+        if(projectRoomSelect.value)window.location.href=projectRoomSelect.value;
     });
 }
 
