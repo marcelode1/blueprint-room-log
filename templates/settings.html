@@ -127,6 +127,14 @@
         <button type="submit">Save D-Tools Cloud Settings</button>
     </form>
     <p class="muted">Default authentication follows D-Tools Cloud API documentation: API key plus the required Basic Authorization header.</p>
+    <form method="post" action="{{ url_for('test_dtools_connection') }}">
+        <h4>Test D-Tools Import</h4>
+        <div class="grid">
+            <div><label>D-Tools Project or Quote ID</label><input name="dtools_ref" placeholder="Paste one real D-Tools ID"></div>
+            <div><label>Endpoint Path</label><input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}"></div>
+        </div>
+        <button type="submit" class="btn-secondary">Test Connection and Count Items</button>
+    </form>
 </div>
 
 <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">

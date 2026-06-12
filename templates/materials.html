@@ -64,8 +64,9 @@
                 </div>
             </div>
             <button type="submit">Import D-Tools Material List</button>
+            <button type="submit" formaction="{{ url_for('preview_dtools_inventory', project_id=project.id) }}" class="btn-secondary">Preview D-Tools Items</button>
         </form>
-        <p class="muted">Imported products are added to this project inventory as Needs Purchase. If a D-Tools location matches a ProjectONus room name, the item is assigned to that room.</p>
+        <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only.</p>
     {% else %}
         <p class="muted">Add your D-Tools Cloud API key in Settings before importing materials.</p>
         <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">Open Settings</a>

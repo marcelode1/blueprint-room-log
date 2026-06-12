@@ -3539,16 +3539,23 @@ def dtools_collect_item_candidates(payload):
     return candidates
 
 
+def dtools_money(value):
+    text = str(value or "").replace("$", "").replace(",", "").strip()
+    try:
+        return float(text) if text else None
+    except Exception:
+        return None
+
+
 def dtools_normalize_material(item, index, external_ref):
     item_type = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"])
     type_text = item_type.lower()
     name = dtools_pick(item, ["itemName", "productName", "product", "name", "description", "shortDescription", "model", "partNumber"])
     if not name:
         return None
-    if any(token in type_text for token in ["labor", "labour", "service", "subscription", "allowance"]):
-        return None
-    if any(token in name.lower() for token in ["labor", "labour"]) and not dtools_pick(item, ["model", "partNumber", "sku"]):
-        return None
+    is_service = any(token in type_text for token in ["labor", "labour", "service", "subscription", "allowance"])
+    if any(token in name.lower() for token in ["labor", "labour", "service"]) and not dtools_pick(item, ["model", "partNumber", "sku"]):
+        is_service = True
 
     quantity = dtools_quantity(dtools_pick(item, ["totalQuantity", "quantity", "qty", "count"]))
     brand = dtools_pick(item, ["manufacturer", "manufacturerName", "brand", "brandName", "vendor", "vendorName"])
@@ -3557,6 +3564,9 @@ def dtools_normalize_material(item, index, external_ref):
     system = dtools_pick(item, ["system", "systemName"])
     phase = dtools_pick(item, ["phase", "phaseName"])
     category = dtools_pick(item, ["category", "categoryName"])
+    description = dtools_pick(item, ["description", "longDescription", "shortDescription", "notes", "comment"])
+    unit_price = dtools_money(dtools_pick(item, ["unitPrice", "price", "sellPrice", "salePrice", "clientPrice", "msrp"]))
+    unit_cost = dtools_money(dtools_pick(item, ["unitCost", "cost", "dealerCost"]))
     source_item_id = dtools_pick(item, ["id", "itemId", "lineItemId", "quoteItemId", "projectItemId", "productId", "uuid"])
     if not source_item_id:
         stable = json.dumps(item, sort_keys=True, default=str)[:1200]
@@ -3568,10 +3578,14 @@ def dtools_normalize_material(item, index, external_ref):
         "quantity": quantity,
         "brand": brand,
         "model": model,
+        "description": description,
+        "unit_price": unit_price,
+        "unit_cost": unit_cost,
         "location": location,
         "system": system,
         "phase": phase,
         "category": category,
+        "item_type": "service" if is_service else "part",
     }
 
 
@@ -3602,11 +3616,38 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     room_lookup = {normalize_lookup_key(room["name"]): room["id"] for room in rooms}
     materials = dtools_extract_materials(payload, external_ref)
     imported = 0
+    catalog_saved = 0
+    services_saved = 0
     skipped = 0
     unmatched_rooms = 0
     now = utc_now_iso()
 
     for material in materials:
+        is_service = material.get("item_type") == "service"
+        description_parts = []
+        if material.get("description"):
+            description_parts.append(material["description"])
+        for label, key in [("System", "system"), ("Phase", "phase"), ("Category", "category")]:
+            if material.get(key):
+                description_parts.append(f"{label}: {material[key]}")
+        catalog_description = "\n".join(description_parts).strip()
+        part_catalog_id = upsert_part_catalog(
+            conn,
+            material["item_name"],
+            material["model"],
+            material["brand"],
+            catalog_description,
+            material.get("unit_price"),
+            None,
+            material.get("item_type") or "part",
+            material.get("category") or ""
+        )
+        if part_catalog_id:
+            catalog_saved += 1
+            if is_service:
+                services_saved += 1
+        if is_service:
+            continue
         exists = conn.execute(
             """
             SELECT id FROM inventory_items
@@ -3629,14 +3670,6 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
                 detail_parts.append(f"{label}: {material[key]}")
         location_detail = "; ".join(detail_parts) or "Imported from D-Tools Cloud"
         used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
-        part_catalog_id = upsert_part_catalog(
-            conn,
-            material["item_name"],
-            material["model"],
-            material["brand"],
-            used_note,
-            item_type="part"
-        )
 
         conn.execute(
             """
@@ -3672,7 +3705,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
         "UPDATE projects SET dtools_cloud_project_ref = %s WHERE id = %s",
         (external_ref, project_id)
     )
-    return {"found": len(materials), "imported": imported, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
+    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
 
 
 def zoneinfo_or_none(name):
@@ -5965,7 +5998,10 @@ def import_dtools_inventory(project_id):
         payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
         result = import_dtools_materials(conn, project_id, external_ref, payload)
         conn.commit()
-        message = f"D-Tools import complete: {result['imported']} item(s) added as Needs Purchase."
+        message = f"D-Tools import complete: {result['imported']} inventory item(s) added as Needs Purchase."
+        message += f" {result.get('catalog_saved', 0)} catalog item(s) saved."
+        if result.get("services_saved"):
+            message += f" {result['services_saved']} service/labor item(s) saved to Parts / Services."
         if result["skipped"]:
             message += f" {result['skipped']} duplicate item(s) skipped."
         if result["unmatched_rooms"]:
@@ -5978,6 +6014,64 @@ def import_dtools_inventory(project_id):
         flash(str(e))
     conn.close()
     return redirect(url_for("project_materials", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/materials/preview-dtools", methods=["POST"])
+@admin_required
+def preview_dtools_inventory(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    external_ref = request.form.get("dtools_ref", "").strip()
+    endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
+    if not external_ref:
+        conn.close()
+        flash("Enter the D-Tools Cloud Project or Quote ID.")
+        return redirect(url_for("project_materials", project_id=project_id))
+    try:
+        payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
+        items = dtools_extract_materials(payload, external_ref)
+        rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name", (project_id,)).fetchall()
+        room_lookup = {normalize_lookup_key(room["name"]): room["id"] for room in rooms}
+        room_name_by_id = {room["id"]: room["name"] for room in rooms}
+        for item in items:
+            room_id = match_dtools_room(room_lookup, item.get("location"))
+            item["matched_room_name"] = room_name_by_id.get(room_id, "")
+        conn.close()
+        return render_template(
+            "dtools_preview.html",
+            project=project,
+            items=items,
+            external_ref=external_ref,
+            endpoint_path=endpoint_path or dtools_cloud_config().get("material_path"),
+        )
+    except Exception as e:
+        conn.close()
+        flash(str(e))
+        return redirect(url_for("project_materials", project_id=project_id))
+
+
+@app.route("/settings/test-dtools", methods=["POST"])
+@admin_required
+def test_dtools_connection():
+    external_ref = request.form.get("dtools_ref", "").strip()
+    endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
+    if not external_ref:
+        flash("Enter a D-Tools Project or Quote ID to test.")
+        return redirect(url_for("settings"))
+    try:
+        payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
+        items = dtools_extract_materials(payload, external_ref)
+        part_count = sum(1 for item in items if item.get("item_type") != "service")
+        service_count = sum(1 for item in items if item.get("item_type") == "service")
+        flash(f"D-Tools connected. Found {part_count} part item(s) and {service_count} service/labor item(s).")
+    except Exception as e:
+        flash(str(e))
+    return redirect(url_for("settings"))
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
