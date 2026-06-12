@@ -3102,6 +3102,31 @@ def dtools_cloud_configured():
     return bool(dtools_cloud_config().get("api_key"))
 
 
+def dtools_ref_looks_like_quote(external_ref):
+    ref = (external_ref or "").strip().lower()
+    return ref.startswith(("q-", "quote-", "qt-")) or ref.startswith("quote ")
+
+
+def dtools_endpoint_for_ref(endpoint_path, external_ref):
+    path = (endpoint_path or "").strip()
+    if dtools_ref_looks_like_quote(external_ref):
+        if not path or normalize_lookup_key(path) in {"projectsgetproject", "projectgetproject"}:
+            return "Quotes/GetQuote"
+    if path:
+        return path
+    return dtools_cloud_config().get("material_path") or "Projects/GetProject"
+
+
+def dtools_format_error_details(status_code, details, ref, path):
+    hint = ""
+    if status_code == 400 and ref and not str(ref).strip().isdigit():
+        hint = (
+            " D-Tools rejected this value as an API ID. Use the internal numeric D-Tools Project/Quote ID, "
+            "or set the endpoint path to the D-Tools endpoint that searches by quote/project number."
+        )
+    return f"D-Tools Cloud returned {status_code} from {path}: {details}{hint}".strip()
+
+
 def optional_int(value):
     try:
         return int(value) if str(value or "").strip() else None
@@ -3418,7 +3443,7 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
     if not api_key:
         raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings.")
 
-    path = (endpoint_path or config["material_path"]).strip()
+    path = dtools_endpoint_for_ref(endpoint_path, external_ref)
     if not path:
         raise RuntimeError("D-Tools Cloud material endpoint path is missing.")
     if path.startswith("http://") or path.startswith("https://"):
@@ -3448,7 +3473,7 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
             return json.loads(raw or "{}")
     except urllib.error.HTTPError as e:
         details = e.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"D-Tools Cloud returned {e.code}: {details or e.reason}")
+        raise RuntimeError(dtools_format_error_details(e.code, details or e.reason, ref, path))
     except urllib.error.URLError as e:
         raise RuntimeError(f"Could not reach D-Tools Cloud: {e.reason}")
     except json.JSONDecodeError:
@@ -6047,7 +6072,7 @@ def preview_dtools_inventory(project_id):
             project=project,
             items=items,
             external_ref=external_ref,
-            endpoint_path=endpoint_path or dtools_cloud_config().get("material_path"),
+            endpoint_path=dtools_endpoint_for_ref(endpoint_path, external_ref),
         )
     except Exception as e:
         conn.close()
