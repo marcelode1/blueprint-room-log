@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{{ invoice.invoice_number }}</title>
+    <style>
+        body{font-family:Arial,sans-serif;color:#172033;margin:24px}
+        .header{display:grid;grid-template-columns:1fr auto;gap:24px;border-bottom:2px solid #172033;padding-bottom:18px}
+        .logo{max-width:150px;max-height:90px;object-fit:contain}
+        .meta{text-align:right}.meta h1{text-transform:uppercase;margin:0 0 10px}
+        p{margin:4px 0}.bill{margin:22px 0}
+        table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}th{background:#f3f4f6}
+        .totals{max-width:340px;margin:18px 0 0 auto}.totals p{display:flex;justify-content:space-between;gap:20px}.grand{border-top:2px solid #172033;padding-top:10px;font-size:20px;font-weight:bold}
+        .notes{margin-top:18px;border-top:1px solid #d7dee9;padding-top:12px}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            {% set logo = get_app_setting("company_logo") %}
+            {% if logo %}<img class="logo" src="{{ url_for('storage_file', storage_path=logo, _external=True) }}" alt="Company Logo">{% endif %}
+            <h2>{{ company.company_name or 'ProjectONus' }}</h2>
+            {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
+            {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+        </div>
+        <div class="meta">
+            <h1>Invoice</h1>
+            <p><strong>{{ invoice.invoice_number }}</strong></p>
+            <p>Status: {{ invoice.status|title }}</p>
+            <p>Date: {{ format_date(invoice.invoice_date) }}</p>
+            {% if invoice.due_date %}<p>Due: {{ format_date(invoice.due_date) }}</p>{% endif %}
+        </div>
+    </div>
+    <div class="bill">
+        <h3>Bill To</h3>
+        <p><strong>{{ invoice.customer_name or '-' }}</strong></p>
+        {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
+        {% if invoice.customer_email %}<p>{{ invoice.customer_email }}</p>{% endif %}
+        {% if invoice.customer_phone %}<p>{{ invoice.customer_phone }}</p>{% endif %}
+        {% if invoice.project_name %}<p>Project: {{ invoice.project_name }}</p>{% endif %}
+    </div>
+    <table>
+        <thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Rate</th><th>Total</th></tr></thead>
+        <tbody>
+        {% for line in lines %}
+            <tr><td>{{ line.item_name }}</td><td>{{ line.description or '' }}</td><td>{{ line.quantity }}</td><td>{{ format_invoice_money(line.unit_price) }}</td><td>{{ format_invoice_money(line.line_total) }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <div class="totals">
+        <p><span>Subtotal</span><strong>{{ format_invoice_money(invoice.subtotal) }}</strong></p>
+        <p><span>Tax {{ invoice.tax_rate }}%</span><strong>{{ format_invoice_money(invoice.tax_total) }}</strong></p>
+        <p class="grand"><span>Total</span><strong>{{ format_invoice_money(invoice.total) }}</strong></p>
+    </div>
+    {% if invoice.notes %}<div class="notes"><h3>Notes</h3><p>{{ invoice.notes }}</p></div>{% endif %}
+    {% if invoice.terms %}<div class="notes"><h3>Terms</h3><p>{{ invoice.terms }}</p></div>{% endif %}
+</body>
+</html>

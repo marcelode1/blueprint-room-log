@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block content %}
+{% set is_edit = invoice is not none %}
+{% set default_customer_name = '' %}
+{% set default_customer_email = '' %}
+{% set default_customer_phone = '' %}
+{% set default_billing_address = '' %}
+{% if invoice %}
+    {% set default_customer_name = invoice.customer_name or '' %}
+    {% set default_customer_email = invoice.customer_email or '' %}
+    {% set default_customer_phone = invoice.customer_phone or '' %}
+    {% set default_billing_address = invoice.billing_address or '' %}
+{% elif selected_project %}
+    {% set default_customer_name = selected_project.customer_name or selected_project.name or '' %}
+    {% set default_customer_email = selected_project.customer_email or '' %}
+    {% set default_customer_phone = selected_project.customer_phone or '' %}
+    {% set default_billing_address = selected_project.billing_address or selected_project.customer_address or '' %}
+{% endif %}
+<div class="card">
+    <h2>{{ 'Edit Invoice' if is_edit else 'Create Invoice' }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+    {% if is_edit %}<a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>{% endif %}
+</div>
+
+<div class="card">
+    <form method="post" id="invoiceForm">
+        <div class="grid">
+            <div>
+                <label>Project</label>
+                <select name="project_id" id="invoiceProjectSelect">
+                    <option value="">No project</option>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}"
+                            data-customer-name="{{ p.customer_name or p.name }}"
+                            data-customer-email="{{ p.customer_email or '' }}"
+                            data-customer-phone="{{ p.customer_phone or '' }}"
+                            data-billing-address="{{ p.billing_address or p.customer_address or '' }}"
+                            {% if (invoice and invoice.project_id == p.id) or (selected_project and selected_project.id == p.id) %}selected{% endif %}>
+                            {{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Status</label>
+                <select name="status">
+                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
+                        <option value="{{ value }}" {% if invoice and invoice.status == value %}selected{% endif %}>{{ value|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div><label>Invoice Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
+            <div><label>Due Date</label><input name="due_date" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
+        </div>
+
+        <h3>Customer</h3>
+        <div class="grid">
+            <div><label>Customer Name</label><input name="customer_name" id="customerName" value="{{ default_customer_name }}" required></div>
+            <div><label>Email</label><input name="customer_email" id="customerEmail" type="email" value="{{ default_customer_email }}"></div>
+            <div><label>Phone</label><input name="customer_phone" id="customerPhone" value="{{ default_customer_phone }}"></div>
+        </div>
+        <label>Billing Address</label>
+        <textarea name="billing_address" id="billingAddress" rows="2">{{ default_billing_address }}</textarea>
+
+        <h3>Invoice Items</h3>
+        <div class="invoiceSavedItemBar">
+            <label>Reuse Saved Item</label>
+            <select id="savedInvoiceItemSelect">
+                <option value="">Choose saved item</option>
+                {% for item in saved_items %}
+                    <option value="{{ item.id }}" data-name="{{ item.item_name }}" data-description="{{ item.description or '' }}" data-price="{{ item.unit_price or 0 }}" data-taxable="{{ '1' if item.taxable else '0' }}">{{ item.item_name }} - {{ format_invoice_money(item.unit_price) }}</option>
+                {% endfor %}
+            </select>
+            <button type="button" class="btn-secondary" id="addSavedInvoiceItem">Add Saved Item</button>
+            <button type="button" id="addBlankInvoiceItem">Add Blank Item</button>
+        </div>
+        <div class="invoiceLines" id="invoiceLines">
+            {% for line in lines %}
+                <div class="invoiceLine">
+                    <div><label>Item</label><input name="line_item_name" value="{{ line.item_name }}" required></div>
+                    <div><label>Description</label><textarea name="line_description" rows="2">{{ line.description or '' }}</textarea></div>
+                    <div><label>Qty</label><input name="line_quantity" type="number" step="0.01" min="0" value="{{ line.quantity }}"></div>
+                    <div><label>Rate</label><input name="line_unit_price" type="number" step="0.01" min="0" value="{{ line.unit_price }}"></div>
+                    <label class="invoiceTaxable"><input type="checkbox" name="line_taxable" value="{{ loop.index0 }}" {% if line.taxable %}checked{% endif %}> Taxable</label>
+                    <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+                </div>
+            {% endfor %}
+        </div>
+        <template id="invoiceLineTemplate">
+            <div class="invoiceLine">
+                <div><label>Item</label><input name="line_item_name" required></div>
+                <div><label>Description</label><textarea name="line_description" rows="2"></textarea></div>
+                <div><label>Qty</label><input name="line_quantity" type="number" step="0.01" min="0" value="1"></div>
+                <div><label>Rate</label><input name="line_unit_price" type="number" step="0.01" min="0" value="0"></div>
+                <label class="invoiceTaxable"><input type="checkbox" name="line_taxable" value="__INDEX__"> Taxable</label>
+                <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+            </div>
+        </template>
+
+        <div class="grid">
+            <div><label>Tax Rate %</label><input name="tax_rate" type="number" step="0.001" min="0" value="{{ invoice.tax_rate if invoice else 0 }}"></div>
+        </div>
+        <label>Notes</label>
+        <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
+        <label>Terms</label>
+        <textarea name="terms" rows="2">{{ invoice.terms if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+        <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
+    </form>
+</div>
+
+<script>
+const projectSelect=document.getElementById("invoiceProjectSelect");
+if(projectSelect){
+    projectSelect.addEventListener("change",()=>{
+        const option=projectSelect.options[projectSelect.selectedIndex];
+        if(!option||!option.value)return;
+        const fill=(id,value)=>{const el=document.getElementById(id);if(el&&!el.value)el.value=value||""};
+        fill("customerName",option.dataset.customerName);
+        fill("customerEmail",option.dataset.customerEmail);
+        fill("customerPhone",option.dataset.customerPhone);
+        fill("billingAddress",option.dataset.billingAddress);
+    });
+}
+const invoiceLines=document.getElementById("invoiceLines");
+const lineTemplate=document.getElementById("invoiceLineTemplate");
+function refreshTaxableIndexes(){
+    invoiceLines.querySelectorAll(".invoiceLine").forEach((line,index)=>{
+        const checkbox=line.querySelector('[name="line_taxable"]');
+        if(checkbox)checkbox.value=String(index);
+    });
+}
+function addInvoiceLine(data={}){
+    const wrapper=document.createElement("div");
+    wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(invoiceLines.querySelectorAll(".invoiceLine").length)).trim();
+    const line=wrapper.firstElementChild;
+    line.querySelector('[name="line_item_name"]').value=data.item_name||"";
+    line.querySelector('[name="line_description"]').value=data.description||"";
+    line.querySelector('[name="line_quantity"]').value=data.quantity||"1";
+    line.querySelector('[name="line_unit_price"]').value=data.unit_price||"0";
+    line.querySelector('[name="line_taxable"]').checked=!!data.taxable;
+    invoiceLines.appendChild(line);
+    refreshTaxableIndexes();
+}
+document.getElementById("addBlankInvoiceItem").addEventListener("click",()=>addInvoiceLine());
+document.getElementById("addSavedInvoiceItem").addEventListener("click",()=>{
+    const select=document.getElementById("savedInvoiceItemSelect");
+    const option=select.options[select.selectedIndex];
+    if(!option||!option.value)return;
+    addInvoiceLine({item_name:option.dataset.name,description:option.dataset.description,unit_price:option.dataset.price,quantity:"1",taxable:option.dataset.taxable==="1"});
+});
+document.addEventListener("click",event=>{
+    const remove=event.target.closest(".removeInvoiceLine");
+    if(remove){
+        const line=remove.closest(".invoiceLine");
+        if(line)line.remove();
+        refreshTaxableIndexes();
+    }
+});
+if(invoiceLines&&invoiceLines.querySelectorAll(".invoiceLine").length===0)addInvoiceLine();
+</script>
+<style>
+.invoiceSavedItemBar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px}.invoiceSavedItemBar label{width:100%}.invoiceSavedItemBar select{max-width:360px}.invoiceLines{display:grid;gap:10px}.invoiceLine{display:grid;grid-template-columns:minmax(150px,1fr) minmax(220px,2fr) 90px 110px auto auto;gap:10px;align-items:end;border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(248,250,252,.72)}.invoiceLine textarea{min-height:42px}.invoiceTaxable{display:flex!important;gap:6px;align-items:center;margin-bottom:10px}.invoiceTaxable input{width:auto;min-height:auto;margin:0}@media(max-width:900px){.invoiceLine{grid-template-columns:1fr}.invoiceSavedItemBar{display:grid}.invoiceSavedItemBar select,.invoiceSavedItemBar button{max-width:none;width:100%}}
+</style>
+{% endblock %}

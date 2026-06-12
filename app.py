@@ -610,6 +610,79 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_saved_items (
+        id SERIAL PRIMARY KEY,
+        item_name TEXT NOT NULL,
+        description TEXT,
+        unit_price REAL NOT NULL DEFAULT 0,
+        taxable BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_number_counters (
+        year_key TEXT PRIMARY KEY,
+        next_sequence INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoices (
+        id SERIAL PRIMARY KEY,
+        invoice_number TEXT UNIQUE NOT NULL,
+        project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+        customer_name TEXT,
+        customer_email TEXT,
+        customer_phone TEXT,
+        billing_address TEXT,
+        invoice_date TEXT NOT NULL,
+        due_date TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        subtotal REAL NOT NULL DEFAULT 0,
+        tax_rate REAL NOT NULL DEFAULT 0,
+        tax_total REAL NOT NULL DEFAULT 0,
+        total REAL NOT NULL DEFAULT 0,
+        notes TEXT,
+        terms TEXT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        sent_at TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_lines (
+        id SERIAL PRIMARY KEY,
+        invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL,
+        item_name TEXT NOT NULL,
+        description TEXT,
+        quantity REAL NOT NULL DEFAULT 0,
+        unit_price REAL NOT NULL DEFAULT 0,
+        taxable BOOLEAN NOT NULL DEFAULT FALSE,
+        line_total REAL NOT NULL DEFAULT 0,
+        position INTEGER NOT NULL DEFAULT 0
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_email_logs (
+        id SERIAL PRIMARY KEY,
+        invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        sent_to TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        success BOOLEAN NOT NULL DEFAULT FALSE,
+        error TEXT,
+        sent_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS login_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -994,6 +1067,11 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS invoice_number_counters (year_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal REAL NOT NULL DEFAULT 0, tax_rate REAL NOT NULL DEFAULT 0, tax_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS invoice_lines (id SERIAL PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL, item_name TEXT NOT NULL, description TEXT, quantity REAL NOT NULL DEFAULT 0, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, line_total REAL NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS invoice_email_logs (id SERIAL PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, sent_to TEXT NOT NULL, subject TEXT NOT NULL, sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL, success BOOLEAN NOT NULL DEFAULT FALSE, error TEXT, sent_at TEXT NOT NULL)",
         """
         DO $$
         BEGIN
@@ -1821,6 +1899,142 @@ def account_info():
         "company_phone": get_app_setting("company_phone", "").strip(),
         "company_email": get_app_setting("company_email", "").strip(),
     }
+
+
+def format_invoice_money(value):
+    try:
+        return "${:,.2f}".format(float(value or 0))
+    except Exception:
+        return "$0.00"
+
+
+def invoice_number_year_key(value=None):
+    dt = local_datetime(value) if value else local_now()
+    return dt.strftime("%Y")
+
+
+def next_invoice_number(conn, reference_value=None):
+    year_key = invoice_number_year_key(reference_value)
+    row = conn.execute(
+        """
+        INSERT INTO invoice_number_counters (year_key, next_sequence, updated_at)
+        VALUES (%s, 1, %s)
+        ON CONFLICT (year_key) DO UPDATE SET
+            next_sequence = invoice_number_counters.next_sequence + 1,
+            updated_at = EXCLUDED.updated_at
+        RETURNING next_sequence - 1 AS sequence_number
+        """,
+        (year_key, utc_now_iso())
+    ).fetchone()
+    return f"INV-{year_key}-{int(row['sequence_number']):04d}"
+
+
+def invoice_line_values_from_form():
+    names = request.form.getlist("line_item_name")
+    descriptions = request.form.getlist("line_description")
+    quantities = request.form.getlist("line_quantity")
+    prices = request.form.getlist("line_unit_price")
+    taxable_flags = request.form.getlist("line_taxable")
+    lines = []
+    subtotal = 0.0
+    taxable_subtotal = 0.0
+    for index, name in enumerate(names):
+        item_name = (name or "").strip()
+        description = (descriptions[index] if index < len(descriptions) else "").strip()
+        if not item_name and not description:
+            continue
+        try:
+            quantity = float(quantities[index] if index < len(quantities) else 0)
+        except Exception:
+            quantity = 0.0
+        try:
+            unit_price = float(prices[index] if index < len(prices) else 0)
+        except Exception:
+            unit_price = 0.0
+        taxable = str(index) in taxable_flags
+        line_total = round(quantity * unit_price, 2)
+        subtotal += line_total
+        if taxable:
+            taxable_subtotal += line_total
+        lines.append({
+            "item_name": item_name or description[:80] or "Invoice item",
+            "description": description,
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "taxable": taxable,
+            "line_total": line_total,
+            "position": len(lines) + 1,
+        })
+    try:
+        tax_rate = float(request.form.get("tax_rate") or 0)
+    except Exception:
+        tax_rate = 0.0
+    tax_total = round(taxable_subtotal * (tax_rate / 100.0), 2)
+    total = round(subtotal + tax_total, 2)
+    return lines, round(subtotal, 2), tax_rate, tax_total, total
+
+
+def save_invoice_items(conn, lines):
+    for line in lines:
+        item_name = (line.get("item_name") or "").strip()
+        if not item_name:
+            continue
+        existing = conn.execute(
+            "SELECT id FROM invoice_saved_items WHERE lower(item_name) = lower(%s) LIMIT 1",
+            (item_name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE invoice_saved_items
+                SET description = %s, unit_price = %s, taxable = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), utc_now_iso(), existing["id"])
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO invoice_saved_items (item_name, description, unit_price, taxable, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (item_name, line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), utc_now_iso(), utc_now_iso())
+            )
+
+
+def load_invoice(conn, invoice_id):
+    invoice = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        WHERE invoices.id = %s
+        """,
+        (invoice_id,)
+    ).fetchone()
+    if not invoice:
+        return None, []
+    lines = conn.execute(
+        "SELECT * FROM invoice_lines WHERE invoice_id = %s ORDER BY position, id",
+        (invoice_id,)
+    ).fetchall()
+    return invoice, lines
+
+
+def invoice_email_body(invoice, company):
+    invoice_url = external_url("invoice_view", invoice_id=invoice["id"])
+    return "\n".join([
+        f"Hello {invoice.get('customer_name') or 'Customer'},",
+        "",
+        f"Please find invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}.",
+        f"Amount Due: {format_invoice_money(invoice.get('total'))}",
+        f"Due Date: {format_date(invoice.get('due_date')) if invoice.get('due_date') else '-'}",
+        "",
+        f"View invoice: {invoice_url}",
+        "",
+        "Thank you.",
+        company.get("company_name") or "ProjectONus",
+    ])
 
 
 def vendor_account_email_body(supplier, info, attachment_name=""):
@@ -3674,6 +3888,7 @@ def utility_processor():
         tel_phone_number=tel_phone_number,
         format_date=format_date,
         format_datetime=format_datetime,
+        format_invoice_money=format_invoice_money,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
@@ -4735,6 +4950,237 @@ def edit_project(project_id):
 
     conn.close()
     return render_template("edit_project.html", project=project)
+
+
+@app.route("/invoices")
+@admin_required
+def invoices():
+    conn = db()
+    q = request.args.get("q", "").strip()
+    status = request.args.get("status", "").strip()
+    where = []
+    params = []
+    if q:
+        like = f"%{q}%"
+        where.append("(invoices.invoice_number ILIKE %s OR invoices.customer_name ILIKE %s OR invoices.customer_email ILIKE %s OR projects.name ILIKE %s)")
+        params.extend([like, like, like, like])
+    if status:
+        where.append("invoices.status = %s")
+        params.append(status)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    rows = conn.execute(
+        f"""
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        {where_sql}
+        ORDER BY invoices.created_at DESC, invoices.id DESC
+        """,
+        tuple(params)
+    ).fetchall()
+    conn.close()
+    return render_template("invoices.html", invoices=rows, q=q, status=status)
+
+
+@app.route("/invoices/new", methods=["GET", "POST"])
+@admin_required
+def new_invoice():
+    conn = db()
+    if request.method == "POST":
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+        if not lines:
+            flash("Add at least one invoice item.")
+            return redirect(url_for("new_invoice"))
+        invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
+        invoice_number = next_invoice_number(conn, invoice_date)
+        row = conn.execute(
+            """
+            INSERT INTO invoices
+            (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                invoice_number,
+                request.form.get("project_id", type=int),
+                request.form.get("customer_name", "").strip(),
+                request.form.get("customer_email", "").strip(),
+                format_us_phone(request.form.get("customer_phone")),
+                request.form.get("billing_address", "").strip(),
+                invoice_date,
+                request.form.get("due_date", "").strip(),
+                request.form.get("status", "draft"),
+                subtotal,
+                tax_rate,
+                tax_total,
+                total,
+                request.form.get("notes", "").strip(),
+                request.form.get("terms", "").strip(),
+                session.get("user_id"),
+                utc_now_iso(),
+                utc_now_iso(),
+            )
+        ).fetchone()
+        invoice_id = row["id"]
+        save_invoice_items(conn, lines)
+        for line in lines:
+            conn.execute(
+                """
+                INSERT INTO invoice_lines
+                (invoice_id, item_name, description, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (invoice_id, line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+            )
+        conn.commit()
+        conn.close()
+        flash("Invoice created.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_project = None
+    if selected_project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+    conn.close()
+    return render_template(
+        "invoice_form.html",
+        invoice=None,
+        lines=[],
+        projects=projects,
+        saved_items=saved_items,
+        selected_project=selected_project,
+        today=local_now().date().isoformat(),
+        form_action=url_for("new_invoice"),
+    )
+
+
+@app.route("/invoices/<int:invoice_id>")
+@admin_required
+def invoice_view(invoice_id):
+    conn = db()
+    invoice, lines = load_invoice(conn, invoice_id)
+    email_logs = conn.execute(
+        "SELECT invoice_email_logs.*, users.name AS sent_by_name FROM invoice_email_logs LEFT JOIN users ON invoice_email_logs.sent_by = users.id WHERE invoice_id = %s ORDER BY sent_at DESC",
+        (invoice_id,)
+    ).fetchall() if invoice else []
+    conn.close()
+    if not invoice:
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    return render_template("invoice_view.html", invoice=invoice, lines=lines, company=account_info(), email_logs=email_logs)
+
+
+@app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_invoice(invoice_id):
+    conn = db()
+    invoice, existing_lines = load_invoice(conn, invoice_id)
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    if request.method == "POST":
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+        if not lines:
+            conn.close()
+            flash("Add at least one invoice item.")
+            return redirect(url_for("edit_invoice", invoice_id=invoice_id))
+        conn.execute(
+            """
+            UPDATE invoices
+            SET project_id = %s,
+                customer_name = %s,
+                customer_email = %s,
+                customer_phone = %s,
+                billing_address = %s,
+                invoice_date = %s,
+                due_date = %s,
+                status = %s,
+                subtotal = %s,
+                tax_rate = %s,
+                tax_total = %s,
+                total = %s,
+                notes = %s,
+                terms = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                request.form.get("project_id", type=int),
+                request.form.get("customer_name", "").strip(),
+                request.form.get("customer_email", "").strip(),
+                format_us_phone(request.form.get("customer_phone")),
+                request.form.get("billing_address", "").strip(),
+                request.form.get("invoice_date") or invoice.get("invoice_date"),
+                request.form.get("due_date", "").strip(),
+                request.form.get("status", "draft"),
+                subtotal,
+                tax_rate,
+                tax_total,
+                total,
+                request.form.get("notes", "").strip(),
+                request.form.get("terms", "").strip(),
+                utc_now_iso(),
+                invoice_id,
+            )
+        )
+        conn.execute("DELETE FROM invoice_lines WHERE invoice_id = %s", (invoice_id,))
+        save_invoice_items(conn, lines)
+        for line in lines:
+            conn.execute(
+                """
+                INSERT INTO invoice_lines
+                (invoice_id, item_name, description, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (invoice_id, line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+            )
+        conn.commit()
+        conn.close()
+        flash("Invoice updated.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    conn.close()
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, selected_project=None, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
+@admin_required
+def send_invoice(invoice_id):
+    conn = db()
+    invoice, lines = load_invoice(conn, invoice_id)
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    to_email = request.form.get("customer_email", "").strip() or invoice.get("customer_email")
+    if not to_email:
+        conn.close()
+        flash("Add a customer email before sending this invoice.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+    company = account_info()
+    subject = f"Invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}"
+    html = render_template("invoice_email_attachment.html", invoice=invoice, lines=lines, company=company)
+    attachment = (f"{invoice.get('invoice_number')}.html", html.encode("utf-8"), "text/html")
+    sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
+    conn.execute(
+        """
+        INSERT INTO invoice_email_logs (invoice_id, sent_to, subject, sent_by, success, error, sent_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (invoice_id, to_email, subject, session.get("user_id"), sent, "" if sent else "SMTP send failed", utc_now_iso())
+    )
+    if sent:
+        conn.execute("UPDATE invoices SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s", (utc_now_iso(), utc_now_iso(), invoice_id))
+        flash("Invoice emailed to customer.")
+    else:
+        flash("Invoice could not be emailed. Check SMTP email settings.")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
 
 @app.route("/suppliers", methods=["GET", "POST"])
