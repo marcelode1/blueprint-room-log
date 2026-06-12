@@ -108,34 +108,10 @@
                     <td>{% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
                     <td>
-                        {% if m.status == "needs_purchase" %}
                         <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <input type="hidden" name="project_id" value="{{ project.id }}">
-                            <input type="hidden" name="room_id" value="{{ m.room_id or '' }}">
-                            <input type="hidden" name="status" value="purchased_waiting_arrival">
-                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased Waiting Arrival</label>
-                        </form>
-                        {% elif m.status == "available" %}
-                        <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
-                            <input type="hidden" name="next" value="{{ request.full_path }}">
-                            <input type="hidden" name="project_id" value="{{ project.id }}">
-                            <input type="hidden" name="room_id" value="{{ m.room_id or '' }}">
-                            <input type="hidden" name="status" value="used">
-                            <input name="used_note" value="{{ m.used_note or '' }}" placeholder="Used note">
-                            <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Used</label>
-                        </form>
-                        {% endif %}
-                        <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
-                            <input type="hidden" name="next" value="{{ request.full_path }}">
-                            <input type="hidden" name="project_id" value="{{ project.id }}">
-                            <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-                            <select name="room_id">
-                                <option value="">Project general</option>
-                                {% for r in rooms %}<option value="{{ r.id }}" {% if m.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
-                            </select>
-                            <input name="used_note" value="{{ m.used_note or '' }}" placeholder="Used or purchase note">
-                            <button type="submit">Save</button>
+                            <select name="status" onchange="this.form.submit()">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
                         </form>
                     </td>
                     {% endif %}
