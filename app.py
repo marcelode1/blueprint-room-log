@@ -610,6 +610,23 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS part_catalog (
+        id SERIAL PRIMARY KEY,
+        item_name TEXT NOT NULL,
+        item_model TEXT,
+        brand TEXT,
+        category TEXT,
+        description TEXT,
+        unit_price REAL,
+        taxable BOOLEAN,
+        item_type TEXT NOT NULL DEFAULT 'part',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS invoice_saved_items (
         id SERIAL PRIMARY KEY,
         item_name TEXT NOT NULL,
@@ -1067,6 +1084,12 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS invoice_number_counters (year_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal REAL NOT NULL DEFAULT 0, tax_rate REAL NOT NULL DEFAULT 0, tax_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
@@ -1908,6 +1931,82 @@ def format_invoice_money(value):
         return "$0.00"
 
 
+def ensure_invoice_tables(conn):
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS invoice_saved_items (
+            id SERIAL PRIMARY KEY,
+            item_name TEXT NOT NULL,
+            description TEXT,
+            unit_price REAL NOT NULL DEFAULT 0,
+            taxable BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS invoice_number_counters (
+            year_key TEXT PRIMARY KEY,
+            next_sequence INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS invoices (
+            id SERIAL PRIMARY KEY,
+            invoice_number TEXT UNIQUE NOT NULL,
+            project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+            customer_name TEXT,
+            customer_email TEXT,
+            customer_phone TEXT,
+            billing_address TEXT,
+            invoice_date TEXT NOT NULL,
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            subtotal REAL NOT NULL DEFAULT 0,
+            tax_rate REAL NOT NULL DEFAULT 0,
+            tax_total REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            terms TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            sent_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS invoice_lines (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL,
+            item_name TEXT NOT NULL,
+            description TEXT,
+            quantity REAL NOT NULL DEFAULT 0,
+            unit_price REAL NOT NULL DEFAULT 0,
+            taxable BOOLEAN NOT NULL DEFAULT FALSE,
+            line_total REAL NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS invoice_email_logs (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            sent_to TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            success BOOLEAN NOT NULL DEFAULT FALSE,
+            error TEXT,
+            sent_at TEXT NOT NULL
+        )
+        """,
+    ]
+    for statement in statements:
+        conn.execute(statement)
+    conn.commit()
+
+
 def invoice_number_year_key(value=None):
     dt = local_datetime(value) if value else local_now()
     return dt.strftime("%Y")
@@ -1922,7 +2021,7 @@ def next_invoice_number(conn, reference_value=None):
         ON CONFLICT (year_key) DO UPDATE SET
             next_sequence = invoice_number_counters.next_sequence + 1,
             updated_at = EXCLUDED.updated_at
-        RETURNING next_sequence - 1 AS sequence_number
+        RETURNING next_sequence AS sequence_number
         """,
         (year_key, utc_now_iso())
     ).fetchone()
@@ -1975,10 +2074,20 @@ def invoice_line_values_from_form():
 
 
 def save_invoice_items(conn, lines):
+    ensure_part_catalog_tables(conn)
     for line in lines:
         item_name = (line.get("item_name") or "").strip()
         if not item_name:
             continue
+        part_catalog_id = upsert_part_catalog(
+            conn,
+            item_name,
+            description=line.get("description") or "",
+            unit_price=line.get("unit_price") or 0,
+            taxable=bool(line.get("taxable")),
+            item_type="service"
+        )
+        line["part_catalog_id"] = part_catalog_id
         existing = conn.execute(
             "SELECT id FROM invoice_saved_items WHERE lower(item_name) = lower(%s) LIMIT 1",
             (item_name,)
@@ -1987,18 +2096,18 @@ def save_invoice_items(conn, lines):
             conn.execute(
                 """
                 UPDATE invoice_saved_items
-                SET description = %s, unit_price = %s, taxable = %s, updated_at = %s
+                SET description = %s, unit_price = %s, taxable = %s, part_catalog_id = %s, updated_at = %s
                 WHERE id = %s
                 """,
-                (line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), utc_now_iso(), existing["id"])
+                (line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), part_catalog_id, utc_now_iso(), existing["id"])
             )
         else:
             conn.execute(
                 """
-                INSERT INTO invoice_saved_items (item_name, description, unit_price, taxable, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO invoice_saved_items (item_name, description, unit_price, taxable, part_catalog_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (item_name, line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), utc_now_iso(), utc_now_iso())
+                (item_name, line.get("description") or "", line.get("unit_price") or 0, bool(line.get("taxable")), part_catalog_id, utc_now_iso(), utc_now_iso())
             )
 
 
@@ -2574,6 +2683,7 @@ def can_edit_inventory():
 INVENTORY_STATUS_LABELS = {
     "available": "Available",
     "picked_up": "Picked up",
+    "purchased_waiting_arrival": "Purchased Waiting Arrival",
     "unavailable": "Unavailable",
     "backordered": "Backordered",
     "used": "Used",
@@ -2633,6 +2743,126 @@ def inventory_condition_label(value):
     return INVENTORY_CONDITION_LABELS.get(value or "", "New")
 
 
+def ensure_part_catalog_tables(conn):
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS part_catalog (
+            id SERIAL PRIMARY KEY,
+            item_name TEXT NOT NULL,
+            item_model TEXT,
+            brand TEXT,
+            category TEXT,
+            description TEXT,
+            unit_price REAL,
+            taxable BOOLEAN,
+            item_type TEXT NOT NULL DEFAULT 'part',
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT
+        )
+        """,
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Part catalog migration skipped:", e)
+
+
+def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category=""):
+    item_name = (item_name or "").strip()
+    if not item_name:
+        return None
+    item_model = (item_model or "").strip()
+    brand = (brand or "").strip()
+    category = (category or "").strip()
+    description = (description or "").strip()
+    item_type = (item_type or "part").strip() or "part"
+    existing = conn.execute(
+        """
+        SELECT id FROM part_catalog
+        WHERE lower(item_name) = lower(%s)
+          AND lower(COALESCE(item_model, '')) = lower(%s)
+          AND lower(COALESCE(brand, '')) = lower(%s)
+        LIMIT 1
+        """,
+        (item_name, item_model, brand)
+    ).fetchone()
+    now = utc_now_iso()
+    if existing:
+        conn.execute(
+            """
+            UPDATE part_catalog
+            SET category = COALESCE(NULLIF(%s, ''), category),
+                description = COALESCE(NULLIF(%s, ''), description),
+                unit_price = COALESCE(%s, unit_price),
+                taxable = COALESCE(%s, taxable),
+                item_type = COALESCE(NULLIF(%s, ''), item_type),
+                is_active = TRUE,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (category, description, unit_price, taxable, item_type, now, existing["id"])
+        )
+        return existing["id"]
+    row = conn.execute(
+        """
+        INSERT INTO part_catalog
+        (item_name, item_model, brand, category, description, unit_price, taxable, item_type, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        RETURNING id
+        """,
+        (item_name, item_model, brand, category, description, unit_price, taxable, item_type, now, now)
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def part_catalog_options(conn):
+    ensure_part_catalog_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT id, item_name, item_model, brand, category, description, unit_price, taxable, item_type
+        FROM part_catalog
+        WHERE COALESCE(is_active, TRUE) = TRUE
+        ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def backfill_part_catalog_from_inventory(conn):
+    ensure_part_catalog_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT id, item_name, item_model, brand, used_note
+        FROM inventory_items
+        WHERE COALESCE(item_name, '') <> ''
+          AND part_catalog_id IS NULL
+        ORDER BY id
+        LIMIT 300
+        """
+    ).fetchall()
+    for row in rows:
+        part_id = upsert_part_catalog(
+            conn,
+            row.get("item_name"),
+            row.get("item_model"),
+            row.get("brand"),
+            row.get("used_note"),
+            item_type="part"
+        )
+        if part_id:
+            conn.execute("UPDATE inventory_items SET part_catalog_id = %s WHERE id = %s", (part_id, row["id"]))
+    conn.commit()
+
+
 def fetch_suppliers(conn):
     return conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
 
@@ -2675,6 +2905,7 @@ def supplier_from_task_form(conn):
 
 
 def create_supplier_inventory_item(conn, supplier, project_id, room_id):
+    ensure_part_catalog_tables(conn)
     if not supplier:
         return None, ""
     item_name = request.form.get("supplier_item_name", "").strip()
@@ -2696,19 +2927,23 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
     purchase_note = request.form.get("supplier_purchase_note", "").strip()
     if purchase_note:
         note_parts.append(purchase_note)
+    item_model = request.form.get("supplier_model", "").strip()
+    brand = request.form.get("supplier_brand", "").strip()
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "\n".join(note_parts), item_type="part")
     return conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
             pickup_date,
             quantity,
             item_name,
-            request.form.get("supplier_model", "").strip(),
-            request.form.get("supplier_brand", "").strip(),
+            item_model,
+            brand,
+            part_catalog_id,
             "",
             project_id,
             room_id,
@@ -2723,6 +2958,7 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
 
 
 def supplier_items_from_task_form(conn, supplier):
+    ensure_part_catalog_tables(conn)
     if not supplier:
         return [], ""
     raw = request.form.get("supplier_items_json", "").strip()
@@ -2761,19 +2997,23 @@ def supplier_items_from_task_form(conn, supplier):
         purchase_note = (row.get("purchase_note") or request.form.get("supplier_purchase_note") or "").strip()
         if purchase_note:
             note_parts.append(purchase_note)
+        item_model = (row.get("model") or "").strip()
+        brand = (row.get("brand") or "").strip()
+        part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "\n".join(note_parts), item_type="part")
         created.append(conn.execute(
             """
             INSERT INTO inventory_items
-            (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+            (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
                 pickup_date,
                 quantity,
                 item_name,
-                (row.get("model") or "").strip(),
-                (row.get("brand") or "").strip(),
+                item_model,
+                brand,
+                part_catalog_id,
                 "",
                 project_id,
                 room_id,
@@ -3009,14 +3249,15 @@ def inventory_select_query(where_sql):
         LEFT JOIN users AS purchased_users ON inventory_items.purchased_by = purchased_users.id
         LEFT JOIN users AS used_users ON inventory_items.used_by = used_users.id
         {where_sql}
-        ORDER BY CASE inventory_items.status
+                 ORDER BY CASE inventory_items.status
                     WHEN 'available' THEN 0
                     WHEN 'picked_up' THEN 1
-                    WHEN 'backordered' THEN 2
-                    WHEN 'unavailable' THEN 3
-                    WHEN 'needs_purchase' THEN 4
-                    WHEN 'used' THEN 5
-                    ELSE 6
+                    WHEN 'purchased_waiting_arrival' THEN 2
+                    WHEN 'backordered' THEN 3
+                    WHEN 'unavailable' THEN 4
+                    WHEN 'needs_purchase' THEN 5
+                    WHEN 'used' THEN 6
+                    ELSE 7
                  END,
                  inventory_items.item_date DESC,
                  inventory_items.created_at DESC,
@@ -3122,6 +3363,7 @@ def validate_inventory_allocation(conn, project_id, room_id):
 
 
 def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
+    ensure_part_catalog_tables(conn)
     project_id = fixed_project_id if fixed_project_id is not None else optional_int(request.form.get("project_id"))
     room_id = fixed_room_id if fixed_room_id is not None else optional_int(request.form.get("room_id"))
     project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
@@ -3135,18 +3377,23 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
     item_name = (request.form.get("item_name") or request.form.get("description") or "").strip()
     if not item_name:
         return "Item name is required."
+    item_model = (request.form.get("item_model") or request.form.get("part_number") or "").strip()
+    brand = request.form.get("brand", "").strip()
+    used_note = request.form.get("used_note", "").strip()
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
     conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_by, used_at, used_note, picture_file, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             request.form.get("item_date") or local_now().date().isoformat(),
             float(request.form.get("quantity") or 0),
             item_name,
-            (request.form.get("item_model") or request.form.get("part_number") or "").strip(),
-            request.form.get("brand", "").strip(),
+            item_model,
+            brand,
+            part_catalog_id,
             clean_inventory_condition(request.form.get("item_condition")),
             clean_inventory_location(request.form.get("location_type")),
             request.form.get("location_detail", "").strip(),
@@ -3156,7 +3403,7 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
             session.get("user_id"),
             used_by,
             used_at,
-            request.form.get("used_note", "").strip(),
+            used_note,
             picture_file,
             utc_now_iso(),
             utc_now_iso()
@@ -3350,6 +3597,7 @@ def match_dtools_room(room_lookup, location):
 
 
 def import_dtools_materials(conn, project_id, external_ref, payload):
+    ensure_part_catalog_tables(conn)
     rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s", (project_id,)).fetchall()
     room_lookup = {normalize_lookup_key(room["name"]): room["id"] for room in rooms}
     materials = dtools_extract_materials(payload, external_ref)
@@ -3381,12 +3629,20 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
                 detail_parts.append(f"{label}: {material[key]}")
         location_detail = "; ".join(detail_parts) or "Imported from D-Tools Cloud"
         used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+        part_catalog_id = upsert_part_catalog(
+            conn,
+            material["item_name"],
+            material["model"],
+            material["brand"],
+            used_note,
+            item_type="part"
+        )
 
         conn.execute(
             """
             INSERT INTO inventory_items
-            (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_note, dtools_cloud_source_id, dtools_cloud_item_id, dtools_cloud_project_ref, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, status, added_by, used_note, dtools_cloud_source_id, dtools_cloud_item_id, dtools_cloud_project_ref, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 local_now().date().isoformat(),
@@ -3394,6 +3650,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
                 material["item_name"],
                 material["model"],
                 material["brand"],
+                part_catalog_id,
                 "new",
                 "job_site",
                 location_detail[:500],
@@ -4158,6 +4415,7 @@ def mobile_location_ping():
 @login_required
 def mobile_project_materials(project_id):
     conn = db()
+    ensure_part_catalog_tables(conn)
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
         conn.close()
@@ -4188,12 +4446,14 @@ def mobile_project_materials(project_id):
 
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "mobile_materials.html",
         project=project,
         materials=materials,
         rooms=rooms,
+        part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
@@ -4344,8 +4604,9 @@ def mobile_room(room_id):
         params.append(selected_date)
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
+    catalog = part_catalog_options(conn)
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, selected_date=selected_date, today=local_now().date().isoformat())
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, part_catalog=catalog, selected_date=selected_date, today=local_now().date().isoformat())
 
 
 @app.route("/routes-check")
@@ -4671,6 +4932,8 @@ def logout():
 def users():
 
     conn = db()
+    ensure_part_catalog_tables(conn)
+    backfill_part_catalog_from_inventory(conn)
     if request.method == "POST":
         try:
             email = request.form["email"].strip().lower()
@@ -4956,6 +5219,7 @@ def edit_project(project_id):
 @admin_required
 def invoices():
     conn = db()
+    ensure_invoice_tables(conn)
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "").strip()
     where = []
@@ -4986,6 +5250,8 @@ def invoices():
 @admin_required
 def new_invoice():
     conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
     if request.method == "POST":
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
         if not lines:
@@ -5027,10 +5293,10 @@ def new_invoice():
             conn.execute(
                 """
                 INSERT INTO invoice_lines
-                (invoice_id, item_name, description, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (invoice_id, part_catalog_id, item_name, description, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (invoice_id, line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
         conn.commit()
         conn.close()
@@ -5039,6 +5305,7 @@ def new_invoice():
 
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    catalog = part_catalog_options(conn)
     selected_project_id = request.args.get("project_id", type=int)
     selected_project = None
     if selected_project_id:
@@ -5050,6 +5317,7 @@ def new_invoice():
         lines=[],
         projects=projects,
         saved_items=saved_items,
+        part_catalog=catalog,
         selected_project=selected_project,
         today=local_now().date().isoformat(),
         form_action=url_for("new_invoice"),
@@ -5060,6 +5328,7 @@ def new_invoice():
 @admin_required
 def invoice_view(invoice_id):
     conn = db()
+    ensure_invoice_tables(conn)
     invoice, lines = load_invoice(conn, invoice_id)
     email_logs = conn.execute(
         "SELECT invoice_email_logs.*, users.name AS sent_by_name FROM invoice_email_logs LEFT JOIN users ON invoice_email_logs.sent_by = users.id WHERE invoice_id = %s ORDER BY sent_at DESC",
@@ -5076,6 +5345,8 @@ def invoice_view(invoice_id):
 @admin_required
 def edit_invoice(invoice_id):
     conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
     invoice, existing_lines = load_invoice(conn, invoice_id)
     if not invoice:
         conn.close()
@@ -5132,10 +5403,10 @@ def edit_invoice(invoice_id):
             conn.execute(
                 """
                 INSERT INTO invoice_lines
-                (invoice_id, item_name, description, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (invoice_id, part_catalog_id, item_name, description, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (invoice_id, line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
         conn.commit()
         conn.close()
@@ -5143,14 +5414,17 @@ def edit_invoice(invoice_id):
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    catalog = part_catalog_options(conn)
     conn.close()
-    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, selected_project=None, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=None, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
 @admin_required
 def send_invoice(invoice_id):
     conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
     invoice, lines = load_invoice(conn, invoice_id)
     if not invoice:
         conn.close()
@@ -5181,6 +5455,106 @@ def send_invoice(invoice_id):
     conn.commit()
     conn.close()
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+
+@app.route("/parts-catalog", methods=["GET", "POST"])
+@admin_required
+def parts_catalog():
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
+    if request.method == "POST":
+        action = request.form.get("action", "save")
+        part_id = request.form.get("part_id", type=int)
+        if action == "archive" and part_id:
+            conn.execute("UPDATE part_catalog SET is_active = FALSE, updated_at = %s WHERE id = %s", (utc_now_iso(), part_id))
+            conn.commit()
+            conn.close()
+            flash("Catalog item archived.")
+            return redirect(url_for("parts_catalog"))
+
+        item_name = request.form.get("item_name", "").strip()
+        if not item_name:
+            conn.close()
+            flash("Item name is required.")
+            return redirect(url_for("parts_catalog"))
+        try:
+            unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
+        except Exception:
+            unit_price = None
+        item_model = request.form.get("item_model", "").strip()
+        brand = request.form.get("brand", "").strip()
+        category = request.form.get("category", "").strip()
+        description = request.form.get("description", "").strip()
+        item_type = request.form.get("item_type", "part")
+        if item_type not in ["part", "service"]:
+            item_type = "part"
+        taxable = request.form.get("taxable") == "1"
+        now = utc_now_iso()
+        if part_id:
+            conn.execute(
+                """
+                UPDATE part_catalog
+                SET item_name = %s,
+                    item_model = %s,
+                    brand = %s,
+                    category = %s,
+                    description = %s,
+                    unit_price = %s,
+                    taxable = %s,
+                    item_type = %s,
+                    is_active = TRUE,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (item_name, item_model, brand, category, description, unit_price, taxable, item_type, now, part_id)
+            )
+            flash("Catalog item updated.")
+        else:
+            upsert_part_catalog(
+                conn,
+                item_name,
+                item_model,
+                brand,
+                description,
+                unit_price,
+                taxable,
+                item_type,
+                category
+            )
+            flash("Catalog item saved.")
+        conn.commit()
+        conn.close()
+        return redirect(url_for("parts_catalog"))
+
+    q = request.args.get("q", "").strip()
+    params = []
+    where = "WHERE COALESCE(part_catalog.is_active, TRUE) = TRUE"
+    if q:
+        like = f"%{q}%"
+        where += """
+            AND (
+                part_catalog.item_name ILIKE %s
+                OR part_catalog.item_model ILIKE %s
+                OR part_catalog.brand ILIKE %s
+                OR part_catalog.category ILIKE %s
+                OR part_catalog.description ILIKE %s
+            )
+        """
+        params.extend([like, like, like, like, like])
+    rows = conn.execute(
+        f"""
+        SELECT part_catalog.*,
+               (SELECT COUNT(*) FROM inventory_items WHERE inventory_items.part_catalog_id = part_catalog.id) AS inventory_count,
+               (SELECT COUNT(*) FROM invoice_lines WHERE invoice_lines.part_catalog_id = part_catalog.id) AS invoice_count
+        FROM part_catalog
+        {where}
+        ORDER BY lower(part_catalog.item_name), lower(COALESCE(part_catalog.brand, '')), lower(COALESCE(part_catalog.item_model, ''))
+        """,
+        tuple(params)
+    ).fetchall()
+    conn.close()
+    return render_template("parts_catalog.html", parts=rows, q=q)
 
 
 @app.route("/suppliers", methods=["GET", "POST"])
@@ -5333,6 +5707,7 @@ def inventory():
     })
     projects = fetch_inventory_projects(conn)
     rooms = fetch_inventory_rooms(conn)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "inventory.html",
@@ -5343,6 +5718,7 @@ def inventory():
         selected_status=selected_status,
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
+        part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
@@ -5385,7 +5761,7 @@ def update_inventory_status(item_id):
     used_at = now if new_status == "used" else None
     purchased_by = item.get("purchased_by")
     purchased_at = item.get("purchased_at")
-    if new_status in ["available", "used"] and item.get("status") == "needs_purchase" and not purchased_at:
+    if new_status in ["available", "purchased_waiting_arrival", "used"] and item.get("status") == "needs_purchase" and not purchased_at:
         purchased_by = session.get("user_id")
         purchased_at = now
     conn.execute(
@@ -5523,6 +5899,7 @@ def delete_inventory_item(item_id):
 @login_required
 def project_materials(project_id):
     conn = db()
+    ensure_part_catalog_tables(conn)
     project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if not project:
         conn.close()
@@ -5553,12 +5930,14 @@ def project_materials(project_id):
 
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "materials.html",
         project=project,
         materials=materials,
         rooms=rooms,
+        part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
@@ -6116,8 +6495,9 @@ def room(room_id):
         params.append(selected_date)
     query += " ORDER BY note_date DESC, created_at DESC"
     notes = conn.execute(query, tuple(params)).fetchall()
+    catalog = part_catalog_options(conn)
     conn.close()
-    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, users=users, suppliers=suppliers, selected_date=selected_date, today=local_now().date().isoformat())
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, users=users, suppliers=suppliers, part_catalog=catalog, selected_date=selected_date, today=local_now().date().isoformat())
 
 
 @app.route("/project/<int:project_id>/timeline")
@@ -7210,6 +7590,7 @@ def create_global_task():
     ).fetchall()
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     suppliers = fetch_suppliers(conn)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "create_task.html",
@@ -7217,6 +7598,7 @@ def create_global_task():
         users=users,
         rooms=rooms,
         suppliers=suppliers,
+        part_catalog=catalog,
         today=local_now().date().isoformat(),
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id
@@ -7455,6 +7837,7 @@ def notify_supplier_task_saved(conn, task, message):
 def add_task_supplier_item(task_id):
     next_url = remove_query_param_from_next_url(safe_next_url("my_tasks", task_id=task_id), "calendar_task")
     conn = db()
+    ensure_part_catalog_tables(conn)
     task, _item, error = load_supplier_task_item_for_update(conn, task_id)
     if error:
         conn.close()
@@ -7475,19 +7858,24 @@ def add_task_supplier_item(task_id):
         flash("Choose the supplier task status.")
         return redirect(next_url)
     now = utc_now_iso()
+    item_model = request.form.get("item_model", "").strip()
+    brand = request.form.get("brand", "").strip()
+    used_note = request.form.get("used_note", "").strip()
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
     item = conn.execute(
         """
         INSERT INTO inventory_items
-        (item_date, quantity, item_name, item_model, brand, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, supplier_picked_up, purchased_by, purchased_at, used_note, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, supplier_picked_up, purchased_by, purchased_at, used_note, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
         (
             request.form.get("item_date") or local_now().date().isoformat(),
             quantity,
             item_name,
-            request.form.get("item_model", "").strip(),
-            request.form.get("brand", "").strip(),
+            item_model,
+            brand,
+            part_catalog_id,
             "Supplier task material",
             task["project_id"],
             task.get("room_id"),
@@ -7498,7 +7886,7 @@ def add_task_supplier_item(task_id):
             status == "picked_up",
             session.get("user_id") if status == "picked_up" else None,
             now if status == "picked_up" else None,
-            request.form.get("used_note", "").strip(),
+            used_note,
             now,
             now
         )
@@ -7518,6 +7906,7 @@ def add_task_supplier_item(task_id):
 def update_task_supplier_item(task_id, item_id):
     next_url = remove_query_param_from_next_url(safe_next_url("my_tasks", task_id=task_id), "calendar_task")
     conn = db()
+    ensure_part_catalog_tables(conn)
     task, item, error = load_supplier_task_item_for_update(conn, task_id, item_id)
     if error:
         conn.close()
@@ -7537,6 +7926,11 @@ def update_task_supplier_item(task_id, item_id):
         flash("Choose the supplier task status.")
         return redirect(next_url)
     now = utc_now_iso()
+    item_name = request.form.get("item_name", "").strip() or item.get("item_name")
+    item_model = request.form.get("item_model", "").strip()
+    brand = request.form.get("brand", "").strip()
+    used_note = request.form.get("used_note", "").strip()
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
     conn.execute(
         """
         UPDATE inventory_items
@@ -7545,6 +7939,7 @@ def update_task_supplier_item(task_id, item_id):
             item_name = %s,
             item_model = %s,
             brand = %s,
+            part_catalog_id = %s,
             supplier_pickup_time = %s,
             status = %s,
             supplier_picked_up = %s,
@@ -7557,9 +7952,10 @@ def update_task_supplier_item(task_id, item_id):
         (
             request.form.get("item_date") or item.get("item_date") or local_now().date().isoformat(),
             quantity,
-            request.form.get("item_name", "").strip() or item.get("item_name"),
-            request.form.get("item_model", "").strip(),
-            request.form.get("brand", "").strip(),
+            item_name,
+            item_model,
+            brand,
+            part_catalog_id,
             request.form.get("supplier_pickup_time", "").strip(),
             status,
             status == "picked_up",
@@ -7567,12 +7963,12 @@ def update_task_supplier_item(task_id, item_id):
             session.get("user_id"),
             status == "picked_up",
             now,
-            request.form.get("used_note", "").strip(),
+            used_note,
             now,
             item_id
         )
     )
-    item_name = request.form.get("item_name", "").strip() or item.get("item_name") or "Material"
+    item_name = item_name or "Material"
     notify_supplier_task_saved(conn, task, f"Supplier material updated: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
@@ -8304,11 +8700,13 @@ def today_tasks():
     if received_any:
         task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
     tasks = load_task_details(conn, task_rows)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "today_tasks.html",
         tasks=tasks,
         task_status_options=TASK_STATUS_LABELS,
+        part_catalog=catalog,
         today=task_day.isoformat()
     )
 
@@ -8348,11 +8746,13 @@ def assignment_tasks(task_id):
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
     tasks = load_task_details(conn, worker_assignment_task_rows(conn, source_task))
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "today_tasks.html",
         tasks=tasks,
         task_status_options=TASK_STATUS_LABELS,
+        part_catalog=catalog,
         today=(task_scheduled_date_value(source_task) or local_now().date()).isoformat()
     )
 
@@ -8390,11 +8790,13 @@ def open_task_workspace(task_id):
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
     task = load_task_details(conn, [task], task.get("room_id"))[0]
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "task_work.html",
         t=task,
         task_status_options=TASK_STATUS_LABELS,
+        part_catalog=catalog,
         today=local_now().date().isoformat()
     )
 
@@ -8687,6 +9089,7 @@ def my_tasks():
                 if not open_only or not task_is_completed(task):
                     project_level_tasks.append(task)
         tasks_by_room[0] = project_level_tasks
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "tasks.html",
@@ -8711,7 +9114,8 @@ def my_tasks():
         from_notification=from_notification,
         notification_task_id=notification_task_id,
         notification_task_list=notification_task_list,
-        task_work_view=task_work_view
+        task_work_view=task_work_view,
+        part_catalog=catalog
     )
 
 

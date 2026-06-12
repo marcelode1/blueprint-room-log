@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Parts / Services Catalog</h2>
+    <p class="muted">Reusable product and service records used by inventory, supplier tasks, rooms, notes, and invoices.</p>
+</div>
+
+<div class="card">
+    <h3>Add Catalog Item</h3>
+    <form method="post">
+        <div class="grid">
+            <div><label>Type</label><select name="item_type"><option value="part">Part</option><option value="service">Service</option></select></div>
+            <div><label>Item Name</label><input name="item_name" required></div>
+            <div><label>Manufacturer / Brand</label><input name="brand"></div>
+            <div><label>Model #</label><input name="item_model"></div>
+            <div><label>Category</label><input name="category" placeholder="Audio, network, labor, camera"></div>
+            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0"></div>
+        </div>
+        <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
+        <label>Description</label>
+        <textarea name="description" rows="3"></textarea>
+        <button type="submit">Save Catalog Item</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Catalog Library</h3>
+    <form method="get" class="catalogSearch">
+        <input name="q" value="{{ q or '' }}" placeholder="Search item, model, brand, category">
+        <button type="submit">Search</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog') }}">Clear</a>
+    </form>
+    {% for part in parts %}
+        <details class="catalogItem">
+            <summary>
+                <strong>{{ part.item_name }}</strong>
+                {% if part.brand %}<span>{{ part.brand }}</span>{% endif %}
+                {% if part.item_model %}<span>{{ part.item_model }}</span>{% endif %}
+                <span class="catalogType">{{ part.item_type|title }}</span>
+            </summary>
+            <form method="post">
+                <input type="hidden" name="part_id" value="{{ part.id }}">
+                <div class="grid">
+                    <div><label>Type</label><select name="item_type"><option value="part" {% if part.item_type != 'service' %}selected{% endif %}>Part</option><option value="service" {% if part.item_type == 'service' %}selected{% endif %}>Service</option></select></div>
+                    <div><label>Item Name</label><input name="item_name" value="{{ part.item_name }}" required></div>
+                    <div><label>Manufacturer / Brand</label><input name="brand" value="{{ part.brand or '' }}"></div>
+                    <div><label>Model #</label><input name="item_model" value="{{ part.item_model or '' }}"></div>
+                    <div><label>Category</label><input name="category" value="{{ part.category or '' }}"></div>
+                    <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ part.unit_price or '' }}"></div>
+                </div>
+                <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if part.taxable %}checked{% endif %}> Taxable</label>
+                <label>Description</label>
+                <textarea name="description" rows="3">{{ part.description or '' }}</textarea>
+                <p class="muted">Linked inventory items: {{ part.inventory_count }} | Linked invoice lines: {{ part.invoice_count }}</p>
+                <button type="submit">Update Catalog Item</button>
+            </form>
+            <form method="post" onsubmit="return confirm('Archive this catalog item? Existing inventory and invoice records will keep their links.');">
+                <input type="hidden" name="part_id" value="{{ part.id }}">
+                <input type="hidden" name="action" value="archive">
+                <button type="submit" class="btn-danger">Archive</button>
+            </form>
+        </details>
+    {% else %}
+        <p>No catalog items found.</p>
+    {% endfor %}
+</div>
+
+<style>
+.catalogSearch{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.catalogSearch input{max-width:420px}
+.catalogItem{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
+.catalogItem summary{cursor:pointer;min-height:42px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.catalogType{border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;color:#1d4ed8;background:#eef2ff}
+.catalogCheck{display:flex!important;gap:8px;align-items:center;font-weight:800}.catalogCheck input{width:auto;min-height:auto}
+</style>
+{% endblock %}

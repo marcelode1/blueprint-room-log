@@ -1,0 +1,55 @@
+{% set catalog_rows = part_catalog|default([]) %}
+<datalist id="partCatalogNameList">
+    {% for part in catalog_rows %}
+        <option value="{{ part.item_name }}" label="{{ part.brand or '' }} {{ part.item_model or '' }}"></option>
+    {% endfor %}
+</datalist>
+<datalist id="partCatalogModelList">
+    {% for part in catalog_rows %}
+        {% if part.item_model %}<option value="{{ part.item_model }}" label="{{ part.item_name }} {{ part.brand or '' }}"></option>{% endif %}
+    {% endfor %}
+</datalist>
+<datalist id="partCatalogBrandList">
+    {% for part in catalog_rows %}
+        {% if part.brand %}<option value="{{ part.brand }}" label="{{ part.item_name }} {{ part.item_model or '' }}"></option>{% endif %}
+    {% endfor %}
+</datalist>
+<script>
+window.partCatalogData={{ catalog_rows|tojson }};
+if(!window.partCatalogAutocompleteReady){
+    window.partCatalogAutocompleteReady=true;
+    const norm=value=>(value||"").toString().trim().toLowerCase();
+    function catalogRows(){return window.partCatalogData||[]}
+    function findPart(value){
+        const target=norm(value);
+        if(!target)return null;
+        return catalogRows().find(part=>norm(part.item_name)===target)
+            || catalogRows().find(part=>norm(part.item_name).startsWith(target))
+            || null;
+    }
+    function scopedField(input, selector){
+        const line=input.closest(".invoiceLine,.grid,form,.supplierMaterialItem,.supplierEditDetails,.card")||document;
+        return line.querySelector(selector);
+    }
+    function fillPartFields(input){
+        const part=findPart(input.value);
+        if(!part)return;
+        const model=scopedField(input,".js-part-model");
+        const brand=scopedField(input,".js-part-brand");
+        const description=scopedField(input,".js-part-description");
+        const price=scopedField(input,".js-part-price");
+        const taxable=scopedField(input,".js-part-taxable");
+        if(model&&!model.value)model.value=part.item_model||"";
+        if(brand&&!brand.value)brand.value=part.brand||"";
+        if(description&&!description.value)description.value=part.description||"";
+        if(price&&(!price.value||price.value==="0"))price.value=part.unit_price||"0";
+        if(taxable&&part.taxable!==null&&part.taxable!==undefined)taxable.checked=!!part.taxable;
+    }
+    document.addEventListener("input",event=>{
+        if(event.target.matches(".js-part-item"))fillPartFields(event.target);
+    });
+    document.addEventListener("change",event=>{
+        if(event.target.matches(".js-part-item"))fillPartFields(event.target);
+    });
+}
+</script>

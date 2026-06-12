@@ -45,9 +45,9 @@
                 <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
                 <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time"></div>
                 <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
-                <div><label>Material / Item</label><input name="supplier_item_name" placeholder="Cable, keypad, speakers"></div>
-                <div><label>Brand</label><input name="supplier_brand"></div>
-                <div><label>Model Number</label><input name="supplier_model"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers"></div>
+                <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList"></div>
+                <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList"></div>
             </div>
             <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
             <input type="hidden" name="new_supplier_name" id="newSupplierName">
@@ -1121,4 +1121,5 @@
     if(realtimeVoiceClearButton)realtimeVoiceClearButton.addEventListener("click",clearRealtimeConversation);
 })();
 </script>
+{% include "_part_catalog_autocomplete.html" %}
 {% endblock %}

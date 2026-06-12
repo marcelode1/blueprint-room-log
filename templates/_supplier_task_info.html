@@ -99,13 +99,13 @@
                         <form method="post" action="{{ url_for('update_task_supplier_item', task_id=t.id, item_id=item.id) }}">
                             <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
                             <label>Material / Item</label>
-                            <input name="item_name" value="{{ item.item_name or '' }}" required>
+                            <input name="item_name" class="js-part-item" list="partCatalogNameList" value="{{ item.item_name or '' }}" required>
                             <label>Quantity</label>
                             <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity or '' }}" required>
                             <label>Brand</label>
-                            <input name="brand" value="{{ item.brand or '' }}">
+                            <input name="brand" class="js-part-brand" list="partCatalogBrandList" value="{{ item.brand or '' }}">
                             <label>Model Number</label>
-                            <input name="item_model" value="{{ item.item_model or '' }}">
+                            <input name="item_model" class="js-part-model" list="partCatalogModelList" value="{{ item.item_model or '' }}">
                             <label>Pickup Date</label>
                             <input name="item_date" type="date" value="{{ item.item_date or '' }}">
                             <label>Pickup Time</label>
@@ -136,13 +136,13 @@
                 <form method="post" action="{{ url_for('add_task_supplier_item', task_id=t.id) }}">
                     <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
                     <label>Material / Item</label>
-                    <input name="item_name" required>
+                    <input name="item_name" class="js-part-item" list="partCatalogNameList" required>
                     <label>Quantity</label>
                     <input name="quantity" type="number" step="0.01" min="0.01" required>
                     <label>Brand</label>
-                    <input name="brand">
+                    <input name="brand" class="js-part-brand" list="partCatalogBrandList">
                     <label>Model Number</label>
-                    <input name="item_model">
+                    <input name="item_model" class="js-part-model" list="partCatalogModelList">
                     <label>Pickup Date</label>
                     <input name="item_date" type="date">
                     <label>Pickup Time</label>
@@ -231,3 +231,4 @@ if(!window.supplierItemPhotoControlsReady){
 .supplierItemPhoto{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.18)}
 .supplierPictureComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.1);font-weight:700}
 </style>
+{% include "_part_catalog_autocomplete.html" %}

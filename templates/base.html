@@ -59,6 +59,7 @@
                 <a href="{{ url_for('today_tasks') }}">Tasks</a>
             {% endif %}
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+            {% if is_main_admin() %}<a href="{{ url_for('parts_catalog') }}">Parts / Services</a>{% endif %}
             {% if not is_main_admin() %}
                 <a href="{{ url_for('my_time_report') }}">Time Report</a>
             {% endif %}
@@ -105,6 +106,7 @@
             <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         </details>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
+        <a href="{{ url_for('parts_catalog') }}">Parts / Services</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('users') }}">Users</a>
         <a href="{{ url_for('suppliers') }}">Suppliers</a>
