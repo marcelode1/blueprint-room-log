@@ -703,6 +703,17 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_delete_codes (
+        id SERIAL PRIMARY KEY,
+        invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS login_events (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -2028,6 +2039,16 @@ def ensure_invoice_tables(conn):
             sent_at TEXT NOT NULL
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS invoice_delete_codes (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            pin_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
     ]
     for statement in statements:
         conn.execute(statement)
@@ -2306,8 +2327,8 @@ def invoice_pdf_attachment(invoice, lines, company):
     logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
     if logo_bytes:
         try:
-            page.insert_image(fitz.Rect(left, 46, left + 92, 92), stream=logo_bytes, keep_proportion=True)
-            y = 102
+            page.insert_image(fitz.Rect(left, 38, left + 184, 130), stream=logo_bytes, keep_proportion=True)
+            y = 140
         except Exception:
             pass
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
@@ -2320,8 +2341,10 @@ def invoice_pdf_attachment(invoice, lines, company):
     for label, value in [
         ("Date", format_date(invoice.get("invoice_date"))),
         ("Invoice #", invoice.get("invoice_number") or "PREVIEW"),
-        ("Status", str(invoice.get("status") or "").title()),
+        ("Terms", invoice.get("terms") or ""),
     ]:
+        if not value:
+            continue
         text(378, meta_y, label, 8)
         text(450, meta_y, value, 8)
         meta_y += 16
@@ -2378,6 +2401,10 @@ def invoice_pdf_attachment(invoice, lines, company):
         y += 6
     totals = invoice_totals_breakdown(invoice, lines)
     y = 610
+    if invoice.get("notes"):
+        page.draw_line((left, y - 18), (330, y - 18), color=line_color, width=1)
+        text(left, y, "Notes", 9)
+        wrapped(left, y + 14, invoice.get("notes"), 260, 9)
     page.draw_line((374, y - 18), (right, y - 18), color=line_color, width=1)
     for label, key in [
         ("Total Material", "material"),
@@ -2395,14 +2422,6 @@ def invoice_pdf_attachment(invoice, lines, company):
     page.draw_line((374, y - 10), (right, y - 10), color=grid_color, width=0.6)
     text(386, y + 4, "Balance Due", 9)
     text(510, y + 4, format_invoice_money(totals["balance_due"]), 9)
-
-    y += 34
-    if invoice.get("notes"):
-        text(left, y, "Notes", 11)
-        y = wrapped(left, y + 14, invoice.get("notes"), 500, 9)
-    if invoice.get("terms"):
-        text(left, y + 6, "Terms", 11)
-        wrapped(left, y + 20, invoice.get("terms"), 500, 9)
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -5952,6 +5971,100 @@ def send_invoice(invoice_id):
     conn.commit()
     conn.close()
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
+@admin_required
+def delete_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT id, invoice_number, customer_name, project_id FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    pin = f"{secrets.randbelow(10000):04d}"
+    conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s AND admin_id = %s", (invoice_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO invoice_delete_codes (invoice_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (invoice_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete invoice PIN",
+        "\n".join([
+            f"Your 4-digit PIN to delete invoice {invoice.get('invoice_number') or invoice_id} is:",
+            "",
+            pin,
+            "",
+            f"Customer: {invoice.get('customer_name') or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s AND admin_id = %s", (invoice_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+    conn.close()
+    flash("A 4-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_invoice", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT id, invoice_number, customer_name, project_id FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM invoice_delete_codes
+            WHERE invoice_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (invoice_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("invoice_view", invoice_id=invoice_id))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_invoice", invoice_id=invoice_id))
+
+        project_id = invoice.get("project_id")
+        conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s", (invoice_id,))
+        conn.execute("DELETE FROM invoices WHERE id = %s", (invoice_id,))
+        conn.commit()
+        conn.close()
+        flash("Invoice deleted.")
+        return redirect(url_for("invoices", project_id=project_id) if project_id else url_for("invoices"))
+
+    conn.close()
+    return render_template("delete_invoice_confirm.html", invoice=invoice)
 
 
 @app.route("/parts-catalog", methods=["GET", "POST"])

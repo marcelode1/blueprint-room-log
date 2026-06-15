@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Confirm Delete Invoice</h2>
+    <p><strong>{{ invoice.invoice_number }}</strong></p>
+    <p class="muted">Customer: {{ invoice.customer_name or "-" }}</p>
+    <p class="muted">A 4-digit PIN was sent to your admin email. Enter it below to permanently delete this invoice.</p>
+    <form method="post">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required>
+        <button type="submit" class="btn-danger">Delete Invoice</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}
