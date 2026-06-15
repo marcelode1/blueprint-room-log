@@ -2299,9 +2299,9 @@ def invoice_pdf_attachment(invoice, lines, company):
         return None, "PDF support is not available on this server."
     doc = fitz.open()
     page = doc.new_page(width=612, height=792)
-    y = 48
-    left = 48
-    right = 564
+    y = 42
+    left = 40
+    right = 572
     line_color = (0.08, 0.12, 0.2)
     grid_color = (0.70, 0.76, 0.84)
     fill_color = (0.95, 0.97, 0.99)
@@ -2332,16 +2332,17 @@ def invoice_pdf_attachment(invoice, lines, company):
     logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
     if logo_bytes:
         try:
-            page.insert_image(fitz.Rect(left, 34, left + 221, 144), stream=logo_bytes, keep_proportion=True)
-            y = 154
+            page.insert_image(fitz.Rect(left, 28, left + 265, 150), stream=logo_bytes, keep_proportion=True)
+            y = 164
         except Exception:
             pass
+    company_y = y
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
         if value:
-            text(left, y, value, 9)
-            y += 12
+            text(left, company_y, value, 10)
+            company_y += 15
 
-    text(418, 58, "INVOICE", 22)
+    text(458, 52, "INVOICE", 24)
     meta_y = 78
     for label, value in [
         ("Date", format_date(invoice.get("invoice_date"))),
@@ -2350,42 +2351,44 @@ def invoice_pdf_attachment(invoice, lines, company):
     ]:
         if not value:
             continue
-        text(378, meta_y, label, 8)
+        text(376, meta_y, label, 8)
         if label == "Terms":
-            next_y = wrapped(450, meta_y, value, 104, 8, 10)
+            next_y = wrapped(452, meta_y, value, 116, 9, 11)
             meta_y = max(meta_y + 16, next_y + 2)
         else:
-            text(450, meta_y, value, 8)
+            text(452, meta_y, value, 9)
             meta_y += 16
     if invoice.get("due_date"):
-        text(378, meta_y, "Due", 8)
-        text(450, meta_y, format_date(invoice.get("due_date")), 8)
-    page.draw_line((left, 168), (right, 168), color=line_color, width=1.2)
+        text(376, meta_y, "Due", 8)
+        text(452, meta_y, format_date(invoice.get("due_date")), 9)
+        meta_y += 16
+    divider_y = max(214, company_y + 18, meta_y + 12)
+    page.draw_line((left, divider_y), (right, divider_y), color=line_color, width=1.2)
 
-    y = 198
-    text(left, y + 16, "Customer Name", 9)
-    text(312, y + 16, "Job Name", 9)
-    text(left, y + 34, invoice.get("customer_name") or "-", 10)
-    text(312, y + 34, invoice.get("project_name") or invoice.get("customer_name") or "-", 10)
-    customer_y = y + 48
+    y = divider_y + 34
+    text(left, y, "CUSTOMER NAME", 10)
+    text(318, y, "JOB NAME", 10)
+    text(left, y + 20, invoice.get("customer_name") or "-", 10)
+    text(318, y + 20, invoice.get("project_name") or invoice.get("customer_name") or "-", 10)
+    customer_y = y + 38
     if invoice.get("billing_address"):
-        customer_y = wrapped(left, customer_y, invoice.get("billing_address"), 225, 8)
-        wrapped(312, y + 48, invoice.get("billing_address"), 225, 8)
+        customer_y = wrapped(left, customer_y, invoice.get("billing_address"), 240, 9, 12)
+        wrapped(318, y + 38, invoice.get("billing_address"), 240, 9, 12)
     if invoice.get("customer_email"):
-        text(left, customer_y, invoice.get("customer_email"), 8)
-        customer_y += 11
+        text(left, customer_y, invoice.get("customer_email"), 9)
+        customer_y += 12
     if invoice.get("customer_phone"):
-        text(left, customer_y, invoice.get("customer_phone"), 8)
+        text(left, customer_y, invoice.get("customer_phone"), 9)
 
-    y = 306
+    y = max(customer_y + 32, divider_y + 126)
     table_top = y - 16
-    headers = [("#", 52), ("Qty", 82), ("Item", 118), ("Description", 220), ("Location", 386), ("Unit", 466), ("Amount", 522)]
+    headers = [("#", 48), ("Qty", 82), ("Item", 120), ("Description", 250), ("Location", 426), ("Unit", 486), ("Amount", 535)]
     page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
     page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
     page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
     for label, x in headers:
         text(x, y, label, 8)
-    y += 16
+    y += 18
     for index, line in enumerate(lines, start=1):
         if y > 690:
             page = doc.new_page(width=612, height=792)
@@ -2396,25 +2399,29 @@ def invoice_pdf_attachment(invoice, lines, company):
             page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
             for label, x in headers:
                 text(x, y, label, 8)
-            y += 16
+            y += 18
         row_top = y
-        text(52, y, index, 8)
-        text(82, y, line.get("quantity"), 8)
-        y_item = wrapped(118, y, line.get("item_name"), 92, 8, 10)
-        y_desc = wrapped(220, y, line.get("description"), 160, 8, 10)
-        y_loc = wrapped(386, y, line.get("location"), 70, 8, 10)
-        text(466, y, format_invoice_money(line.get("unit_price")), 8)
-        text(522, y, format_invoice_money(line.get("line_total")), 8)
-        y = max(y_item, y_desc, y_loc, row_top + 18)
+        text(48, y, index, 9)
+        text(82, y, line.get("quantity"), 9)
+        y_item = wrapped(120, y, line.get("item_name"), 120, 9, 11)
+        y_desc = wrapped(250, y, line.get("description"), 166, 9, 11)
+        y_loc = wrapped(426, y, line.get("location"), 52, 9, 11)
+        text(486, y, format_invoice_money(line.get("unit_price")), 9)
+        text(535, y, format_invoice_money(line.get("line_total")), 9)
+        y = max(y_item, y_desc, y_loc, row_top + 20)
         page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.5)
         y += 6
     totals = invoice_totals_breakdown(invoice, lines)
     y = 610
+    if y > 640:
+        page = doc.new_page(width=612, height=792)
+        y = 80
     if invoice.get("notes"):
-        page.draw_line((left, y - 18), (330, y - 18), color=line_color, width=1)
-        text(left, y, "Notes", 9)
-        wrapped(left, y + 14, invoice.get("notes"), 260, 9)
-    page.draw_line((374, y - 18), (right, y - 18), color=line_color, width=1)
+        page.draw_line((left, y - 14), (330, y - 14), color=line_color, width=1)
+        text(left, y + 4, "NOTES", 10)
+        wrapped(left, y + 22, invoice.get("notes"), 290, 10, 12)
+    page.draw_line((360, y - 14), (right, y - 14), color=line_color, width=1)
+    totals_y = y + 4
     for label, key in [
         ("Total Material", "material"),
         ("Total Labor", "labor"),
@@ -2425,12 +2432,12 @@ def invoice_pdf_attachment(invoice, lines, company):
         value = format_invoice_money(totals[key])
         if key == "payments_credit":
             value = "-" + value
-        text(386, y, label, 9)
-        text(510, y, value, 9)
-        y += 16
-    page.draw_line((374, y - 10), (right, y - 10), color=grid_color, width=0.6)
-    text(386, y + 4, "Balance Due", 9)
-    text(510, y + 4, format_invoice_money(totals["balance_due"]), 9)
+        text(374, totals_y, label, 10)
+        text(512, totals_y, value, 10)
+        totals_y += 17
+    page.draw_line((360, totals_y - 10), (right, totals_y - 10), color=grid_color, width=0.6)
+    text(374, totals_y + 5, "Balance Due", 10)
+    text(512, totals_y + 5, format_invoice_money(totals["balance_due"]), 10)
 
     pdf_bytes = doc.tobytes()
     doc.close()
