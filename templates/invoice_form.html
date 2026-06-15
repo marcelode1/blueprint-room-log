@@ -240,7 +240,7 @@ function applySelectedItem(select){
     const price=line.querySelector(".lineUnitPrice");
     const taxable=line.querySelector(".lineTaxable");
     if(name)name.value=option.dataset.name||option.textContent.trim();
-    if(description&&!description.value)description.value=option.dataset.description||"";
+    if(description)description.value=option.dataset.description||"";
     if(price)price.value=option.dataset.price||"0";
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     updateLineAmount(line);

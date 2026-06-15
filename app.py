@@ -2804,6 +2804,20 @@ def inventory_condition_label(value):
     return INVENTORY_CONDITION_LABELS.get(value or "", "New")
 
 
+def clean_catalog_description(value):
+    text = (value or "").strip()
+    if not text:
+        return ""
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered.startswith("pickup date:") or lowered.startswith("pickup time:"):
+            continue
+        cleaned_lines.append(stripped)
+    return "\n".join(cleaned_lines).strip()
+
+
 def ensure_part_catalog_tables(conn):
     statements = [
         """
@@ -2849,7 +2863,7 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
     part_number = (part_number or "").strip()
     brand = (brand or "").strip()
     category = (category or "").strip()
-    description = (description or "").strip()
+    description = clean_catalog_description(description)
     item_type = (item_type or "part").strip() or "part"
     existing = conn.execute(
         """
@@ -2902,7 +2916,7 @@ def part_catalog_options(conn):
         ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
         """
     ).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row, description=clean_catalog_description(row.get("description"))) for row in rows]
 
 
 def backfill_part_catalog_from_inventory(conn):
@@ -2997,7 +3011,7 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
         note_parts.append(purchase_note)
     item_model = request.form.get("supplier_model", "").strip()
     brand = request.form.get("supplier_brand", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "\n".join(note_parts), item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
     return conn.execute(
         """
         INSERT INTO inventory_items
@@ -3067,7 +3081,7 @@ def supplier_items_from_task_form(conn, supplier):
             note_parts.append(purchase_note)
         item_model = (row.get("model") or "").strip()
         brand = (row.get("brand") or "").strip()
-        part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "\n".join(note_parts), item_type="part")
+        part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
         created.append(conn.execute(
             """
             INSERT INTO inventory_items
