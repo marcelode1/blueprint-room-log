@@ -98,6 +98,21 @@
 </div>
 
 <div class="card">
+    <h3>Invoice Settings</h3>
+    <p class="muted">This tax rate is used automatically on invoices.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="invoice_settings">
+        <div class="grid">
+            <div>
+                <label>Default Tax Rate %</label>
+                <input name="default_invoice_tax_rate" type="number" step="0.001" min="0" value="{{ get_app_setting('default_invoice_tax_rate', '0') }}">
+            </div>
+        </div>
+        <button type="submit">Save Invoice Settings</button>
+    </form>
+</div>
+
+<div class="card">
     {% set dtools = dtools_cloud_config() %}
     <h3>D-Tools Cloud Integration</h3>
     <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>

@@ -24,7 +24,7 @@
 </div>
 
 <div class="card">
-    <form method="post" id="invoiceForm">
+    <form method="post" id="invoiceForm" action="{{ form_action }}">
         <div class="grid">
             <div>
                 <label>Project</label>
@@ -129,6 +129,7 @@
                     <input type="hidden" name="line_item_name" class="lineItemName">
                     <select name="line_part_catalog_id" class="lineItemSelect" required>
                         <option value="__new__">NEW ITEM</option>
+                        <option value="" selected hidden>Choose item</option>
                         {% for item in part_catalog %}
                             <option value="{{ item.id }}"
                                 data-name="{{ item.item_name }}"
@@ -151,13 +152,11 @@
             </tr>
         </template>
 
-        <div class="grid">
-            <div><label>Tax Rate %</label><input name="tax_rate" type="number" step="0.001" min="0" value="{{ invoice.tax_rate if invoice else 0 }}"></div>
-        </div>
         <label>Notes</label>
         <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
         <label>Terms</label>
         <textarea name="terms" rows="2">{{ invoice.terms if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+        <button type="submit" class="btn-secondary" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
         <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
     </form>
 </div>
@@ -233,10 +232,7 @@ function applySelectedItem(select){
     const option=select.options[select.selectedIndex];
     if(!line||!option)return;
     if(option.value==="__new__"){
-        pendingItemSelect=select;
-        newItemForm.reset();
-        document.getElementById("newItemError").textContent="";
-        newItemModal.hidden=false;
+        openNewItemModal(select);
         return;
     }
     const name=line.querySelector(".lineItemName");
@@ -248,6 +244,12 @@ function applySelectedItem(select){
     if(price)price.value=option.dataset.price||"0";
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     updateLineAmount(line);
+}
+function openNewItemModal(select){
+    pendingItemSelect=select;
+    newItemForm.reset();
+    document.getElementById("newItemError").textContent="";
+    newItemModal.hidden=false;
 }
 function addInvoiceLine(data={}){
     const wrapper=document.createElement("tbody");
@@ -282,11 +284,16 @@ function appendCatalogOption(item, targetSelect){
 document.getElementById("addInvoiceLine").addEventListener("click",()=>addInvoiceLine());
 document.getElementById("closeNewItemModal").addEventListener("click",()=>{
     newItemModal.hidden=true;
-    if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.selectedIndex=0;
+    if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
 });
 invoiceLines.addEventListener("change",event=>{
     if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+});
+invoiceLines.addEventListener("click",event=>{
+    if(event.target.matches(".lineItemSelect")&&event.target.value==="__new__"){
+        openNewItemModal(event.target);
+    }
 });
 invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
