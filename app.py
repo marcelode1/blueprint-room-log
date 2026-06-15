@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib, math
 import psycopg
 from psycopg.rows import dict_row
 
@@ -2101,6 +2101,28 @@ def next_invoice_number(conn, reference_value=None):
     return f"INV-{year_key}-{int(row['sequence_number']):04d}"
 
 
+DEFAULT_INVOICE_TERMS = "Payment due upon receipt. Thank you for your business."
+
+
+def invoice_due_date_terms(due_date):
+    due_date = (due_date or "").strip()
+    if not due_date:
+        return DEFAULT_INVOICE_TERMS
+    return f"Payment due by {format_date(due_date)}. Thank you for your business."
+
+
+def invoice_terms_for_due_date(due_date, terms):
+    terms = (terms or "").strip()
+    default_like = (
+        not terms
+        or terms == DEFAULT_INVOICE_TERMS
+        or (terms.startswith("Payment due by ") and terms.endswith(". Thank you for your business."))
+    )
+    if default_like:
+        return invoice_due_date_terms(due_date)
+    return terms
+
+
 def invoice_line_values_from_form():
     names = request.form.getlist("line_item_name")
     part_catalog_ids = request.form.getlist("line_part_catalog_id")
@@ -2250,6 +2272,7 @@ def preview_invoice_from_form(conn):
     if invoice_id and not invoice_number:
         existing_invoice = conn.execute("SELECT invoice_number FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
         invoice_number = existing_invoice["invoice_number"] if existing_invoice else ""
+    due_date = request.form.get("due_date", "").strip()
     invoice = {
         "id": invoice_id,
         "invoice_number": invoice_number or "PREVIEW",
@@ -2260,14 +2283,14 @@ def preview_invoice_from_form(conn):
         "customer_phone": format_us_phone(request.form.get("customer_phone")),
         "billing_address": request.form.get("billing_address", "").strip(),
         "invoice_date": invoice_date,
-        "due_date": request.form.get("due_date", "").strip(),
+        "due_date": due_date,
         "status": request.form.get("status", "draft"),
         "subtotal": subtotal,
         "tax_rate": tax_rate,
         "tax_total": tax_total,
         "total": total,
         "notes": request.form.get("notes", "").strip(),
-        "terms": request.form.get("terms", "").strip(),
+        "terms": invoice_terms_for_due_date(due_date, request.form.get("terms", "")),
     }
     return invoice, lines
 
@@ -2347,7 +2370,7 @@ def invoice_pdf_attachment(invoice, lines, company):
     for label, value in [
         ("Date", format_date(invoice.get("invoice_date"))),
         ("Invoice #", invoice.get("invoice_number") or "PREVIEW"),
-        ("Terms", invoice.get("terms") or ""),
+        ("Terms", invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms") or "")),
     ]:
         if not value:
             continue
@@ -2471,6 +2494,7 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
 def create_project_invoice_draft(conn, project):
     invoice_date = local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
+    copied_due_date = invoice.get("due_date") or ""
     row = conn.execute(
         """
         INSERT INTO invoices
@@ -2488,7 +2512,7 @@ def create_project_invoice_draft(conn, project):
             invoice_date,
             "",
             default_invoice_tax_rate(),
-            "Payment due upon receipt. Thank you for your business.",
+            invoice_due_date_terms(""),
             session.get("user_id"),
             utc_now_iso(),
             utc_now_iso(),
@@ -2502,6 +2526,8 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
     invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
+    due_date = request.form.get("due_date", "").strip()
+    terms = invoice_terms_for_due_date(due_date, request.form.get("terms", ""))
     row = conn.execute(
         """
         INSERT INTO invoices
@@ -2517,14 +2543,14 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
             format_us_phone(request.form.get("customer_phone")),
             request.form.get("billing_address", "").strip(),
             invoice_date,
-            request.form.get("due_date", "").strip(),
+            due_date,
             request.form.get("status", "draft"),
             subtotal,
             tax_rate,
             tax_total,
             total,
             request.form.get("notes", "").strip(),
-            request.form.get("terms", "").strip(),
+            terms,
             session.get("user_id"),
             utc_now_iso(),
             utc_now_iso(),
@@ -2547,6 +2573,8 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
 def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
     if lines is None:
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    due_date = request.form.get("due_date", "").strip()
+    terms = invoice_terms_for_due_date(due_date, request.form.get("terms", ""))
     conn.execute(
         """
         UPDATE invoices
@@ -2574,14 +2602,14 @@ def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None,
             format_us_phone(request.form.get("customer_phone")),
             request.form.get("billing_address", "").strip(),
             request.form.get("invoice_date") or local_now().date().isoformat(),
-            request.form.get("due_date", "").strip(),
+            due_date,
             request.form.get("status", "draft"),
             subtotal,
             tax_rate,
             tax_total,
             total,
             request.form.get("notes", "").strip(),
-            request.form.get("terms", "").strip(),
+            terms,
             utc_now_iso(),
             invoice_id,
         )
@@ -4679,6 +4707,7 @@ def utility_processor():
         format_date=format_date,
         format_datetime=format_datetime,
         format_invoice_money=format_invoice_money,
+        invoice_terms_for_due_date=invoice_terms_for_due_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
@@ -5973,13 +6002,13 @@ def copy_invoice(invoice_id):
             invoice.get("customer_phone") or "",
             invoice.get("billing_address") or "",
             invoice_date,
-            invoice.get("due_date") or "",
+            copied_due_date,
             invoice.get("subtotal") or 0,
             invoice.get("tax_rate") or 0,
             invoice.get("tax_total") or 0,
             invoice.get("total") or 0,
             invoice.get("notes") or "",
-            invoice.get("terms") or "",
+            invoice_terms_for_due_date(copied_due_date, invoice.get("terms") or ""),
             session.get("user_id"),
             utc_now_iso(),
             utc_now_iso(),
@@ -6286,6 +6315,9 @@ def parts_catalog():
         return redirect(url_for("parts_catalog"))
 
     q = request.args.get("q", "").strip()
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    per_page = 10
+    offset = (page - 1) * per_page
     params = []
     where = "WHERE COALESCE(part_catalog.is_active, TRUE) = TRUE"
     if q:
@@ -6301,6 +6333,15 @@ def parts_catalog():
             )
         """
         params.extend([like, like, like, like, like, like])
+    total_row = conn.execute(
+        f"SELECT COUNT(*) AS total FROM part_catalog {where}",
+        tuple(params)
+    ).fetchone()
+    total_count = int(total_row["total"] if total_row else 0)
+    total_pages = max(1, math.ceil(total_count / per_page))
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * per_page
     rows = conn.execute(
         f"""
         SELECT part_catalog.*,
@@ -6309,11 +6350,12 @@ def parts_catalog():
         FROM part_catalog
         {where}
         ORDER BY lower(part_catalog.item_name), lower(COALESCE(part_catalog.brand, '')), lower(COALESCE(part_catalog.item_model, ''))
+        LIMIT %s OFFSET %s
         """,
-        tuple(params)
+        tuple(params + [per_page, offset])
     ).fetchall()
     conn.close()
-    return render_template("parts_catalog.html", parts=rows, q=q)
+    return render_template("parts_catalog.html", parts=rows, q=q, page=page, total_pages=total_pages, total_count=total_count, per_page=per_page)
 
 
 @app.route("/parts-catalog/create-json", methods=["POST"])

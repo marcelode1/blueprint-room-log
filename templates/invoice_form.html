@@ -70,7 +70,7 @@
                 </select>
             </div>
             <div><label>Invoice Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
-            <div><label>Due Date</label><input name="due_date" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
+            <div><label>Due Date</label><input name="due_date" id="invoiceDueDate" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
         </div>
 
         <h3>Customer</h3>
@@ -186,7 +186,7 @@
         <label>Notes</label>
         <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
         <label>Terms</label>
-        <textarea name="terms" rows="2">{{ invoice.terms if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+        <textarea name="terms" id="invoiceTerms" rows="2">{{ invoice_terms_for_due_date(invoice.due_date, invoice.terms) if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
         <button type="submit" class="btn-secondary" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
         <button type="submit" class="btn-secondary" name="submit_action" value="email">Email Invoice</button>
         <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
@@ -228,6 +228,8 @@
 
 <script>
 const projectSelect=document.getElementById("invoiceProjectSelect");
+const dueDateInput=document.getElementById("invoiceDueDate");
+const termsInput=document.getElementById("invoiceTerms");
 if(projectSelect){
     projectSelect.addEventListener("change",()=>{
         const option=projectSelect.options[projectSelect.selectedIndex];
@@ -237,6 +239,26 @@ if(projectSelect){
         fill("customerEmail",option.dataset.customerEmail);
         fill("customerPhone",option.dataset.customerPhone);
         fill("billingAddress",option.dataset.billingAddress);
+    });
+}
+function formattedInvoiceDueDate(value){
+    const parts=String(value||"").split("-");
+    if(parts.length!==3)return "";
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+}
+function automaticTermsForDueDate(value){
+    const formatted=formattedInvoiceDueDate(value);
+    return formatted ? `Payment due by ${formatted}. Thank you for your business.` : "Payment due upon receipt. Thank you for your business.";
+}
+function isAutomaticInvoiceTerms(value){
+    const text=String(value||"").trim();
+    return !text || text==="Payment due upon receipt. Thank you for your business." || /^Payment due by .+\. Thank you for your business\.$/.test(text);
+}
+if(dueDateInput&&termsInput){
+    dueDateInput.addEventListener("change",()=>{
+        if(isAutomaticInvoiceTerms(termsInput.value)){
+            termsInput.value=automaticTermsForDueDate(dueDateInput.value);
+        }
     });
 }
 
@@ -448,6 +470,7 @@ updateInvoiceLiveTotals();
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}
+@media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
 {% endblock %}

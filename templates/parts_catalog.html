@@ -9,7 +9,7 @@
     <h3>Add Catalog Item</h3>
     <form method="post">
         <div class="grid">
-            <div><label>Type</label><select name="item_type"><option value="part">Part</option><option value="service">Service</option></select></div>
+            <div><label>Classification</label><select name="item_type"><option value="part">Material</option><option value="service">Labor</option></select></div>
             <div><label>Item Name</label><input name="item_name" required></div>
             <div><label>Manufacturer / Brand</label><input name="brand"></div>
             <div><label>Model #</label><input name="item_model"></div>
@@ -32,19 +32,29 @@
         <button type="submit">Search</button>
         <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog') }}">Clear</a>
     </form>
+    <div class="catalogLibraryMeta">
+        <span>{{ total_count }} item{{ '' if total_count == 1 else 's' }}</span>
+        <span>Page {{ page }} of {{ total_pages }}</span>
+    </div>
     {% for part in parts %}
         <details class="catalogItem">
             <summary>
-                <strong>{{ part.item_name }}</strong>
-                {% if part.brand %}<span>{{ part.brand }}</span>{% endif %}
-                {% if part.item_model %}<span>{{ part.item_model }}</span>{% endif %}
-                {% if part.part_number %}<span>{{ part.part_number }}</span>{% endif %}
-                <span class="catalogType">{{ part.item_type|title }}</span>
+                <span class="catalogMainLine">
+                    <strong>{{ part.item_name }}</strong>
+                    {% if part.description %}<span class="catalogDescription">{{ part.description }}</span>{% endif %}
+                </span>
+                <span class="catalogMetaLine">
+                    {% if part.brand %}<span>{{ part.brand }}</span>{% endif %}
+                    {% if part.item_model %}<span>{{ part.item_model }}</span>{% endif %}
+                    {% if part.part_number %}<span>{{ part.part_number }}</span>{% endif %}
+                    {% if part.category %}<span>{{ part.category }}</span>{% endif %}
+                </span>
+                <span class="catalogType">{{ 'Labor' if part.item_type == 'service' else 'Material' }}</span>
             </summary>
             <form method="post">
                 <input type="hidden" name="part_id" value="{{ part.id }}">
                 <div class="grid">
-                    <div><label>Type</label><select name="item_type"><option value="part" {% if part.item_type != 'service' %}selected{% endif %}>Part</option><option value="service" {% if part.item_type == 'service' %}selected{% endif %}>Service</option></select></div>
+                    <div><label>Classification</label><select name="item_type"><option value="part" {% if part.item_type != 'service' %}selected{% endif %}>Material</option><option value="service" {% if part.item_type == 'service' %}selected{% endif %}>Labor</option></select></div>
                     <div><label>Item Name</label><input name="item_name" value="{{ part.item_name }}" required></div>
                     <div><label>Manufacturer / Brand</label><input name="brand" value="{{ part.brand or '' }}"></div>
                     <div><label>Model #</label><input name="item_model" value="{{ part.item_model or '' }}"></div>
@@ -73,13 +83,47 @@
     {% else %}
         <p>No catalog items found.</p>
     {% endfor %}
+    {% if total_pages > 1 %}
+        <div class="catalogPagination">
+            {% if page > 1 %}
+                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page-1) }}">Previous</a>
+            {% endif %}
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                    <span class="catalogPageCurrent">{{ p }}</span>
+                {% elif p <= 2 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+                    <a class="catalogPageLink" href="{{ url_for('parts_catalog', q=q, page=p) }}">{{ p }}</a>
+                {% elif p == 3 or p == total_pages - 2 %}
+                    <span class="catalogPageDots">...</span>
+                {% endif %}
+            {% endfor %}
+            {% if page < total_pages %}
+                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page+1) }}">Next</a>
+            {% endif %}
+        </div>
+    {% endif %}
 </div>
 
 <style>
 .catalogSearch{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.catalogSearch input{max-width:420px}
-.catalogItem{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
-.catalogItem summary{cursor:pointer;min-height:42px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.catalogType{border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;color:#1d4ed8;background:#eef2ff}
+.catalogLibraryMeta{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:8px 0 10px;color:var(--muted);font-weight:800;font-size:13px}
+.catalogItem{border:1px solid var(--border);border-radius:8px;padding:0;margin:6px 0;background:var(--card);overflow:hidden}
+.catalogItem summary{cursor:pointer;min-height:34px;display:grid;grid-template-columns:minmax(260px,1.6fr) minmax(180px,1fr) auto;gap:10px;align-items:center;padding:7px 10px;list-style:none}
+.catalogItem summary::-webkit-details-marker{display:none}
+.catalogItem summary:hover{background:rgba(37,99,235,.07)}
+.catalogMainLine,.catalogMetaLine{display:flex;gap:8px;align-items:center;min-width:0}
+.catalogMainLine strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px}
+.catalogDescription{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.catalogMetaLine{color:var(--muted);font-size:13px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.catalogMetaLine span{overflow:hidden;text-overflow:ellipsis}
+.catalogType{border:1px solid var(--border);border-radius:999px;padding:2px 7px;font-size:11px;font-weight:800;color:#1d4ed8;background:#eef2ff;white-space:nowrap}
+.catalogItem > form{padding:10px 12px;border-top:1px solid var(--border)}
 .catalogCheck{display:flex!important;gap:8px;align-items:center;font-weight:800}.catalogCheck input{width:auto;min-height:auto}
+.catalogPagination{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}
+.catalogPageLink,.catalogPageCurrent,.catalogPageDots{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px;border-radius:7px;text-decoration:none;font-weight:800}
+.catalogPageLink{border:1px solid var(--border);color:var(--text);background:var(--card)}
+.catalogPageCurrent{background:var(--primary);color:white}
+.catalogPageDots{color:var(--muted)}
+@media(max-width:760px){.catalogItem summary{grid-template-columns:1fr}.catalogMainLine,.catalogMetaLine{flex-wrap:wrap}.catalogDescription{white-space:normal}.catalogMainLine strong{max-width:none}.catalogPagination{justify-content:center}}
 </style>
 {% endblock %}

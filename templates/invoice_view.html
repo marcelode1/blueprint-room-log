@@ -45,7 +45,8 @@
             <div class="invoiceMetaGrid">
                 <span>Date</span><strong>{{ format_date(invoice.invoice_date) }}</strong>
                 <span>Invoice #</span><strong>{{ invoice.invoice_number }}</strong>
-                {% if invoice.terms %}<span>Terms</span><strong>{{ invoice.terms }}</strong>{% endif %}
+                {% set displayed_terms = invoice_terms_for_due_date(invoice.due_date, invoice.terms) %}
+                {% if displayed_terms %}<span>Terms</span><strong>{{ displayed_terms }}</strong>{% endif %}
                 {% if invoice.due_date %}<span>Due</span><strong>{{ format_date(invoice.due_date) }}</strong>{% endif %}
             </div>
         </div>
