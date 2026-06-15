@@ -27,15 +27,14 @@
 
 <div class="card invoicePaper">
     <div class="invoiceHeader">
-        <div class="invoiceBox invoiceCompanyBox">
+        <div class="invoiceCompanyBox">
             {% set logo = get_app_setting("company_logo") %}
             {% if logo %}<img class="invoiceLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
-            <h2>{{ company.company_name or 'ProjectONus' }}</h2>
             {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
             {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
             {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
         </div>
-        <div class="invoiceBox invoiceMeta">
+        <div class="invoiceMeta">
             <h1>Invoice</h1>
             <div class="invoiceMetaGrid">
                 <span>Date</span><strong>{{ format_date(invoice.invoice_date) }}</strong>
@@ -47,14 +46,14 @@
     </div>
 
     <div class="invoiceBillTo">
-        <div class="invoiceBox">
+        <div>
             <h3>Customer Name</h3>
             <p><strong>{{ invoice.customer_name or '-' }}</strong></p>
             {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
             {% if invoice.customer_email %}<p>{{ invoice.customer_email }}</p>{% endif %}
             {% if invoice.customer_phone %}<p>{{ invoice.customer_phone }}</p>{% endif %}
         </div>
-        <div class="invoiceBox">
+        <div>
             <h3>Job Name</h3>
             <p><strong>{{ invoice.project_name or invoice.customer_name or '-' }}</strong></p>
             {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
@@ -132,6 +131,6 @@
 {% endif %}
 
 <style>
-.inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceBox{border:1px solid #172033;padding:12px;background:#fff}.invoiceHeader{display:grid;grid-template-columns:1fr 260px;gap:14px;align-items:start}.invoiceLogo{max-width:150px;max-height:90px;object-fit:contain;margin-bottom:10px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:4px 0}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin:0 0 10px;text-align:center}.invoiceMetaGrid{display:grid;grid-template-columns:90px 1fr;border-top:1px solid #172033;border-left:1px solid #172033}.invoiceMetaGrid span,.invoiceMetaGrid strong{border-right:1px solid #172033;border-bottom:1px solid #172033;padding:6px;font-size:13px}.invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0}.invoiceBillTo h3{margin:0 0 8px;font-size:14px;text-transform:uppercase}.invoiceLinesTable{width:100%;border-collapse:collapse;border:1px solid #172033}.invoiceLinesTable th,.invoiceLinesTable td{border:1px solid #c3cad5;padding:9px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f3f4f6;text-transform:uppercase;font-size:12px}.invoiceTotals{max-width:390px;margin:18px 0 0 auto;border:1px solid #172033;padding:10px 12px;background:#fff;font-size:13px}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:2px solid #172033;padding-top:12px;font-size:13px}.invoiceNotes{margin-top:18px;border:1px solid #172033;padding:12px}@media(max-width:760px){.invoiceHeader,.invoiceBillTo{grid-template-columns:1fr}.invoiceMeta{width:auto}}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
+.inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:1fr 260px;gap:28px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}.invoiceLogo{max-width:150px;max-height:90px;object-fit:contain;margin-bottom:10px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:4px 0}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin:0 0 12px}.invoiceMetaGrid{display:grid;grid-template-columns:90px 1fr;gap:4px 12px;font-size:13px}.invoiceMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}.invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:34px;margin:22px 0}.invoiceBillTo h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}.invoiceTotals{max-width:390px;margin:18px 0 0 auto;border-top:2px solid #172033;padding:10px 0 0;background:#fff;font-size:13px}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:1px solid #d7dee9;padding-top:10px;font-size:13px}.invoiceNotes{margin-top:18px;border-top:1px solid #d7dee9;padding-top:12px}@media(max-width:760px){.invoiceHeader,.invoiceBillTo{grid-template-columns:1fr}.invoiceMeta{text-align:left}}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
 </style>
 {% endblock %}

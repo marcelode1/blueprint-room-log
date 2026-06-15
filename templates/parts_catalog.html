@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Parts / Services Catalog</h2>
+    <h2>Items / Services Catalog</h2>
     <p class="muted">Reusable product and service records used by inventory, supplier tasks, rooms, notes, and invoices.</p>
 </div>
 
@@ -63,6 +63,11 @@
                 <input type="hidden" name="part_id" value="{{ part.id }}">
                 <input type="hidden" name="action" value="archive">
                 <button type="submit" class="btn-danger">Archive</button>
+            </form>
+            <form method="post" onsubmit="return confirm('Permanently delete this catalog item? Existing inventory and invoice lines will keep their saved text, but the reusable catalog link will be removed.');">
+                <input type="hidden" name="part_id" value="{{ part.id }}">
+                <input type="hidden" name="action" value="delete">
+                <button type="submit" class="btn-danger">Delete</button>
             </form>
         </details>
     {% else %}

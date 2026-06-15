@@ -2284,9 +2284,6 @@ def invoice_pdf_attachment(invoice, lines, company):
         font = "helv"
         page.insert_text((x, y_pos), str(value or ""), fontsize=size, fontname=font, color=(0.08, 0.12, 0.2))
 
-    def box(x0, y0, x1, y1, fill=None, width=0.8):
-        page.draw_rect(fitz.Rect(x0, y0, x1, y1), color=line_color, fill=fill, width=width)
-
     def wrapped(x, y_pos, value, width, size=9, line_gap=11):
         current_y = y_pos
         for raw_line in str(value or "").splitlines() or [""]:
@@ -2305,21 +2302,17 @@ def invoice_pdf_attachment(invoice, lines, company):
                 current_y += line_gap
         return current_y
 
-    box(left, 38, 350, 138)
-    box(370, 38, right, 138)
     logo_path = get_app_setting("company_logo", "")
     logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
     if logo_bytes:
         try:
-            page.insert_image(fitz.Rect(left + 10, 48, left + 96, 92), stream=logo_bytes, keep_proportion=True)
+            page.insert_image(fitz.Rect(left, 46, left + 92, 92), stream=logo_bytes, keep_proportion=True)
             y = 102
         except Exception:
             pass
-    text(left + 10, y, company.get("company_name") or "ProjectONus", 15)
-    y += 20
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
         if value:
-            text(left + 10, y, value, 9)
+            text(left, y, value, 9)
             y += 12
 
     text(418, 58, "INVOICE", 22)
@@ -2329,37 +2322,35 @@ def invoice_pdf_attachment(invoice, lines, company):
         ("Invoice #", invoice.get("invoice_number") or "PREVIEW"),
         ("Status", str(invoice.get("status") or "").title()),
     ]:
-        page.draw_line((370, meta_y + 4), (right, meta_y + 4), color=grid_color, width=0.5)
         text(378, meta_y, label, 8)
         text(450, meta_y, value, 8)
         meta_y += 16
     if invoice.get("due_date"):
-        page.draw_line((370, meta_y + 4), (right, meta_y + 4), color=grid_color, width=0.5)
         text(378, meta_y, "Due", 8)
         text(450, meta_y, format_date(invoice.get("due_date")), 8)
+    page.draw_line((left, 142), (right, 142), color=line_color, width=1.2)
 
     y = 158
-    box(left, y, 300, 242)
-    box(312, y, right, 242)
-    text(left + 10, y + 16, "Customer Name", 10)
-    text(312 + 10, y + 16, "Job Name", 10)
-    text(left + 10, y + 34, invoice.get("customer_name") or "-", 10)
-    text(312 + 10, y + 34, invoice.get("project_name") or invoice.get("customer_name") or "-", 10)
+    text(left, y + 16, "Customer Name", 9)
+    text(312, y + 16, "Job Name", 9)
+    text(left, y + 34, invoice.get("customer_name") or "-", 10)
+    text(312, y + 34, invoice.get("project_name") or invoice.get("customer_name") or "-", 10)
     customer_y = y + 48
     if invoice.get("billing_address"):
-        customer_y = wrapped(left + 10, customer_y, invoice.get("billing_address"), 225, 8)
-        wrapped(312 + 10, y + 48, invoice.get("billing_address"), 225, 8)
+        customer_y = wrapped(left, customer_y, invoice.get("billing_address"), 225, 8)
+        wrapped(312, y + 48, invoice.get("billing_address"), 225, 8)
     if invoice.get("customer_email"):
-        text(left + 10, customer_y, invoice.get("customer_email"), 8)
+        text(left, customer_y, invoice.get("customer_email"), 8)
         customer_y += 11
     if invoice.get("customer_phone"):
-        text(left + 10, customer_y, invoice.get("customer_phone"), 8)
+        text(left, customer_y, invoice.get("customer_phone"), 8)
 
     y = 268
     table_top = y - 16
     headers = [("#", 52), ("Qty", 82), ("Item", 118), ("Description", 220), ("Location", 386), ("Unit", 466), ("Amount", 522)]
-    box(left, table_top, right, 590)
-    page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=line_color, fill=fill_color, width=0.8)
+    page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
+    page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
+    page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
     for label, x in headers:
         text(x, y, label, 8)
     y += 16
@@ -2368,8 +2359,9 @@ def invoice_pdf_attachment(invoice, lines, company):
             page = doc.new_page(width=612, height=792)
             y = 70
             table_top = y - 18
-            box(left, table_top, right, 590)
-            page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=line_color, fill=fill_color, width=0.8)
+            page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
+            page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
+            page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
             for label, x in headers:
                 text(x, y, label, 8)
             y += 16
@@ -2384,12 +2376,9 @@ def invoice_pdf_attachment(invoice, lines, company):
         y = max(y_item, y_desc, y_loc, row_top + 18)
         page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.5)
         y += 6
-    for x in [74, 112, 214, 382, 462, 518]:
-        page.draw_line((x, table_top), (x, 590), color=grid_color, width=0.5)
-
     totals = invoice_totals_breakdown(invoice, lines)
     y = 610
-    box(374, y - 18, right, y + 96)
+    page.draw_line((374, y - 18), (right, y - 18), color=line_color, width=1)
     for label, key in [
         ("Total Material", "material"),
         ("Total Labor", "labor"),
@@ -2403,7 +2392,7 @@ def invoice_pdf_attachment(invoice, lines, company):
         text(386, y, label, 9)
         text(510, y, value, 9)
         y += 16
-    page.draw_line((374, y - 10), (right, y - 10), color=line_color, width=1)
+    page.draw_line((374, y - 10), (right, y - 10), color=grid_color, width=0.6)
     text(386, y + 4, "Balance Due", 9)
     text(510, y + 4, format_invoice_money(totals["balance_due"]), 9)
 
@@ -5979,6 +5968,12 @@ def parts_catalog():
             conn.commit()
             conn.close()
             flash("Catalog item archived.")
+            return redirect(url_for("parts_catalog"))
+        if action == "delete" and part_id:
+            conn.execute("DELETE FROM part_catalog WHERE id = %s", (part_id,))
+            conn.commit()
+            conn.close()
+            flash("Catalog item deleted.")
             return redirect(url_for("parts_catalog"))
 
         item_name = request.form.get("item_name", "").strip()
