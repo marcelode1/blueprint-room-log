@@ -2052,8 +2052,16 @@ def ensure_invoice_tables(conn):
 
 
 def invoice_number_year_key(value=None):
-    dt = local_datetime(value) if value else local_now()
-    return dt.strftime("%Y")
+    dt = local_datetime(value) if value else None
+    if dt:
+        return dt.strftime("%Y")
+    text = str(value or "").strip()
+    if text:
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").strftime("%Y")
+        except Exception:
+            pass
+    return local_now().strftime("%Y")
 
 
 def next_invoice_number(conn, reference_value=None):
