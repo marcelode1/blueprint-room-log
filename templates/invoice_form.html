@@ -31,6 +31,10 @@
 <div class="card">
     <form method="post" id="invoiceForm" action="{{ form_action }}">
         <div class="grid">
+            <div>
+                <label>Invoice Number</label>
+                <input value="{{ invoice.invoice_number if invoice else 'Auto generated when saved' }}" readonly>
+            </div>
             {% if selected_project %}
                 <input type="hidden" name="project_id" value="{{ selected_project.id }}">
                 <div>
@@ -134,6 +138,14 @@
                     </tbody>
                 </table>
             </div>
+            <div class="invoiceLiveTotals">
+                <p><span>Total Material</span><strong id="liveTotalMaterial">$0.00</strong></p>
+                <p><span>Total Labor</span><strong id="liveTotalLabor">$0.00</strong></p>
+                <p><span>Total Sales Tax</span><strong id="liveTotalTax">$0.00</strong></p>
+                <p><span>Total Amount</span><strong id="liveTotalAmount">$0.00</strong></p>
+                <p><span>Payments/Credit</span><strong id="livePaymentsCredit">$0.00</strong></p>
+                <p class="invoiceLiveBalance"><span>Balance Due</span><strong id="liveBalanceDue">$0.00</strong></p>
+            </div>
         </div>
 
         <template id="invoiceLineTemplate">
@@ -196,7 +208,16 @@
             </div>
             <label>Description</label>
             <textarea name="description" rows="3"></textarea>
-            <label class="invoiceToggle"><input type="checkbox" name="taxable" value="1"><span>Taxable</span></label>
+            <div class="invoiceItemOptions">
+                <label class="invoiceToggle"><input type="checkbox" name="taxable" value="1"><span>Taxable</span></label>
+                <label>
+                    Type
+                    <select name="item_type">
+                        <option value="part" selected>Material</option>
+                        <option value="service">Labor</option>
+                    </select>
+                </label>
+            </div>
             <p class="formError" id="newItemError"></p>
             <button type="submit">Create</button>
         </form>
@@ -221,6 +242,7 @@ const invoiceLines=document.getElementById("invoiceLines");
 const lineTemplate=document.getElementById("invoiceLineTemplate");
 const newItemModal=document.getElementById("newItemModal");
 const newItemForm=document.getElementById("newCatalogItemForm");
+const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
 let pendingItemSelect=null;
 
 function money(value){
@@ -243,6 +265,38 @@ function updateLineAmount(line){
     const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
     const amount=line.querySelector(".lineAmount");
     if(amount)amount.value=money(qty*price);
+    updateInvoiceLiveTotals();
+}
+function updateInvoiceLiveTotals(){
+    let material=0;
+    let labor=0;
+    let taxableSubtotal=0;
+    let paymentsCredit=0;
+    lineRows().forEach(line=>{
+        const qty=Number(line.querySelector(".lineQty")?.value||0);
+        const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+        const lineTotal=qty*price;
+        const itemType=line.querySelector(".lineItemType")?.value||"part";
+        const taxable=line.querySelector(".lineTaxable")?.checked;
+        if(lineTotal<0){
+            paymentsCredit+=Math.abs(lineTotal);
+        }else if(itemType==="service"){
+            labor+=lineTotal;
+        }else{
+            material+=lineTotal;
+        }
+        if(taxable)taxableSubtotal+=lineTotal;
+    });
+    const tax=taxableSubtotal*(invoiceTaxRate/100);
+    const totalAmount=material+labor+tax;
+    const balanceDue=(material+labor-paymentsCredit)+tax;
+    const setTotal=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=money(value);};
+    setTotal("liveTotalMaterial",material);
+    setTotal("liveTotalLabor",labor);
+    setTotal("liveTotalTax",tax);
+    setTotal("liveTotalAmount",totalAmount);
+    setTotal("livePaymentsCredit",paymentsCredit ? -paymentsCredit : 0);
+    setTotal("liveBalanceDue",balanceDue);
 }
 function refreshLineIndexes(){
     lineRows().forEach((line,index)=>{
@@ -252,6 +306,7 @@ function refreshLineIndexes(){
         if(taxable)taxable.value=String(index);
         updateLineAmount(line);
     });
+    updateInvoiceLiveTotals();
 }
 function lockSelectedItem(select){
     if(!select||!select.value||select.value==="__new__")return;
@@ -286,6 +341,7 @@ function applySelectedItem(select){
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     lockSelectedItem(select);
     updateLineAmount(line);
+    updateInvoiceLiveTotals();
 }
 function openNewItemModal(select){
     pendingItemSelect=select;
@@ -316,7 +372,9 @@ function appendCatalogOption(item, targetSelect){
         option.dataset.description=item.description||"";
         option.dataset.price=item.unit_price||0;
         option.dataset.taxable=item.taxable?"1":"0";
-        option.textContent=[item.item_name,item.brand,item.item_model].filter(Boolean).join(" - ");
+        option.dataset.type=item.item_type||"part";
+        const typeLabel=option.dataset.type==="service"?" (Labor)":"";
+        option.textContent=[`${item.item_name||""}${typeLabel}`,item.brand,item.item_model].filter(Boolean).join(" - ");
         select.appendChild(option);
     });
     if(targetSelect){
@@ -355,6 +413,7 @@ invoiceLines.addEventListener("click",event=>{
         if(line)line.remove();
         if(lineRows().length===0)addInvoiceLine();
         refreshLineIndexes();
+        updateInvoiceLiveTotals();
     }
 });
 newItemForm.addEventListener("submit",async event=>{
@@ -378,13 +437,15 @@ if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 lockAllSelectedItems();
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 refreshLineIndexes();
+updateInvoiceLiveTotals();
 </script>
 
 <style>
 .invoiceLinePanel{position:sticky;top:8px;z-index:5;margin:22px 0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.08);overflow:hidden}
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
-.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.formError{color:#b91c1c;font-weight:800}
+.invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
 {% endblock %}

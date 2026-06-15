@@ -1091,6 +1091,7 @@ def init_db():
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -2031,6 +2032,15 @@ def ensure_invoice_tables(conn):
     for statement in statements:
         conn.execute(statement)
     for statement in [
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_phone TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_address TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS due_date TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TEXT",
+        "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
     ]:
         try:
@@ -2121,7 +2131,7 @@ def save_invoice_items(conn, lines):
             description=line.get("description") or "",
             unit_price=line.get("unit_price") or 0,
             taxable=bool(line.get("taxable")),
-            item_type="service"
+            item_type=line.get("item_type") if line.get("item_type") in ["part", "service"] else "part"
         )
         line["part_catalog_id"] = part_catalog_id
         existing = conn.execute(
@@ -3024,6 +3034,7 @@ def ensure_part_catalog_tables(conn):
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -5653,6 +5664,7 @@ def new_invoice():
         saved_items=saved_items,
         part_catalog=catalog,
         selected_project=selected_project,
+        default_tax_rate=default_invoice_tax_rate(),
         today=local_now().date().isoformat(),
         form_action=url_for("new_invoice"),
     )
@@ -5805,7 +5817,7 @@ def edit_invoice(invoice_id):
     catalog = part_catalog_options(conn)
     selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone() if invoice.get("project_id") else None
     conn.close()
-    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=selected_project, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=selected_project, default_tax_rate=default_invoice_tax_rate(), today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
