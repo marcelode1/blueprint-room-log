@@ -15,14 +15,14 @@
         <label>Quantity</label>
         <input type="number" name="quantity" step="0.01" min="0" required>
         <label>Item Name</label>
-        <input name="item_name" required>
+        <input name="item_name" class="js-part-item" list="partCatalogNameList" required>
         <label>Item Model #</label>
-        <input name="item_model">
+        <input name="item_model" class="js-part-model" list="partCatalogModelList">
         <label>Brand</label>
-        <input name="brand">
+        <input name="brand" class="js-part-brand" list="partCatalogBrandList">
         <label>New or Used</label>
         <select name="item_condition">{% for value, label in condition_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
-        <label>Room Allocation</label>
+        <label>Choose a Room</label>
         <select name="room_id">
             <option value="">Project general</option>
             {% for r in rooms %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
@@ -64,8 +64,8 @@
                 <input type="hidden" name="next" value="{{ request.full_path }}">
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <input type="hidden" name="room_id" value="{{ m.room_id or '' }}">
-                <input type="hidden" name="status" value="available">
-                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased</label>
+                <input type="hidden" name="status" value="purchased_waiting_arrival">
+                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> Purchased Waiting Arrival</label>
             </form>
             {% elif m.status == "available" %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
@@ -83,7 +83,7 @@
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <label>Update Status</label>
                 <select name="status">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
-                <label>Room</label>
+                <label>Choose a Room</label>
                 <select name="room_id">
                     <option value="">Project general</option>
                     {% for r in rooms %}<option value="{{ r.id }}" {% if m.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>{% endfor %}
@@ -99,9 +99,10 @@
     {% endfor %}
 </div>
 <style>
-.inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}
-.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
+.inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}.inventoryCard.inventory-picked_up{border-left-color:#2563eb;background:#dbeafe}.inventoryCard.inventory-purchased_waiting_arrival{border-left-color:#0284c7;background:#e0f2fe}.inventoryCard.inventory-unavailable{border-left-color:#64748b;background:#f1f5f9}.inventoryCard.inventory-backordered{border-left-color:#d97706;background:#fef3c7}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}
 .inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 </style>
+{% include "_part_catalog_autocomplete.html" %}
 {% endblock %}

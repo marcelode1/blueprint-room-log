@@ -1,0 +1,60 @@
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    {% set logo = get_app_setting("company_logo") %}
+    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo" style="max-height:90px;max-width:260px;display:block;margin-bottom:10px;">{% endif %}
+    <h1>{{ get_app_setting("company_name", "ProjectONus") }}</h1>
+    <p class="muted">Powered by ProjectONus</p>
+    <div class="grid">
+        <a class="btn-link" href="#projects">Projects</a>
+        <a class="btn-link" href="#search">Search Projects</a>
+        {% if is_main_admin() %}
+            <a class="btn-link" href="{{ url_for('new_project') }}">Create Project</a>
+            <a class="btn-link" href="{{ url_for('today_tasks') }}">Task</a>
+            <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+            <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
+        {% elif can_view_inventory() %}
+            <a class="btn-link btn-secondary" href="{{ url_for('inventory') }}">Inventory</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card" id="search">
+    <h2>Search Projects</h2>
+    <form method="get">
+        <input name="q" value="{{ q or '' }}" placeholder="Search by project, customer, or address">
+        <button type="submit">Search</button>
+    </form>
+</div>
+
+<div class="card" id="projects">
+    <h2>Projects</h2>
+    <div class="grid">
+    {% for p in projects %}
+        <div class="card">
+            <h3>{{ p.name }}</h3>
+            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
+            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            {% if is_main_admin() or has_perm("view_contact_info") %}
+            <div class="desktop-only">
+                <p><strong>Customer Phone Number:</strong> {{ format_us_phone(p.customer_phone) or '-' }}</p>
+                <p><strong>Point of Contact:</strong> {{ p.point_of_contact_name or '-' }}</p>
+                <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(p.point_of_contact_phone) or '-' }}</p>
+                <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
+                {% if is_main_admin() %}
+                    <p><strong>Billing Address:</strong> {{ p.billing_address or p.customer_address or '-' }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+            <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
+            {% if is_main_admin() %}
+                <a class="btn-link btn-secondary desktop-only" href="{{ url_for('edit_project', project_id=p.id) }}">Edit Project</a>
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No projects found.</p>
+    {% endfor %}
+    </div>
+</div>
+{% endblock %}

@@ -13,7 +13,7 @@
                 <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
-        <label>Room</label>
+        <label>Choose a Room</label>
         <select name="room_id">
             <option value="">All Rooms</option>
             {% for r in rooms %}
@@ -50,8 +50,8 @@
     {% endfor %}
 </div>
 <style>
-.inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}
-.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}
+.inventoryCard{border-left:8px solid #16a34a}.inventoryCard.inventory-needs_purchase{border-left-color:#f59e0b;background:#fffbeb}.inventoryCard.inventory-used{border-left-color:#dc2626;background:#fef2f2}.inventoryCard.inventory-available{background:#f0fdf4}.inventoryCard.inventory-picked_up{border-left-color:#2563eb;background:#dbeafe}.inventoryCard.inventory-purchased_waiting_arrival{border-left-color:#0284c7;background:#e0f2fe}.inventoryCard.inventory-unavailable{border-left-color:#64748b;background:#f1f5f9}.inventoryCard.inventory-backordered{border-left-color:#d97706;background:#fef3c7}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}
 .inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
 </style>
 {% endblock %}

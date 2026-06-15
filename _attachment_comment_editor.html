@@ -1,67 +1,41 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
-    <h2>Timeline - {{ project.name }}</h2>
-    <p class="muted">{{ range_label }}</p>
-    <a class="btn-link" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
-</div>
-
-<div class="card">
-    <form method="get" class="timelineFilter">
-        <div class="grid">
-            <div>
-                <label>Show By</label>
-                <select name="period">
-                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
-                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
-                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
-                    <option value="all" {% if period == "all" %}selected{% endif %}>All History</option>
-                </select>
+{% if tasks %}
+    {% for project_group in tasks|groupby('project_id') %}
+        {% set project_task = project_group.list[0] %}
+        {% set project_address = task_project_address(project_task) %}
+        <section class="workerProjectTaskGroup" id="project-{{ project_group.grouper }}">
+            <div class="card workerProjectTaskHeader">
+                <h2>{{ project_task.project_name or 'Project' }}</h2>
+                {% if project_task.customer_name %}<p><strong>Customer:</strong> {{ project_task.customer_name }}</p>{% endif %}
+                {% if project_address %}<p><strong>Address:</strong> {{ project_address }}</p>{% endif %}
+                <div class="workerProjectActions">
+                    {% if project_address %}
+                        <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project_address) }}">Open Route in Google Maps</a>
+                    {% endif %}
+                    <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=project_task.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
+                </div>
             </div>
-            <div>
-                <label>Date</label>
-                <input name="date" type="date" value="{{ selected_date }}">
-            </div>
-        </div>
-        <button type="submit">Show Timeline</button>
-    </form>
-</div>
-
-<div class="timelineList">
-    {% for record in records %}
-        <div class="card timelineItem timelineType-{{ record.type|lower|replace(' ', '-') }}">
-            <div class="timelineMeta">
-                <span class="timelineType">{{ record.type }}</span>
-                <span class="muted">{{ record.when }}</span>
-            </div>
-            <h3>{{ record.title }}</h3>
-            {% if record.subtitle %}<p class="muted">{{ record.subtitle }}</p>{% endif %}
-            {% if record.body %}<p>{{ record.body }}</p>{% endif %}
-            {% if record.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=record.photo_file) }}">{% endif %}
-            {% if record.audio_file %}
-                <audio controls style="width:100%; margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=record.audio_file) }}"></audio>
-            {% endif %}
-            {% if record.map_url %}<a class="btn-link btn-secondary" target="_blank" href="{{ record.map_url }}">Open Map</a>{% endif %}
-            {% if record.url %}<a class="btn-link btn-secondary" href="{{ record.url }}">Open</a>{% endif %}
-        </div>
-    {% else %}
-        <div class="card">
-            <p>No timeline records found for this period.</p>
-        </div>
+            {% for t in project_group.list %}
+                {% set work_room_id = t.room_id %}
+                {% set work_room_name = t.room_name or 'Project general' %}
+                {% set show_worker_task_actions = false %}
+                {% include "_worker_task_work_card.html" %}
+            {% endfor %}
+        </section>
     {% endfor %}
-</div>
-
+{% else %}
+    <div class="card">
+        <h2>Today's Tasks</h2>
+        <p>No tasks scheduled for today.</p>
+        <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
+    </div>
+{% endif %}
+{% include "_worker_task_work_assets.html" %}
 <style>
-.timelineFilter button{max-width:260px}
-.timelineList{display:grid;gap:12px}
-.timelineItem{border-left:8px solid #2563eb}
-.timelineMeta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
-.timelineType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
-.timelineItem h3{margin:4px 0 8px}
-.timelineType-task-completed{border-left-color:#16a34a}
-.timelineType-task-received{border-left-color:#0ea5e9}
-.timelineType-clock-in,.timelineType-clock-out{border-left-color:#7c3aed}
-.timelineType-inventory{border-left-color:#f59e0b}
-@media(max-width:760px){.timelineFilter button{max-width:none}.timelineMeta{display:block}.timelineType{margin-bottom:6px}}
+.workerProjectTaskGroup{margin-bottom:18px}
+.workerProjectTaskHeader{margin-bottom:12px}
+.workerProjectTaskHeader h2{margin-top:0}
+.workerProjectActions{display:grid;gap:10px}
 </style>
 {% endblock %}

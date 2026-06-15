@@ -1,56 +1,704 @@
-
 {% extends "base.html" %}
 {% block content %}
+{% set is_edit = invoice is not none and invoice.id %}
+{% set default_customer_name = '' %}
+{% set default_customer_email = '' %}
+{% set default_customer_phone = '' %}
+{% set default_billing_address = '' %}
+{% if invoice %}
+    {% set default_customer_name = invoice.customer_name or '' %}
+    {% set default_customer_email = invoice.customer_email or '' %}
+    {% set default_customer_phone = invoice.customer_phone or '' %}
+    {% set default_billing_address = invoice.billing_address or '' %}
+{% elif selected_project %}
+    {% set default_customer_name = selected_project.customer_name or selected_project.name or '' %}
+    {% set default_customer_email = selected_project.customer_email or '' %}
+    {% set default_customer_phone = selected_project.customer_phone or '' %}
+    {% set default_billing_address = selected_project.billing_address or selected_project.customer_address or '' %}
+{% endif %}
+
 <div class="card">
-    {% set logo = get_app_setting("company_logo") %}
-    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo" style="max-height:90px;max-width:260px;display:block;margin-bottom:10px;">{% endif %}
-    <h1>{{ get_app_setting("company_name", "ProjectONus") }}</h1>
-    <p class="muted">Powered by ProjectONus</p>
-    <div class="grid">
-        <a class="btn-link" href="#projects">Projects</a>
-        <a class="btn-link" href="#search">Search Projects</a>
-        {% if is_main_admin() %}
-            <a class="btn-link" href="{{ url_for('new_project') }}">Create Project</a>
-            <a class="btn-link" href="{{ url_for('my_tasks') }}">Task</a>
-            <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
-            <a class="btn-link" href="{{ url_for('create_global_task') }}">Create a Task</a>
-        {% elif can_view_inventory() %}
-            <a class="btn-link btn-secondary" href="{{ url_for('inventory') }}">Inventory</a>
-        {% endif %}
-    </div>
+    <h2>{{ 'Edit Invoice' if is_edit else 'Create Invoice' }}</h2>
+    {% if selected_project %}
+        <p><strong>Project:</strong> {{ selected_project.name }}</p>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) }}">Invoices</a>
+    {% else %}
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+    {% endif %}
+    {% if is_edit %}<a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>{% endif %}
 </div>
 
-<div class="card" id="search">
-    <h2>Search Projects</h2>
-    <form method="get">
-        <input name="q" value="{{ q or '' }}" placeholder="Search by project, customer, or address">
-        <button type="submit">Search</button>
+<div class="card">
+    <form method="post" id="invoiceForm" action="{{ form_action }}">
+        {% if invoice and invoice.id %}<input type="hidden" name="invoice_id" value="{{ invoice.id }}">{% endif %}
+        {% if invoice and invoice.invoice_number %}<input type="hidden" name="invoice_number" value="{{ invoice.invoice_number }}">{% endif %}
+        <div class="grid">
+            <div>
+                <label>Invoice Number</label>
+                <input value="{{ invoice.invoice_number if invoice else 'Auto generated when saved' }}" readonly>
+            </div>
+            {% if selected_project %}
+                <input type="hidden" name="project_id" value="{{ selected_project.id }}">
+                <div>
+                    <label>Project</label>
+                    <input value="{{ selected_project.name }}" readonly>
+                </div>
+            {% else %}
+            <div>
+                <label>Project</label>
+                <select name="project_id" id="invoiceProjectSelect">
+                    <option value="">No project</option>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}"
+                            data-customer-name="{{ p.customer_name or p.name }}"
+                            data-customer-email="{{ p.customer_email or '' }}"
+                            data-customer-phone="{{ p.customer_phone or '' }}"
+                            data-billing-address="{{ p.billing_address or p.customer_address or '' }}"
+                            {% if (invoice and invoice.project_id == p.id) or (selected_project and selected_project.id == p.id) %}selected{% endif %}>
+                            {{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div>
+                <label>Status</label>
+                <select name="status">
+                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
+                        <option value="{{ value }}" {% if invoice and invoice.status == value %}selected{% endif %}>{{ value|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div><label>Invoice Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
+            <div><label>Due Date</label><input name="due_date" id="invoiceDueDate" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
+        </div>
+
+        <h3>Customer</h3>
+        <div class="grid">
+            <div><label>Customer Name</label><input name="customer_name" id="customerName" value="{{ default_customer_name }}" required></div>
+            <div><label>Email</label><input name="customer_email" id="customerEmail" type="email" value="{{ default_customer_email }}"></div>
+            <div><label>Phone</label><input name="customer_phone" id="customerPhone" value="{{ default_customer_phone }}"></div>
+        </div>
+        <label>Billing Address</label>
+        <textarea name="billing_address" id="billingAddress" rows="2">{{ default_billing_address }}</textarea>
+
+        <div class="invoiceLinePanel">
+            <div class="invoiceLineToolbar">
+                <h3>Invoice Item Lines</h3>
+                <button type="button" id="addInvoiceLine">Add Line</button>
+            </div>
+            <div class="invoiceGridWrap">
+                <table class="invoiceGridTable">
+                    <thead>
+                        <tr>
+                            <th>Line #</th>
+                            <th>Qty</th>
+                            <th>Item</th>
+                            <th>Description</th>
+                            <th>Location</th>
+                            <th>Unit Price</th>
+                            <th>Amount</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="invoiceLines">
+                        {% for line in lines %}
+                        <tr class="invoiceLine">
+                            <td class="lineNumber">{{ loop.index }}</td>
+                            <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="{{ line.quantity or 1 }}"></td>
+                            <td>
+                                <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
+                                <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
+                                <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                    <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
+                                        data-name="{{ line.item_name }}"
+                                        data-description="{{ line.description or '' }}"
+                                        data-price="{{ line.unit_price or 0 }}"
+                                        data-type="{{ line.item_type or 'part' }}"
+                                        data-taxable="{{ '1' if line.taxable else '0' }}"
+                                        selected>
+                                        {{ line.item_name or 'Saved item' }}{% if line.item_type == 'service' %} (Labor){% endif %}
+                                    </option>
+                                    <option value="__new__">NEW ITEM</option>
+                                    {% for item in part_catalog %}
+                                        {% if not line.part_catalog_id or line.part_catalog_id != item.id %}
+                                        <option value="{{ item.id }}"
+                                            data-name="{{ item.item_name }}"
+                                            data-description="{{ item.description or '' }}"
+                                            data-price="{{ item.unit_price or 0 }}"
+                                            data-type="{{ item.item_type or 'part' }}"
+                                            data-taxable="{{ '1' if item.taxable else '0' }}"
+                                            >
+                                            {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                                        </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><textarea name="line_description" class="lineDescription" rows="2">{{ line.description or '' }}</textarea></td>
+                            <td><input name="line_location" class="lineLocation" value="{{ line.location or '' }}" placeholder="Room, rack, area"></td>
+                            <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="{{ format_invoice_money(line.unit_price) }}"></td>
+                            <td><input class="lineAmount" value="{{ format_invoice_money(line.line_total) }}" readonly></td>
+                            <td>
+                                <input type="checkbox" name="line_taxable" class="lineTaxable" value="{{ loop.index0 }}" {% if line.taxable %}checked{% endif %} hidden>
+                                <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="invoiceLiveTotals">
+                <p><span>Total Material</span><strong id="liveTotalMaterial">$0.00</strong></p>
+                <p><span>Total Labor</span><strong id="liveTotalLabor">$0.00</strong></p>
+                <p><span>Total Sales Tax</span><strong id="liveTotalTax">$0.00</strong></p>
+                <p><span>Total Amount</span><strong id="liveTotalAmount">$0.00</strong></p>
+                <p><span>Payments/Credit</span><strong id="livePaymentsCredit">$0.00</strong></p>
+                <p class="invoiceLiveBalance"><span>Balance Due</span><strong id="liveBalanceDue">$0.00</strong></p>
+            </div>
+        </div>
+
+        <template id="invoiceLineTemplate">
+            <tr class="invoiceLine">
+                <td class="lineNumber"></td>
+                <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="1"></td>
+                <td>
+                    <input type="hidden" name="line_item_name" class="lineItemName">
+                    <input type="hidden" name="line_item_type" class="lineItemType" value="part">
+                    <select name="line_part_catalog_id" class="lineItemSelect" required>
+                        <option value="__new__">NEW ITEM</option>
+                        <option value="" selected hidden>Choose item</option>
+                        {% for item in part_catalog %}
+                            <option value="{{ item.id }}"
+                                data-name="{{ item.item_name }}"
+                                data-description="{{ item.description or '' }}"
+                                data-price="{{ item.unit_price or 0 }}"
+                                data-type="{{ item.item_type or 'part' }}"
+                                data-taxable="{{ '1' if item.taxable else '0' }}">
+                                {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td><textarea name="line_description" class="lineDescription" rows="2"></textarea></td>
+                <td><input name="line_location" class="lineLocation" placeholder="Room, rack, area"></td>
+                <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="$0.00"></td>
+                <td><input class="lineAmount" value="$0.00" readonly></td>
+                <td>
+                    <input type="checkbox" name="line_taxable" class="lineTaxable" value="__INDEX__" hidden>
+                    <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+                </td>
+            </tr>
+        </template>
+
+        <label>Notes</label>
+        <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
+        <label>Terms</label>
+        <textarea name="terms" id="invoiceTerms" rows="2">{{ invoice_terms_for_due_date(invoice.due_date, invoice.terms) if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+        <button type="submit" class="btn-secondary" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
+        <button type="submit" class="btn-secondary" name="submit_action" value="email">Email Invoice</button>
+        <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
     </form>
 </div>
 
-<div class="card" id="projects">
-    <h2>Projects</h2>
-    <div class="grid">
-    {% for p in projects %}
-        <div class="card">
-            <h3>{{ p.name }}</h3>
-            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
-            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
-            <div class="desktop-only">
-                <p><strong>Phone:</strong> {{ p.customer_phone or '-' }}</p>
-                <p><strong>Email:</strong> {{ p.customer_email or '-' }}</p>
-                {% if is_main_admin() %}
-                    <p><strong>Billing Address:</strong> {{ p.billing_address or p.customer_address or '-' }}</p>
-                {% endif %}
-            </div>
-            <a class="btn-link" href="{{ url_for('project', project_id=p.id) }}">Open Project</a>
-            {% if is_main_admin() %}
-                <a class="btn-link btn-secondary desktop-only" href="{{ url_for('edit_project', project_id=p.id) }}">Edit Project</a>
-            {% endif %}
+<div class="invoiceModal" id="newItemModal" hidden>
+    <div class="invoiceModalDialog">
+        <div class="invoiceModalHeader">
+            <h3>New Item</h3>
+            <button type="button" class="btn-secondary" id="closeNewItemModal">Close</button>
         </div>
-    {% else %}
-        <p>No projects found.</p>
-    {% endfor %}
+        <form id="newCatalogItemForm">
+            <div class="grid">
+                <div><label>Item Name</label><input name="item_name" required></div>
+                <div><label>Brand</label><input name="brand"></div>
+                <div><label>Model</label><input name="item_model"></div>
+                <div><label>Part Number</label><input name="part_number"></div>
+                <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0"></div>
+                <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0"></div>
+            </div>
+            <label>Description</label>
+            <textarea name="description" rows="3"></textarea>
+            <div class="invoiceItemOptions">
+                <label class="invoiceToggle"><input type="checkbox" name="taxable" value="1"><span>Taxable</span></label>
+                <label>
+                    Type
+                    <select name="item_type">
+                        <option value="part" selected>Material</option>
+                        <option value="service">Labor</option>
+                    </select>
+                </label>
+            </div>
+            <p class="formError" id="newItemError"></p>
+            <button type="submit">Create</button>
+        </form>
     </div>
 </div>
+
+<div class="invoiceModal" id="catalogUpdateModal" hidden>
+    <div class="invoiceModalDialog catalogUpdateDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Item Change?</h3>
+        </div>
+        <p id="catalogUpdateMessage">Save this description or price to Items & Catalog for future invoices?</p>
+        <p class="muted">This will not change invoices that were already saved or sent to customers.</p>
+        <p class="formError" id="catalogUpdateError"></p>
+        <div class="catalogUpdateActions">
+            <button type="button" id="saveCatalogUpdate">Save to Catalog</button>
+            <button type="button" class="btn-secondary" id="skipCatalogUpdate">Only This Invoice</button>
+        </div>
+    </div>
+</div>
+
+<div class="invoiceModal" id="unsavedInvoiceModal" hidden>
+    <div class="invoiceModalDialog unsavedInvoiceDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Invoice Changes?</h3>
+        </div>
+        <p>You have changes on this invoice that are not saved yet.</p>
+        <div class="unsavedInvoiceActions">
+            <button type="button" id="saveBeforeLeaving">Save Invoice</button>
+            <button type="button" class="btn-secondary" id="leaveWithoutSaving">Leave Without Saving</button>
+            <button type="button" class="btn-secondary" id="keepEditingInvoice">Keep Editing</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const projectSelect=document.getElementById("invoiceProjectSelect");
+const dueDateInput=document.getElementById("invoiceDueDate");
+const termsInput=document.getElementById("invoiceTerms");
+const invoiceForm=document.getElementById("invoiceForm");
+if(projectSelect){
+    projectSelect.addEventListener("change",()=>{
+        const option=projectSelect.options[projectSelect.selectedIndex];
+        if(!option||!option.value)return;
+        const fill=(id,value)=>{const el=document.getElementById(id);if(el&&!el.value)el.value=value||""};
+        fill("customerName",option.dataset.customerName);
+        fill("customerEmail",option.dataset.customerEmail);
+        fill("customerPhone",option.dataset.customerPhone);
+        fill("billingAddress",option.dataset.billingAddress);
+    });
+}
+function formattedInvoiceDueDate(value){
+    const parts=String(value||"").split("-");
+    if(parts.length!==3)return "";
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+}
+function automaticTermsForDueDate(value){
+    const formatted=formattedInvoiceDueDate(value);
+    return formatted ? `Payment due by ${formatted}. Thank you for your business.` : "Payment due upon receipt. Thank you for your business.";
+}
+function isAutomaticInvoiceTerms(value){
+    const text=String(value||"").trim();
+    return !text || text==="Payment due upon receipt. Thank you for your business." || /^Payment due by .+\. Thank you for your business\.$/.test(text);
+}
+if(dueDateInput&&termsInput){
+    dueDateInput.addEventListener("change",()=>{
+        if(isAutomaticInvoiceTerms(termsInput.value)){
+            termsInput.value=automaticTermsForDueDate(dueDateInput.value);
+        }
+    });
+}
+
+const invoiceLines=document.getElementById("invoiceLines");
+const lineTemplate=document.getElementById("invoiceLineTemplate");
+const newItemModal=document.getElementById("newItemModal");
+const newItemForm=document.getElementById("newCatalogItemForm");
+const catalogUpdateModal=document.getElementById("catalogUpdateModal");
+const catalogUpdateMessage=document.getElementById("catalogUpdateMessage");
+const catalogUpdateError=document.getElementById("catalogUpdateError");
+const saveCatalogUpdate=document.getElementById("saveCatalogUpdate");
+const skipCatalogUpdate=document.getElementById("skipCatalogUpdate");
+const unsavedInvoiceModal=document.getElementById("unsavedInvoiceModal");
+const saveBeforeLeaving=document.getElementById("saveBeforeLeaving");
+const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
+const keepEditingInvoice=document.getElementById("keepEditingInvoice");
+const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
+let pendingItemSelect=null;
+let pendingCatalogUpdate=null;
+let invoiceDirty=false;
+let allowInvoiceLeave=false;
+let pendingInvoiceNavigation=null;
+
+function markInvoiceDirty(){
+    if(!allowInvoiceLeave)invoiceDirty=true;
+}
+function showUnsavedInvoicePrompt(navigateFn){
+    pendingInvoiceNavigation=navigateFn;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=false;
+}
+function hideUnsavedInvoicePrompt(){
+    pendingInvoiceNavigation=null;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=true;
+}
+
+function money(value){
+    const number=Number(value||0);
+    return number.toLocaleString(undefined,{style:"currency",currency:"USD"});
+}
+function parseMoney(value){
+    const text=String(value||"").trim().replace(/[$,]/g,"");
+    if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);
+    return Number(text||0);
+}
+function formatMoneyInput(input){
+    if(input)input.value=money(parseMoney(input.value));
+}
+function lineRows(){
+    return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
+}
+function selectedCatalogOption(line){
+    const select=line?.querySelector(".lineItemSelect");
+    if(!select||!select.value||select.value==="__new__"||!/^\d+$/.test(select.value))return null;
+    return select.options[select.selectedIndex]||null;
+}
+function updateLineAmount(line){
+    const qty=Number(line.querySelector(".lineQty")?.value||0);
+    const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+    const amount=line.querySelector(".lineAmount");
+    if(amount)amount.value=money(qty*price);
+    updateInvoiceLiveTotals();
+}
+function updateInvoiceLiveTotals(){
+    let material=0;
+    let labor=0;
+    let taxableSubtotal=0;
+    let paymentsCredit=0;
+    lineRows().forEach(line=>{
+        const qty=Number(line.querySelector(".lineQty")?.value||0);
+        const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+        const lineTotal=qty*price;
+        const itemType=line.querySelector(".lineItemType")?.value||"part";
+        const taxable=line.querySelector(".lineTaxable")?.checked;
+        if(lineTotal<0){
+            paymentsCredit+=Math.abs(lineTotal);
+        }else if(itemType==="service"){
+            labor+=lineTotal;
+        }else{
+            material+=lineTotal;
+        }
+        if(taxable)taxableSubtotal+=lineTotal;
+    });
+    const tax=taxableSubtotal*(invoiceTaxRate/100);
+    const totalAmount=material+labor+tax;
+    const balanceDue=(material+labor-paymentsCredit)+tax;
+    const setTotal=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=money(value);};
+    setTotal("liveTotalMaterial",material);
+    setTotal("liveTotalLabor",labor);
+    setTotal("liveTotalTax",tax);
+    setTotal("liveTotalAmount",totalAmount);
+    setTotal("livePaymentsCredit",paymentsCredit ? -paymentsCredit : 0);
+    setTotal("liveBalanceDue",balanceDue);
+}
+function refreshLineIndexes(){
+    lineRows().forEach((line,index)=>{
+        const number=line.querySelector(".lineNumber");
+        const taxable=line.querySelector(".lineTaxable");
+        if(number)number.textContent=String(index+1);
+        if(taxable)taxable.value=String(index);
+        updateLineAmount(line);
+    });
+    updateInvoiceLiveTotals();
+}
+function lockSelectedItem(select){
+    if(!select||!select.value||select.value==="__new__")return;
+    Array.from(select.options).forEach(option=>{
+        option.defaultSelected=false;
+        option.selected=option.value===select.value;
+    });
+    const selected=select.options[select.selectedIndex];
+    if(selected)selected.defaultSelected=true;
+    select.dataset.selectedValue=select.value;
+}
+function lockAllSelectedItems(){
+    invoiceLines.querySelectorAll(".lineItemSelect").forEach(lockSelectedItem);
+}
+function applySelectedItem(select){
+    const line=select.closest(".invoiceLine");
+    const option=select.options[select.selectedIndex];
+    if(!line||!option)return;
+    if(option.value==="__new__"){
+        openNewItemModal(select);
+        return;
+    }
+    const name=line.querySelector(".lineItemName");
+    const type=line.querySelector(".lineItemType");
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const taxable=line.querySelector(".lineTaxable");
+    if(name)name.value=option.dataset.name||option.textContent.trim();
+    if(type)type.value=option.dataset.type||"part";
+    if(description)description.value=option.dataset.description||"";
+    if(price)price.value=money(option.dataset.price||0);
+    if(taxable)taxable.checked=option.dataset.taxable==="1";
+    lockSelectedItem(select);
+    markCatalogBaseline(line);
+    updateLineAmount(line);
+    updateInvoiceLiveTotals();
+}
+function markCatalogBaseline(line,useCurrent=false){
+    const option=selectedCatalogOption(line);
+    if(!option)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    if(description)description.dataset.catalogBaseline=useCurrent ? (description.value||"").trim() : (option.dataset.description||"");
+    if(price)price.dataset.catalogBaseline=String(useCurrent ? parseMoney(price.value||0) : parseMoney(option.dataset.price||0));
+}
+function openCatalogUpdatePrompt(line){
+    const option=selectedCatalogOption(line);
+    if(!option||!catalogUpdateModal)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const newDescription=(description?.value||"").trim();
+    const newPrice=parseMoney(price?.value||0);
+    const oldDescription=description?.dataset.catalogBaseline ?? (option.dataset.description||"");
+    const oldPrice=Number(price?.dataset.catalogBaseline ?? option.dataset.price ?? 0);
+    const descriptionChanged=newDescription!==String(oldDescription||"").trim();
+    const priceChanged=Math.abs(newPrice-oldPrice)>0.009;
+    if(!descriptionChanged&&!priceChanged)return;
+    pendingCatalogUpdate={line,option,partId:option.value,description:newDescription,unitPrice:newPrice};
+    const itemName=option.dataset.name||line.querySelector(".lineItemName")?.value||"this item";
+    if(catalogUpdateMessage)catalogUpdateMessage.textContent=`Save the new description or price for ${itemName} to Items & Catalog for future invoices?`;
+    if(catalogUpdateError)catalogUpdateError.textContent="";
+    catalogUpdateModal.hidden=false;
+}
+function closeCatalogUpdatePrompt(){
+    pendingCatalogUpdate=null;
+    if(catalogUpdateModal)catalogUpdateModal.hidden=true;
+}
+function updateCatalogOptionEverywhere(item){
+    document.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.name=item.item_name||option.dataset.name||"";
+        option.dataset.type=item.item_type||option.dataset.type||"part";
+        option.dataset.taxable=item.taxable?"1":"0";
+    });
+}
+function openNewItemModal(select){
+    pendingItemSelect=select;
+    newItemForm.reset();
+    document.getElementById("newItemError").textContent="";
+    newItemModal.hidden=false;
+}
+function addInvoiceLine(data={}){
+    lockAllSelectedItems();
+    const wrapper=document.createElement("tbody");
+    wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
+    const line=wrapper.firstElementChild;
+    invoiceLines.appendChild(line);
+    const select=line.querySelector(".lineItemSelect");
+    if(data.part_catalog_id&&select){
+        select.value=String(data.part_catalog_id);
+        applySelectedItem(select);
+    }
+    lockAllSelectedItems();
+    refreshLineIndexes();
+    requestAnimationFrame(()=>{
+        const gridWrap=document.querySelector(".invoiceGridWrap");
+        if(gridWrap)gridWrap.scrollTop=gridWrap.scrollHeight;
+        line.scrollIntoView({block:"nearest",inline:"nearest"});
+        const firstInput=line.querySelector(".lineItemSelect");
+        if(firstInput)firstInput.focus({preventScroll:true});
+    });
+    markInvoiceDirty();
+}
+function appendCatalogOption(item, targetSelect){
+    document.querySelectorAll(".lineItemSelect").forEach(select=>{
+        if(select.querySelector(`option[value="${item.id}"]`))return;
+        const option=document.createElement("option");
+        option.value=String(item.id);
+        option.dataset.name=item.item_name||"";
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.taxable=item.taxable?"1":"0";
+        option.dataset.type=item.item_type||"part";
+        const typeLabel=option.dataset.type==="service"?" (Labor)":"";
+        option.textContent=[`${item.item_name||""}${typeLabel}`,item.brand,item.item_model].filter(Boolean).join(" - ");
+        select.appendChild(option);
+    });
+    if(targetSelect){
+        targetSelect.value=String(item.id);
+        applySelectedItem(targetSelect);
+    }
+}
+
+document.getElementById("addInvoiceLine").addEventListener("click",()=>addInvoiceLine());
+document.getElementById("closeNewItemModal").addEventListener("click",()=>{
+    newItemModal.hidden=true;
+    if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
+});
+invoiceLines.addEventListener("change",event=>{
+    if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
+    if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    markInvoiceDirty();
+});
+invoiceLines.addEventListener("click",event=>{
+    if(event.target.matches(".lineItemSelect")&&event.target.value==="__new__"){
+        openNewItemModal(event.target);
+    }
+});
+invoiceLines.addEventListener("input",event=>{
+    if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    markInvoiceDirty();
+});
+invoiceLines.addEventListener("keydown",event=>{
+    if(event.key!=="Enter")return;
+    if(event.target.matches(".lineDescription,.lineUnitPrice")){
+        event.preventDefault();
+        if(event.target.matches(".lineUnitPrice")){
+            formatMoneyInput(event.target);
+            updateLineAmount(event.target.closest(".invoiceLine"));
+        }
+        openCatalogUpdatePrompt(event.target.closest(".invoiceLine"));
+    }
+});
+invoiceLines.addEventListener("blur",event=>{
+    if(event.target.matches(".lineUnitPrice")){
+        formatMoneyInput(event.target);
+        updateLineAmount(event.target.closest(".invoiceLine"));
+    }
+},true);
+if(skipCatalogUpdate){
+    skipCatalogUpdate.addEventListener("click",()=>{
+        if(pendingCatalogUpdate){
+            markCatalogBaseline(pendingCatalogUpdate.line,true);
+        }
+        closeCatalogUpdatePrompt();
+    });
+}
+if(saveCatalogUpdate){
+    saveCatalogUpdate.addEventListener("click",async()=>{
+        if(!pendingCatalogUpdate)return;
+        if(catalogUpdateError)catalogUpdateError.textContent="";
+        const formData=new FormData();
+        formData.set("description",pendingCatalogUpdate.description);
+        formData.set("unit_price",String(pendingCatalogUpdate.unitPrice));
+        try{
+            const response=await fetch(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,{method:"POST",body:formData});
+            const payload=await response.json();
+            if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not update catalog item.");
+            updateCatalogOptionEverywhere(payload.item);
+            markCatalogBaseline(pendingCatalogUpdate.line);
+            closeCatalogUpdatePrompt();
+        }catch(err){
+            if(catalogUpdateError)catalogUpdateError.textContent=err.message||"Could not update catalog item.";
+        }
+    });
+}
+invoiceLines.addEventListener("click",event=>{
+    const remove=event.target.closest(".removeInvoiceLine");
+    if(remove){
+        const line=remove.closest(".invoiceLine");
+        if(line)line.remove();
+        if(lineRows().length===0)addInvoiceLine();
+        refreshLineIndexes();
+        updateInvoiceLiveTotals();
+        markInvoiceDirty();
+    }
+});
+newItemForm.addEventListener("submit",async event=>{
+    event.preventDefault();
+    const error=document.getElementById("newItemError");
+    error.textContent="";
+    const formData=new FormData(newItemForm);
+    if(!formData.get("taxable"))formData.set("taxable","0");
+    try{
+        const response=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:formData});
+        const payload=await response.json();
+        if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
+        appendCatalogOption(payload.item,pendingItemSelect);
+        newItemModal.hidden=true;
+    }catch(err){
+        error.textContent=err.message||"Could not create item.";
+    }
+});
+if(invoiceForm){
+    invoiceForm.addEventListener("input",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("change",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("submit",event=>{
+        lockAllSelectedItems();
+        const submitter=event.submitter;
+        const isPreview=submitter&&submitter.getAttribute("formtarget")==="_blank";
+        if(isPreview){
+            allowInvoiceLeave=false;
+            return;
+        }
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+    });
+}
+document.addEventListener("click",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    const link=event.target.closest("a[href]");
+    const backButton=event.target.closest(".backButton");
+    if(!link&&!backButton)return;
+    if(link&&link.target==="_blank")return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    showUnsavedInvoicePrompt(()=>{
+        allowInvoiceLeave=true;
+        if(link){
+            window.location.href=link.href;
+        }else if(window.history.length>1){
+            window.history.back();
+        }else{
+            window.location.href="{{ url_for('index') }}";
+        }
+    });
+},true);
+window.addEventListener("beforeunload",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    event.preventDefault();
+    event.returnValue="";
+});
+if(saveBeforeLeaving){
+    saveBeforeLeaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        lockAllSelectedItems();
+        if(invoiceForm){
+            const submitButton=invoiceForm.querySelector('button[type="submit"]:not([formaction])');
+            if(submitButton&&invoiceForm.requestSubmit)invoiceForm.requestSubmit(submitButton);
+            else invoiceForm.submit();
+        }
+    });
+}
+if(leaveWithoutSaving){
+    leaveWithoutSaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        const navigate=pendingInvoiceNavigation;
+        hideUnsavedInvoicePrompt();
+        if(navigate)navigate();
+    });
+}
+if(keepEditingInvoice){
+    keepEditingInvoice.addEventListener("click",hideUnsavedInvoicePrompt);
+}
+if(invoiceLines&&lineRows().length===0)addInvoiceLine();
+lockAllSelectedItems();
+invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
+lineRows().forEach(markCatalogBaseline);
+refreshLineIndexes();
+updateInvoiceLiveTotals();
+invoiceDirty=false;
+</script>
+
+<style>
+.invoiceLinePanel{position:sticky;top:8px;z-index:5;margin:22px 0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.08);overflow:hidden}
+.invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
+.invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
+.invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
+@media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
+@media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
+</style>
 {% endblock %}

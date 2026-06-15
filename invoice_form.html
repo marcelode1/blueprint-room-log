@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>{% if selected_project %}Invoices - {{ selected_project.name }}{% else %}Invoices{% endif %}</h2>
+    {% if selected_project %}
+        <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
+        <a class="btn-link" href="{{ url_for('new_invoice', project_id=selected_project.id) }}">Create Invoice</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
+    {% else %}
+        <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
+    {% endif %}
+</div>
+
+<div class="card">
+    <form method="get">
+        {% if selected_project %}<input type="hidden" name="project_id" value="{{ selected_project.id }}">{% endif %}
+        <div class="grid">
+            <div>
+                <label>Search</label>
+                <input name="q" value="{{ q or '' }}" placeholder="Invoice, customer, project, email">
+            </div>
+            <div>
+                <label>Status</label>
+                <select name="status">
+                    <option value="">All statuses</option>
+                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
+                        <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ value|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit">Show Invoices</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) if selected_project else url_for('invoices') }}">Clear</a>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Invoice List</h3>
+    <div class="invoiceTableWrap">
+        <table class="invoiceTable">
+            <thead>
+                <tr>
+                    <th>Invoice</th>
+                    <th>Customer</th>
+                    <th>Project</th>
+                    <th>Date</th>
+                    <th>Due</th>
+                    <th>Status</th>
+                    <th>Total</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for inv in invoices %}
+                <tr>
+                    <td><a href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.invoice_number }}</a></td>
+                    <td>{{ inv.customer_name or '-' }}<br><span class="muted">{{ inv.customer_email or '' }}</span></td>
+                    <td>{{ inv.project_name or '-' }}</td>
+                    <td>{{ format_date(inv.invoice_date) }}</td>
+                    <td>{{ format_date(inv.due_date) if inv.due_date else '-' }}</td>
+                    <td><span class="invoiceStatus">{{ inv.status|title }}</span></td>
+                    <td>{{ format_invoice_money(inv.total) }}</td>
+                    <td><a class="btn-link btn-secondary" href="{{ url_for('edit_invoice', invoice_id=inv.id) }}">Edit</a></td>
+                </tr>
+            {% else %}
+                <tr><td colspan="8">No invoices found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<style>
+.invoiceTableWrap{overflow-x:auto}.invoiceTable{width:100%;border-collapse:collapse;min-width:860px}.invoiceTable th,.invoiceTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:top}.invoiceTable th{background:#f3f4f6}.invoiceStatus{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
+</style>
+{% endblock %}

@@ -1,98 +1,58 @@
-
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>New Project</h2>
-    <form method="post" enctype="multipart/form-data">
-        <label>Project Name</label>
-        <input name="name" required>
-        <label>Customer Name</label>
-        <input name="customer_name" autocomplete="name">
-        <label>Street Address</label>
-        <input id="customerStreet" name="customer_address" autocomplete="street-address" placeholder="Start typing the street address">
-        <div class="grid">
-            <div>
-                <label>City</label>
-                <input id="customerCity" name="customer_city" autocomplete="address-level2">
-            </div>
-            <div>
-                <label>State</label>
-                <input id="customerState" name="customer_state" autocomplete="address-level1" maxlength="2" placeholder="FL">
-            </div>
-            <div>
-                <label>ZIP Code</label>
-                <input id="customerZip" name="customer_zip" autocomplete="postal-code" inputmode="numeric">
-            </div>
-        </div>
-        <div class="billingAddressBlock">
-            <h3>Billing Address</h3>
-            <label class="inlineCheck">
-                <input id="billingSame" name="billing_same_as_customer" type="checkbox" checked>
-                Billing address is the same as customer address
-            </label>
-            <label>Billing Street Address</label>
-            <input id="billingStreet" name="billing_street" autocomplete="billing street-address" placeholder="Billing street address">
-            <div class="grid">
-                <div>
-                    <label>Billing City</label>
-                    <input id="billingCity" name="billing_city" autocomplete="billing address-level2">
-                </div>
-                <div>
-                    <label>Billing State</label>
-                    <input id="billingState" name="billing_state" autocomplete="billing address-level1" maxlength="2" placeholder="FL">
-                </div>
-                <div>
-                    <label>Billing ZIP Code</label>
-                    <input id="billingZip" name="billing_zip" autocomplete="billing postal-code" inputmode="numeric">
-                </div>
-            </div>
-        </div>
-        <label>Customer Phone</label>
-        <input name="customer_phone" autocomplete="tel">
-        <label>Customer Email</label>
-        <input name="customer_email" type="email" autocomplete="email">
-        <label>Upload PDF Blueprint / Image (optional)</label>
-        <input name="blueprint" type="file" accept=".pdf,image/*">
-        <p style="font-size:13px;">You can create the project now and upload or replace the blueprint later.</p>
-        <button type="submit">Create Project</button>
-    </form>
+    <h2>Notifications</h2>
+    <form method="post"><button type="submit">Mark All as Read</button></form>
 </div>
-<style>
-.billingAddressBlock{border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin:16px 0;background:#f8fafc}
-.billingAddressBlock h3{margin-top:0}
-.inlineCheck{display:flex;gap:10px;align-items:center;margin:8px 0 14px;font-weight:800}
-.inlineCheck input{width:auto}
-.billingAddressBlock input[readonly]{background:#eef2ff;color:#334155}
-</style>
-<script>
-(function(){
-    const pairs = [
-        ["customerStreet", "billingStreet"],
-        ["customerCity", "billingCity"],
-        ["customerState", "billingState"],
-        ["customerZip", "billingZip"]
-    ];
-    const same = document.getElementById("billingSame");
-    function syncBilling(){
-        if(!same) return;
-        pairs.forEach(([sourceId, targetId]) => {
-            const source = document.getElementById(sourceId);
-            const target = document.getElementById(targetId);
-            if(!source || !target) return;
-            if(same.checked){
-                target.value = source.value;
-                target.setAttribute("readonly", "readonly");
-            }else{
-                target.removeAttribute("readonly");
-            }
-        });
-    }
-    pairs.forEach(([sourceId]) => {
-        const source = document.getElementById(sourceId);
-        if(source) source.addEventListener("input", syncBilling);
-    });
-    if(same) same.addEventListener("change", syncBilling);
-    syncBilling();
-})();
-</script>
+<div class="card">
+    {% for e in events %}
+        <div id="notification-{{ e.id }}" class="card" style="border-left:6px solid {% if e.is_read %}#64748b{% else %}#dc2626{% endif %};">
+            {% if e.event_type == 'task_assigned' %}
+                <strong>Task assigned</strong>{% if is_main_admin() %} to {{ e.user_name or 'Unknown user' }}{% endif %}<br>
+            {% elif e.event_type == 'task_received' %}
+                <strong>Task received</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'task_completed' %}
+                <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'task_updated' %}
+                <strong>Task updated</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'field_comment_added' %}
+                <strong>Comment added</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'field_picture_added' %}
+                <strong>Picture added</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'field_audio_added' %}
+                <strong>Audio added</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'field_note_added' %}
+                <strong>Field update added</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'attendance_check_in' %}
+                <strong>Clock in</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'attendance_check_out' %}
+                <strong>Clock out</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% elif e.event_type == 'login' %}
+                <strong>Login</strong> by {{ e.user_name or 'Unknown user' }}<br>
+            {% endif %}
+            {% if e.message %}<p>{{ e.message }}</p>{% endif %}
+            {% if e.task_title %}
+                <p><strong>Task #:</strong> {{ e.task_number or '-' }}<br><strong>Task:</strong> {{ task_display_name(e) }}{% if e.project_name %}<br><strong>Project:</strong> {{ e.project_name }}{% endif %}</p>
+            {% elif e.project_name or e.room_name %}
+                <p>{% if e.project_name %}<strong>Project:</strong> {{ e.project_name }}{% endif %}{% if e.room_name %}<br><strong>Room:</strong> {{ e.room_name }}{% endif %}</p>
+            {% endif %}
+            <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</span>
+            {% if e.event_type == 'task_assigned' and e.task_id and not is_main_admin() %}
+                {% if not e.task_accepted_at %}
+                    <form method="post" action="{{ url_for('receive_task', task_id=e.task_id) }}">
+                        <input type="hidden" name="next" value="{{ url_for('assignment_tasks', task_id=e.task_id, calendar_task=e.task_id) }}">
+                        <button type="submit">Received</button>
+                    </form>
+                {% else %}
+                    <p class="muted">Confirmed {{ format_datetime(e.task_accepted_at) }}</p>
+                    <a class="btn-link btn-secondary" href="{{ url_for('assignment_tasks', task_id=e.task_id) }}">Open Tasks</a>
+                {% endif %}
+            {% else %}
+                <a class="btn-link btn-secondary" href="{{ url_for('open_notification', notification_id=e.id) }}">Open Notification</a>
+            {% endif %}
+        </div>
+    {% else %}
+        <p>No notifications yet.</p>
+    {% endfor %}
+</div>
 {% endblock %}

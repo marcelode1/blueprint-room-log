@@ -1,109 +1,1125 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card noPrint">
-    <h2>Comment Report</h2>
-    <form method="get">
-        <div class="grid">
-            <div>
-                <label>Project</label>
-                <select name="project_id">
-                    <option value="">All Projects</option>
-                    {% for p in report.projects %}
-                        <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Room</label>
-                <select name="room_id">
-                    <option value="">All Rooms</option>
-                    {% for r in report.rooms %}
-                        <option value="{{ r.id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.project_name }} - {{ r.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Period</label>
-                <select name="period">
-                    <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
-                    <option value="week" {% if period == "week" %}selected{% endif %}>Week</option>
-                    <option value="month" {% if period == "month" %}selected{% endif %}>Month</option>
-                    <option value="year" {% if period == "year" %}selected{% endif %}>Year</option>
-                </select>
-            </div>
-            <div>
-                <label>Date</label>
-                <input type="date" name="date" value="{{ selected_date }}" required>
-            </div>
+<div class="card">
+    <h2>Create a Task</h2>
+    <p class="muted">Choose a project, select one or more workers, and send task details to their app and email.</p>
+    {% if is_mobile_request() and is_main_admin() %}
+    <button type="button" id="realtimeVoiceTaskButton" class="btn-secondary">Realtime Voice Task</button>
+    <div id="realtimeVoiceTaskPanel" class="realtimeVoiceTaskPanel" hidden>
+        <div class="realtimeVoiceTaskActions">
+            <button type="button" id="realtimeVoiceStartButton">Start Realtime Voice</button>
+            <button type="button" class="btn-secondary" id="realtimeVoiceStopButton" disabled>Stop & Fill Task</button>
+            <button type="button" class="btn-secondary" id="realtimeVoiceClearButton">Clear Conversation</button>
         </div>
-        <button type="submit">Show Comment Report</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('comment_report_export', project_id=selected_project_id or '', room_id=selected_room_id or '', period=period, date=selected_date) }}">Export to CSV</a>
-        <button type="button" class="btn-secondary" onclick="window.print()">Print / Save PDF</button>
-    </form>
-    <p class="muted">Showing {{ report.start.date() }} through {{ report.end.date() }}.</p>
+        <audio id="realtimeVoiceAudio" autoplay hidden></audio>
+        <p id="realtimeVoiceTaskStatus" class="muted">Speak naturally. The assistant can ask questions, then tap Stop & Fill Task when ready.</p>
+        <p id="realtimeVoiceTranscript" class="realtimeVoiceTranscript" hidden></p>
+        <p id="realtimeVoiceAssistant" class="realtimeVoiceTranscript" hidden></p>
+        <p id="realtimeVoiceTaskResult" class="realtimeVoiceTaskResult" hidden></p>
+    </div>
+    {% endif %}
 </div>
 
 <div class="card">
-    <h3>Comments</h3>
-    <style>
-        .commentReportWrap{overflow-x:auto}
-        .commentReportTable{width:100%;border-collapse:collapse;min-width:980px}
-        .commentReportTable th,.commentReportTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
-        .commentReportTable th{background:#f3f4f6}
-        .commentText{white-space:pre-wrap;min-width:260px}
-        .commentLinkList{display:flex;gap:8px;flex-wrap:wrap}
-        .commentLinkList a{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border-radius:8px;background:#e0f2fe;color:#075985;text-decoration:none;font-weight:800}
-        .commentType{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:900;background:#eef2ff;color:#1d4ed8}
-        @page{size:letter portrait;margin:.35in}
-        @media print{header,.bottom-nav,.noPrint,.backButton,.linkedColumn{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0;padding:0;margin:0}.commentReportWrap{overflow:visible}.commentReportTable{width:100%;min-width:0;table-layout:fixed}.commentReportTable th,.commentReportTable td{font-size:9px;line-height:1.2;padding:4px;word-break:break-word}.commentReportTable th:nth-child(1){width:13%}.commentReportTable th:nth-child(2){width:15%}.commentReportTable th:nth-child(3){width:12%}.commentReportTable th:nth-child(4){width:17%}.commentReportTable th:nth-child(5){width:30%}.commentReportTable th:nth-child(6){width:13%}.commentType{font-size:8px;padding:2px 5px}.muted{color:#444}}
-    </style>
-    <div class="commentReportWrap">
-        <table class="commentReportTable">
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Project</th>
-                    <th>Room</th>
-                    <th>Type</th>
-                    <th>Comment</th>
-                    <th>Created By</th>
-                    <th class="linkedColumn">Linked To</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for record in report.records %}
-                <tr>
-                    <td>
-                        {{ format_date(record.record_date) }}<br>
-                        <span class="muted">{{ format_datetime(record.created_at) }}</span>
-                    </td>
-                    <td>{{ record.project_name or "-" }}</td>
-                    <td>{{ record.room_name or "-" }}</td>
-                    <td>
-                        <span class="commentType">{{ record.source_label }}</span>
-                        {% if record.task_id %}
-                            <br><span class="muted">Task #{{ record.task_number or record.task_id }}</span>
-                            {% if record.task_title %}<br><span class="muted">{{ record.task_title }}</span>{% endif %}
-                        {% endif %}
-                    </td>
-                    <td class="commentText">{{ record.comment or "-" }}</td>
-                    <td>
-                        {{ record.created_by_name or "Unknown user" }}
-                        {% if record.created_by_email %}<br><span class="muted">{{ record.created_by_email }}</span>{% endif %}
-                    </td>
-                    <td class="linkedColumn">
-                        <div class="commentLinkList">
-                            {% if record.comment_url %}
-                                <a href="{{ record.comment_url }}">Open Comment</a>
-                            {% endif %}
-                        </div>
-                    </td>
-                </tr>
-            {% else %}
-                <tr><td colspan="7">No comments for this report.</td></tr>
+    <form method="post" enctype="multipart/form-data" novalidate>
+        <label>Create Task For</label>
+        <select id="taskTypeSelect" name="task_type">
+            <option value="project">Project</option>
+            <option value="supplier">Supplier</option>
+        </select>
+
+        <input type="hidden" name="supplier_enabled" id="supplierEnabled" value="0">
+        <div id="supplierTaskPanel" class="supplierTaskPanel" style="display:none;">
+            <h3>Supplier</h3>
+            <div class="grid">
+                <div>
+                    <label>Supplier</label>
+                    <select name="supplier_id" id="supplierSelect">
+                        <option value="">Choose supplier</option>
+                        {% for s in suppliers %}
+                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                        {% endfor %}
+                        <option value="__new__">Add new supplier...</option>
+                    </select>
+                </div>
+                <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
+                <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers"></div>
+                <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList"></div>
+                <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList"></div>
+            </div>
+            <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
+            <input type="hidden" name="new_supplier_name" id="newSupplierName">
+            <input type="hidden" name="new_supplier_contact_name" id="newSupplierContactName">
+            <input type="hidden" name="new_supplier_phone" id="newSupplierPhone">
+            <input type="hidden" name="new_supplier_email" id="newSupplierEmail">
+            <input type="hidden" name="new_supplier_address" id="newSupplierAddress">
+            <input type="hidden" name="new_supplier_city" id="newSupplierCity">
+            <input type="hidden" name="new_supplier_state" id="newSupplierState">
+            <input type="hidden" name="new_supplier_zip" id="newSupplierZip">
+            <input type="hidden" name="new_supplier_website" id="newSupplierWebsite">
+            <input type="hidden" name="new_supplier_notes" id="newSupplierNotes">
+        </div>
+
+        <label id="projectSelectLabel">Project</label>
+        <select name="project_id" id="taskProjectSelect" required>
+            <option value="">Choose project</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
-            </tbody>
-        </table>
+        </select>
+
+        <div id="mainRoomField" class="mainRoomField" data-supplier-mode="0">
+            <label id="roomSelectLabel">Room</label>
+            <select name="room_id" id="taskMainRoomSelect">
+                <option value="">Choose project first</option>
+                {% for r in rooms %}
+                    <option value="{{ r.id }}" data-project-id="{{ r.project_id }}" {% if selected_room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div id="supplierItemActions" class="supplierItemActions" style="display:none;">
+            <button type="button" id="addSupplierItemBtn">Add to List</button>
+            <div id="supplierItemList" class="supplierItemList"></div>
+            <label>Purchase Note</label>
+            <textarea name="supplier_purchase_note" rows="2" placeholder="PO, color, pickup note, or order details"></textarea>
+        </div>
+
+        <h3>Workers</h3>
+        <div class="workerList">
+            {% for u in users %}
+                <label><input type="checkbox" name="user_ids" value="{{ u.id }}"> {{ u.name }} - {{ u.email }}</label>
+            {% else %}
+                <p>No workers found. Create users first.</p>
+            {% endfor %}
+        </div>
+
+        <div class="grid" id="taskScheduleFields">
+            <div>
+                <label>Start Date</label>
+                <input name="task_start_date" type="date" required>
+            </div>
+            <div>
+                <label>Be There Time</label>
+                <input name="task_start_time" type="time" required>
+            </div>
+            <div>
+                <label>To be done by</label>
+                <input name="task_end_date" type="date">
+            </div>
+        </div>
+
+        <div id="taskTextFields">
+            <label>Task</label>
+            <input name="title" placeholder="Task title">
+            <label>Task Information / Instructions</label>
+            <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
+        </div>
+        <input type="hidden" name="task_batch_json" id="taskBatchJson">
+        <div id="taskBatchPanel" class="taskBatchPanel">
+            <button type="button" class="btn-secondary" id="addTaskDraftBtn">Add Task</button>
+            <div id="taskDraftList" class="taskDraftList"></div>
+        </div>
+
+        {% set attachment_project_select_id = "taskProjectSelect" %}
+        {% include "_task_attachments_form.html" %}
+
+        <button type="submit">Save and Send</button>
+    </form>
+</div>
+
+<div id="newSupplierModal" class="newSupplierModal" aria-hidden="true">
+    <div class="newSupplierDialog">
+        <h3>Add New Supplier</h3>
+        <div class="grid">
+            <div><label>Supplier Name</label><input id="modalSupplierName"></div>
+            <div><label>Contact Name</label><input id="modalSupplierContactName"></div>
+            <div><label>Phone</label><input id="modalSupplierPhone" type="tel"></div>
+            <div><label>Email</label><input id="modalSupplierEmail" type="email"></div>
+            <div><label>Street Address</label><input id="modalSupplierAddress"></div>
+            <div><label>City</label><input id="modalSupplierCity"></div>
+            <div><label>State</label><input id="modalSupplierState" maxlength="2"></div>
+            <div><label>ZIP</label><input id="modalSupplierZip"></div>
+            <div><label>Website</label><input id="modalSupplierWebsite" type="url"></div>
+        </div>
+        <label>Supplier Notes</label>
+        <textarea id="modalSupplierNotes" rows="2"></textarea>
+        <div class="modalActions">
+            <button type="button" id="saveNewSupplierBtn">Save Supplier</button>
+            <button type="button" class="btn-secondary" id="cancelNewSupplierBtn">Cancel</button>
+        </div>
     </div>
 </div>
+
+<style>
+.workerList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:12px}
+.workerList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+.workerList input{width:auto;min-height:auto;margin-right:8px}
+.supplierTaskPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(14,165,233,.06)}
+.supplierItemActions{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(245,158,11,.08)}
+.supplierItemList{display:grid;gap:8px;margin-top:8px}
+.supplierItemRow,.taskDraftItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--card);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.supplierItemRow button,.taskDraftItem button{width:auto;min-height:40px;padding:8px 12px;margin:0}
+.taskBatchPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(37,99,235,.06)}
+.taskDraftList{display:grid;gap:8px;margin-top:8px}
+.newSupplierModal{display:none;position:fixed;inset:0;z-index:900;background:rgba(15,23,42,.72);padding:16px;overflow-y:auto}
+.newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
+.newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
+.modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mainRoomField{display:block;margin:7px 0 12px}
+.realtimeVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
+.realtimeVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.realtimeVoiceTaskActions button{margin:0}
+.realtimeVoiceTaskActions button.isListening{background:#16a34a!important}
+.realtimeVoiceTranscript,.realtimeVoiceTaskResult{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
+.realtimeVoiceTranscript{font-weight:800}
+@media(max-width:760px){.modalActions,.realtimeVoiceTaskActions{grid-template-columns:1fr}}
+</style>
+<script>
+(function(){
+    const projectSelect=document.getElementById("taskProjectSelect");
+    const roomSelect=document.getElementById("taskMainRoomSelect");
+    function filterMainRooms(){
+        if(!projectSelect||!roomSelect)return;
+        const projectId=projectSelect.value;
+        if(roomSelect.options[0])roomSelect.options[0].textContent=projectId?"Project general":"Choose project first";
+        roomSelect.disabled=!projectId;
+        Array.from(roomSelect.options).forEach(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            option.hidden=Boolean(optionProject)&&Boolean(projectId)&&optionProject!==projectId;
+            if(optionProject&&!projectId)option.hidden=true;
+        });
+        const selectedOption=roomSelect.options[roomSelect.selectedIndex];
+        if(selectedOption&&selectedOption.hidden)roomSelect.value="";
+    }
+    if(projectSelect)projectSelect.addEventListener("change",filterMainRooms);
+    filterMainRooms();
+    const taskTypeSelect=document.getElementById("taskTypeSelect");
+    const supplierPanel=document.getElementById("supplierTaskPanel");
+    const supplierEnabled=document.getElementById("supplierEnabled");
+    const supplierSelect=document.getElementById("supplierSelect");
+    const supplierItemsJson=document.getElementById("supplierItemsJson");
+    const supplierItemActions=document.getElementById("supplierItemActions");
+    const addSupplierItemBtn=document.getElementById("addSupplierItemBtn");
+    const supplierItemList=document.getElementById("supplierItemList");
+    const taskBatchJson=document.getElementById("taskBatchJson");
+    const addTaskDraftBtn=document.getElementById("addTaskDraftBtn");
+    const taskDraftList=document.getElementById("taskDraftList");
+    const taskForm=supplierEnabled?supplierEnabled.closest("form"):null;
+    const newSupplierModal=document.getElementById("newSupplierModal");
+    const saveNewSupplierBtn=document.getElementById("saveNewSupplierBtn");
+    const cancelNewSupplierBtn=document.getElementById("cancelNewSupplierBtn");
+    const projectLabel=document.getElementById("projectSelectLabel");
+    const roomLabel=document.getElementById("roomSelectLabel");
+    const scheduleFields=document.getElementById("taskScheduleFields");
+    const taskTextFields=document.getElementById("taskTextFields");
+    const supplierItemFields={
+        pickupDate:document.querySelector('[name="supplier_item_date"]'),
+        pickupTime:document.querySelector('[name="supplier_pickup_time"]'),
+        quantity:document.querySelector('[name="supplier_quantity"]'),
+        itemName:document.querySelector('[name="supplier_item_name"]'),
+        brand:document.querySelector('[name="supplier_brand"]'),
+        model:document.querySelector('[name="supplier_model"]'),
+        note:document.querySelector('[name="supplier_purchase_note"]')
+    };
+    let supplierItems=[];
+    let taskDrafts=[];
+    const hiddenSupplierFields={
+        name:document.getElementById("newSupplierName"),
+        contact:document.getElementById("newSupplierContactName"),
+        phone:document.getElementById("newSupplierPhone"),
+        email:document.getElementById("newSupplierEmail"),
+        address:document.getElementById("newSupplierAddress"),
+        city:document.getElementById("newSupplierCity"),
+        state:document.getElementById("newSupplierState"),
+        zip:document.getElementById("newSupplierZip"),
+        website:document.getElementById("newSupplierWebsite"),
+        notes:document.getElementById("newSupplierNotes")
+    };
+    const modalSupplierFields={
+        name:document.getElementById("modalSupplierName"),
+        contact:document.getElementById("modalSupplierContactName"),
+        phone:document.getElementById("modalSupplierPhone"),
+        email:document.getElementById("modalSupplierEmail"),
+        address:document.getElementById("modalSupplierAddress"),
+        city:document.getElementById("modalSupplierCity"),
+        state:document.getElementById("modalSupplierState"),
+        zip:document.getElementById("modalSupplierZip"),
+        website:document.getElementById("modalSupplierWebsite"),
+        notes:document.getElementById("modalSupplierNotes")
+    };
+    function updateTaskType(){
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(supplierPanel)supplierPanel.style.display=supplierMode?"block":"none";
+        if(supplierItemActions)supplierItemActions.style.display=supplierMode?"block":"none";
+        if(supplierEnabled)supplierEnabled.value=supplierMode?"1":"0";
+        if(projectLabel)projectLabel.textContent=supplierMode?"Project Where Material Will Go":"Project";
+        if(roomLabel)roomLabel.textContent=supplierMode?"Room Where Material Will Go":"Room";
+        const mainRoomField=document.getElementById("mainRoomField");
+        const taskBatchPanel=document.getElementById("taskBatchPanel");
+        if(mainRoomField)mainRoomField.dataset.supplierMode=supplierMode?"1":"0";
+        if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
+        if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
+        if(taskBatchPanel)taskBatchPanel.style.display=supplierMode?"none":"block";
+        const titleInput=document.querySelector('[name="title"]');
+        const startDateInput=document.querySelector('[name="task_start_date"]');
+        const startTimeInput=document.querySelector('[name="task_start_time"]');
+        if(titleInput)titleInput.required=!supplierMode;
+        if(startDateInput)startDateInput.required=!supplierMode;
+        if(startTimeInput)startTimeInput.required=!supplierMode;
+    }
+    if(taskTypeSelect)taskTypeSelect.addEventListener("change",updateTaskType);
+    updateTaskType();
+    function optionText(select){
+        if(!select||select.selectedIndex<0)return "";
+        return select.options[select.selectedIndex].textContent.trim();
+    }
+    function renderSupplierItems(){
+        if(supplierItemsJson)supplierItemsJson.value=JSON.stringify(supplierItems);
+        if(!supplierItemList)return;
+        supplierItemList.innerHTML="";
+        supplierItems.forEach((item,index)=>{
+            const row=document.createElement("div");
+            row.className="supplierItemRow";
+            const text=document.createElement("div");
+            text.innerHTML="<strong>"+(index+1)+". "+item.item_name+"</strong><br>Qty: "+item.quantity+
+                (item.brand?" | Brand: "+item.brand:"")+
+                (item.model?" | Model #: "+item.model:"")+
+                "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"");
+            const remove=document.createElement("button");
+            remove.type="button";
+            remove.className="btn-danger";
+            remove.textContent="Remove";
+            remove.addEventListener("click",()=>{
+                supplierItems.splice(index,1);
+                renderSupplierItems();
+            });
+            row.appendChild(text);
+            row.appendChild(remove);
+            supplierItemList.appendChild(row);
+        });
+    }
+    function taskField(name){
+        return document.querySelector('[name="'+name+'"]');
+    }
+    function currentTaskDraft(){
+        return {
+            room_id:roomSelect?roomSelect.value:"",
+            room_name:roomSelect&&roomSelect.value?optionText(roomSelect):"Project general",
+            task_start_date:taskField("task_start_date")?taskField("task_start_date").value:"",
+            task_start_time:taskField("task_start_time")?taskField("task_start_time").value:"",
+            task_end_date:taskField("task_end_date")?taskField("task_end_date").value:"",
+            title:taskField("title")?taskField("title").value.trim():"",
+            instructions:taskField("instructions")?taskField("instructions").value.trim():""
+        };
+    }
+    function hasTaskDraftContent(draft){
+        return Boolean((draft.title||"").trim()||(draft.instructions||"").trim());
+    }
+    function renderTaskDrafts(){
+        if(taskBatchJson)taskBatchJson.value=JSON.stringify(taskDrafts);
+        if(!taskDraftList)return;
+        taskDraftList.innerHTML="";
+        taskDrafts.forEach((draft,index)=>{
+            const row=document.createElement("div");
+            row.className="taskDraftItem";
+            const text=document.createElement("div");
+            text.innerHTML="<strong>"+(index+1)+". "+draft.title+"</strong><br>"+
+                "Room: "+(draft.room_name||"Project general")+" | Be there: "+(draft.task_start_date||"date not set")+" "+(draft.task_start_time||"time not set");
+            const remove=document.createElement("button");
+            remove.type="button";
+            remove.className="btn-danger";
+            remove.textContent="Remove";
+            remove.addEventListener("click",()=>{
+                taskDrafts.splice(index,1);
+                renderTaskDrafts();
+            });
+            row.appendChild(text);
+            row.appendChild(remove);
+            taskDraftList.appendChild(row);
+        });
+    }
+    function addTaskDraft(showAlert=true){
+        const draft=currentTaskDraft();
+        if(!projectSelect||!projectSelect.value){
+            if(showAlert)alert("Choose a project before adding a task.");
+            return false;
+        }
+        if(!draft.title||!draft.task_start_time){
+            if(showAlert)alert("Enter the task and be-there time before adding it.");
+            return false;
+        }
+        taskDrafts.push(draft);
+        renderTaskDrafts();
+        if(taskField("title"))taskField("title").value="";
+        if(taskField("instructions"))taskField("instructions").value="";
+        if(taskField("title"))taskField("title").focus();
+        return true;
+    }
+    function addSupplierItem(showAlert=true){
+        const projectId=projectSelect?projectSelect.value:"";
+        const roomId=roomSelect?roomSelect.value:"";
+        const item={
+            pickup_date:supplierItemFields.pickupDate?supplierItemFields.pickupDate.value:"",
+            pickup_time:supplierItemFields.pickupTime?supplierItemFields.pickupTime.value:"",
+            quantity:supplierItemFields.quantity?supplierItemFields.quantity.value:"",
+            item_name:supplierItemFields.itemName?supplierItemFields.itemName.value.trim():"",
+            brand:supplierItemFields.brand?supplierItemFields.brand.value.trim():"",
+            model:supplierItemFields.model?supplierItemFields.model.value.trim():"",
+            project_id:projectId,
+            project_name:optionText(projectSelect),
+            room_id:roomId,
+            room_name:roomId?optionText(roomSelect):"Project general"
+        };
+        if(!item.project_id||!item.item_name||!item.quantity){
+            if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
+            return false;
+        }
+        supplierItems.push(item);
+        renderSupplierItems();
+        if(supplierItemFields.quantity)supplierItemFields.quantity.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.value="";
+        if(supplierItemFields.brand)supplierItemFields.brand.value="";
+        if(supplierItemFields.model)supplierItemFields.model.value="";
+        if(supplierItemFields.itemName)supplierItemFields.itemName.focus();
+        return true;
+    }
+    if(addSupplierItemBtn)addSupplierItemBtn.addEventListener("click",()=>addSupplierItem(true));
+    if(addTaskDraftBtn)addTaskDraftBtn.addEventListener("click",()=>addTaskDraft(true));
+    if(projectSelect)projectSelect.addEventListener("change",()=>{
+        if(taskDrafts.length){
+            taskDrafts=[];
+            renderTaskDrafts();
+        }
+    });
+    if(taskForm)taskForm.addEventListener("submit",event=>{
+        const supplierMode=taskTypeSelect&&taskTypeSelect.value==="supplier";
+        if(!supplierMode){
+            const draft=currentTaskDraft();
+            if(hasTaskDraftContent(draft)){
+                if(!addTaskDraft(false)){
+                    event.preventDefault();
+                    alert("Enter the task and be-there time before saving.");
+                    return;
+                }
+            }
+            if(!taskDrafts.length){
+                event.preventDefault();
+                alert("Add at least one task before saving and sending.");
+                return;
+            }
+            renderTaskDrafts();
+            return;
+        }
+        const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
+        if(hasDraft||!supplierItems.length){
+            addSupplierItem(false);
+        }
+        if(!supplierItems.length){
+            event.preventDefault();
+            alert("Add at least one supplier material item before saving the task.");
+        }
+    });
+    function openNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.add("open");
+        newSupplierModal.setAttribute("aria-hidden","false");
+        if(modalSupplierFields.name)modalSupplierFields.name.focus();
+    }
+    function closeNewSupplierModal(){
+        if(!newSupplierModal)return;
+        newSupplierModal.classList.remove("open");
+        newSupplierModal.setAttribute("aria-hidden","true");
+    }
+    if(supplierSelect){
+        supplierSelect.addEventListener("change",()=>{
+            if(supplierSelect.value==="__new__")openNewSupplierModal();
+            else Object.values(hiddenSupplierFields).forEach(field=>{if(field)field.value="";});
+        });
+    }
+    if(cancelNewSupplierBtn)cancelNewSupplierBtn.addEventListener("click",()=>{
+        closeNewSupplierModal();
+        if(supplierSelect)supplierSelect.value="";
+    });
+    if(saveNewSupplierBtn)saveNewSupplierBtn.addEventListener("click",()=>{
+        const name=(modalSupplierFields.name&&modalSupplierFields.name.value.trim())||"";
+        if(!name){
+            alert("Supplier name is required.");
+            if(modalSupplierFields.name)modalSupplierFields.name.focus();
+            return;
+        }
+        Object.keys(hiddenSupplierFields).forEach(key=>{
+            if(hiddenSupplierFields[key]&&modalSupplierFields[key])hiddenSupplierFields[key].value=modalSupplierFields[key].value.trim();
+        });
+        if(supplierSelect){
+            let newOption=Array.from(supplierSelect.options).find(option=>option.dataset.newSupplier==="1");
+            if(!newOption){
+                newOption=document.createElement("option");
+                newOption.value="";
+                newOption.dataset.newSupplier="1";
+                supplierSelect.insertBefore(newOption,supplierSelect.querySelector('option[value="__new__"]'));
+            }
+            newOption.textContent=name+" (new)";
+            newOption.selected=true;
+        }
+        closeNewSupplierModal();
+    });
+    if(newSupplierModal)newSupplierModal.addEventListener("click",event=>{
+        if(event.target===newSupplierModal){
+            closeNewSupplierModal();
+            if(supplierSelect&&supplierSelect.value==="__new__")supplierSelect.value="";
+        }
+    });
+
+    const realtimeVoiceTaskButton=document.getElementById("realtimeVoiceTaskButton");
+    const realtimeVoiceTaskPanel=document.getElementById("realtimeVoiceTaskPanel");
+    const realtimeVoiceStartButton=document.getElementById("realtimeVoiceStartButton");
+    const realtimeVoiceStopButton=document.getElementById("realtimeVoiceStopButton");
+    const realtimeVoiceClearButton=document.getElementById("realtimeVoiceClearButton");
+    const realtimeVoiceAudio=document.getElementById("realtimeVoiceAudio");
+    const realtimeVoiceTaskStatus=document.getElementById("realtimeVoiceTaskStatus");
+    const realtimeVoiceTranscript=document.getElementById("realtimeVoiceTranscript");
+    const realtimeVoiceAssistant=document.getElementById("realtimeVoiceAssistant");
+    const realtimeVoiceTaskResult=document.getElementById("realtimeVoiceTaskResult");
+    let realtimePc=null;
+    let realtimeDc=null;
+    let realtimeStream=null;
+    let realtimeText="";
+    let realtimeTranscriptText="";
+    let realtimeAssistantText="";
+    let realtimeUserTranscriptLog="";
+    let realtimeAssistantTranscriptLog="";
+    let realtimeCurrentTranscriptText="";
+    let realtimeCurrentAssistantText="";
+    let realtimeProcessingTimer=null;
+    let realtimeFinalRequested=false;
+    let realtimeLastJsonText="";
+    let realtimeResponseInProgress=false;
+    let realtimePendingFinalRequest=false;
+    let realtimeCancelingForFinal=false;
+    let realtimeActiveResponseRetryTimer=null;
+
+    function setRealtimeStatus(message,isError=false){
+        if(!realtimeVoiceTaskStatus)return;
+        realtimeVoiceTaskStatus.textContent=message;
+        realtimeVoiceTaskStatus.style.color=isError?"#dc2626":"";
+    }
+    function setSelectValue(select,value){
+        if(!select)return;
+        select.value=value?String(value):"";
+        select.dispatchEvent(new Event("change",{bubbles:true}));
+    }
+    function appendRealtimeLine(existing,line){
+        const clean=String(line||"").trim();
+        if(!clean)return existing||"";
+        const current=String(existing||"").trim();
+        if(current.endsWith(clean))return current;
+        return current?current+"\n"+clean:clean;
+    }
+    function selectedRealtimeUserIds(){
+        return Array.from(document.querySelectorAll('input[name="user_ids"]:checked')).map(input=>input.value);
+    }
+    function getRealtimeUserText(){
+        return [realtimeUserTranscriptLog,realtimeCurrentTranscriptText].filter(Boolean).join("\n").trim();
+    }
+    function getRealtimeAssistantText(){
+        return [realtimeAssistantTranscriptLog,realtimeCurrentAssistantText,realtimeText].filter(Boolean).join("\n").trim();
+    }
+    function prepareRealtimeJsonText(text){
+        return String(text||"")
+            .replace(/([:\[,]\s*)(-?\d[\d\s]*\d)(?=\s*[\],}])/g,(match,prefix,numberText)=>prefix+numberText.replace(/\s+/g,""));
+    }
+    function parsedRealtimeObject(value){
+        const parsed=JSON.parse(prepareRealtimeJsonText(value));
+        if(Array.isArray(parsed)){
+            for(let i=parsed.length-1;i>=0;i--){
+                if(parsed[i]&&typeof parsed[i]==="object"&&!Array.isArray(parsed[i]))return parsed[i];
+            }
+            throw new Error("No task object in JSON array.");
+        }
+        return parsed;
+    }
+    function extractRealtimeJsonObjects(text){
+        const source=prepareRealtimeJsonText(text);
+        const objects=[];
+        let start=-1,depth=0,inString=false,escape=false;
+        for(let i=0;i<source.length;i++){
+            const char=source[i];
+            if(inString){
+                if(escape){escape=false;continue;}
+                if(char==="\\"){escape=true;continue;}
+                if(char==='"')inString=false;
+                continue;
+            }
+            if(char==='"'){inString=true;continue;}
+            if(char==="{"){
+                if(depth===0)start=i;
+                depth++;
+            }else if(char==="}"&&depth>0){
+                depth--;
+                if(depth===0&&start>=0){
+                    const candidate=source.slice(start,i+1);
+                    try{
+                        const parsed=parsedRealtimeObject(candidate);
+                        if(parsed&&typeof parsed==="object")objects.push(parsed);
+                    }catch(error){}
+                    start=-1;
+                }
+            }
+        }
+        return objects;
+    }
+    function looksLikeTaskDraft(draft){
+        if(!draft||typeof draft!=="object")return false;
+        const keys=Object.keys(draft).map(normalizedDraftKey);
+        return ["project_id","user_ids","task_start_date","task_start_time","title","instructions"].some(key=>keys.includes(key));
+    }
+    function parseRealtimeJson(text){
+        const raw=String(text||"").trim();
+        const fenced=raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        const candidate=(fenced?fenced[1]:raw).trim();
+        try{
+            return parsedRealtimeObject(candidate);
+        }catch(error){}
+        const objects=extractRealtimeJsonObjects(candidate).filter(looksLikeTaskDraft);
+        if(objects.length)return objects[objects.length-1];
+        throw new Error("No task JSON found.");
+    }
+    function compactMatchText(value){
+        return String(value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+    }
+    function normalizedDraftKey(key){
+        return String(key||"").replace(/\s+/g,"").replace(/-/g,"_");
+    }
+    function normalizeRealtimeDate(value){
+        const text=String(value||"").replace(/\s+/g,"");
+        const match=text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if(!match)return text;
+        return match[1]+"-"+match[2].padStart(2,"0")+"-"+match[3].padStart(2,"0");
+    }
+    function normalizeRealtimeTime(value){
+        const text=String(value||"").replace(/\s+/g,"").toLowerCase();
+        const match=text.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)?$/);
+        if(!match)return text;
+        let hour=parseInt(match[1],10);
+        const minute=parseInt(match[2]||"0",10);
+        if(match[3]==="pm"&&hour<12)hour+=12;
+        if(match[3]==="am"&&hour===12)hour=0;
+        if(hour<0||hour>23||minute<0||minute>59)return text;
+        return String(hour).padStart(2,"0")+":"+String(minute).padStart(2,"0");
+    }
+    function resolveSelectValue(select,value,projectId){
+        if(!select||value===undefined||value===null||value==="")return "";
+        const direct=String(value).trim();
+        if(Array.from(select.options).some(option=>option.value===direct))return direct;
+        const compact=compactMatchText(direct);
+        if(!compact)return "";
+        const options=Array.from(select.options).filter(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            return !projectId||!optionProject||optionProject===String(projectId);
+        });
+        const exact=options.find(option=>compactMatchText(option.textContent)===compact);
+        if(exact)return exact.value;
+        const contains=options.find(option=>{
+            const optionText=compactMatchText(option.textContent);
+            return optionText.includes(compact)||compact.includes(optionText);
+        });
+        return contains?contains.value:"";
+    }
+    function resolveUserIds(values){
+        const incoming=Array.isArray(values)?values:[values];
+        const inputs=Array.from(document.querySelectorAll('input[name="user_ids"]'));
+        const ids=[];
+        incoming.forEach(value=>{
+            if(value===undefined||value===null||value==="")return;
+            const direct=String(value).trim();
+            const directInput=inputs.find(input=>input.value===direct);
+            if(directInput){
+                if(!ids.includes(directInput.value))ids.push(directInput.value);
+                return;
+            }
+            const compact=compactMatchText(direct);
+            const match=inputs.find(input=>{
+                const label=input.closest("label");
+                const labelText=compactMatchText(label?label.textContent:"");
+                return labelText.includes(compact)||compact.includes(labelText.split("-")[0]||labelText);
+            });
+            if(match&&!ids.includes(match.value))ids.push(match.value);
+        });
+        return ids;
+    }
+    function roomOptionText(option){
+        const text=String(option&&option.textContent||"").trim();
+        const separator=text.indexOf(" - ");
+        return separator>=0?text.slice(separator+3).trim():text;
+    }
+    function resolveRealtimeRoomValue(projectId,normalized,title,instructions,notes){
+        let roomId=resolveSelectValue(roomSelect,normalized.room_id,projectId);
+        if(roomId)return roomId;
+        ["room_name","room","main_room","location","area"].some(key=>{
+            roomId=resolveSelectValue(roomSelect,normalized[key],projectId);
+            return Boolean(roomId);
+        });
+        if(roomId)return roomId;
+        const spokenText=[
+            title,
+            instructions,
+            notes,
+            normalized.room_name,
+            normalized.room,
+            normalized.main_room,
+            normalized.location,
+            normalized.area,
+            getRealtimeUserText(),
+            getRealtimeAssistantText(),
+            realtimeText
+        ].join(" ");
+        const compactSpoken=compactMatchText(spokenText);
+        if(!compactSpoken||!roomSelect)return "";
+        const options=Array.from(roomSelect.options).filter(option=>{
+            const optionProject=option.getAttribute("data-project-id")||"";
+            return option.value&&(!projectId||optionProject===String(projectId));
+        });
+        if(options.length===1)return options[0].value;
+        const directRoomText=[
+            normalized.room_name,
+            normalized.room,
+            normalized.main_room,
+            normalized.location,
+            normalized.area
+        ].join(" ");
+        const compactDirectRoom=compactMatchText(directRoomText);
+        if(compactDirectRoom){
+            const directMatches=[];
+            options.forEach(option=>{
+                const roomKey=compactMatchText(roomOptionText(option));
+                if(roomKey&&(roomKey.includes(compactDirectRoom)||compactDirectRoom.includes(roomKey))){
+                    directMatches.push({score:roomKey.length,value:option.value});
+                }
+            });
+            directMatches.sort((a,b)=>b.score-a.score);
+            if(directMatches.length)return directMatches[0].value;
+        }
+        const matches=[];
+        options.forEach(option=>{
+            const roomText=roomOptionText(option);
+            const roomKey=compactMatchText(roomText);
+            if(!roomKey)return;
+            if(compactSpoken.includes(roomKey)||roomKey.includes(compactSpoken)){
+                matches.push({score:roomKey.length,value:option.value});
+                return;
+            }
+            const words=String(roomText||"").toLowerCase().split(/[^a-z0-9]+/).filter(word=>word.length>=4);
+            const wordHits=words.filter(word=>compactSpoken.includes(compactMatchText(word))).length;
+            if(wordHits){
+                matches.push({score:wordHits*20+roomKey.length,value:option.value});
+            }
+        });
+        matches.sort((a,b)=>b.score-a.score);
+        return matches.length?matches[0].value:"";
+    }
+    function cleanRealtimeDraft(rawDraft){
+        const normalized={};
+        Object.keys(rawDraft||{}).forEach(key=>{
+            normalized[normalizedDraftKey(key)]=rawDraft[key];
+        });
+        const projectId=resolveSelectValue(projectSelect,normalized.project_id);
+        const title=String(normalized.title||"").trim();
+        const instructions=String(normalized.instructions||"").trim();
+        const notes=String(normalized.notes||"").trim();
+        return {
+            project_id:projectId,
+            room_id:resolveRealtimeRoomValue(projectId,normalized,title,instructions,notes),
+            room_name:String(normalized.room_name||normalized.room||normalized.main_room||normalized.location||normalized.area||"").trim(),
+            user_ids:resolveUserIds(normalized.user_ids),
+            task_start_date:normalizeRealtimeDate(normalized.task_start_date),
+            task_start_time:normalizeRealtimeTime(normalized.task_start_time),
+            task_end_date:normalizeRealtimeDate(normalized.task_end_date||normalized.task_start_date),
+            title:title,
+            instructions:instructions,
+            notes:notes
+        };
+    }
+    function fillRealtimeTaskDraft(draft){
+        draft=cleanRealtimeDraft(draft);
+        if(taskTypeSelect){
+            taskTypeSelect.value="project";
+            updateTaskType();
+        }
+        setSelectValue(projectSelect,draft.project_id);
+        filterMainRooms();
+        setSelectValue(roomSelect,draft.room_id);
+        const userIds=(draft.user_ids||[]).map(String);
+        document.querySelectorAll('input[name="user_ids"]').forEach(input=>{
+            input.checked=userIds.includes(input.value);
+        });
+        const startDate=document.querySelector('[name="task_start_date"]');
+        const startTime=document.querySelector('[name="task_start_time"]');
+        const endDate=document.querySelector('[name="task_end_date"]');
+        const title=document.querySelector('[name="title"]');
+        const instructions=document.querySelector('[name="instructions"]');
+        if(startDate)startDate.value=draft.task_start_date||"";
+        if(startTime)startTime.value=draft.task_start_time||"";
+        if(endDate)endDate.value=draft.task_end_date||draft.task_start_date||"";
+        if(title)title.value=draft.title||"";
+        if(instructions)instructions.value=draft.instructions||"";
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=false;
+            realtimeVoiceTaskResult.textContent="Task form filled. Review the fields below before saving.";
+        }
+        const missing=[];
+        if(!draft.project_id)missing.push("project");
+        if(!draft.room_id)missing.push("room");
+        if(!userIds.length)missing.push("worker");
+        if(!draft.task_start_time)missing.push("time");
+        if(!draft.title)missing.push("task title");
+        const roomNote=(!draft.room_id&&draft.room_name)?" Heard room: "+draft.room_name+".":"";
+        setRealtimeStatus(missing.length?"Realtime filled what it could. Please review: "+missing.join(", ")+". "+roomNote:"Task form filled. Please review it, then click Save and Send.",missing.length>0);
+    }
+    function stopRealtimeVoice(){
+        if(realtimeProcessingTimer){
+            clearTimeout(realtimeProcessingTimer);
+            realtimeProcessingTimer=null;
+        }
+        if(realtimeActiveResponseRetryTimer){
+            clearTimeout(realtimeActiveResponseRetryTimer);
+            realtimeActiveResponseRetryTimer=null;
+        }
+        if(realtimeStream){
+            realtimeStream.getTracks().forEach(track=>track.stop());
+            realtimeStream=null;
+        }
+        if(realtimeDc){
+            try{realtimeDc.close();}catch(error){}
+            realtimeDc=null;
+        }
+        if(realtimePc){
+            try{realtimePc.close();}catch(error){}
+            realtimePc=null;
+        }
+        if(realtimeVoiceAudio)realtimeVoiceAudio.srcObject=null;
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=false;
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
+    }
+    function clearRealtimeConversation(){
+        stopRealtimeVoice();
+        realtimeText="";
+        realtimeTranscriptText="";
+        realtimeAssistantText="";
+        realtimeUserTranscriptLog="";
+        realtimeAssistantTranscriptLog="";
+        realtimeCurrentTranscriptText="";
+        realtimeCurrentAssistantText="";
+        realtimeLastJsonText="";
+        realtimeFinalRequested=false;
+        realtimeResponseInProgress=false;
+        realtimePendingFinalRequest=false;
+        realtimeCancelingForFinal=false;
+        if(realtimeVoiceTranscript){
+            realtimeVoiceTranscript.hidden=true;
+            realtimeVoiceTranscript.textContent="";
+        }
+        if(realtimeVoiceAssistant){
+            realtimeVoiceAssistant.hidden=true;
+            realtimeVoiceAssistant.textContent="";
+        }
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=true;
+            realtimeVoiceTaskResult.textContent="";
+        }
+        setRealtimeStatus("Conversation cleared. Start Realtime Voice again when ready.");
+    }
+    function requestRealtimeResponse(force=false){
+        if(realtimeFinalRequested&&!force)return;
+        if(force)realtimeFinalRequested=false;
+        realtimeFinalRequested=true;
+        if(realtimeStream){
+            realtimeStream.getTracks().forEach(track=>track.stop());
+            realtimeStream=null;
+        }
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.remove("isListening");
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=true;
+        setRealtimeStatus("Processing voice command...");
+        stopRealtimeVoice();
+        createRealtimeDraftFromServer();
+    }
+    async function createRealtimeDraftFromServer(){
+        try{
+            if(realtimeVoiceTaskResult){
+                realtimeVoiceTaskResult.hidden=false;
+                realtimeVoiceTaskResult.textContent="Creating task form...";
+            }
+            const response=await fetch("{{ url_for('create_task_realtime_draft') }}",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({
+                    transcript:getRealtimeUserText(),
+                    assistant:getRealtimeAssistantText(),
+                    selected_project_id:projectSelect?projectSelect.value:"",
+                    selected_project_name:optionText(projectSelect),
+                    selected_room_id:roomSelect?roomSelect.value:"",
+                    selected_room_name:optionText(roomSelect),
+                    selected_user_ids:selectedRealtimeUserIds()
+                })
+            });
+            const data=await response.json().catch(()=>({error:"Could not read task draft response."}));
+            if(!response.ok)throw new Error(data.error||"Task draft failed.");
+            fillRealtimeTaskDraft(data.draft||{});
+            stopRealtimeVoice();
+        }catch(error){
+            setRealtimeStatus(error.message||"Task draft failed.",true);
+            stopRealtimeVoice();
+        }
+    }
+    function tryFillRealtimeFromVisibleJson(){
+        const sources=[
+            realtimeLastJsonText,
+            realtimeText,
+            realtimeVoiceTaskResult?realtimeVoiceTaskResult.textContent:"",
+            realtimeAssistantText,
+            realtimeTranscriptText
+        ];
+        for(const source of sources){
+            try{
+                fillRealtimeTaskDraft(parseRealtimeJson(source));
+                stopRealtimeVoice();
+                return true;
+            }catch(error){}
+        }
+        return false;
+    }
+    function handleRealtimeText(text){
+        realtimeText=(realtimeText+" "+String(text||"")).trim();
+        realtimeLastJsonText=realtimeText;
+    }
+    function showRealtimeTranscript(text,isFinal=false){
+        const transcript=String(text||"").trim();
+        if(!transcript||!realtimeVoiceTranscript)return;
+        if(isFinal){
+            realtimeUserTranscriptLog=appendRealtimeLine(realtimeUserTranscriptLog,transcript);
+            realtimeCurrentTranscriptText="";
+        }else{
+            realtimeCurrentTranscriptText=transcript;
+        }
+        realtimeTranscriptText=getRealtimeUserText();
+        realtimeVoiceTranscript.hidden=false;
+        realtimeVoiceTranscript.textContent=(isFinal?"Heard: ":"Listening: ")+transcript;
+        if(shouldAutoFillRealtimeTask(transcript)&&!realtimeFinalRequested){
+            setRealtimeStatus("Voice command received. Turning off mic and filling the task...");
+            setTimeout(()=>requestRealtimeResponse(),250);
+        }
+    }
+    function shouldAutoFillRealtimeTask(text){
+        const compact=String(text||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+        return [
+            "fill out the task",
+            "fill the task",
+            "fill out task",
+            "fill task",
+            "fill the task now",
+            "fill task now",
+            "fill the form",
+            "fill form",
+            "fill up the form",
+            "fill up form",
+            "fill up the task",
+            "fill up task",
+            "fill out the form",
+            "fill it out",
+            "fill it up",
+            "fill the form now",
+            "fill out the form now",
+            "feel the task",
+            "feel the task now",
+            "feel the form",
+            "feel the form now",
+            "feel up the form",
+            "save it to the form",
+            "put it in the form",
+            "create the task form",
+            "make the task",
+            "make the task form",
+            "write the task",
+            "write the task form",
+            "yes fill the task",
+            "yes fill the form",
+            "correct fill the task",
+            "correct fill the form",
+            "that is correct fill the task",
+            "that is correct fill the form",
+            "everything is correct fill the task",
+            "everything is correct fill the form",
+            "excellent fill the task",
+            "excellent fill the form",
+            "finish and fill the task",
+            "finish and fill the form",
+            "finish the conversation",
+            "finish conversation",
+            "end the conversation",
+            "we are done fill the task",
+            "we are done fill the form",
+            "close the mic",
+            "close microphone",
+            "stop and fill",
+            "stop and fill task",
+            "stop and fill the task"
+        ].some(phrase=>compact.includes(phrase));
+    }
+    function showRealtimeAssistant(text,isFinal=false){
+        const message=String(text||"").trim();
+        if(!message||!realtimeVoiceAssistant)return;
+        if(isFinal){
+            realtimeAssistantTranscriptLog=appendRealtimeLine(realtimeAssistantTranscriptLog,message);
+            realtimeCurrentAssistantText="";
+        }else{
+            realtimeCurrentAssistantText=message;
+        }
+        realtimeAssistantText=getRealtimeAssistantText();
+        realtimeVoiceAssistant.hidden=false;
+        realtimeVoiceAssistant.textContent="Assistant: "+message;
+    }
+    async function startRealtimeVoiceTask(){
+        if(!navigator.mediaDevices||!window.RTCPeerConnection){
+            setRealtimeStatus("This phone browser cannot start Realtime voice.",true);
+            return;
+        }
+        realtimeText="";
+        realtimeTranscriptText="";
+        realtimeAssistantText="";
+        realtimeUserTranscriptLog="";
+        realtimeAssistantTranscriptLog="";
+        realtimeCurrentTranscriptText="";
+        realtimeCurrentAssistantText="";
+        realtimeFinalRequested=false;
+        realtimeResponseInProgress=false;
+        realtimePendingFinalRequest=false;
+        setRealtimeStatus("Starting Realtime voice...");
+        if(realtimeVoiceTaskResult){
+            realtimeVoiceTaskResult.hidden=true;
+            realtimeVoiceTaskResult.textContent="";
+        }
+        if(realtimeVoiceTranscript){
+            realtimeVoiceTranscript.hidden=true;
+            realtimeVoiceTranscript.textContent="";
+        }
+        if(realtimeVoiceAssistant){
+            realtimeVoiceAssistant.hidden=true;
+            realtimeVoiceAssistant.textContent="";
+        }
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.disabled=true;
+        if(realtimeVoiceStartButton)realtimeVoiceStartButton.classList.add("isListening");
+        if(realtimeVoiceStopButton)realtimeVoiceStopButton.disabled=false;
+        try{
+            const tokenResponse=await fetch("{{ url_for('create_task_realtime_token') }}",{method:"POST"});
+            const tokenData=await tokenResponse.json().catch(()=>({error:"Could not read Realtime token response."}));
+            if(!tokenResponse.ok)throw new Error(tokenData.error||"Realtime token failed.");
+            const realtimeKey=tokenData.value||(tokenData.client_secret&&tokenData.client_secret.value)||(tokenData.session&&tokenData.session.client_secret&&tokenData.session.client_secret.value);
+            if(!realtimeKey)throw new Error("Realtime token was missing.");
+
+            realtimePc=new RTCPeerConnection();
+            realtimePc.addEventListener("track",event=>{
+                if(realtimeVoiceAudio&&event.streams&&event.streams[0]){
+                    realtimeVoiceAudio.srcObject=event.streams[0];
+                }
+            });
+            realtimePc.addEventListener("connectionstatechange",()=>{
+                if(realtimePc&&realtimePc.connectionState==="connected"){
+                    setRealtimeStatus("Listening... speak the task, then pause.");
+                }
+                if(realtimePc&&["failed","disconnected","closed"].includes(realtimePc.connectionState)&&!realtimeText){
+                    setRealtimeStatus("Realtime connection ended before a task was created.",true);
+                }
+            });
+            realtimeStream=await navigator.mediaDevices.getUserMedia({audio:true});
+            realtimeStream.getTracks().forEach(track=>realtimePc.addTrack(track,realtimeStream));
+            realtimeDc=realtimePc.createDataChannel("oai-events");
+            realtimeDc.addEventListener("open",()=>setRealtimeStatus("Listening... speak the task, then pause."));
+            realtimeDc.addEventListener("message",event=>{
+                let payload=null;
+                try{payload=JSON.parse(event.data);}catch(error){return;}
+                if(payload.type==="response.output_text.delta"||payload.type==="response.text.delta"){
+                    handleRealtimeText(payload.delta||"");
+                }
+                if(payload.type==="response.output_text.done"||payload.type==="response.text.done"){
+                    handleRealtimeText(payload.text||"");
+                }
+                if(payload.type==="response.created"){
+                    realtimeResponseInProgress=true;
+                }
+                if(payload.type==="conversation.item.input_audio_transcription.delta"){
+                    showRealtimeTranscript((realtimeTranscriptText+" "+(payload.delta||"")).trim(),false);
+                }
+                if(payload.type==="conversation.item.input_audio_transcription.completed"){
+                    showRealtimeTranscript(payload.transcript||realtimeTranscriptText,true);
+                }
+                if(payload.type==="response.audio_transcript.delta"){
+                    showRealtimeAssistant((realtimeCurrentAssistantText+" "+(payload.delta||"")).trim(),false);
+                }
+                if(payload.type==="response.audio_transcript.done"){
+                    showRealtimeAssistant(payload.transcript||realtimeCurrentAssistantText,true);
+                }
+                if(payload.type==="response.done"){
+                    realtimeResponseInProgress=false;
+                    if(!realtimeText){
+                        const output=((payload.response||{}).output||[]).flatMap(item=>item.content||[]);
+                        output.forEach(content=>handleRealtimeText(content.text||content.transcript||""));
+                    }
+                    if(realtimePendingFinalRequest&&!realtimeText){
+                        realtimePendingFinalRequest=false;
+                        realtimeCancelingForFinal=false;
+                        setTimeout(()=>requestRealtimeResponse(true),250);
+                    }
+                }
+                if(payload.type==="response.cancelled"||payload.type==="response.canceled"){
+                    realtimeResponseInProgress=false;
+                    if(realtimePendingFinalRequest){
+                        realtimePendingFinalRequest=false;
+                        realtimeCancelingForFinal=false;
+                        setTimeout(()=>requestRealtimeResponse(true),250);
+                    }
+                }
+                if(payload.type==="error"){
+                    const message=payload.error&&payload.error.message?payload.error.message:"Realtime voice error.";
+                    if(realtimePendingFinalRequest&&message.toLowerCase().includes("active response")){
+                        setRealtimeStatus("Assistant is still finishing. Retrying form fill...");
+                        if(realtimeActiveResponseRetryTimer)clearTimeout(realtimeActiveResponseRetryTimer);
+                        realtimeActiveResponseRetryTimer=setTimeout(()=>requestRealtimeResponse(true),1200);
+                    }else{
+                        setRealtimeStatus(message,true);
+                    }
+                }
+            });
+
+            const offer=await realtimePc.createOffer();
+            await realtimePc.setLocalDescription(offer);
+            const sdpResponse=await fetch("https://api.openai.com/v1/realtime/calls",{
+                method:"POST",
+                body:offer.sdp,
+                headers:{
+                    "Authorization":"Bearer "+realtimeKey,
+                    "Content-Type":"application/sdp"
+                }
+            });
+            const answerText=await sdpResponse.text();
+            if(!sdpResponse.ok)throw new Error(answerText.slice(0,220)||"Realtime connection failed.");
+            await realtimePc.setRemoteDescription({type:"answer",sdp:answerText});
+        }catch(error){
+            stopRealtimeVoice();
+            setRealtimeStatus(error.message||"Realtime voice failed.",true);
+        }
+    }
+    if(realtimeVoiceTaskButton)realtimeVoiceTaskButton.addEventListener("click",()=>{
+        if(realtimeVoiceTaskPanel)realtimeVoiceTaskPanel.hidden=!realtimeVoiceTaskPanel.hidden;
+    });
+    if(realtimeVoiceStartButton)realtimeVoiceStartButton.addEventListener("click",startRealtimeVoiceTask);
+    if(realtimeVoiceStopButton)realtimeVoiceStopButton.addEventListener("click",()=>{
+        requestRealtimeResponse(true);
+    });
+    if(realtimeVoiceClearButton)realtimeVoiceClearButton.addEventListener("click",clearRealtimeConversation);
+})();
+</script>
+{% include "_part_catalog_autocomplete.html" %}
 {% endblock %}

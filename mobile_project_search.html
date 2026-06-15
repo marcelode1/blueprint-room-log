@@ -5,6 +5,12 @@
     <h2>{{ project.name }}</h2>
     <p><strong>Customer:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Address:</strong> {{ project.customer_address or '-' }}</p>
+    {% if is_main_admin() or has_perm("view_contact_info") %}
+        <p><strong>Customer Phone Number:</strong> {{ format_us_phone(project.customer_phone) or '-' }}</p>
+        <p><strong>Point of Contact:</strong> {{ project.point_of_contact_name or '-' }}</p>
+        <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(project.point_of_contact_phone) or '-' }}</p>
+        <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
+    {% endif %}
     {% if is_main_admin() %}
         <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
     {% endif %}
@@ -12,6 +18,9 @@
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
+    {% endif %}
+    {% if can_view_project_files(project.id) %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
     {% endif %}
     <a class="btn-link" href="{{ url_for('my_tasks', mode='search', project_id=project.id, open_only=1) }}">Open Tasks</a>
     {% if is_main_admin() %}
@@ -45,21 +54,19 @@
 {% endif %}
 <div class="card">
     <h3>Rooms</h3>
-    <div class="mobileRoomList">
-    {% for r in rooms %}
-        <div class="mobileRoomRow">
-            <a class="btn-link" href="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</a>
-            {% if is_main_admin() %}
-                <form method="post" action="{{ url_for('delete_room', room_id=r.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                    <button type="submit" class="btn-danger mobileRoomDeleteButton" aria-label="Delete {{ r.name }}">Delete</button>
-                </form>
-            {% endif %}
-        </div>
+    {% if rooms %}
+    <div class="mobileRoomChooser">
+        <label for="mobileProjectRoomSelect">Choose a Room</label>
+        <select id="mobileProjectRoomSelect" onchange="if(this.value) window.location.href=this.value;">
+            <option value="">Choose a Room</option>
+            {% for r in rooms %}
+                <option value="{{ url_for('mobile_room', room_id=r.id) }}">{{ r.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
     {% else %}
         <p>No rooms created yet.</p>
-    {% endfor %}
-    </div>
+    {% endif %}
     {% if is_main_admin() or has_perm("create_rooms") %}
         <div class="mobileCreateRoomArea">
             <button type="button" id="showCreateRoomBtn">Create Room</button>
@@ -108,8 +115,14 @@ if(cancelCreateRoomBtn&&mobileRoomForm&&showCreateRoomBtn){
         showCreateRoomBtn.style.display="inline-flex";
     });
 }
+const mobileProjectRoomSelect=document.getElementById("mobileProjectRoomSelect");
+if(mobileProjectRoomSelect){
+    mobileProjectRoomSelect.addEventListener("change",()=>{
+        if(mobileProjectRoomSelect.value)window.location.href=mobileProjectRoomSelect.value;
+    });
+}
 </script>
 <style>
-.mobileBlueprintTabs,.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}.mobileRoomRow .btn-link,.mobileRoomRow button{margin:0}.mobileRoomRow form{margin:0}.mobileRoomDeleteButton{width:auto!important;min-width:88px!important;padding:12px!important;border-radius:14px!important}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+.mobileBlueprintTabs{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.mobileRoomChooser{display:grid;gap:8px}.mobileRoomChooser select{margin:0}.mobileCreateRoomArea{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
 </style>
 {% endblock %}

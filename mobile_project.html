@@ -6,13 +6,14 @@
         <label>Email</label>
         <input name="email" type="email" value="{{ email or '' }}" required>
         <label>PIN</label>
-        <input name="pin" inputmode="numeric" autocomplete="one-time-code" required>
+        <input name="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4}" maxlength="4" minlength="4" required>
         <label class="stayLoginCheck">
             <input name="stay_logged_in" type="checkbox" {% if stay_logged_in %}checked{% endif %}>
             Stay logged in on this phone
         </label>
         <button type="submit">Open Mobile Version</button>
     </form>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_forgot_pin') }}">Forgot PIN?</a>
     <a class="btn-link btn-secondary" href="{{ url_for('login') }}">Admin Login</a>
 </div>
 <style>

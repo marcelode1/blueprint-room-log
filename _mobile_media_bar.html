@@ -14,9 +14,6 @@
         <input name="phone_number" type="tel" placeholder="+15551234567">
         <label><input type="checkbox" name="sms_enabled"> Allow text messages for this user</label>
 
-        <label>PIN Number</label>
-        <input name="pin" inputmode="numeric" minlength="4" required>
-
         <label>Role</label>
         <select name="role">
             <option value="customer">Customer</option>
@@ -25,7 +22,7 @@
 
         <button type="submit">Send Mobile Invitation</button>
     </form>
-    <p class="muted">The invitation email sends the mobile link. Share the PIN with the user separately.</p>
+    <p class="muted">The invitation email sends a setup link. The user creates their own 4-digit PIN from that link.</p>
     <p class="muted">Text messages require Twilio settings on Render: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.</p>
 </div>
 
@@ -110,9 +107,8 @@
                 <p class="muted">Cellphone: {{ u.phone_number or "Not set" }}{% if u.sms_enabled %} - Text enabled{% else %} - Text disabled{% endif %}</p>
                 {% if u.role != "admin" %}
                 <form method="post" action="{{ url_for('update_user_pin', user_id=u.id) }}" style="margin-top:10px;">
-                    <label>New PIN / Resend Invite</label>
-                    <input name="pin" inputmode="numeric" minlength="4" required>
-                    <button type="submit" class="btn-secondary">Update PIN & Send Invite</button>
+                    <p class="muted">Send a private setup link so this user can create or reset their own 4-digit PIN.</p>
+                    <button type="submit" class="btn-secondary">Send PIN Setup Link</button>
                 </form>
                 {% endif %}
                 <div class="smsBox">

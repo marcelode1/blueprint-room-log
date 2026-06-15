@@ -7,100 +7,31 @@
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Timeline</a>
 </div>
 
-<div class="card" id="roomSwipeArea">
+<div class="card">
     <h3>Switch Rooms</h3>
-    <div class="roomScroller">
+    <div class="roomChooser">
+        <label for="roomSwitchSelect">Choose a Room</label>
+        <select id="roomSwitchSelect">
         {% for r in rooms %}
-            <a class="roomChip {% if r.id == room.id %}activeRoom{% endif %}" href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
+            <option value="{{ url_for('room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
         {% endfor %}
+        </select>
     </div>
-    <p class="muted">Scroll up/down here to move between rooms.</p>
 </div>
 
 {% if is_main_admin() %}
 <div class="card">
-    <h3>Create Task</h3>
-    <form method="post" enctype="multipart/form-data" action="{{ url_for('create_task', room_id=room.id) }}">
-        <div class="grid">
-            <div>
-                <label>Task Title</label>
-                <input name="title" placeholder="Take finish photo, verify wiring, install keypad" required>
-            </div>
-            <div>
-                <label>Assign To</label>
-                <select name="assigned_user_id" required>
-                    <option value="">Choose user</option>
-                    {% for u in users %}
-                        <option value="{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label>Due Date</label>
-                <input name="task_date" type="date" value="{{ selected_date or '' }}">
-            </div>
-            <div>
-                <label>Be There Time</label>
-                <input name="task_start_time" type="time" required>
-            </div>
-        </div>
-        <label>Instructions</label>
-        <textarea name="instructions" rows="4"></textarea>
-        <button type="button" class="btn-secondary roomSupplierBtn">Supplier</button>
-        <input type="hidden" name="supplier_enabled" class="roomSupplierEnabled" value="0">
-        <div class="roomSupplierPanel" style="display:none;">
-            <h3>Supplier Material</h3>
-            <div class="grid">
-                <div>
-                    <label>Existing Supplier</label>
-                    <select name="supplier_id">
-                        <option value="">Enter new supplier below</option>
-                        {% for s in suppliers %}
-                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div><label>Needed Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
-                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
-                <div><label>Material / Item</label><input name="supplier_item_name"></div>
-                <div><label>Brand</label><input name="supplier_brand"></div>
-                <div><label>Model Number</label><input name="supplier_model"></div>
-            </div>
-            <label>Purchase Note</label><textarea name="supplier_purchase_note" rows="2"></textarea>
-            <details>
-                <summary>Enter New Supplier</summary>
-                <div class="grid">
-                    <div><label>Supplier Name</label><input name="new_supplier_name"></div>
-                    <div><label>Contact Name</label><input name="new_supplier_contact_name"></div>
-                    <div><label>Phone</label><input name="new_supplier_phone" type="tel"></div>
-                    <div><label>Email</label><input name="new_supplier_email" type="email"></div>
-                    <div><label>Street Address</label><input name="new_supplier_address"></div>
-                    <div><label>City</label><input name="new_supplier_city"></div>
-                    <div><label>State</label><input name="new_supplier_state" maxlength="2"></div>
-                    <div><label>ZIP</label><input name="new_supplier_zip"></div>
-                    <div><label>Website</label><input name="new_supplier_website" type="url"></div>
-                </div>
-                <label>Supplier Notes</label><textarea name="new_supplier_notes" rows="2"></textarea>
-            </details>
-        </div>
-        {% include "_task_attachments_form.html" %}
-        <div class="grid taskOptions">
-            <label><input type="checkbox" name="require_picture"> Must take picture</label>
-            <label><input type="checkbox" name="allow_picture_upload" checked> Allow picture upload</label>
-            <label><input type="checkbox" name="allow_comment" checked> Allow comment</label>
-            <label><input type="checkbox" name="allow_audio" checked> Allow voice/audio</label>
-        </div>
-        <button type="submit">Assign Task</button>
-    </form>
+    <h3>Create a Task</h3>
+    <a class="btn-link" href="{{ url_for('create_global_task', project_id=project.id, room_id=room.id) }}">Create a Task</a>
 </div>
 {% endif %}
 
 <div class="card">
     <h3>Tasks</h3>
     {% for t in tasks %}
-        <div class="card taskCard {% if t.status == 'done' %}taskDone{% endif %}">
+        <div class="card taskCard {% if task_is_completed(t) %}taskDone{% endif %}">
             <strong>{{ task_display_name(t) }}</strong>
-            <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ t.status }}</p>
+            <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ task_status_label(t) }}</p>
             {% if project.customer_address %}
                 <p><strong>Address:</strong> {{ project.customer_address }}</p>
                 <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project.customer_address) }}">Open Route in Google Maps</a>
@@ -120,21 +51,28 @@
                 <p class="muted mobile-only-delete-note">Received tasks can only be deleted from the desktop version with an email PIN.</p>
             {% endif %}
             {% endif %}
-            {% if t.status != 'done' and not t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-            <form method="post" action="{{ url_for('receive_task', task_id=t.id) }}">
-                <button type="submit">Received</button>
-            </form>
-            {% elif t.accepted_at and t.assigned_user_id == session.get("user_id") %}
-            <button type="button" class="btn-secondary" disabled>Received</button>
-            {% endif %}
-            {% if t.status != 'done' and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
+            {% if not task_is_completed(t) and (t.accepted_at or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
             <form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}">
                 {% if t.allow_comment %}<label>Completion Comment</label><textarea name="completion_comment" rows="3"></textarea>{% endif %}
-                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload) %}
-                    <label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-                    {% if t.allow_picture_upload %}<label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">{% endif %}
+                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload or t.allow_audio) %}
+                <div class="roomMobileCompletionActions" aria-label="Complete task with picture, upload, or audio">
+                    {% if t.allow_picture_upload %}
+                    <button type="button" class="btn-secondary" data-completion-media-pick="completion_photo">Upload Picture</button>
+                    {% endif %}
+                    {% if t.require_picture or t.allow_picture_upload %}
+                    <button type="button" data-completion-media-pick="completion_camera">Take Picture</button>
+                    {% endif %}
+                    {% if t.allow_audio %}
+                    <button type="button" class="btn-secondary" data-completion-media-pick="completion_audio">Audio</button>
+                    {% endif %}
+                </div>
+                <p class="muted roomMobileCompletionStatus">No picture or audio selected.</p>
                 {% endif %}
-                {% if not t.supplier_id and t.allow_audio %}<label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*">{% endif %}
+                {% if not t.supplier_id and (t.require_picture or t.allow_picture_upload) %}
+                    <div class="roomNativeMediaField"><label>Take Picture</label><input name="completion_camera" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment"></div>
+                    {% if t.allow_picture_upload %}<div class="roomNativeMediaField"><label>Upload Picture</label><input name="completion_photo" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif"></div>{% endif %}
+                {% endif %}
+                {% if not t.supplier_id and t.allow_audio %}<div class="roomNativeMediaField"><label>Voice / Audio</label><input name="completion_audio" type="file" accept="audio/*"></div>{% endif %}
                 <button type="submit">Mark Task Done</button>
             </form>
             {% endif %}
@@ -162,13 +100,13 @@
             {% if can_edit_inventory() and item.status != 'used' %}
             <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
-                <input type="hidden" name="status" value="{{ 'available' if item.status == 'needs_purchase' else 'used' }}">
+                <input type="hidden" name="status" value="{{ 'purchased_waiting_arrival' if item.status == 'needs_purchase' else 'used' }}">
                 <input type="hidden" name="project_id" value="{{ project.id }}">
                 <input type="hidden" name="room_id" value="{{ room.id }}">
                 {% if item.status != 'needs_purchase' %}<label>Used Note</label>
                 <input name="used_note" placeholder="Where/how it was used">
                 {% endif %}
-                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> {{ 'Purchased' if item.status == 'needs_purchase' else 'Used' }}</label>
+                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> {{ 'Purchased Waiting Arrival' if item.status == 'needs_purchase' else 'Used' }}</label>
             </form>
             {% endif %}
         </div>
@@ -190,20 +128,38 @@
         <button type="button" class="btn-secondary" id="voiceBtn">Voice-to-Text Note</button>
         {% else %}<input type="hidden" name="comment" value="">{% endif %}
         <p id="voiceStatus" class="muted"></p>
+        {% if has_perm("add_pictures") or has_perm("add_audio") %}
+        <div class="roomMobileMediaActions" aria-label="Add picture, upload, or audio">
+            {% if has_perm("add_pictures") %}
+            <button type="button" class="btn-secondary" data-room-media-pick="photoInput">Upload Picture</button>
+            <button type="button" data-room-media-pick="cameraInput">Take Picture</button>
+            {% endif %}
+            {% if has_perm("add_audio") %}
+            <button type="button" class="btn-secondary" data-room-media-pick="audioInput">Audio</button>
+            {% endif %}
+        </div>
+        <p class="muted roomMobileMediaStatus" id="roomMobileMediaStatus">No picture or audio selected.</p>
+        {% endif %}
         {% if has_perm("add_pictures") %}
-        <label>Upload Picture</label>
-        <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-        <label>Take Picture From Phone</label>
-        <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+        <div class="roomNativeMediaField">
+            <label>Upload Picture</label>
+            <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
+        </div>
+        <div class="roomNativeMediaField">
+            <label>Take Picture From Phone</label>
+            <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+        </div>
         {% endif %}
         {% if has_perm("add_audio") %}
-        <label>Upload Audio Recording</label>
-        <input name="audio" id="audioInput" type="file" accept="audio/*">
+        <div class="roomNativeMediaField">
+            <label>Upload Audio Recording</label>
+            <input name="audio" id="audioInput" type="file" accept="audio/*">
+        </div>
         <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
         <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
         {% endif %}
         <p id="recordStatus" class="muted"></p>
-        <button type="submit">Save</button>
+        <button type="submit">Save Note</button>
     </form>
 </div>
 <button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
@@ -237,7 +193,7 @@
 </div>
 
 <style>
-.roomScroller{display:flex;flex-direction:column;gap:10px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding:6px 4px 12px}.roomChip{display:flex;align-items:center;justify-content:center;padding:14px 18px;background:var(--primary);color:white;border-radius:14px;text-decoration:none;font-weight:800;min-height:54px;text-align:center}.activeRoom{outline:3px solid #22c55e}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}}
+.roomChooser{display:grid;gap:8px}.roomChooser select{margin:0}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -251,6 +207,10 @@
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
 const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
+document.querySelectorAll("[data-room-media-pick]").forEach(btn=>btn.addEventListener("click",()=>{const input=document.getElementById(btn.dataset.roomMediaPick);if(input)input.click()}));
+["photoInput","cameraInput","audioInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>{const status=document.getElementById("roomMobileMediaStatus");if(!status)return;const selected=["photoInput","cameraInput","audioInput"].map(inputId=>document.getElementById(inputId)).filter(input=>input&&input.files&&input.files.length).map(input=>input.files[0].name);status.textContent=selected.length?selected.join(", "):"No picture or audio selected."})});
+document.querySelectorAll("[data-completion-media-pick]").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form");const input=form?form.querySelector('[name="'+btn.dataset.completionMediaPick+'"]'):null;if(input)input.click()}));
+document.querySelectorAll("form").forEach(form=>{const status=form.querySelector(".roomMobileCompletionStatus");if(!status)return;["completion_photo","completion_camera","completion_audio"].forEach(name=>{const input=form.querySelector('[name="'+name+'"]');if(input)input.addEventListener("change",()=>{const selected=["completion_photo","completion_camera","completion_audio"].map(inputName=>form.querySelector('[name="'+inputName+'"]')).filter(item=>item&&item.files&&item.files.length).map(item=>item.files[0].name);status.textContent=selected.length?selected.join(", "):"No picture or audio selected."})})});
 document.querySelectorAll(".roomSupplierBtn").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form"),panel=form?form.querySelector(".roomSupplierPanel"):null,enabled=form?form.querySelector(".roomSupplierEnabled"):null;if(!panel||!enabled)return;const opening=panel.style.display==="none";panel.style.display=opening?"block":"none";enabled.value=opening?"1":"0";btn.textContent=opening?"Remove Supplier":"Supplier"}));
 function isHeicFile(file){const type=(file&&file.type?file.type:"").toLowerCase(),name=(file&&file.name?file.name:"").toLowerCase();return type.includes("heic")||type.includes("heif")||name.endsWith(".heic")||name.endsWith(".heif")}
 async function compressImageFile(file,maxSize=1600,quality=.78){if(!file||isHeicFile(file)||!file.type||!file.type.startsWith("image/"))return file;const bitmap=await createImageBitmap(file);let{width,height}=bitmap;const ratio=Math.min(1,maxSize/Math.max(width,height));width=Math.round(width*ratio);height=Math.round(height*ratio);const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;canvas.getContext("2d").drawImage(bitmap,0,0,width,height);const blob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",quality));return blob?new File([blob],file.name.replace(/\.[^.]+$/,"")+"_compressed.jpg",{type:"image/jpeg"}):file}
@@ -264,10 +224,10 @@ async function openDrawModal(input){if(!input.files||!input.files[0]||isHeicFile
 ["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
 ["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
 ["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
-document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
+document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="ProjectONus_IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
 document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
 document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 const voiceBtn=document.getElementById("voiceBtn"),commentBox=document.getElementById("commentBox"),voiceStatus=document.getElementById("voiceStatus");if(voiceBtn&&("webkitSpeechRecognition"in window||"SpeechRecognition"in window)){const SR=window.SpeechRecognition||window.webkitSpeechRecognition,recog=new SR();recog.continuous=false;recog.interimResults=false;recog.lang="en-US";voiceBtn.onclick=()=>{voiceStatus.textContent="Listening...";recog.start()};recog.onresult=e=>{commentBox.value+=(commentBox.value?" ":"")+e.results[0][0].transcript;voiceStatus.textContent="Text added."};recog.onerror=()=>voiceStatus.textContent="Voice-to-text failed or permission denied."}else if(voiceBtn){voiceBtn.disabled=true;voiceStatus.textContent="Voice-to-text is not supported on this browser."}
-const swipeArea=document.getElementById("roomSwipeArea");if(swipeArea){let sx=0,sy=0;swipeArea.addEventListener("touchstart",e=>{sx=e.changedTouches[0].screenX;sy=e.changedTouches[0].screenY},{passive:true});swipeArea.addEventListener("touchend",e=>{const dx=e.changedTouches[0].screenX-sx,dy=e.changedTouches[0].screenY-sy;if(Math.abs(dx)<60||Math.abs(dy)>80)return;const links=Array.from(document.querySelectorAll(".roomChip")),active=links.findIndex(a=>a.classList.contains("activeRoom")),next=dx<0?active+1:active-1;if(links[next])window.location.href=links[next].href},{passive:true})}
+const roomSwitchSelect=document.getElementById("roomSwitchSelect");if(roomSwitchSelect){roomSwitchSelect.addEventListener("change",()=>{if(roomSwitchSelect.value)window.location.href=roomSwitchSelect.value})}
 </script>
 {% endblock %}

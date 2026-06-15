@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Projects</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_home') }}">Back to Mobile Home</a>
+</div>
+
+{% for p in projects %}
+    <div class="card">
+        <h3>{{ p.name }}</h3>
+        <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
+        <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+        <a class="btn-link" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Project</a>
+    </div>
+{% else %}
+    <div class="card">
+        <p>No projects found.</p>
+    </div>
+{% endfor %}
+{% endblock %}

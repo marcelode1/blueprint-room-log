@@ -4,7 +4,13 @@
 <div class="card">
     <h2>{{ room.name }}</h2>
     <p>{{ project.name }}</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Rooms</a>
+    <label for="mobileRoomSwitchSelect">Choose a Room</label>
+    <select id="mobileRoomSwitchSelect">
+        {% for r in rooms %}
+            <option value="{{ url_for('mobile_room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
+        {% endfor %}
+    </select>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Project</a>
 </div>
 {% if can_add_notes() %}
 <div class="card">
@@ -19,7 +25,7 @@
         {% set media_comment_name = 'comment' %}
         {% set media_comment_label = 'Comment' %}
         {% set media_comment_placeholder = 'Comment about this picture or audio' %}
-        {% set media_save_label = 'Save' %}
+        {% set media_save_label = 'Attach to Note' %}
         {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Note</button>
     </form>
@@ -42,7 +48,7 @@
     {% endfor %}
 </div>
 <style>
-.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.mobileRoomList{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;overflow-x:hidden;padding-right:4px}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
+.taskDone{opacity:.82}.mobile-only-delete-note{display:block}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
 <template id="completionBlockTemplate">
     <div class="completionBlock">
@@ -52,8 +58,9 @@
         {% set media_upload_name = 'completion_attachment___INDEX___photo' %}
         {% set media_audio_name = 'completion_attachment___INDEX___audio' %}
         {% set media_comment_name = 'completion_attachment___INDEX___comment' %}
-        {% set media_comment_label = 'Picture / Audio Comment' %}
-        {% set media_save_label = 'Save' %}
+        {% set media_comment_label = 'Comments' %}
+        {% set media_comment_placeholder = 'Details regarding this uploaded media' %}
+        {% set media_save_label = 'Attach to Task' %}
         {% include "_mobile_media_bar.html" %}
         <button type="button" class="btn-secondary removeCompletionBlock">Remove</button>
     </div>
@@ -67,6 +74,7 @@
     </div>
 </div>
 <script>
+const mobileRoomSwitchSelect=document.getElementById("mobileRoomSwitchSelect");if(mobileRoomSwitchSelect){mobileRoomSwitchSelect.addEventListener("change",()=>{if(mobileRoomSwitchSelect.value)window.location.href=mobileRoomSwitchSelect.value})}
 document.addEventListener("click",event=>{
     const addButton=event.target.closest(".addCompletionBlock");
     if(addButton){
@@ -97,7 +105,7 @@ async function openDrawModal(input){if(!input.files||!input.files[0]||isHeicFile
 ["mousedown","touchstart"].forEach(ev=>drawCanvas.addEventListener(ev,e=>{isDrawing=true;lastPoint=canvasPoint(e);e.preventDefault()}));
 ["mousemove","touchmove"].forEach(ev=>drawCanvas.addEventListener(ev,drawMove,{passive:false}));
 ["mouseup","mouseleave","touchend"].forEach(ev=>drawCanvas.addEventListener(ev,()=>{isDrawing=false}));
-document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
+document.getElementById("saveDrawingBtn").onclick=()=>{drawCanvas.toBlob(blob=>{if(blob&&activePhotoInput){const now=new Date(),pad=n=>String(n).padStart(2,"0"),fallback="ProjectONus_IMG_"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"_"+pad(now.getHours())+pad(now.getMinutes())+pad(now.getSeconds())+".jpg";const source=(activePhotoInput.files&&activePhotoInput.files[0]&&activePhotoInput.files[0].name)||fallback;const marked=source.match(/\.[^.]+$/)?source.replace(/\.[^.]+$/,"_marked.jpg"):source+"_marked.jpg";const file=new File([blob],marked,{type:"image/jpeg"});const dt=new DataTransfer();dt.items.add(file);activePhotoInput.files=dt.files}drawModal.style.display="none"},"image/jpeg",.86)};
 document.getElementById("clearDrawingBtn").onclick=()=>openDrawModal(activePhotoInput);
 document.getElementById("cancelDrawingBtn").onclick=()=>drawModal.style.display="none";
 document.querySelectorAll(".voiceTaskBtn").forEach(btn=>btn.addEventListener("click",()=>{const box=document.getElementById(btn.dataset.target);const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!box||!SR)return;const recog=new SR();recog.lang="en-US";recog.onresult=e=>box.value+=(box.value?" ":"")+e.results[0][0].transcript;recog.start()}));

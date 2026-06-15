@@ -11,6 +11,11 @@
         .settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
         .projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
         .projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+        .fileAccessSection{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+        .fileAccessProject{border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;background:rgba(255,255,255,.03)}
+        .fileAccessProject h5{margin:0 0 10px;font-size:1rem}
+        .fileAccessFolders{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+        .fileAccessFolders label{border:1px solid var(--border);border-radius:8px;padding:9px;background:var(--card);font-weight:700}
         @media(max-width:760px){.settingsTabs{display:none}}
     </style>
     <div class="settingsTabs desktop-only">
@@ -93,6 +98,21 @@
 </div>
 
 <div class="card">
+    <h3>Invoice Settings</h3>
+    <p class="muted">This tax rate is used automatically on invoices.</p>
+    <form method="post">
+        <input type="hidden" name="action" value="invoice_settings">
+        <div class="grid">
+            <div>
+                <label>Default Tax Rate %</label>
+                <input name="default_invoice_tax_rate" type="number" step="0.001" min="0" value="{{ get_app_setting('default_invoice_tax_rate', '0') }}">
+            </div>
+        </div>
+        <button type="submit">Save Invoice Settings</button>
+    </form>
+</div>
+
+<div class="card">
     {% set dtools = dtools_cloud_config() %}
     <h3>D-Tools Cloud Integration</h3>
     <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>
@@ -122,6 +142,14 @@
         <button type="submit">Save D-Tools Cloud Settings</button>
     </form>
     <p class="muted">Default authentication follows D-Tools Cloud API documentation: API key plus the required Basic Authorization header.</p>
+    <form method="post" action="{{ url_for('test_dtools_connection') }}">
+        <h4>Test D-Tools Import</h4>
+        <div class="grid">
+            <div><label>D-Tools Project or Quote ID</label><input name="dtools_ref" placeholder="Paste one real D-Tools ID"></div>
+            <div><label>Endpoint Path</label><input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}"></div>
+        </div>
+        <button type="submit" class="btn-secondary">Test Connection and Count Items</button>
+    </form>
 </div>
 
 <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">
@@ -134,20 +162,50 @@
             <form method="post">
                 <input type="hidden" name="action" value="permissions">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
+                {% set worker_defaults = u.role == "worker" %}
                 <div class="grid">
+                    <label><input type="checkbox" name="view_contact_info" {% if (p and p.view_contact_info) or (not p and worker_defaults) %}checked{% endif %}> View contact information</label>
                     <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
-                    <label><input type="checkbox" name="write_comments" {% if p and p.write_comments %}checked{% endif %}> Write comments</label>
+                    <label><input type="checkbox" name="write_comments" {% if (p and p.write_comments) or (not p and worker_defaults) %}checked{% endif %}> Write comments</label>
                     <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>
                     <label><input type="checkbox" name="delete_comments" {% if p and p.delete_comments %}checked{% endif %}> Delete comments</label>
                     <label><input type="checkbox" name="see_pictures" {% if not p or p.see_pictures %}checked{% endif %}> See pictures</label>
-                    <label><input type="checkbox" name="add_pictures" {% if p and p.add_pictures %}checked{% endif %}> Add pictures</label>
+                    <label><input type="checkbox" name="add_pictures" {% if (p and p.add_pictures) or (not p and worker_defaults) %}checked{% endif %}> Add pictures</label>
                     <label><input type="checkbox" name="delete_pictures" {% if p and p.delete_pictures %}checked{% endif %}> Delete pictures</label>
                     <label><input type="checkbox" name="see_audio" {% if not p or p.see_audio %}checked{% endif %}> See audio</label>
-                    <label><input type="checkbox" name="add_audio" {% if p and p.add_audio %}checked{% endif %}> Add audio</label>
+                    <label><input type="checkbox" name="add_audio" {% if (p and p.add_audio) or (not p and worker_defaults) %}checked{% endif %}> Add audio</label>
                     <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
                     <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
                     <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
                     <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
+                </div>
+                <div class="fileAccessSection">
+                    <h5>Project Files Access</h5>
+                    <p class="muted">Choose which project folders this user can open. Add project access first if a project is not listed here.</p>
+                    {% if u.role == "admin" %}
+                        <p class="muted">Admin accounts can see every project file folder.</p>
+                    {% else %}
+                        {% set file_projects = file_project_map.get(u.id, []) %}
+                        {% set user_file_access = project_file_access_map.get(u.id, {}) %}
+                        {% if file_projects %}
+                            {% for project in file_projects %}
+                                {% set selected_folders = user_file_access.get(project.id, []) %}
+                                <div class="fileAccessProject">
+                                    <h5>{{ project.name }}</h5>
+                                    <div class="fileAccessFolders">
+                                        {% for folder in project_file_folders %}
+                                            <label>
+                                                <input type="checkbox" name="project_file_folders_{{ project.id }}" value="{{ folder.key }}" {% if folder.key in selected_folders %}checked{% endif %}>
+                                                {{ folder.label }}
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p class="muted">No project access yet. Add this user to a project under the Project Access tab first.</p>
+                        {% endif %}
+                    {% endif %}
                 </div>
                 <button type="submit">Save Permissions for {{ u.name }}</button>
             </form>

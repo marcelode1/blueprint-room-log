@@ -1,0 +1,15 @@
+{% set be_there_time = format_task_time(t.task_start_time) %}
+<p><strong>Be There Time:</strong> {{ format_date(t.task_start_date or t.task_date) }}{% if be_there_time %} at {{ be_there_time }}{% endif %}</p>
+<p><strong>To be done by:</strong> {{ format_date(t.task_end_date or t.task_start_date or t.task_date) }}</p>
+{% if is_main_admin() or has_perm("view_contact_info") %}
+    {% set poc_phone = t.point_of_contact_phone or '' %}
+    {% if t.point_of_contact_name or poc_phone %}
+        <div class="taskContactInfo">
+            <p><strong>Point of Contact:</strong> {{ t.point_of_contact_name or '-' }}</p>
+            <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(poc_phone) or '-' }}</p>
+            {% if tel_phone_number(poc_phone) %}
+                <a class="btn-link btn-secondary taskCallButton" href="tel:{{ tel_phone_number(poc_phone) }}">Call</a>
+            {% endif %}
+        </div>
+    {% endif %}
+{% endif %}

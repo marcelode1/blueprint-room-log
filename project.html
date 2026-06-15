@@ -1,53 +1,181 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Notifications</h2>
-    <form method="post"><button type="submit">Mark All as Read</button></form>
+    <h2>Items & Catalog</h2>
+    <p class="muted">Reusable material and labor records used by inventory, supplier tasks, rooms, notes, and invoices.</p>
 </div>
-<div class="card">
-    {% for e in events %}
-        <div class="card" style="border-left:6px solid {% if e.is_read %}#64748b{% else %}#dc2626{% endif %};">
-            {% if e.event_type == 'task_assigned' %}
-                <strong>Task assigned</strong>{% if is_main_admin() %} to {{ e.user_name or 'Unknown user' }}{% endif %}<br>
-            {% elif e.event_type == 'task_received' %}
-                <strong>Task received</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'task_completed' %}
-                <strong>Task completed</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'field_comment_added' %}
-                <strong>Comment added</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'field_picture_added' %}
-                <strong>Picture added</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'field_audio_added' %}
-                <strong>Audio added</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'field_note_added' %}
-                <strong>Field update added</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'attendance_check_in' %}
-                <strong>Clock in</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% elif e.event_type == 'attendance_check_out' %}
-                <strong>Clock out</strong> by {{ e.user_name or 'Unknown user' }}<br>
-            {% endif %}
-            {% if e.message %}<p>{{ e.message }}</p>{% endif %}
-            {% if e.task_title %}
-                <p><strong>Task #:</strong> {{ e.task_number or '-' }}<br><strong>Task:</strong> {{ task_display_name(e) }}{% if e.project_name %}<br><strong>Project:</strong> {{ e.project_name }}{% endif %}</p>
-            {% elif e.project_name or e.room_name %}
-                <p>{% if e.project_name %}<strong>Project:</strong> {{ e.project_name }}{% endif %}{% if e.room_name %}<br><strong>Room:</strong> {{ e.room_name }}{% endif %}</p>
-            {% endif %}
-            <span class="muted">{{ e.user_email }} - {{ e.role }} - {{ format_date(e.created_at) }} {{ format_time(e.created_at) }}</span>
-            {% if e.event_type == 'task_assigned' and e.task_id and not is_main_admin() %}
-                {% if not e.task_accepted_at %}
-                    <form method="post" action="{{ url_for('receive_task', task_id=e.task_id) }}">
-                        <input type="hidden" name="next" value="{{ url_for('my_tasks', task_id=e.task_id) }}#task-{{ e.task_id }}">
-                        <button type="submit">Confirm Received</button>
-                    </form>
-                {% else %}
-                    <button type="button" class="btn-secondary" disabled>Received</button>
-                    <p class="muted">Confirmed {{ format_datetime(e.task_accepted_at) }}</p>
-                {% endif %}
-            {% endif %}
-            <a class="btn-link btn-secondary" href="{{ url_for('open_notification', notification_id=e.id) }}">Open Notification</a>
+
+{% if edit_part %}
+<div class="card catalogEditorCard">
+    <div class="catalogEditorHeader">
+        <div>
+            <h3>Edit Item</h3>
+            <p class="muted">{{ edit_part.item_name }}</p>
         </div>
-    {% else %}
-        <p>No notifications yet.</p>
-    {% endfor %}
+        <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page) }}">Cancel Edit</a>
+    </div>
+    <form method="post">
+        <input type="hidden" name="part_id" value="{{ edit_part.id }}">
+        <div class="grid">
+            <div>
+                <label>Classification</label>
+                <select name="item_type">
+                    <option value="part" {% if edit_part.item_type != 'service' %}selected{% endif %}>Material</option>
+                    <option value="service" {% if edit_part.item_type == 'service' %}selected{% endif %}>Labor</option>
+                </select>
+            </div>
+            <div><label>Item Name</label><input name="item_name" value="{{ edit_part.item_name }}" required></div>
+            <div><label>Manufacturer / Brand</label><input name="brand" value="{{ edit_part.brand or '' }}"></div>
+            <div><label>Model #</label><input name="item_model" value="{{ edit_part.item_model or '' }}"></div>
+            <div><label>Part Number</label><input name="part_number" value="{{ edit_part.part_number or '' }}"></div>
+            <div><label>Category</label><input name="category" value="{{ edit_part.category or '' }}"></div>
+            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ edit_part.unit_price or '' }}"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0" value="{{ edit_part.unit_cost or '' }}"></div>
+        </div>
+        <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if edit_part.taxable %}checked{% endif %}> Taxable</label>
+        <label>Description</label>
+        <textarea name="description" rows="3">{{ edit_part.description or '' }}</textarea>
+        <button type="submit">Save Changes</button>
+    </form>
 </div>
+{% endif %}
+
+<div class="card">
+    <h3>Add Catalog Item</h3>
+    <form method="post">
+        <div class="grid">
+            <div>
+                <label>Classification</label>
+                <select name="item_type">
+                    <option value="part">Material</option>
+                    <option value="service">Labor</option>
+                </select>
+            </div>
+            <div><label>Item Name</label><input name="item_name" required></div>
+            <div><label>Manufacturer / Brand</label><input name="brand"></div>
+            <div><label>Model #</label><input name="item_model"></div>
+            <div><label>Part Number</label><input name="part_number"></div>
+            <div><label>Category</label><input name="category" placeholder="Audio, network, labor, camera"></div>
+            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0"></div>
+        </div>
+        <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
+        <label>Description</label>
+        <textarea name="description" rows="3"></textarea>
+        <button type="submit">Save Catalog Item</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="catalogLibraryHeader">
+        <div>
+            <h3>Catalog Library</h3>
+            <p class="muted">{{ total_count }} item{{ '' if total_count == 1 else 's' }} sorted alphabetically. Showing {{ per_page }} per page.</p>
+        </div>
+        <span class="catalogPagePill">Page {{ page }} of {{ total_pages }}</span>
+    </div>
+    <form method="get" class="catalogSearch">
+        <input name="q" value="{{ q or '' }}" placeholder="Search item, model, brand, category">
+        <button type="submit">Search</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog') }}">Clear</a>
+    </form>
+
+    <div class="catalogTableWrap">
+        <table class="catalogTable">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Type</th>
+                    <th>Brand / Model</th>
+                    <th>Category</th>
+                    <th>Price</th>
+                    <th>Used</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for part in parts %}
+                <tr>
+                    <td>
+                        <strong>{{ part.item_name }}</strong>
+                        {% if part.description %}<span class="catalogDescription">{{ part.description }}</span>{% endif %}
+                        {% if part.part_number %}<span class="catalogSmall">Part #: {{ part.part_number }}</span>{% endif %}
+                    </td>
+                    <td><span class="catalogType {{ 'catalogLabor' if part.item_type == 'service' else 'catalogMaterial' }}">{{ 'Labor' if part.item_type == 'service' else 'Material' }}</span></td>
+                    <td>
+                        <span>{{ part.brand or '-' }}</span>
+                        {% if part.item_model %}<span class="catalogSmall">{{ part.item_model }}</span>{% endif %}
+                    </td>
+                    <td>{{ part.category or '-' }}</td>
+                    <td>{{ format_invoice_money(part.unit_price or 0) }}</td>
+                    <td>{{ part.inventory_count }} inv. / {{ part.invoice_count }} invoice</td>
+                    <td>
+                        <div class="catalogActions">
+                            <a class="btn-link" href="{{ url_for('parts_catalog', q=q, page=page, edit_id=part.id) }}">Edit</a>
+                            <form method="post" onsubmit="return confirm('Archive this catalog item? Existing inventory and invoice records will keep their links.');">
+                                <input type="hidden" name="part_id" value="{{ part.id }}">
+                                <input type="hidden" name="action" value="archive">
+                                <button type="submit" class="btn-secondary">Archive</button>
+                            </form>
+                            <form method="post" onsubmit="return confirm('Permanently delete this catalog item? Existing inventory and invoice lines will keep their saved text, but the reusable catalog link will be removed.');">
+                                <input type="hidden" name="part_id" value="{{ part.id }}">
+                                <input type="hidden" name="action" value="delete">
+                                <button type="submit" class="btn-danger">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7">No catalog items found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if total_pages > 1 %}
+        <div class="catalogPagination">
+            {% if page > 1 %}
+                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page-1) }}">Previous</a>
+            {% endif %}
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                    <span class="catalogPageCurrent">{{ p }}</span>
+                {% elif p <= 2 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+                    <a class="catalogPageLink" href="{{ url_for('parts_catalog', q=q, page=p) }}">{{ p }}</a>
+                {% elif p == 3 or p == total_pages - 2 %}
+                    <span class="catalogPageDots">...</span>
+                {% endif %}
+            {% endfor %}
+            {% if page < total_pages %}
+                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page+1) }}">Next</a>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.catalogEditorCard{border-left:4px solid var(--primary)}
+.catalogEditorHeader,.catalogLibraryHeader{display:flex;align-items:start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.catalogEditorHeader h3,.catalogLibraryHeader h3{margin-bottom:4px}
+.catalogSearch{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:10px 0 12px}.catalogSearch input{max-width:420px}
+.catalogPagePill{border:1px solid var(--border);border-radius:999px;padding:5px 10px;color:var(--muted);font-weight:800;font-size:12px;background:rgba(148,163,184,.08)}
+.catalogTableWrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
+.catalogTable{width:100%;min-width:980px;border-collapse:collapse;background:var(--card)}
+.catalogTable th,.catalogTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+.catalogTable th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px}
+.catalogTable td{font-size:13px}
+.catalogTable tbody tr:hover{background:rgba(37,99,235,.05)}
+.catalogDescription,.catalogSmall{display:block;color:var(--muted);font-size:12px;line-height:1.25;margin-top:2px}
+.catalogDescription{max-width:430px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.catalogType{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;white-space:nowrap}
+.catalogMaterial{color:#166534;background:#dcfce7}.catalogLabor{color:#1d4ed8;background:#dbeafe}
+.catalogActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.catalogActions form{margin:0}.catalogActions .btn-link,.catalogActions button{min-height:30px!important;padding:5px 9px!important;font-size:12px!important;margin:0!important}
+.catalogCheck{display:flex!important;gap:8px;align-items:center;font-weight:800}.catalogCheck input{width:auto;min-height:auto}
+.catalogPagination{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}
+.catalogPageLink,.catalogPageCurrent,.catalogPageDots{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px;border-radius:7px;text-decoration:none;font-weight:800}
+.catalogPageLink{border:1px solid var(--border);color:var(--text);background:var(--card)}
+.catalogPageCurrent{background:var(--primary);color:white}
+.catalogPageDots{color:var(--muted)}
+@media(max-width:760px){.catalogEditorHeader,.catalogLibraryHeader{display:block}.catalogDescription{white-space:normal}.catalogPagination{justify-content:center}}
+</style>
 {% endblock %}

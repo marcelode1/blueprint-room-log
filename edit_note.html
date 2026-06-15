@@ -1,23 +1,60 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card desktop-only">
-    <h2>Confirm Delete Task</h2>
-    <p><strong>{{ task_display_name(task) }}</strong></p>
-    <p class="muted">Project: {{ task.project_name or "-" }}</p>
-    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this task.</p>
-    <form method="post">
-        <input type="hidden" name="next" value="{{ next_url }}">
-        <label>Delete PIN</label>
-        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
-        <button type="submit" class="btn-danger">Delete Task</button>
-        <a class="btn-link btn-secondary" href="{{ next_url }}">Cancel</a>
+<div class="card">
+    <h2>D-Tools Preview</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
+    <p class="muted">Review what ProjectONus found before importing. Parts become inventory and catalog records. Services/labor become Parts / Services records only.</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Back to Project Inventory</a>
+</div>
+
+<div class="card">
+    <h3>Import These Items</h3>
+    <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
+        <input type="hidden" name="dtools_ref" value="{{ external_ref }}">
+        <input type="hidden" name="dtools_endpoint_path" value="{{ endpoint_path }}">
+        <button type="submit">Import Now</button>
     </form>
 </div>
-<div class="card mobileDeleteNotice">
-    <p class="muted">This task was already received by the worker. Delete it from the desktop version with an email PIN.</p>
+
+<div class="card">
+    <h3>Found {{ items|length }} Item{% if items|length != 1 %}s{% endif %}</h3>
+    <div class="dtoolsPreviewWrap">
+        <table class="dtoolsPreviewTable">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Item</th>
+                    <th>Brand</th>
+                    <th>Model #</th>
+                    <th>Qty</th>
+                    <th>Unit Price</th>
+                    <th>Category</th>
+                    <th>D-Tools Location</th>
+                    <th>Matched Room</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in items %}
+                <tr class="dtoolsRow dtools-{{ item.item_type }}">
+                    <td><span class="typePill">{{ item.item_type|title }}</span></td>
+                    <td><strong>{{ item.item_name }}</strong>{% if item.description %}<br><span class="muted">{{ item.description }}</span>{% endif %}</td>
+                    <td>{{ item.brand or '-' }}</td>
+                    <td>{{ item.model or '-' }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ format_invoice_money(item.unit_price) if item.unit_price is not none else '-' }}</td>
+                    <td>{{ item.category or '-' }}</td>
+                    <td>{{ item.location or '-' }}</td>
+                    <td>{{ item.matched_room_name or 'Project general' }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="9">No usable D-Tools items were found. Try a different endpoint path or ID.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
+
 <style>
-.mobileDeleteNotice{display:none}
-@media(max-width:760px){.mobileDeleteNotice{display:block}}
+.dtoolsPreviewWrap{overflow-x:auto}.dtoolsPreviewTable{width:100%;min-width:1050px;border-collapse:collapse}.dtoolsPreviewTable th,.dtoolsPreviewTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:top}.dtoolsPreviewTable th{background:#eef2f7}.dtools-service{background:#f5f3ff}.dtools-part{background:#f8fafc}.typePill{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
 </style>
 {% endblock %}

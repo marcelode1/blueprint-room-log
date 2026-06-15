@@ -1,27 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
-    <h2>Search Projects</h2>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_home') }}">Back to Mobile Home</a>
-    <form method="get" action="{{ url_for('mobile_project_search') }}">
-        <label>Search</label>
-        <input name="q" value="{{ q or '' }}" placeholder="Project, customer, or address">
-        <button type="submit">Search Projects</button>
+<div class="card" style="max-width:420px;margin:auto;">
+    <h2>Create New Mobile PIN</h2>
+    <p class="muted">{{ user.email }}</p>
+    <form method="post">
+        <label>4-digit PIN</label>
+        <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" autocomplete="new-password" required>
+        <label>Confirm PIN</label>
+        <input name="confirm_pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" autocomplete="new-password" required>
+        <label class="stayLoginCheck">
+            <input name="stay_logged_in" type="checkbox" {% if stay_logged_in %}checked{% endif %}>
+            Stay logged in on this phone
+        </label>
+        <button type="submit">Save PIN</button>
     </form>
 </div>
-
-{% if q %}
-    {% for p in projects %}
-        <div class="card">
-            <h3>{{ p.name }}</h3>
-            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
-            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
-            <a class="btn-link" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Project</a>
-        </div>
-    {% else %}
-        <div class="card">
-            <p>No projects found.</p>
-        </div>
-    {% endfor %}
-{% endif %}
+<style>
+.stayLoginCheck{display:flex;align-items:center;gap:10px;margin:10px 0 14px;font-weight:800}
+.stayLoginCheck input{width:auto;min-height:auto;margin:0}
+</style>
 {% endblock %}

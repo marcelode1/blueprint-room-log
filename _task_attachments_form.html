@@ -1,23 +1,234 @@
-<form method="post" enctype="multipart/form-data" action="{{ url_for('complete_task', task_id=t.id) }}" class="mobileRoomCompletionForm">
-    <input type="hidden" name="next" value="{{ request.full_path }}#task-{{ t.id }}">
-    <input type="hidden" name="completion_room_id" value="{{ r.id }}">
-    <label>Completion Comment</label>
-    <textarea name="completion_comment" rows="3"></textarea>
-    {% if not t.supplier_id %}
-    <div class="completionBlocks">
-        <div class="completionBlock">
-            <input type="hidden" name="completion_attachment_indexes" value="0">
-            {% set media_id = 'task_' ~ t.id ~ '_room_' ~ r.id ~ '_media_0' %}
-            {% set media_camera_name = 'completion_attachment_0_camera' %}
-            {% set media_upload_name = 'completion_attachment_0_photo' %}
-            {% set media_audio_name = 'completion_attachment_0_audio' %}
-            {% set media_comment_name = 'completion_attachment_0_comment' %}
-            {% set media_comment_label = 'Picture / Audio Comment' %}
-            {% set media_save_label = 'Save' %}
-            {% include "_mobile_media_bar.html" %}
-        </div>
-    </div>
-    <button type="button" class="btn-secondary addCompletionBlock">Add Picture / Audio</button>
+{% set supplier = t.get('_supplier') %}
+{% set supplier_item = t.get('_supplier_inventory_item') %}
+{% set supplier_items = t.get('_supplier_inventory_items', []) %}
+{% set supplier_item_attachments = t.get('_supplier_item_attachments', {}) %}
+{% set can_pickup_supplier_item = is_main_admin() or t.assigned_user_id == session.get("user_id") %}
+{% set supplier_task_return_url = request.full_path ~ '#task-' ~ t.id %}
+{% if supplier %}
+    {% if supplier_items %}
+        {% set display_supplier_items = supplier_items %}
+    {% elif supplier_item %}
+        {% set display_supplier_items = [supplier_item] %}
+    {% else %}
+        {% set display_supplier_items = [] %}
     {% endif %}
-    <button type="submit">Mark This Room Done</button>
-</form>
+    <div class="supplierTaskInfo">
+        <h4>Supplier</h4>
+        <p class="supplierName">{{ supplier.name }}</p>
+        <div class="supplierMaterialList">
+        {% for item in display_supplier_items %}
+            {% set item_photos = supplier_item_attachments.get(item.id, []) %}
+            <div class="supplierMaterialItem">
+                <p><strong>Material / Item:</strong> {{ item.item_name }}</p>
+                <p><strong>QTY:</strong> {{ item.quantity }}</p>
+                <p><strong>Brand:</strong> {{ item.brand or '-' }}</p>
+                <p><strong>Model:</strong> {{ item.item_model or '-' }}</p>
+                <p><strong>Project:</strong> {{ item.project_name or '-' }}</p>
+                <p><strong>Room:</strong> {{ item.room_name or '-' }}</p>
+                <p><strong>Status:</strong> {{ inventory_status_label(item.status) }}</p>
+                {% if item.used_note %}
+                    <p><strong>Note:</strong><br>{{ item.used_note }}</p>
+                {% endif %}
+                {% if item.pickup_comment %}
+                    <p><strong>Comment:</strong><br>{{ item.pickup_comment }}</p>
+                {% endif %}
+                {% if item_photos %}
+                    <div class="supplierItemPhotoList">
+                        {% for attachment in item_photos %}
+                            {% if attachment.file_type == 'photo' %}
+                                <div class="supplierItemPhoto">
+                                    {% if attachment.comment %}
+                                        <div class="supplierPictureComment">{{ attachment.comment }}</div>
+                                    {% endif %}
+                                    <img class="photo" src="{{ url_for('storage_file', storage_path=attachment.storage_path) }}">
+                                    <p class="muted">{{ attachment.original_filename or 'Material picture' }}</p>
+                                    {% include "_attachment_comment_editor.html" %}
+                                    {% if is_main_admin() and not is_mobile_request() %}
+                                        <form method="post" action="{{ url_for('delete_task_attachment', task_id=t.id, attachment_id=attachment.id) }}" onsubmit="return confirm('Delete this picture?');">
+                                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                                            <button type="submit" class="btn-danger">Delete Picture</button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if can_pickup_supplier_item %}
+                    <form method="post" enctype="multipart/form-data" action="{{ url_for('pickup_task_supplier_item', task_id=t.id, item_id=item.id) }}" class="supplierItemPickupForm">
+                        <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                        <label>Task Status</label>
+                        <select name="supplier_status" required {% if item.status == 'used' %}disabled{% endif %}>
+                            <option value="" selected>Choose task status</option>
+                            {% for value, label in supplier_task_status_options.items() %}
+                                <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="supplierItemPhotoBlocks">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="0">
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media_0' %}
+                                {% set media_camera_name = 'supplier_item_attachment_0_camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment_0_photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment_0_comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Attach to Item' %}
+                                {% include "_mobile_media_bar.html" %}
+                            </div>
+                        </div>
+                        <template class="supplierItemPhotoBlockTemplate">
+                            <div class="supplierItemPhotoBlock">
+                                <input type="hidden" name="supplier_item_attachment_indexes" value="__INDEX__">
+                                {% set media_id = 'supplier_item_' ~ item.id ~ '_media___INDEX__' %}
+                                {% set media_camera_name = 'supplier_item_attachment___INDEX___camera' %}
+                                {% set media_upload_name = 'supplier_item_attachment___INDEX___photo' %}
+                                {% set media_audio_name = '' %}
+                                {% set media_comment_name = 'supplier_item_attachment___INDEX___comment' %}
+                                {% set media_comment_label = 'Comment Box' %}
+                                {% set media_save_label = 'Attach to Item' %}
+                                {% include "_mobile_media_bar.html" %}
+                                <button type="button" class="btn-secondary removeSupplierItemPhoto">Remove</button>
+                            </div>
+                        </template>
+                        <button type="button" class="btn-secondary addSupplierItemPhoto">Add more picture</button>
+                        <button type="submit">Save and Send to Admin</button>
+                    </form>
+                    <details class="supplierEditDetails">
+                        <summary>Edit Material Details</summary>
+                        <form method="post" action="{{ url_for('update_task_supplier_item', task_id=t.id, item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                            <label>Material / Item</label>
+                            <input name="item_name" class="js-part-item" list="partCatalogNameList" value="{{ item.item_name or '' }}" required>
+                            <label>Quantity</label>
+                            <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity or '' }}" required>
+                            <label>Brand</label>
+                            <input name="brand" class="js-part-brand" list="partCatalogBrandList" value="{{ item.brand or '' }}">
+                            <label>Model Number</label>
+                            <input name="item_model" class="js-part-model" list="partCatalogModelList" value="{{ item.item_model or '' }}">
+                            <label>Pickup Date</label>
+                            <input name="item_date" type="date" value="{{ item.item_date or '' }}">
+                            <label>Pickup Time</label>
+                            <input name="supplier_pickup_time" type="time" value="{{ item.supplier_pickup_time or '' }}">
+                            <label>Task Status</label>
+                            <select name="supplier_status" required>
+                                <option value="" selected>Choose task status</option>
+                                {% for value, label in supplier_task_status_options.items() %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <label>Note</label>
+                            <textarea name="used_note" rows="2">{{ item.used_note or '' }}</textarea>
+                            <button type="submit" class="btn-secondary">Save Material Details</button>
+                        </form>
+                    </details>
+                {% else %}
+                    <label class="supplierPickupCheck supplierPickupCheckReadOnly">
+                        {{ inventory_status_label(item.status) }}
+                    </label>
+                {% endif %}
+            </div>
+        {% endfor %}
+        </div>
+        {% if can_pickup_supplier_item %}
+            <details class="supplierEditDetails">
+                <summary>Add Material to Supplier Task</summary>
+                <form method="post" action="{{ url_for('add_task_supplier_item', task_id=t.id) }}">
+                    <input type="hidden" name="next" value="{{ supplier_task_return_url }}">
+                    <label>Material / Item</label>
+                    <input name="item_name" class="js-part-item" list="partCatalogNameList" required>
+                    <label>Quantity</label>
+                    <input name="quantity" type="number" step="0.01" min="0.01" required>
+                    <label>Brand</label>
+                    <input name="brand" class="js-part-brand" list="partCatalogBrandList">
+                    <label>Model Number</label>
+                    <input name="item_model" class="js-part-model" list="partCatalogModelList">
+                    <label>Pickup Date</label>
+                    <input name="item_date" type="date">
+                    <label>Pickup Time</label>
+                    <input name="supplier_pickup_time" type="time">
+                    <label>Task Status</label>
+                    <select name="supplier_status" required>
+                        <option value="" selected>Choose task status</option>
+                        {% for value, label in supplier_task_status_options.items() %}
+                            <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Note</label>
+                    <textarea name="used_note" rows="2"></textarea>
+                    <button type="submit">Add Material</button>
+                </form>
+            </details>
+        {% endif %}
+    </div>
+{% endif %}
+
+<script>
+if(!window.supplierItemPhotoControlsReady){
+    window.supplierItemPhotoControlsReady=true;
+    document.addEventListener("click",event=>{
+        const addButton=event.target.closest(".addSupplierItemPhoto");
+        if(!addButton)return;
+        const form=addButton.closest(".supplierItemPickupForm");
+        const blocks=form?form.querySelector(".supplierItemPhotoBlocks"):null;
+        const template=form?form.querySelector(".supplierItemPhotoBlockTemplate"):null;
+        if(!form||!blocks||!template)return;
+        const index=Number(form.dataset.nextPhotoIndex||"1");
+        form.dataset.nextPhotoIndex=String(index+1);
+        const wrapper=document.createElement("div");
+        wrapper.innerHTML=template.innerHTML.split("__INDEX__").join(String(index)).trim();
+        blocks.appendChild(wrapper.firstElementChild);
+    });
+    document.addEventListener("click",event=>{
+        const removeButton=event.target.closest(".removeSupplierItemPhoto");
+        if(!removeButton)return;
+        const block=removeButton.closest(".supplierItemPhotoBlock");
+        if(block)block.remove();
+    });
+    document.addEventListener("change",event=>{
+        const input=event.target;
+        if(!input||!input.matches('input[name^="supplier_item_attachment_"][type="file"]'))return;
+        const block=input.closest(".supplierItemPhotoBlock");
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(!preview||!img)return;
+        if(!input.files||!input.files[0]){
+            preview.style.display="none";
+            img.removeAttribute("src");
+            return;
+        }
+        img.src=URL.createObjectURL(input.files[0]);
+        preview.style.display="block";
+    });
+    document.addEventListener("click",event=>{
+        const clearButton=event.target.closest(".clearSupplierSelectedPhoto");
+        if(!clearButton)return;
+        const block=clearButton.closest(".supplierItemPhotoBlock");
+        const input=block?block.querySelector('input[type="file"]'):null;
+        const preview=block?block.querySelector(".supplierPhotoPreview"):null;
+        const img=preview?preview.querySelector("img"):null;
+        if(input)input.value="";
+        if(img)img.removeAttribute("src");
+        if(preview)preview.style.display="none";
+    });
+}
+</script>
+<style>
+.supplierTaskInfo{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(245,158,11,.09)}
+.supplierTaskInfo h4{margin:0 0 4px}
+.supplierName{font-size:18px;font-weight:800;margin:0 0 10px}
+.supplierMaterialList{display:grid;gap:12px;margin:12px 0}
+.supplierMaterialItem{border:1px solid var(--border);border-radius:8px;padding:12px;background:rgba(255,255,255,.25)}
+.supplierMaterialItem p{margin:6px 0}
+.supplierPickupCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;font-weight:800;background:rgba(255,255,255,.18)}
+.supplierPickupCheck input{width:auto;min-height:auto}
+.supplierPickupCheckReadOnly{opacity:.8}
+.supplierEditDetails{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.18)}
+.supplierEditDetails summary{font-weight:800;cursor:pointer}
+.supplierItemPhotoBlocks{display:grid;gap:10px}
+.supplierItemPhotoBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;background:rgba(255,255,255,.18)}
+.supplierItemPhotoList{display:grid;gap:10px;margin:10px 0}
+.supplierItemPhoto{border:1px solid var(--border);border-radius:8px;padding:8px;background:rgba(255,255,255,.18)}
+.supplierPictureComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.1);font-weight:700}
+</style>
+{% include "_part_catalog_autocomplete.html" %}

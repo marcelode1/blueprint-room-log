@@ -16,6 +16,15 @@
             </div>
             {% endif %}
             <div>
+                <label>Project</label>
+                <select name="project_id">
+                    <option value="">All Projects</option>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>Period</label>
                 <select name="period">
                     <option value="day" {% if period == "day" %}selected{% endif %}>Day</option>
@@ -31,8 +40,8 @@
         </div>
         <button type="submit">Show Report</button>
         {% if not my_report %}
-        <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', period=period, date=selected_date) }}">Export to CSV</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('task_report') }}">Task Report</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Export to CSV</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('project_report', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Project Report</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
         {% endif %}
     </form>

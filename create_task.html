@@ -2,7 +2,7 @@
 {% block content %}
 <div class="card">
     <h2>Comment</h2>
-    <a class="btn-link btn-secondary" href="{{ next_url }}">Back to Comment Report</a>
+    <a class="btn-link btn-secondary" href="{{ next_url }}">Back to Project Report</a>
     <div class="commentDetailMeta">
         <p><strong>Project:</strong> {{ record.project_name or '-' }}</p>
         <p><strong>Room:</strong> {{ record.room_name or '-' }}</p>
@@ -31,6 +31,7 @@
     {% endif %}
 </div>
 
+{% if can_edit_comment %}
 <div class="card">
     <h3>Edit Comment</h3>
     <form method="post">
@@ -41,7 +42,9 @@
         <button type="submit">Save Comment</button>
     </form>
 </div>
+{% endif %}
 
+{% if can_delete_comment %}
 <div class="card">
     <h3>Delete</h3>
     <p class="muted">This removes the linked comment/media record from this report. It does not delete the project or room.</p>
@@ -51,6 +54,7 @@
         <button type="submit" class="btn-danger">Delete Comment / Media</button>
     </form>
 </div>
+{% endif %}
 
 <style>
 .commentDetailMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px 16px}.commentDetailMeta p{margin:4px 0}.commentDetailMedia{display:block;margin-bottom:10px}

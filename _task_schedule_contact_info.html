@@ -1,0 +1,110 @@
+{% set attachment_rooms = rooms if rooms is defined else [] %}
+<div class="taskAttachmentBuilder" data-project-select-id="{{ attachment_project_select_id|default('') }}">
+    <h3>Pictures, Audio, and Room Links</h3>
+    <div class="taskAttachmentBlocks"></div>
+    <button type="button" class="btn-secondary addTaskAttachmentBtn">Add Picture / Audio</button>
+    <template class="taskAttachmentTemplate">
+        <div class="taskAttachmentInput">
+            <input type="hidden" name="attachment_indexes" value="__INDEX__">
+            <div class="grid">
+                <div>
+                    <label>Room</label>
+                    <select name="attachment___INDEX___room_id" class="attachmentRoomSelect">
+                        <option value="">No room</option>
+                        {% for r in attachment_rooms %}
+                            <option value="{{ r.id }}" data-project-id="{{ r.project_id|default('') }}">{{ r.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label>Picture Comment</label>
+                    <input name="attachment___INDEX___comment" placeholder="Comment for this picture or audio">
+                </div>
+            </div>
+            <div class="taskAttachmentMobileMedia">
+                {% set media_id = 'task_attachment___INDEX__' %}
+                {% set media_camera_name = 'attachment___INDEX___camera' %}
+                {% set media_upload_name = 'attachment___INDEX___photo' %}
+                {% set media_audio_name = 'attachment___INDEX___audio' %}
+                {% set media_comment_name = '' %}
+                {% set media_save_label = 'Attach to Task' %}
+                {% include "_mobile_media_bar.html" %}
+            </div>
+            <div class="grid taskAttachmentFileGrid">
+                <div class="taskAttachmentFileField">
+                    <label>Upload Picture</label>
+                    <input name="attachment___INDEX___photo" type="file" accept="image/*,.heic,.heif">
+                </div>
+                <div class="mobileTaskCamera taskAttachmentFileField">
+                    <label>Take Picture From Phone</label>
+                    <input name="attachment___INDEX___camera" type="file" accept="image/*,.heic,.heif" capture="environment">
+                </div>
+                <div class="taskAttachmentFileField">
+                    <label>Audio</label>
+                    <input name="attachment___INDEX___audio" type="file" accept="audio/*">
+                </div>
+            </div>
+            <button type="button" class="btn-secondary removeTaskAttachmentBtn">Remove</button>
+        </div>
+    </template>
+</div>
+
+<style>
+.taskAttachmentBuilder{margin:16px 0}
+.taskAttachmentInput{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(255,255,255,.03)}
+.taskAttachmentInput .removeTaskAttachmentBtn{margin-top:8px}
+.mobileTaskCamera{display:none}
+.taskAttachmentMobileMedia{display:none}
+@media(max-width:760px){
+    .mobileTaskCamera{display:block}
+    .taskAttachmentMobileMedia{display:block}
+    .taskAttachmentFileGrid{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+}
+</style>
+
+<script>
+(function(){
+    function filterRooms(builder){
+        const selectId=builder.getAttribute("data-project-select-id");
+        if(!selectId)return;
+        const projectSelect=document.getElementById(selectId);
+        if(!projectSelect)return;
+        const selectedProject=projectSelect.value;
+        builder.querySelectorAll(".attachmentRoomSelect").forEach(roomSelect=>{
+            Array.from(roomSelect.options).forEach(option=>{
+                const projectId=option.getAttribute("data-project-id")||"";
+                option.hidden=Boolean(projectId)&&Boolean(selectedProject)&&projectId!==selectedProject;
+                if(projectId&&!selectedProject)option.hidden=true;
+            });
+            const selectedOption=roomSelect.options[roomSelect.selectedIndex];
+            if(selectedOption&&selectedOption.hidden)roomSelect.value="";
+        });
+    }
+
+    function initBuilder(builder){
+        if(builder.dataset.ready==="1")return;
+        builder.dataset.ready="1";
+        const blocks=builder.querySelector(".taskAttachmentBlocks");
+        const template=builder.querySelector(".taskAttachmentTemplate");
+        const addBtn=builder.querySelector(".addTaskAttachmentBtn");
+        let nextIndex=0;
+        function addBlock(){
+            const html=template.innerHTML.split("__INDEX__").join(String(nextIndex++));
+            const wrapper=document.createElement("div");
+            wrapper.innerHTML=html.trim();
+            const block=wrapper.firstElementChild;
+            block.querySelector(".removeTaskAttachmentBtn").addEventListener("click",()=>block.remove());
+            blocks.appendChild(block);
+            if(window.ProjectONusMobileMedia)window.ProjectONusMobileMedia.init(block);
+            filterRooms(builder);
+        }
+        addBtn.addEventListener("click",addBlock);
+        addBlock();
+        const selectId=builder.getAttribute("data-project-select-id");
+        const projectSelect=selectId?document.getElementById(selectId):null;
+        if(projectSelect)projectSelect.addEventListener("change",()=>filterRooms(builder));
+    }
+
+    document.querySelectorAll(".taskAttachmentBuilder").forEach(initBuilder);
+})();
+</script>
