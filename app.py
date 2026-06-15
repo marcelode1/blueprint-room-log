@@ -2239,15 +2239,20 @@ def invoice_totals_breakdown(invoice, lines):
 
 def preview_invoice_from_form(conn):
     lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    invoice_id = request.form.get("invoice_id", type=int)
     project_id = request.form.get("project_id", type=int)
     project_name = ""
     if project_id:
         project = conn.execute("SELECT name FROM projects WHERE id = %s", (project_id,)).fetchone()
         project_name = project["name"] if project else ""
     invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
+    invoice_number = (request.form.get("invoice_number") or "").strip()
+    if invoice_id and not invoice_number:
+        existing_invoice = conn.execute("SELECT invoice_number FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+        invoice_number = existing_invoice["invoice_number"] if existing_invoice else ""
     invoice = {
-        "id": None,
-        "invoice_number": "PREVIEW",
+        "id": invoice_id,
+        "invoice_number": invoice_number or "PREVIEW",
         "project_id": project_id,
         "project_name": project_name,
         "customer_name": request.form.get("customer_name", "").strip(),
@@ -2456,6 +2461,35 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
     return sent, "" if sent else "Invoice could not be emailed. Check SMTP email settings."
 
 
+def create_project_invoice_draft(conn, project):
+    invoice_date = local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', 0, %s, 0, 0, '', %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            project["id"],
+            project.get("customer_name") or project.get("name") or "",
+            project.get("customer_email") or "",
+            format_us_phone(project.get("customer_phone")),
+            project.get("billing_address") or project.get("customer_address") or "",
+            invoice_date,
+            "",
+            default_invoice_tax_rate(),
+            "Payment due upon receipt. Thank you for your business.",
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    return row["id"]
+
+
 def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
     if lines is None:
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
@@ -2501,6 +2535,61 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
             (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
         )
     return invoice_id
+
+
+def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
+    if lines is None:
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    conn.execute(
+        """
+        UPDATE invoices
+        SET project_id = %s,
+            customer_name = %s,
+            customer_email = %s,
+            customer_phone = %s,
+            billing_address = %s,
+            invoice_date = %s,
+            due_date = %s,
+            status = %s,
+            subtotal = %s,
+            tax_rate = %s,
+            tax_total = %s,
+            total = %s,
+            notes = %s,
+            terms = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            request.form.get("project_id", type=int),
+            request.form.get("customer_name", "").strip(),
+            request.form.get("customer_email", "").strip(),
+            format_us_phone(request.form.get("customer_phone")),
+            request.form.get("billing_address", "").strip(),
+            request.form.get("invoice_date") or local_now().date().isoformat(),
+            request.form.get("due_date", "").strip(),
+            request.form.get("status", "draft"),
+            subtotal,
+            tax_rate,
+            tax_total,
+            total,
+            request.form.get("notes", "").strip(),
+            request.form.get("terms", "").strip(),
+            utc_now_iso(),
+            invoice_id,
+        )
+    )
+    conn.execute("DELETE FROM invoice_lines WHERE invoice_id = %s", (invoice_id,))
+    save_invoice_items(conn, lines)
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+        )
 
 
 def vendor_account_email_body(supplier, info, attachment_name=""):
@@ -5723,13 +5812,22 @@ def new_invoice():
         conn.close()
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
+    selected_project_id = request.args.get("project_id", type=int)
+    if selected_project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        if not selected_project:
+            conn.close()
+            flash("Project not found.")
+            return redirect(url_for("invoices"))
+        invoice_id = create_project_invoice_draft(conn, selected_project)
+        conn.commit()
+        conn.close()
+        return redirect(url_for("edit_invoice", invoice_id=invoice_id))
+
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
-    selected_project_id = request.args.get("project_id", type=int)
     selected_project = None
-    if selected_project_id:
-        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
     conn.close()
     return render_template(
         "invoice_form.html",
@@ -5792,7 +5890,7 @@ def restore_invoice_preview():
         selected_project=selected_project,
         default_tax_rate=default_invoice_tax_rate(),
         today=local_now().date().isoformat(),
-        form_action=url_for("new_invoice"),
+        form_action=url_for("edit_invoice", invoice_id=invoice["id"]) if invoice.get("id") else url_for("new_invoice"),
     )
 
 
@@ -5813,13 +5911,19 @@ def send_invoice_preview():
         conn.close()
         flash("Add a customer email before sending this invoice preview.")
         return redirect(url_for("new_invoice"))
+    invoice_id = request.form.get("invoice_id", type=int)
     try:
-        invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+        if invoice_id:
+            update_invoice_record_from_form(conn, invoice_id, lines, subtotal, tax_rate, tax_total, total)
+        else:
+            invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
         conn.commit()
     except Exception as e:
         conn.rollback()
         conn.close()
         flash(f"Invoice could not be saved. {e}")
+        if invoice_id:
+            return redirect(url_for("edit_invoice", invoice_id=invoice_id))
         selected_project_id = request.form.get("project_id", type=int)
         return redirect(url_for("new_invoice", project_id=selected_project_id) if selected_project_id else url_for("new_invoice"))
     invoice, saved_lines = load_invoice(conn, invoice_id)
@@ -5832,6 +5936,73 @@ def send_invoice_preview():
     flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
     conn.close()
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/copy", methods=["POST"])
+@admin_required
+def copy_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
+    invoice, lines = load_invoice(conn, invoice_id)
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    invoice_date = local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            invoice.get("project_id"),
+            invoice.get("customer_name") or "",
+            invoice.get("customer_email") or "",
+            invoice.get("customer_phone") or "",
+            invoice.get("billing_address") or "",
+            invoice_date,
+            invoice.get("due_date") or "",
+            invoice.get("subtotal") or 0,
+            invoice.get("tax_rate") or 0,
+            invoice.get("tax_total") or 0,
+            invoice.get("total") or 0,
+            invoice.get("notes") or "",
+            invoice.get("terms") or "",
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    new_invoice_id = row["id"]
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                new_invoice_id,
+                line.get("part_catalog_id"),
+                line.get("item_name") or "",
+                line.get("description") or "",
+                line.get("location") or "",
+                line.get("quantity") or 0,
+                line.get("unit_price") or 0,
+                bool(line.get("taxable")),
+                line.get("line_total") or 0,
+                line.get("position") or 0,
+            )
+        )
+    conn.commit()
+    conn.close()
+    flash(f"Invoice copied as {invoice_number}.")
+    return redirect(url_for("edit_invoice", invoice_id=new_invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>")
@@ -5869,56 +6040,7 @@ def edit_invoice(invoice_id):
             conn.close()
             flash("Add at least one invoice item.")
             return redirect(url_for("edit_invoice", invoice_id=invoice_id))
-        conn.execute(
-            """
-            UPDATE invoices
-            SET project_id = %s,
-                customer_name = %s,
-                customer_email = %s,
-                customer_phone = %s,
-                billing_address = %s,
-                invoice_date = %s,
-                due_date = %s,
-                status = %s,
-                subtotal = %s,
-                tax_rate = %s,
-                tax_total = %s,
-                total = %s,
-                notes = %s,
-                terms = %s,
-                updated_at = %s
-            WHERE id = %s
-            """,
-            (
-                request.form.get("project_id", type=int),
-                request.form.get("customer_name", "").strip(),
-                request.form.get("customer_email", "").strip(),
-                format_us_phone(request.form.get("customer_phone")),
-                request.form.get("billing_address", "").strip(),
-                request.form.get("invoice_date") or invoice.get("invoice_date"),
-                request.form.get("due_date", "").strip(),
-                request.form.get("status", "draft"),
-                subtotal,
-                tax_rate,
-                tax_total,
-                total,
-                request.form.get("notes", "").strip(),
-                request.form.get("terms", "").strip(),
-                utc_now_iso(),
-                invoice_id,
-            )
-        )
-        conn.execute("DELETE FROM invoice_lines WHERE invoice_id = %s", (invoice_id,))
-        save_invoice_items(conn, lines)
-        for line in lines:
-            conn.execute(
-                """
-                INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
-            )
+        update_invoice_record_from_form(conn, invoice_id, lines, subtotal, tax_rate, tax_total, total)
         if request.form.get("submit_action") == "email":
             invoice, saved_lines = load_invoice(conn, invoice_id)
             sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
