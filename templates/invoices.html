@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Invoices</h2>
-    <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
+    <h2>{% if selected_project %}Invoices - {{ selected_project.name }}{% else %}Invoices{% endif %}</h2>
+    {% if selected_project %}
+        <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
+        <a class="btn-link" href="{{ url_for('new_invoice', project_id=selected_project.id) }}">Create Invoice</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
+    {% else %}
+        <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
+    {% endif %}
 </div>
 
 <div class="card">
     <form method="get">
+        {% if selected_project %}<input type="hidden" name="project_id" value="{{ selected_project.id }}">{% endif %}
         <div class="grid">
             <div>
                 <label>Search</label>
@@ -23,7 +30,7 @@
             </div>
         </div>
         <button type="submit">Show Invoices</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Clear</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) if selected_project else url_for('invoices') }}">Clear</a>
     </form>
 </div>
 

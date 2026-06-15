@@ -2316,6 +2316,29 @@ def invoice_pdf_attachment(invoice, lines, company):
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
+def email_invoice_record(conn, invoice, lines, to_email=None):
+    to_email = (to_email or "").strip() or invoice.get("customer_email")
+    if not to_email:
+        return False, "Add a customer email before sending this invoice."
+    company = account_info()
+    subject = f"Invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}"
+    attachment, error = invoice_pdf_attachment(invoice, lines, company)
+    if error:
+        return False, error
+    sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
+    if invoice.get("id"):
+        conn.execute(
+            """
+            INSERT INTO invoice_email_logs (invoice_id, sent_to, subject, sent_by, success, error, sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (invoice["id"], to_email, subject, session.get("user_id"), sent, "" if sent else "SMTP send failed", utc_now_iso())
+        )
+        if sent:
+            conn.execute("UPDATE invoices SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s", (utc_now_iso(), utc_now_iso(), invoice["id"]))
+    return sent, "" if sent else "Invoice could not be emailed. Check SMTP email settings."
+
+
 def vendor_account_email_body(supplier, info, attachment_name=""):
     company_name = info.get("company_name") or "our company"
     greeting_name = supplier.get("contact_name") or supplier.get("name") or "Vendor Team"
@@ -5471,6 +5494,7 @@ def invoices():
     ensure_invoice_tables(conn)
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "").strip()
+    project_id = request.args.get("project_id", type=int)
     where = []
     params = []
     if q:
@@ -5480,6 +5504,11 @@ def invoices():
     if status:
         where.append("invoices.status = %s")
         params.append(status)
+    selected_project = None
+    if project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+        where.append("invoices.project_id = %s")
+        params.append(project_id)
     where_sql = "WHERE " + " AND ".join(where) if where else ""
     rows = conn.execute(
         f"""
@@ -5492,7 +5521,7 @@ def invoices():
         tuple(params)
     ).fetchall()
     conn.close()
-    return render_template("invoices.html", invoices=rows, q=q, status=status)
+    return render_template("invoices.html", invoices=rows, q=q, status=status, selected_project=selected_project)
 
 
 @app.route("/invoices/new", methods=["GET", "POST"])
@@ -5547,9 +5576,14 @@ def new_invoice():
                 """,
                 (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
+        if request.form.get("submit_action") == "email":
+            invoice, saved_lines = load_invoice(conn, invoice_id)
+            sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
+            flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
+        else:
+            flash("Invoice created.")
         conn.commit()
         conn.close()
-        flash("Invoice created.")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
@@ -5705,15 +5739,21 @@ def edit_invoice(invoice_id):
                 """,
                 (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
+        if request.form.get("submit_action") == "email":
+            invoice, saved_lines = load_invoice(conn, invoice_id)
+            sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
+            flash("Invoice updated and emailed to customer." if sent else f"Invoice updated, but email was not sent. {email_error}")
+        else:
+            flash("Invoice updated.")
         conn.commit()
         conn.close()
-        flash("Invoice updated.")
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
+    selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone() if invoice.get("project_id") else None
     conn.close()
-    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=None, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=selected_project, today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])

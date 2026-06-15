@@ -19,13 +19,25 @@
 
 <div class="card">
     <h2>{{ 'Edit Invoice' if is_edit else 'Create Invoice' }}</h2>
-    <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+    {% if selected_project %}
+        <p><strong>Project:</strong> {{ selected_project.name }}</p>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) }}">Invoices</a>
+    {% else %}
+        <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+    {% endif %}
     {% if is_edit %}<a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>{% endif %}
 </div>
 
 <div class="card">
     <form method="post" id="invoiceForm" action="{{ form_action }}">
         <div class="grid">
+            {% if selected_project %}
+                <input type="hidden" name="project_id" value="{{ selected_project.id }}">
+                <div>
+                    <label>Project</label>
+                    <input value="{{ selected_project.name }}" readonly>
+                </div>
+            {% else %}
             <div>
                 <label>Project</label>
                 <select name="project_id" id="invoiceProjectSelect">
@@ -42,6 +54,7 @@
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
             <div>
                 <label>Status</label>
                 <select name="status">
@@ -157,6 +170,7 @@
         <label>Terms</label>
         <textarea name="terms" rows="2">{{ invoice.terms if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
         <button type="submit" class="btn-secondary" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
+        <button type="submit" class="btn-secondary" name="submit_action" value="email">Email Invoice</button>
         <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
     </form>
 </div>
