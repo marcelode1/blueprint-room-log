@@ -5693,6 +5693,34 @@ def preview_invoice():
     )
 
 
+@app.route("/invoices/preview/restore", methods=["POST"])
+@admin_required
+def restore_invoice_preview():
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
+    invoice, lines = preview_invoice_from_form(conn)
+    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    catalog = part_catalog_options(conn)
+    selected_project = None
+    if invoice.get("project_id"):
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone()
+    conn.close()
+    return render_template(
+        "invoice_form.html",
+        invoice=invoice,
+        lines=lines,
+        projects=projects,
+        saved_items=saved_items,
+        part_catalog=catalog,
+        selected_project=selected_project,
+        default_tax_rate=default_invoice_tax_rate(),
+        today=local_now().date().isoformat(),
+        form_action=url_for("new_invoice"),
+    )
+
+
 @app.route("/invoices/preview/send", methods=["POST"])
 @admin_required
 def send_invoice_preview():

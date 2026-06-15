@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-{% set is_edit = invoice is not none %}
+{% set is_edit = invoice is not none and invoice.id %}
 {% set default_customer_name = '' %}
 {% set default_customer_email = '' %}
 {% set default_customer_phone = '' %}
