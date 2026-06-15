@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -614,10 +614,12 @@ def init_db():
         id SERIAL PRIMARY KEY,
         item_name TEXT NOT NULL,
         item_model TEXT,
+        part_number TEXT,
         brand TEXT,
         category TEXT,
         description TEXT,
         unit_price REAL,
+        unit_cost REAL,
         taxable BOOLEAN,
         item_type TEXT NOT NULL DEFAULT 'part',
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -678,6 +680,7 @@ def init_db():
         saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL,
         item_name TEXT NOT NULL,
         description TEXT,
+        location TEXT,
         quantity REAL NOT NULL DEFAULT 0,
         unit_price REAL NOT NULL DEFAULT 0,
         taxable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1084,12 +1087,15 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
         "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS invoice_number_counters (year_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal REAL NOT NULL DEFAULT 0, tax_rate REAL NOT NULL DEFAULT 0, tax_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
@@ -1982,6 +1988,7 @@ def ensure_invoice_tables(conn):
             saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL,
             item_name TEXT NOT NULL,
             description TEXT,
+            location TEXT,
             quantity REAL NOT NULL DEFAULT 0,
             unit_price REAL NOT NULL DEFAULT 0,
             taxable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2004,6 +2011,14 @@ def ensure_invoice_tables(conn):
     ]
     for statement in statements:
         conn.execute(statement)
+    for statement in [
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
+    ]:
+        try:
+            conn.execute(statement)
+        except Exception as e:
+            conn.rollback()
+            print("Invoice migration skipped:", e)
     conn.commit()
 
 
@@ -2030,7 +2045,9 @@ def next_invoice_number(conn, reference_value=None):
 
 def invoice_line_values_from_form():
     names = request.form.getlist("line_item_name")
+    part_catalog_ids = request.form.getlist("line_part_catalog_id")
     descriptions = request.form.getlist("line_description")
+    locations = request.form.getlist("line_location")
     quantities = request.form.getlist("line_quantity")
     prices = request.form.getlist("line_unit_price")
     taxable_flags = request.form.getlist("line_taxable")
@@ -2040,8 +2057,10 @@ def invoice_line_values_from_form():
     for index, name in enumerate(names):
         item_name = (name or "").strip()
         description = (descriptions[index] if index < len(descriptions) else "").strip()
+        location = (locations[index] if index < len(locations) else "").strip()
         if not item_name and not description:
             continue
+        part_catalog_id = optional_int(part_catalog_ids[index]) if index < len(part_catalog_ids) else None
         try:
             quantity = float(quantities[index] if index < len(quantities) else 0)
         except Exception:
@@ -2056,8 +2075,10 @@ def invoice_line_values_from_form():
         if taxable:
             taxable_subtotal += line_total
         lines.append({
+            "part_catalog_id": part_catalog_id,
             "item_name": item_name or description[:80] or "Invoice item",
             "description": description,
+            "location": location,
             "quantity": quantity,
             "unit_price": unit_price,
             "taxable": taxable,
@@ -2079,7 +2100,7 @@ def save_invoice_items(conn, lines):
         item_name = (line.get("item_name") or "").strip()
         if not item_name:
             continue
-        part_catalog_id = upsert_part_catalog(
+        part_catalog_id = line.get("part_catalog_id") or upsert_part_catalog(
             conn,
             item_name,
             description=line.get("description") or "",
@@ -2750,10 +2771,12 @@ def ensure_part_catalog_tables(conn):
             id SERIAL PRIMARY KEY,
             item_name TEXT NOT NULL,
             item_model TEXT,
+            part_number TEXT,
             brand TEXT,
             category TEXT,
             description TEXT,
             unit_price REAL,
+            unit_cost REAL,
             taxable BOOLEAN,
             item_type TEXT NOT NULL DEFAULT 'part',
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -2761,6 +2784,8 @@ def ensure_part_catalog_tables(conn):
             updated_at TEXT
         )
         """,
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -2776,11 +2801,12 @@ def ensure_part_catalog_tables(conn):
             print("Part catalog migration skipped:", e)
 
 
-def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category=""):
+def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None):
     item_name = (item_name or "").strip()
     if not item_name:
         return None
     item_model = (item_model or "").strip()
+    part_number = (part_number or "").strip()
     brand = (brand or "").strip()
     category = (category or "").strip()
     description = (description or "").strip()
@@ -2802,24 +2828,26 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
             UPDATE part_catalog
             SET category = COALESCE(NULLIF(%s, ''), category),
                 description = COALESCE(NULLIF(%s, ''), description),
+                part_number = COALESCE(NULLIF(%s, ''), part_number),
                 unit_price = COALESCE(%s, unit_price),
+                unit_cost = COALESCE(%s, unit_cost),
                 taxable = COALESCE(%s, taxable),
                 item_type = COALESCE(NULLIF(%s, ''), item_type),
                 is_active = TRUE,
                 updated_at = %s
             WHERE id = %s
             """,
-            (category, description, unit_price, taxable, item_type, now, existing["id"])
+            (category, description, part_number, unit_price, unit_cost, taxable, item_type, now, existing["id"])
         )
         return existing["id"]
     row = conn.execute(
         """
         INSERT INTO part_catalog
-        (item_name, item_model, brand, category, description, unit_price, taxable, item_type, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
         RETURNING id
         """,
-        (item_name, item_model, brand, category, description, unit_price, taxable, item_type, now, now)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, now)
     ).fetchone()
     return row["id"] if row else None
 
@@ -2828,7 +2856,7 @@ def part_catalog_options(conn):
     ensure_part_catalog_tables(conn)
     rows = conn.execute(
         """
-        SELECT id, item_name, item_model, brand, category, description, unit_price, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
         ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
@@ -5351,10 +5379,10 @@ def new_invoice():
             conn.execute(
                 """
                 INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
         conn.commit()
         conn.close()
@@ -5461,10 +5489,10 @@ def edit_invoice(invoice_id):
             conn.execute(
                 """
                 INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
             )
         conn.commit()
         conn.close()
@@ -5540,7 +5568,12 @@ def parts_catalog():
             unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
         except Exception:
             unit_price = None
+        try:
+            unit_cost = float(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
+        except Exception:
+            unit_cost = None
         item_model = request.form.get("item_model", "").strip()
+        part_number = request.form.get("part_number", "").strip()
         brand = request.form.get("brand", "").strip()
         category = request.form.get("category", "").strip()
         description = request.form.get("description", "").strip()
@@ -5555,17 +5588,19 @@ def parts_catalog():
                 UPDATE part_catalog
                 SET item_name = %s,
                     item_model = %s,
+                    part_number = %s,
                     brand = %s,
                     category = %s,
                     description = %s,
                     unit_price = %s,
+                    unit_cost = %s,
                     taxable = %s,
                     item_type = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (item_name, item_model, brand, category, description, unit_price, taxable, item_type, now, part_id)
+                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, part_id)
             )
             flash("Catalog item updated.")
         else:
@@ -5578,7 +5613,9 @@ def parts_catalog():
                 unit_price,
                 taxable,
                 item_type,
-                category
+                category,
+                part_number,
+                unit_cost
             )
             flash("Catalog item saved.")
         conn.commit()
@@ -5594,12 +5631,13 @@ def parts_catalog():
             AND (
                 part_catalog.item_name ILIKE %s
                 OR part_catalog.item_model ILIKE %s
+                OR part_catalog.part_number ILIKE %s
                 OR part_catalog.brand ILIKE %s
                 OR part_catalog.category ILIKE %s
                 OR part_catalog.description ILIKE %s
             )
         """
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like])
     rows = conn.execute(
         f"""
         SELECT part_catalog.*,
@@ -5613,6 +5651,50 @@ def parts_catalog():
     ).fetchall()
     conn.close()
     return render_template("parts_catalog.html", parts=rows, q=q)
+
+
+@app.route("/parts-catalog/create-json", methods=["POST"])
+@admin_required
+def create_part_catalog_json():
+    conn = db()
+    ensure_part_catalog_tables(conn)
+    item_name = request.form.get("item_name", "").strip()
+    description = request.form.get("description", "").strip()
+    if not item_name:
+        conn.close()
+        return jsonify({"ok": False, "error": "Item name is required."}), 400
+    try:
+        unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
+    except Exception:
+        unit_price = None
+    try:
+        unit_cost = float(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
+    except Exception:
+        unit_cost = None
+    part_id = upsert_part_catalog(
+        conn,
+        item_name,
+        request.form.get("item_model", "").strip(),
+        request.form.get("brand", "").strip(),
+        description,
+        unit_price,
+        request.form.get("taxable") == "1",
+        request.form.get("item_type", "part") if request.form.get("item_type") in ["part", "service"] else "part",
+        request.form.get("category", "").strip(),
+        request.form.get("part_number", "").strip(),
+        unit_cost
+    )
+    row = conn.execute(
+        """
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        FROM part_catalog
+        WHERE id = %s
+        """,
+        (part_id,)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "item": dict(row) if row else {}})
 
 
 @app.route("/suppliers", methods=["GET", "POST"])

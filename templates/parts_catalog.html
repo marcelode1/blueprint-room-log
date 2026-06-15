@@ -13,8 +13,10 @@
             <div><label>Item Name</label><input name="item_name" required></div>
             <div><label>Manufacturer / Brand</label><input name="brand"></div>
             <div><label>Model #</label><input name="item_model"></div>
+            <div><label>Part Number</label><input name="part_number"></div>
             <div><label>Category</label><input name="category" placeholder="Audio, network, labor, camera"></div>
             <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0"></div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
         <label>Description</label>
@@ -36,6 +38,7 @@
                 <strong>{{ part.item_name }}</strong>
                 {% if part.brand %}<span>{{ part.brand }}</span>{% endif %}
                 {% if part.item_model %}<span>{{ part.item_model }}</span>{% endif %}
+                {% if part.part_number %}<span>{{ part.part_number }}</span>{% endif %}
                 <span class="catalogType">{{ part.item_type|title }}</span>
             </summary>
             <form method="post">
@@ -45,8 +48,10 @@
                     <div><label>Item Name</label><input name="item_name" value="{{ part.item_name }}" required></div>
                     <div><label>Manufacturer / Brand</label><input name="brand" value="{{ part.brand or '' }}"></div>
                     <div><label>Model #</label><input name="item_model" value="{{ part.item_model or '' }}"></div>
+                    <div><label>Part Number</label><input name="part_number" value="{{ part.part_number or '' }}"></div>
                     <div><label>Category</label><input name="category" value="{{ part.category or '' }}"></div>
                     <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ part.unit_price or '' }}"></div>
+                    <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0" value="{{ part.unit_cost or '' }}"></div>
                 </div>
                 <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if part.taxable %}checked{% endif %}> Taxable</label>
                 <label>Description</label>

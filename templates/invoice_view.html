@@ -43,19 +43,23 @@
     <table class="invoiceLinesTable">
         <thead>
             <tr>
+                <th>Line #</th>
+                <th>Qty</th>
                 <th>Item</th>
                 <th>Description</th>
-                <th>Qty</th>
-                <th>Rate</th>
+                <th>Location</th>
+                <th>Unit Price</th>
                 <th>Total</th>
             </tr>
         </thead>
         <tbody>
         {% for line in lines %}
             <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ line.quantity }}</td>
                 <td>{{ line.item_name }}</td>
                 <td>{{ line.description or '' }}</td>
-                <td>{{ line.quantity }}</td>
+                <td>{{ line.location or '' }}</td>
                 <td>{{ format_invoice_money(line.unit_price) }}</td>
                 <td>{{ format_invoice_money(line.line_total) }}</td>
             </tr>
