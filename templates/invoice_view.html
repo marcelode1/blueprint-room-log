@@ -72,9 +72,12 @@
     </table>
 
     <div class="invoiceTotals">
-        <p><span>Subtotal</span><strong>{{ format_invoice_money(invoice.subtotal) }}</strong></p>
-        <p><span>Tax {{ invoice.tax_rate }}%</span><strong>{{ format_invoice_money(invoice.tax_total) }}</strong></p>
-        <p class="invoiceGrandTotal"><span>Total</span><strong>{{ format_invoice_money(invoice.total) }}</strong></p>
+        <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
+        <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
+        <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
+        <p><span>Total Amount</span><strong>{{ format_invoice_money(totals_breakdown.total_amount) }}</strong></p>
+        <p><span>Payments/Credit</span><strong>{% if totals_breakdown.payments_credit %}-{{ format_invoice_money(totals_breakdown.payments_credit) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
+        <p class="invoiceGrandTotal"><span>Balance Due</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
     </div>
 
     {% if invoice.notes %}<div class="invoiceNotes"><h3>Notes</h3><p>{{ invoice.notes }}</p></div>{% endif %}
@@ -111,6 +114,6 @@
 {% endif %}
 
 <style>
-.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}.invoiceLogo{max-width:150px;max-height:90px;object-fit:contain;margin-bottom:10px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:4px 0}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin-bottom:10px}.invoiceBillTo{margin:22px 0}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f3f4f6}.invoiceTotals{max-width:340px;margin:18px 0 0 auto}.invoiceTotals p{display:flex;justify-content:space-between;gap:20px;margin:8px 0}.invoiceGrandTotal{border-top:2px solid #172033;padding-top:10px;font-size:20px}.invoiceNotes{margin-top:18px;border-top:1px solid #d7dee9;padding-top:12px}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
+.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}.invoiceLogo{max-width:150px;max-height:90px;object-fit:contain;margin-bottom:10px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:4px 0}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin-bottom:10px}.invoiceBillTo{margin:22px 0}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f3f4f6}.invoiceTotals{max-width:390px;margin:18px 0 0 auto}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:2px solid #172033;padding-top:12px;font-size:26px}.invoiceNotes{margin-top:18px;border-top:1px solid #d7dee9;padding-top:12px}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
 </style>
 {% endblock %}

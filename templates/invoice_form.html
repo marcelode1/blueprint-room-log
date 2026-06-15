@@ -102,6 +102,7 @@
                             <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="{{ line.quantity or 1 }}"></td>
                             <td>
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
+                                <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
                                 <select name="line_part_catalog_id" class="lineItemSelect" required>
                                     <option value="__new__">NEW ITEM</option>
                                     {% if not line.part_catalog_id %}
@@ -112,16 +113,17 @@
                                             data-name="{{ item.item_name }}"
                                             data-description="{{ item.description or '' }}"
                                             data-price="{{ item.unit_price or 0 }}"
+                                            data-type="{{ item.item_type or 'part' }}"
                                             data-taxable="{{ '1' if item.taxable else '0' }}"
                                             {% if line.part_catalog_id and line.part_catalog_id == item.id %}selected{% endif %}>
-                                            {{ item.item_name }}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                                            {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
                                         </option>
                                     {% endfor %}
                                 </select>
                             </td>
                             <td><textarea name="line_description" class="lineDescription" rows="2">{{ line.description or '' }}</textarea></td>
                             <td><input name="line_location" class="lineLocation" value="{{ line.location or '' }}" placeholder="Room, rack, area"></td>
-                            <td><input name="line_unit_price" class="lineUnitPrice" type="number" step="0.01" min="0" value="{{ line.unit_price or 0 }}"></td>
+                            <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="{{ format_invoice_money(line.unit_price) }}"></td>
                             <td><input class="lineAmount" value="{{ format_invoice_money(line.line_total) }}" readonly></td>
                             <td>
                                 <input type="checkbox" name="line_taxable" class="lineTaxable" value="{{ loop.index0 }}" {% if line.taxable %}checked{% endif %} hidden>
@@ -140,6 +142,7 @@
                 <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="1"></td>
                 <td>
                     <input type="hidden" name="line_item_name" class="lineItemName">
+                    <input type="hidden" name="line_item_type" class="lineItemType" value="part">
                     <select name="line_part_catalog_id" class="lineItemSelect" required>
                         <option value="__new__">NEW ITEM</option>
                         <option value="" selected hidden>Choose item</option>
@@ -148,15 +151,16 @@
                                 data-name="{{ item.item_name }}"
                                 data-description="{{ item.description or '' }}"
                                 data-price="{{ item.unit_price or 0 }}"
+                                data-type="{{ item.item_type or 'part' }}"
                                 data-taxable="{{ '1' if item.taxable else '0' }}">
-                                {{ item.item_name }}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                                {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
                             </option>
                         {% endfor %}
                     </select>
                 </td>
                 <td><textarea name="line_description" class="lineDescription" rows="2"></textarea></td>
                 <td><input name="line_location" class="lineLocation" placeholder="Room, rack, area"></td>
-                <td><input name="line_unit_price" class="lineUnitPrice" type="number" step="0.01" min="0" value="0"></td>
+                <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="$0.00"></td>
                 <td><input class="lineAmount" value="$0.00" readonly></td>
                 <td>
                     <input type="checkbox" name="line_taxable" class="lineTaxable" value="__INDEX__" hidden>
@@ -223,12 +227,20 @@ function money(value){
     const number=Number(value||0);
     return number.toLocaleString(undefined,{style:"currency",currency:"USD"});
 }
+function parseMoney(value){
+    const text=String(value||"").trim().replace(/[$,]/g,"");
+    if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);
+    return Number(text||0);
+}
+function formatMoneyInput(input){
+    if(input)input.value=money(parseMoney(input.value));
+}
 function lineRows(){
     return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
 }
 function updateLineAmount(line){
     const qty=Number(line.querySelector(".lineQty")?.value||0);
-    const price=Number(line.querySelector(".lineUnitPrice")?.value||0);
+    const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
     const amount=line.querySelector(".lineAmount");
     if(amount)amount.value=money(qty*price);
 }
@@ -263,12 +275,14 @@ function applySelectedItem(select){
         return;
     }
     const name=line.querySelector(".lineItemName");
+    const type=line.querySelector(".lineItemType");
     const description=line.querySelector(".lineDescription");
     const price=line.querySelector(".lineUnitPrice");
     const taxable=line.querySelector(".lineTaxable");
     if(name)name.value=option.dataset.name||option.textContent.trim();
+    if(type)type.value=option.dataset.type||"part";
     if(description)description.value=option.dataset.description||"";
-    if(price)price.value=option.dataset.price||"0";
+    if(price)price.value=money(option.dataset.price||0);
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     lockSelectedItem(select);
     updateLineAmount(line);
@@ -328,6 +342,12 @@ invoiceLines.addEventListener("click",event=>{
 invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
 });
+invoiceLines.addEventListener("blur",event=>{
+    if(event.target.matches(".lineUnitPrice")){
+        formatMoneyInput(event.target);
+        updateLineAmount(event.target.closest(".invoiceLine"));
+    }
+},true);
 invoiceLines.addEventListener("click",event=>{
     const remove=event.target.closest(".removeInvoiceLine");
     if(remove){
@@ -356,6 +376,7 @@ newItemForm.addEventListener("submit",async event=>{
 document.getElementById("invoiceForm").addEventListener("submit",lockAllSelectedItems);
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 lockAllSelectedItems();
+invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 refreshLineIndexes();
 </script>
 

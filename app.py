@@ -1932,9 +1932,21 @@ def account_info():
 
 def format_invoice_money(value):
     try:
-        return "${:,.2f}".format(float(value or 0))
+        number = float(value or 0)
+        prefix = "-$" if number < 0 else "$"
+        return "{}{:,.2f}".format(prefix, abs(number))
     except Exception:
         return "$0.00"
+
+
+def parse_invoice_money(value):
+    text = str(value or "").strip().replace("$", "").replace(",", "")
+    if text.startswith("(") and text.endswith(")"):
+        text = "-" + text[1:-1]
+    try:
+        return float(text or 0)
+    except Exception:
+        return 0.0
 
 
 def default_invoice_tax_rate():
@@ -2053,6 +2065,7 @@ def next_invoice_number(conn, reference_value=None):
 def invoice_line_values_from_form():
     names = request.form.getlist("line_item_name")
     part_catalog_ids = request.form.getlist("line_part_catalog_id")
+    item_types = request.form.getlist("line_item_type")
     descriptions = request.form.getlist("line_description")
     locations = request.form.getlist("line_location")
     quantities = request.form.getlist("line_quantity")
@@ -2072,10 +2085,7 @@ def invoice_line_values_from_form():
             quantity = float(quantities[index] if index < len(quantities) else 0)
         except Exception:
             quantity = 0.0
-        try:
-            unit_price = float(prices[index] if index < len(prices) else 0)
-        except Exception:
-            unit_price = 0.0
+        unit_price = parse_invoice_money(prices[index] if index < len(prices) else 0)
         taxable = str(index) in taxable_flags
         line_total = round(quantity * unit_price, 2)
         subtotal += line_total
@@ -2086,6 +2096,7 @@ def invoice_line_values_from_form():
             "item_name": item_name or description[:80] or "Invoice item",
             "description": description,
             "location": location,
+            "item_type": (item_types[index] if index < len(item_types) else "part") or "part",
             "quantity": quantity,
             "unit_price": unit_price,
             "taxable": taxable,
@@ -2149,10 +2160,42 @@ def load_invoice(conn, invoice_id):
     if not invoice:
         return None, []
     lines = conn.execute(
-        "SELECT * FROM invoice_lines WHERE invoice_id = %s ORDER BY position, id",
+        """
+        SELECT invoice_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type
+        FROM invoice_lines
+        LEFT JOIN part_catalog ON invoice_lines.part_catalog_id = part_catalog.id
+        WHERE invoice_id = %s
+        ORDER BY position, invoice_lines.id
+        """,
         (invoice_id,)
     ).fetchall()
     return invoice, lines
+
+
+def invoice_totals_breakdown(invoice, lines):
+    material = 0.0
+    labor = 0.0
+    payments_credit = 0.0
+    for line in lines or []:
+        line_total = float(line.get("line_total") or 0)
+        if line_total < 0:
+            payments_credit += abs(line_total)
+            continue
+        if (line.get("item_type") or "part") == "service":
+            labor += line_total
+        else:
+            material += line_total
+    tax_total = float(invoice.get("tax_total") or 0)
+    total_amount = material + labor + tax_total
+    balance_due = float(invoice.get("total") or 0)
+    return {
+        "material": round(material, 2),
+        "labor": round(labor, 2),
+        "sales_tax": round(tax_total, 2),
+        "total_amount": round(total_amount, 2),
+        "payments_credit": round(payments_credit, 2),
+        "balance_due": round(balance_due, 2),
+    }
 
 
 def preview_invoice_from_form(conn):
@@ -2291,16 +2334,24 @@ def invoice_pdf_attachment(invoice, lines, company):
         page.draw_line((left, y - 4), (right, y - 4), color=(0.88, 0.91, 0.95), width=0.5)
         y += 6
 
-    y = max(y + 12, 610)
-    text(430, y, "Subtotal", 10)
-    text(520, y, format_invoice_money(invoice.get("subtotal")), 10)
-    y += 16
-    text(430, y, f"Tax {invoice.get('tax_rate') or 0}%", 10)
-    text(520, y, format_invoice_money(invoice.get("tax_total")), 10)
-    y += 18
+    totals = invoice_totals_breakdown(invoice, lines)
+    y = max(y + 12, 590)
+    for label, key in [
+        ("Total Material", "material"),
+        ("Total Labor", "labor"),
+        ("Total Sales Tax", "sales_tax"),
+        ("Total Amount", "total_amount"),
+        ("Payments/Credit", "payments_credit"),
+    ]:
+        value = format_invoice_money(totals[key])
+        if key == "payments_credit":
+            value = "-" + value
+        text(400, y, label, 10)
+        text(520, y, value, 10)
+        y += 16
     page.draw_line((430, y - 10), (right, y - 10), color=(0.08, 0.12, 0.2), width=1)
-    text(430, y, "Total", 13)
-    text(520, y, format_invoice_money(invoice.get("total")), 13)
+    text(400, y, "Balance Due", 15)
+    text(520, y, format_invoice_money(totals["balance_due"]), 15)
 
     y += 34
     if invoice.get("notes"):
@@ -5625,7 +5676,8 @@ def preview_invoice():
         company=account_info(),
         email_logs=[],
         is_preview=True,
-        preview_form_pairs=form_pairs
+        preview_form_pairs=form_pairs,
+        totals_breakdown=invoice_totals_breakdown(invoice, lines)
     )
 
 
@@ -5669,7 +5721,7 @@ def invoice_view(invoice_id):
     if not invoice:
         flash("Invoice not found.")
         return redirect(url_for("invoices"))
-    return render_template("invoice_view.html", invoice=invoice, lines=lines, company=account_info(), email_logs=email_logs)
+    return render_template("invoice_view.html", invoice=invoice, lines=lines, company=account_info(), email_logs=email_logs, totals_breakdown=invoice_totals_breakdown(invoice, lines))
 
 
 @app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
