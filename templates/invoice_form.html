@@ -227,6 +227,19 @@ function refreshLineIndexes(){
         updateLineAmount(line);
     });
 }
+function lockSelectedItem(select){
+    if(!select||!select.value||select.value==="__new__")return;
+    Array.from(select.options).forEach(option=>{
+        option.defaultSelected=false;
+        option.selected=option.value===select.value;
+    });
+    const selected=select.options[select.selectedIndex];
+    if(selected)selected.defaultSelected=true;
+    select.dataset.selectedValue=select.value;
+}
+function lockAllSelectedItems(){
+    invoiceLines.querySelectorAll(".lineItemSelect").forEach(lockSelectedItem);
+}
 function applySelectedItem(select){
     const line=select.closest(".invoiceLine");
     const option=select.options[select.selectedIndex];
@@ -243,6 +256,7 @@ function applySelectedItem(select){
     if(description)description.value=option.dataset.description||"";
     if(price)price.value=option.dataset.price||"0";
     if(taxable)taxable.checked=option.dataset.taxable==="1";
+    lockSelectedItem(select);
     updateLineAmount(line);
 }
 function openNewItemModal(select){
@@ -252,6 +266,7 @@ function openNewItemModal(select){
     newItemModal.hidden=false;
 }
 function addInvoiceLine(data={}){
+    lockAllSelectedItems();
     const wrapper=document.createElement("tbody");
     wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
     const line=wrapper.firstElementChild;
@@ -261,6 +276,7 @@ function addInvoiceLine(data={}){
         select.value=String(data.part_catalog_id);
         applySelectedItem(select);
     }
+    lockAllSelectedItems();
     refreshLineIndexes();
 }
 function appendCatalogOption(item, targetSelect){
@@ -323,7 +339,9 @@ newItemForm.addEventListener("submit",async event=>{
         error.textContent=err.message||"Could not create item.";
     }
 });
+document.getElementById("invoiceForm").addEventListener("submit",lockAllSelectedItems);
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
+lockAllSelectedItems();
 refreshLineIndexes();
 </script>
 
