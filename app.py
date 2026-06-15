@@ -6315,6 +6315,13 @@ def parts_catalog():
         return redirect(url_for("parts_catalog"))
 
     q = request.args.get("q", "").strip()
+    edit_id = request.args.get("edit_id", type=int)
+    edit_part = None
+    if edit_id:
+        edit_part = conn.execute(
+            "SELECT * FROM part_catalog WHERE id = %s AND COALESCE(is_active, TRUE) = TRUE",
+            (edit_id,)
+        ).fetchone()
     page = max(1, request.args.get("page", 1, type=int) or 1)
     per_page = 10
     offset = (page - 1) * per_page
@@ -6355,7 +6362,7 @@ def parts_catalog():
         tuple(params + [per_page, offset])
     ).fetchall()
     conn.close()
-    return render_template("parts_catalog.html", parts=rows, q=q, page=page, total_pages=total_pages, total_count=total_count, per_page=per_page)
+    return render_template("parts_catalog.html", parts=rows, q=q, edit_part=edit_part, page=page, total_pages=total_pages, total_count=total_count, per_page=per_page)
 
 
 @app.route("/parts-catalog/create-json", methods=["POST"])
