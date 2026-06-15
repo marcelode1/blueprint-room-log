@@ -19,8 +19,10 @@
         <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
     {% endif %}
 
-    <a class="btn-link" href="{{ url_for('mobile_time_clock', project_id=project.id, next=request.full_path) }}">Clock In / Clock Out</a>
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
+    {% if is_main_admin() %}
+        <a class="btn-link btn-secondary desktop-only" href="{{ url_for('new_invoice', project_id=project.id) }}">Invoice</a>
+    {% endif %}
     {% if can_view_project_files(project.id) %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
     {% endif %}

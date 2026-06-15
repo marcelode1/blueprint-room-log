@@ -2207,6 +2207,115 @@ def invoice_email_body(invoice, company):
     return "\n".join(lines)
 
 
+def invoice_pdf_attachment(invoice, lines, company):
+    if fitz is None:
+        return None, "PDF support is not available on this server."
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    y = 48
+    left = 48
+    right = 564
+
+    def text(x, y_pos, value, size=10, bold=False, align=0):
+        font = "helv"
+        page.insert_text((x, y_pos), str(value or ""), fontsize=size, fontname=font, color=(0.08, 0.12, 0.2))
+
+    def wrapped(x, y_pos, value, width, size=9, line_gap=11):
+        current_y = y_pos
+        for raw_line in str(value or "").splitlines() or [""]:
+            words = raw_line.split()
+            line = ""
+            for word in words:
+                candidate = (line + " " + word).strip()
+                if len(candidate) > max(18, int(width / (size * 0.52))):
+                    text(x, current_y, line, size)
+                    current_y += line_gap
+                    line = word
+                else:
+                    line = candidate
+            if line:
+                text(x, current_y, line, size)
+                current_y += line_gap
+        return current_y
+
+    text(left, y, company.get("company_name") or "ProjectONus", 18)
+    y += 20
+    for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
+        if value:
+            text(left, y, value, 9)
+            y += 12
+
+    text(450, 48, "INVOICE", 22)
+    text(450, 76, invoice.get("invoice_number") or "PREVIEW", 10)
+    text(450, 92, f"Date: {format_date(invoice.get('invoice_date'))}", 9)
+    if invoice.get("due_date"):
+        text(450, 108, f"Due: {format_date(invoice.get('due_date'))}", 9)
+
+    y = max(y + 18, 145)
+    text(left, y, "Bill To", 12)
+    y += 16
+    text(left, y, invoice.get("customer_name") or "-", 10)
+    y += 13
+    if invoice.get("billing_address"):
+        y = wrapped(left, y, invoice.get("billing_address"), 260, 9)
+    if invoice.get("customer_email"):
+        text(left, y, invoice.get("customer_email"), 9)
+        y += 12
+    if invoice.get("customer_phone"):
+        text(left, y, invoice.get("customer_phone"), 9)
+        y += 12
+    if invoice.get("project_name"):
+        text(left, y, f"Project: {invoice.get('project_name')}", 9)
+        y += 12
+
+    y += 18
+    headers = [("#", 48), ("Qty", 78), ("Item", 118), ("Description", 220), ("Location", 390), ("Unit", 470), ("Amount", 525)]
+    page.draw_line((left, y - 10), (right, y - 10), color=(0.75, 0.8, 0.88), width=0.8)
+    for label, x in headers:
+        text(x, y, label, 8)
+    y += 12
+    page.draw_line((left, y - 7), (right, y - 7), color=(0.75, 0.8, 0.88), width=0.8)
+    for index, line in enumerate(lines, start=1):
+        if y > 690:
+            page = doc.new_page(width=612, height=792)
+            y = 48
+        row_top = y
+        text(48, y, index, 8)
+        text(78, y, line.get("quantity"), 8)
+        y_item = wrapped(118, y, line.get("item_name"), 92, 8, 10)
+        y_desc = wrapped(220, y, line.get("description"), 160, 8, 10)
+        y_loc = wrapped(390, y, line.get("location"), 70, 8, 10)
+        text(470, y, format_invoice_money(line.get("unit_price")), 8)
+        text(525, y, format_invoice_money(line.get("line_total")), 8)
+        y = max(y_item, y_desc, y_loc, row_top + 18)
+        page.draw_line((left, y - 4), (right, y - 4), color=(0.88, 0.91, 0.95), width=0.5)
+        y += 6
+
+    y = max(y + 12, 610)
+    text(430, y, "Subtotal", 10)
+    text(520, y, format_invoice_money(invoice.get("subtotal")), 10)
+    y += 16
+    text(430, y, f"Tax {invoice.get('tax_rate') or 0}%", 10)
+    text(520, y, format_invoice_money(invoice.get("tax_total")), 10)
+    y += 18
+    page.draw_line((430, y - 10), (right, y - 10), color=(0.08, 0.12, 0.2), width=1)
+    text(430, y, "Total", 13)
+    text(520, y, format_invoice_money(invoice.get("total")), 13)
+
+    y += 34
+    if invoice.get("notes"):
+        text(left, y, "Notes", 11)
+        y = wrapped(left, y + 14, invoice.get("notes"), 500, 9)
+    if invoice.get("terms"):
+        text(left, y + 6, "Terms", 11)
+        wrapped(left, y + 20, invoice.get("terms"), 500, 9)
+
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    invoice_number = secure_filename(invoice.get("invoice_number") or "invoice-preview") or "invoice"
+    return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
+
+
 def vendor_account_email_body(supplier, info, attachment_name=""):
     company_name = info.get("company_name") or "our company"
     greeting_name = supplier.get("contact_name") or supplier.get("name") or "Vendor Team"
@@ -5503,8 +5612,10 @@ def send_invoice_preview():
         return redirect(url_for("new_invoice"))
     company = account_info()
     subject = f"Invoice preview from {company.get('company_name') or 'ProjectONus'}"
-    html = render_template("invoice_email_attachment.html", invoice=invoice, lines=lines, company=company)
-    attachment = ("invoice-preview.html", html.encode("utf-8"), "text/html")
+    attachment, error = invoice_pdf_attachment(invoice, lines, company)
+    if error:
+        flash(error)
+        return redirect(url_for("new_invoice"))
     sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
     flash("Invoice preview emailed." if sent else "Invoice preview email failed. Check email settings.")
     return redirect(url_for("new_invoice"))
@@ -5623,8 +5734,11 @@ def send_invoice(invoice_id):
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
     company = account_info()
     subject = f"Invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}"
-    html = render_template("invoice_email_attachment.html", invoice=invoice, lines=lines, company=company)
-    attachment = (f"{invoice.get('invoice_number')}.html", html.encode("utf-8"), "text/html")
+    attachment, error = invoice_pdf_attachment(invoice, lines, company)
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
     sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
     conn.execute(
         """
