@@ -2291,6 +2291,14 @@ def invoice_pdf_attachment(invoice, lines, company):
                 current_y += line_gap
         return current_y
 
+    logo_path = get_app_setting("company_logo", "")
+    logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
+    if logo_bytes:
+        try:
+            page.insert_image(fitz.Rect(left, y - 8, left + 92, y + 52), stream=logo_bytes, keep_proportion=True)
+            y += 58
+        except Exception:
+            pass
     text(left, y, company.get("company_name") or "ProjectONus", 18)
     y += 20
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
@@ -2398,6 +2406,53 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
         if sent:
             conn.execute("UPDATE invoices SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s", (utc_now_iso(), utc_now_iso(), invoice["id"]))
     return sent, "" if sent else "Invoice could not be emailed. Check SMTP email settings."
+
+
+def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
+    if lines is None:
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            request.form.get("project_id", type=int),
+            request.form.get("customer_name", "").strip(),
+            request.form.get("customer_email", "").strip(),
+            format_us_phone(request.form.get("customer_phone")),
+            request.form.get("billing_address", "").strip(),
+            invoice_date,
+            request.form.get("due_date", "").strip(),
+            request.form.get("status", "draft"),
+            subtotal,
+            tax_rate,
+            tax_total,
+            total,
+            request.form.get("notes", "").strip(),
+            request.form.get("terms", "").strip(),
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    invoice_id = row["id"]
+    save_invoice_items(conn, lines)
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+        )
+    return invoice_id
 
 
 def vendor_account_email_body(supplier, info, attachment_name=""):
@@ -5597,47 +5652,7 @@ def new_invoice():
         if not lines:
             flash("Add at least one invoice item.")
             return redirect(url_for("new_invoice"))
-        invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
-        invoice_number = next_invoice_number(conn, invoice_date)
-        row = conn.execute(
-            """
-            INSERT INTO invoices
-            (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                invoice_number,
-                request.form.get("project_id", type=int),
-                request.form.get("customer_name", "").strip(),
-                request.form.get("customer_email", "").strip(),
-                format_us_phone(request.form.get("customer_phone")),
-                request.form.get("billing_address", "").strip(),
-                invoice_date,
-                request.form.get("due_date", "").strip(),
-                request.form.get("status", "draft"),
-                subtotal,
-                tax_rate,
-                tax_total,
-                total,
-                request.form.get("notes", "").strip(),
-                request.form.get("terms", "").strip(),
-                session.get("user_id"),
-                utc_now_iso(),
-                utc_now_iso(),
-            )
-        ).fetchone()
-        invoice_id = row["id"]
-        save_invoice_items(conn, lines)
-        for line in lines:
-            conn.execute(
-                """
-                INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
-            )
+        invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
         if request.form.get("submit_action") == "email":
             invoice, saved_lines = load_invoice(conn, invoice_id)
             sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
@@ -5726,25 +5741,25 @@ def restore_invoice_preview():
 def send_invoice_preview():
     conn = db()
     ensure_invoice_tables(conn)
-    invoice, lines = preview_invoice_from_form(conn)
-    conn.close()
+    ensure_part_catalog_tables(conn)
+    lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
     email_values = [value.strip() for value in request.form.getlist("customer_email") if value.strip()]
-    to_email = (email_values[-1] if email_values else "") or invoice.get("customer_email")
+    to_email = (email_values[-1] if email_values else "") or request.form.get("customer_email", "").strip()
     if not lines:
+        conn.close()
         flash("Add at least one invoice item before emailing the preview.")
         return redirect(url_for("new_invoice"))
     if not to_email:
+        conn.close()
         flash("Add a customer email before sending this invoice preview.")
         return redirect(url_for("new_invoice"))
-    company = account_info()
-    subject = f"Invoice preview from {company.get('company_name') or 'ProjectONus'}"
-    attachment, error = invoice_pdf_attachment(invoice, lines, company)
-    if error:
-        flash(error)
-        return redirect(url_for("new_invoice"))
-    sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
-    flash("Invoice preview emailed." if sent else "Invoice preview email failed. Check email settings.")
-    return redirect(url_for("new_invoice"))
+    invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+    invoice, saved_lines = load_invoice(conn, invoice_id)
+    sent, email_error = email_invoice_record(conn, invoice, saved_lines, to_email)
+    flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>")
