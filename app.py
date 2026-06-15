@@ -6409,6 +6409,47 @@ def create_part_catalog_json():
     return jsonify({"ok": True, "item": dict(row) if row else {}})
 
 
+@app.route("/parts-catalog/<int:part_id>/quick-update-json", methods=["POST"])
+@admin_required
+def quick_update_part_catalog_json(part_id):
+    conn = db()
+    ensure_part_catalog_tables(conn)
+    row = conn.execute(
+        "SELECT id FROM part_catalog WHERE id = %s AND COALESCE(is_active, TRUE) = TRUE",
+        (part_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Catalog item not found."}), 404
+    description = request.form.get("description", "").strip()
+    try:
+        unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else 0
+    except Exception:
+        conn.close()
+        return jsonify({"ok": False, "error": "Unit price is not valid."}), 400
+    conn.execute(
+        """
+        UPDATE part_catalog
+        SET description = %s,
+            unit_price = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (description, unit_price, utc_now_iso(), part_id)
+    )
+    updated = conn.execute(
+        """
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        FROM part_catalog
+        WHERE id = %s
+        """,
+        (part_id,)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "item": dict(updated) if updated else {}})
+
+
 @app.route("/suppliers", methods=["GET", "POST"])
 @admin_required
 def suppliers():

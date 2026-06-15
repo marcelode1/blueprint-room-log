@@ -234,6 +234,21 @@
     </div>
 </div>
 
+<div class="invoiceModal" id="catalogUpdateModal" hidden>
+    <div class="invoiceModalDialog catalogUpdateDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Item Change?</h3>
+        </div>
+        <p id="catalogUpdateMessage">Save this description or price to Items & Catalog for future invoices?</p>
+        <p class="muted">This will not change invoices that were already saved or sent to customers.</p>
+        <p class="formError" id="catalogUpdateError"></p>
+        <div class="catalogUpdateActions">
+            <button type="button" id="saveCatalogUpdate">Save to Catalog</button>
+            <button type="button" class="btn-secondary" id="skipCatalogUpdate">Only This Invoice</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const projectSelect=document.getElementById("invoiceProjectSelect");
 const dueDateInput=document.getElementById("invoiceDueDate");
@@ -274,8 +289,14 @@ const invoiceLines=document.getElementById("invoiceLines");
 const lineTemplate=document.getElementById("invoiceLineTemplate");
 const newItemModal=document.getElementById("newItemModal");
 const newItemForm=document.getElementById("newCatalogItemForm");
+const catalogUpdateModal=document.getElementById("catalogUpdateModal");
+const catalogUpdateMessage=document.getElementById("catalogUpdateMessage");
+const catalogUpdateError=document.getElementById("catalogUpdateError");
+const saveCatalogUpdate=document.getElementById("saveCatalogUpdate");
+const skipCatalogUpdate=document.getElementById("skipCatalogUpdate");
 const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
 let pendingItemSelect=null;
+let pendingCatalogUpdate=null;
 
 function money(value){
     const number=Number(value||0);
@@ -291,6 +312,11 @@ function formatMoneyInput(input){
 }
 function lineRows(){
     return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
+}
+function selectedCatalogOption(line){
+    const select=line?.querySelector(".lineItemSelect");
+    if(!select||!select.value||select.value==="__new__"||!/^\d+$/.test(select.value))return null;
+    return select.options[select.selectedIndex]||null;
 }
 function updateLineAmount(line){
     const qty=Number(line.querySelector(".lineQty")?.value||0);
@@ -372,8 +398,48 @@ function applySelectedItem(select){
     if(price)price.value=money(option.dataset.price||0);
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     lockSelectedItem(select);
+    markCatalogBaseline(line);
     updateLineAmount(line);
     updateInvoiceLiveTotals();
+}
+function markCatalogBaseline(line,useCurrent=false){
+    const option=selectedCatalogOption(line);
+    if(!option)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    if(description)description.dataset.catalogBaseline=useCurrent ? (description.value||"").trim() : (option.dataset.description||"");
+    if(price)price.dataset.catalogBaseline=String(useCurrent ? parseMoney(price.value||0) : parseMoney(option.dataset.price||0));
+}
+function openCatalogUpdatePrompt(line){
+    const option=selectedCatalogOption(line);
+    if(!option||!catalogUpdateModal)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const newDescription=(description?.value||"").trim();
+    const newPrice=parseMoney(price?.value||0);
+    const oldDescription=description?.dataset.catalogBaseline ?? (option.dataset.description||"");
+    const oldPrice=Number(price?.dataset.catalogBaseline ?? option.dataset.price ?? 0);
+    const descriptionChanged=newDescription!==String(oldDescription||"").trim();
+    const priceChanged=Math.abs(newPrice-oldPrice)>0.009;
+    if(!descriptionChanged&&!priceChanged)return;
+    pendingCatalogUpdate={line,option,partId:option.value,description:newDescription,unitPrice:newPrice};
+    const itemName=option.dataset.name||line.querySelector(".lineItemName")?.value||"this item";
+    if(catalogUpdateMessage)catalogUpdateMessage.textContent=`Save the new description or price for ${itemName} to Items & Catalog for future invoices?`;
+    if(catalogUpdateError)catalogUpdateError.textContent="";
+    catalogUpdateModal.hidden=false;
+}
+function closeCatalogUpdatePrompt(){
+    pendingCatalogUpdate=null;
+    if(catalogUpdateModal)catalogUpdateModal.hidden=true;
+}
+function updateCatalogOptionEverywhere(item){
+    document.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.name=item.item_name||option.dataset.name||"";
+        option.dataset.type=item.item_type||option.dataset.type||"part";
+        option.dataset.taxable=item.taxable?"1":"0";
+    });
 }
 function openNewItemModal(select){
     pendingItemSelect=select;
@@ -432,12 +498,50 @@ invoiceLines.addEventListener("click",event=>{
 invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
 });
+invoiceLines.addEventListener("keydown",event=>{
+    if(event.key!=="Enter")return;
+    if(event.target.matches(".lineDescription,.lineUnitPrice")){
+        event.preventDefault();
+        if(event.target.matches(".lineUnitPrice")){
+            formatMoneyInput(event.target);
+            updateLineAmount(event.target.closest(".invoiceLine"));
+        }
+        openCatalogUpdatePrompt(event.target.closest(".invoiceLine"));
+    }
+});
 invoiceLines.addEventListener("blur",event=>{
     if(event.target.matches(".lineUnitPrice")){
         formatMoneyInput(event.target);
         updateLineAmount(event.target.closest(".invoiceLine"));
     }
 },true);
+if(skipCatalogUpdate){
+    skipCatalogUpdate.addEventListener("click",()=>{
+        if(pendingCatalogUpdate){
+            markCatalogBaseline(pendingCatalogUpdate.line,true);
+        }
+        closeCatalogUpdatePrompt();
+    });
+}
+if(saveCatalogUpdate){
+    saveCatalogUpdate.addEventListener("click",async()=>{
+        if(!pendingCatalogUpdate)return;
+        if(catalogUpdateError)catalogUpdateError.textContent="";
+        const formData=new FormData();
+        formData.set("description",pendingCatalogUpdate.description);
+        formData.set("unit_price",String(pendingCatalogUpdate.unitPrice));
+        try{
+            const response=await fetch(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,{method:"POST",body:formData});
+            const payload=await response.json();
+            if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not update catalog item.");
+            updateCatalogOptionEverywhere(payload.item);
+            markCatalogBaseline(pendingCatalogUpdate.line);
+            closeCatalogUpdatePrompt();
+        }catch(err){
+            if(catalogUpdateError)catalogUpdateError.textContent=err.message||"Could not update catalog item.";
+        }
+    });
+}
 invoiceLines.addEventListener("click",event=>{
     const remove=event.target.closest(".removeInvoiceLine");
     if(remove){
@@ -468,6 +572,7 @@ document.getElementById("invoiceForm").addEventListener("submit",lockAllSelected
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 lockAllSelectedItems();
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
+lineRows().forEach(markCatalogBaseline);
 refreshLineIndexes();
 updateInvoiceLiveTotals();
 </script>
@@ -477,7 +582,7 @@ updateInvoiceLiveTotals();
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
-.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog{max-width:460px}.catalogUpdateActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button{flex:1;min-width:180px}
 @media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
