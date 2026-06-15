@@ -249,10 +249,25 @@
     </div>
 </div>
 
+<div class="invoiceModal" id="unsavedInvoiceModal" hidden>
+    <div class="invoiceModalDialog unsavedInvoiceDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Invoice Changes?</h3>
+        </div>
+        <p>You have changes on this invoice that are not saved yet.</p>
+        <div class="unsavedInvoiceActions">
+            <button type="button" id="saveBeforeLeaving">Save Invoice</button>
+            <button type="button" class="btn-secondary" id="leaveWithoutSaving">Leave Without Saving</button>
+            <button type="button" class="btn-secondary" id="keepEditingInvoice">Keep Editing</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const projectSelect=document.getElementById("invoiceProjectSelect");
 const dueDateInput=document.getElementById("invoiceDueDate");
 const termsInput=document.getElementById("invoiceTerms");
+const invoiceForm=document.getElementById("invoiceForm");
 if(projectSelect){
     projectSelect.addEventListener("change",()=>{
         const option=projectSelect.options[projectSelect.selectedIndex];
@@ -294,9 +309,28 @@ const catalogUpdateMessage=document.getElementById("catalogUpdateMessage");
 const catalogUpdateError=document.getElementById("catalogUpdateError");
 const saveCatalogUpdate=document.getElementById("saveCatalogUpdate");
 const skipCatalogUpdate=document.getElementById("skipCatalogUpdate");
+const unsavedInvoiceModal=document.getElementById("unsavedInvoiceModal");
+const saveBeforeLeaving=document.getElementById("saveBeforeLeaving");
+const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
+const keepEditingInvoice=document.getElementById("keepEditingInvoice");
 const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
 let pendingItemSelect=null;
 let pendingCatalogUpdate=null;
+let invoiceDirty=false;
+let allowInvoiceLeave=false;
+let pendingInvoiceNavigation=null;
+
+function markInvoiceDirty(){
+    if(!allowInvoiceLeave)invoiceDirty=true;
+}
+function showUnsavedInvoicePrompt(navigateFn){
+    pendingInvoiceNavigation=navigateFn;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=false;
+}
+function hideUnsavedInvoicePrompt(){
+    pendingInvoiceNavigation=null;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=true;
+}
 
 function money(value){
     const number=Number(value||0);
@@ -460,6 +494,14 @@ function addInvoiceLine(data={}){
     }
     lockAllSelectedItems();
     refreshLineIndexes();
+    requestAnimationFrame(()=>{
+        const gridWrap=document.querySelector(".invoiceGridWrap");
+        if(gridWrap)gridWrap.scrollTop=gridWrap.scrollHeight;
+        line.scrollIntoView({block:"nearest",inline:"nearest"});
+        const firstInput=line.querySelector(".lineItemSelect");
+        if(firstInput)firstInput.focus({preventScroll:true});
+    });
+    markInvoiceDirty();
 }
 function appendCatalogOption(item, targetSelect){
     document.querySelectorAll(".lineItemSelect").forEach(select=>{
@@ -489,6 +531,7 @@ document.getElementById("closeNewItemModal").addEventListener("click",()=>{
 invoiceLines.addEventListener("change",event=>{
     if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    markInvoiceDirty();
 });
 invoiceLines.addEventListener("click",event=>{
     if(event.target.matches(".lineItemSelect")&&event.target.value==="__new__"){
@@ -497,6 +540,7 @@ invoiceLines.addEventListener("click",event=>{
 });
 invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    markInvoiceDirty();
 });
 invoiceLines.addEventListener("keydown",event=>{
     if(event.key!=="Enter")return;
@@ -550,6 +594,7 @@ invoiceLines.addEventListener("click",event=>{
         if(lineRows().length===0)addInvoiceLine();
         refreshLineIndexes();
         updateInvoiceLiveTotals();
+        markInvoiceDirty();
     }
 });
 newItemForm.addEventListener("submit",async event=>{
@@ -568,13 +613,83 @@ newItemForm.addEventListener("submit",async event=>{
         error.textContent=err.message||"Could not create item.";
     }
 });
-document.getElementById("invoiceForm").addEventListener("submit",lockAllSelectedItems);
+if(invoiceForm){
+    invoiceForm.addEventListener("input",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("change",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("submit",event=>{
+        lockAllSelectedItems();
+        const submitter=event.submitter;
+        const isPreview=submitter&&submitter.getAttribute("formtarget")==="_blank";
+        if(isPreview){
+            allowInvoiceLeave=false;
+            return;
+        }
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+    });
+}
+document.addEventListener("click",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    const link=event.target.closest("a[href]");
+    const backButton=event.target.closest(".backButton");
+    if(!link&&!backButton)return;
+    if(link&&link.target==="_blank")return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    showUnsavedInvoicePrompt(()=>{
+        allowInvoiceLeave=true;
+        if(link){
+            window.location.href=link.href;
+        }else if(window.history.length>1){
+            window.history.back();
+        }else{
+            window.location.href="{{ url_for('index') }}";
+        }
+    });
+},true);
+window.addEventListener("beforeunload",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    event.preventDefault();
+    event.returnValue="";
+});
+if(saveBeforeLeaving){
+    saveBeforeLeaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        lockAllSelectedItems();
+        if(invoiceForm){
+            const submitButton=invoiceForm.querySelector('button[type="submit"]:not([formaction])');
+            if(submitButton&&invoiceForm.requestSubmit)invoiceForm.requestSubmit(submitButton);
+            else invoiceForm.submit();
+        }
+    });
+}
+if(leaveWithoutSaving){
+    leaveWithoutSaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        const navigate=pendingInvoiceNavigation;
+        hideUnsavedInvoicePrompt();
+        if(navigate)navigate();
+    });
+}
+if(keepEditingInvoice){
+    keepEditingInvoice.addEventListener("click",hideUnsavedInvoicePrompt);
+}
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 lockAllSelectedItems();
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 lineRows().forEach(markCatalogBaseline);
 refreshLineIndexes();
 updateInvoiceLiveTotals();
+invoiceDirty=false;
 </script>
 
 <style>
@@ -582,7 +697,7 @@ updateInvoiceLiveTotals();
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
-.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog{max-width:460px}.catalogUpdateActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button{flex:1;min-width:180px}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
 @media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
