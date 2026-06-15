@@ -110,20 +110,28 @@
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
                                 <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
                                 <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                    <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
+                                        data-name="{{ line.item_name }}"
+                                        data-description="{{ line.description or '' }}"
+                                        data-price="{{ line.unit_price or 0 }}"
+                                        data-type="{{ line.item_type or 'part' }}"
+                                        data-taxable="{{ '1' if line.taxable else '0' }}"
+                                        selected>
+                                        {{ line.item_name or 'Saved item' }}{% if line.item_type == 'service' %} (Labor){% endif %}
+                                    </option>
                                     <option value="__new__">NEW ITEM</option>
-                                    {% if not line.part_catalog_id %}
-                                        <option value="" selected>{{ line.item_name }}</option>
-                                    {% endif %}
                                     {% for item in part_catalog %}
+                                        {% if not line.part_catalog_id or line.part_catalog_id != item.id %}
                                         <option value="{{ item.id }}"
                                             data-name="{{ item.item_name }}"
                                             data-description="{{ item.description or '' }}"
                                             data-price="{{ item.unit_price or 0 }}"
                                             data-type="{{ item.item_type or 'part' }}"
                                             data-taxable="{{ '1' if item.taxable else '0' }}"
-                                            {% if line.part_catalog_id and line.part_catalog_id == item.id %}selected{% endif %}>
+                                            >
                                             {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
                                         </option>
+                                        {% endif %}
                                     {% endfor %}
                                 </select>
                             </td>
