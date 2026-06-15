@@ -1937,6 +1937,13 @@ def format_invoice_money(value):
         return "$0.00"
 
 
+def default_invoice_tax_rate():
+    try:
+        return float(get_app_setting("default_invoice_tax_rate", "0") or 0)
+    except Exception:
+        return 0.0
+
+
 def ensure_invoice_tables(conn):
     statements = [
         """
@@ -2085,10 +2092,7 @@ def invoice_line_values_from_form():
             "line_total": line_total,
             "position": len(lines) + 1,
         })
-    try:
-        tax_rate = float(request.form.get("tax_rate") or 0)
-    except Exception:
-        tax_rate = 0.0
+    tax_rate = default_invoice_tax_rate()
     tax_total = round(taxable_subtotal * (tax_rate / 100.0), 2)
     total = round(subtotal + tax_total, 2)
     return lines, round(subtotal, 2), tax_rate, tax_total, total
@@ -2151,20 +2155,56 @@ def load_invoice(conn, invoice_id):
     return invoice, lines
 
 
+def preview_invoice_from_form(conn):
+    lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    project_id = request.form.get("project_id", type=int)
+    project_name = ""
+    if project_id:
+        project = conn.execute("SELECT name FROM projects WHERE id = %s", (project_id,)).fetchone()
+        project_name = project["name"] if project else ""
+    invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
+    invoice = {
+        "id": None,
+        "invoice_number": "PREVIEW",
+        "project_id": project_id,
+        "project_name": project_name,
+        "customer_name": request.form.get("customer_name", "").strip(),
+        "customer_email": request.form.get("customer_email", "").strip(),
+        "customer_phone": format_us_phone(request.form.get("customer_phone")),
+        "billing_address": request.form.get("billing_address", "").strip(),
+        "invoice_date": invoice_date,
+        "due_date": request.form.get("due_date", "").strip(),
+        "status": request.form.get("status", "draft"),
+        "subtotal": subtotal,
+        "tax_rate": tax_rate,
+        "tax_total": tax_total,
+        "total": total,
+        "notes": request.form.get("notes", "").strip(),
+        "terms": request.form.get("terms", "").strip(),
+    }
+    return invoice, lines
+
+
+def invoice_form_pairs():
+    pairs = []
+    for key, values in request.form.lists():
+        for value in values:
+            pairs.append((key, value))
+    return pairs
+
+
 def invoice_email_body(invoice, company):
-    invoice_url = external_url("invoice_view", invoice_id=invoice["id"])
-    return "\n".join([
+    lines = [
         f"Hello {invoice.get('customer_name') or 'Customer'},",
         "",
         f"Please find invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}.",
         f"Amount Due: {format_invoice_money(invoice.get('total'))}",
         f"Due Date: {format_date(invoice.get('due_date')) if invoice.get('due_date') else '-'}",
-        "",
-        f"View invoice: {invoice_url}",
-        "",
-        "Thank you.",
-        company.get("company_name") or "ProjectONus",
-    ])
+    ]
+    if invoice.get("id"):
+        lines.extend(["", f"View invoice: {external_url('invoice_view', invoice_id=invoice['id'])}"])
+    lines.extend(["", "Thank you.", company.get("company_name") or "ProjectONus"])
+    return "\n".join(lines)
 
 
 def vendor_account_email_body(supplier, info, attachment_name=""):
@@ -5408,6 +5448,52 @@ def new_invoice():
         today=local_now().date().isoformat(),
         form_action=url_for("new_invoice"),
     )
+
+
+@app.route("/invoices/preview", methods=["POST"])
+@admin_required
+def preview_invoice():
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice, lines = preview_invoice_from_form(conn)
+    form_pairs = invoice_form_pairs()
+    conn.close()
+    if not lines:
+        flash("Add at least one invoice item before previewing.")
+        return redirect(url_for("new_invoice"))
+    return render_template(
+        "invoice_view.html",
+        invoice=invoice,
+        lines=lines,
+        company=account_info(),
+        email_logs=[],
+        is_preview=True,
+        preview_form_pairs=form_pairs
+    )
+
+
+@app.route("/invoices/preview/send", methods=["POST"])
+@admin_required
+def send_invoice_preview():
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice, lines = preview_invoice_from_form(conn)
+    conn.close()
+    email_values = [value.strip() for value in request.form.getlist("customer_email") if value.strip()]
+    to_email = (email_values[-1] if email_values else "") or invoice.get("customer_email")
+    if not lines:
+        flash("Add at least one invoice item before emailing the preview.")
+        return redirect(url_for("new_invoice"))
+    if not to_email:
+        flash("Add a customer email before sending this invoice preview.")
+        return redirect(url_for("new_invoice"))
+    company = account_info()
+    subject = f"Invoice preview from {company.get('company_name') or 'ProjectONus'}"
+    html = render_template("invoice_email_attachment.html", invoice=invoice, lines=lines, company=company)
+    attachment = ("invoice-preview.html", html.encode("utf-8"), "text/html")
+    sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
+    flash("Invoice preview emailed." if sent else "Invoice preview email failed. Check email settings.")
+    return redirect(url_for("new_invoice"))
 
 
 @app.route("/invoices/<int:invoice_id>")
@@ -10756,6 +10842,13 @@ def settings():
             set_app_setting("email_note_pictures", "1" if "email_note_pictures" in request.form else "0")
             set_app_setting("email_note_audio", "1" if "email_note_audio" in request.form else "0")
             flash("Email notification preferences updated.")
+        elif action == "invoice_settings":
+            try:
+                tax_rate = max(0.0, float(request.form.get("default_invoice_tax_rate") or 0))
+            except Exception:
+                tax_rate = 0.0
+            set_app_setting("default_invoice_tax_rate", str(tax_rate))
+            flash("Invoice settings saved.")
         elif action == "account_info":
             redirect_tab = "account_info"
             for key in ["company_name", "company_street_address", "company_city", "company_state", "company_zip_code", "company_contact_name", "company_phone", "company_email"]:
