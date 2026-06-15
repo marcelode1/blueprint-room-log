@@ -89,12 +89,22 @@
                             <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="{{ line.quantity or 1 }}"></td>
                             <td>
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
-                                <input type="hidden" name="line_part_catalog_id" class="linePartCatalogId" value="{{ line.part_catalog_id or '' }}">
-                                <div class="invoiceItemCombo">
-                                    <input class="lineItemSearch" value="{{ line.item_name }}" placeholder="Search or choose item" autocomplete="off" required>
-                                    <button type="button" class="itemDropdownButton" aria-label="Show items">v</button>
-                                    <div class="itemResults" hidden></div>
-                                </div>
+                                <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                    <option value="__new__">NEW ITEM</option>
+                                    {% if not line.part_catalog_id %}
+                                        <option value="" selected>{{ line.item_name }}</option>
+                                    {% endif %}
+                                    {% for item in part_catalog %}
+                                        <option value="{{ item.id }}"
+                                            data-name="{{ item.item_name }}"
+                                            data-description="{{ item.description or '' }}"
+                                            data-price="{{ item.unit_price or 0 }}"
+                                            data-taxable="{{ '1' if item.taxable else '0' }}"
+                                            {% if line.part_catalog_id and line.part_catalog_id == item.id %}selected{% endif %}>
+                                            {{ item.item_name }}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                                        </option>
+                                    {% endfor %}
+                                </select>
                             </td>
                             <td><textarea name="line_description" class="lineDescription" rows="2">{{ line.description or '' }}</textarea></td>
                             <td><input name="line_location" class="lineLocation" value="{{ line.location or '' }}" placeholder="Room, rack, area"></td>
@@ -117,12 +127,19 @@
                 <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="1"></td>
                 <td>
                     <input type="hidden" name="line_item_name" class="lineItemName">
-                    <input type="hidden" name="line_part_catalog_id" class="linePartCatalogId">
-                    <div class="invoiceItemCombo">
-                        <input class="lineItemSearch" placeholder="Search or choose item" autocomplete="off" required>
-                        <button type="button" class="itemDropdownButton" aria-label="Show items">v</button>
-                        <div class="itemResults" hidden></div>
-                    </div>
+                    <select name="line_part_catalog_id" class="lineItemSelect" required>
+                        <option value="__new__">NEW ITEM</option>
+                        <option value="" selected hidden>Choose item</option>
+                        {% for item in part_catalog %}
+                            <option value="{{ item.id }}"
+                                data-name="{{ item.item_name }}"
+                                data-description="{{ item.description or '' }}"
+                                data-price="{{ item.unit_price or 0 }}"
+                                data-taxable="{{ '1' if item.taxable else '0' }}">
+                                {{ item.item_name }}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
                 </td>
                 <td><textarea name="line_description" class="lineDescription" rows="2"></textarea></td>
                 <td><input name="line_location" class="lineLocation" placeholder="Room, rack, area"></td>
@@ -186,28 +203,11 @@ const invoiceLines=document.getElementById("invoiceLines");
 const lineTemplate=document.getElementById("invoiceLineTemplate");
 const newItemModal=document.getElementById("newItemModal");
 const newItemForm=document.getElementById("newCatalogItemForm");
-const catalogItems=[
-{% for item in part_catalog %}
-    {
-        id:"{{ item.id }}",
-        item_name:{{ (item.item_name or '')|tojson }},
-        item_model:{{ (item.item_model or '')|tojson }},
-        part_number:{{ (item.part_number or '')|tojson }},
-        brand:{{ (item.brand or '')|tojson }},
-        description:{{ (item.description or '')|tojson }},
-        unit_price:"{{ item.unit_price or 0 }}",
-        taxable:{{ 'true' if item.taxable else 'false' }}
-    }{% if not loop.last %},{% endif %}
-{% endfor %}
-];
-let pendingItemCombo=null;
+let pendingItemSelect=null;
 
 function money(value){
     const number=Number(value||0);
     return number.toLocaleString(undefined,{style:"currency",currency:"USD"});
-}
-function itemLabel(item){
-    return [item.item_name,item.brand,item.item_model].filter(Boolean).join(" - ");
 }
 function lineRows(){
     return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
@@ -227,67 +227,27 @@ function refreshLineIndexes(){
         updateLineAmount(line);
     });
 }
-function itemMatches(item, query){
-    if(!query)return true;
-    const haystack=[item.item_name,item.brand,item.item_model,item.part_number,item.description].join(" ").toLowerCase();
-    return haystack.includes(query.toLowerCase());
-}
-function renderItemResults(combo, query="", showAll=false){
-    const results=combo.querySelector(".itemResults");
-    if(!results)return;
-    const matches=(showAll?catalogItems:catalogItems.filter(item=>itemMatches(item,query))).slice(0,20);
-    const addLabel=query?`Add New: ${query}`:"Add New";
-    results.innerHTML=`<button type="button" class="itemResult addNewItemResult" data-action="new">${addLabel}</button>`;
-    matches.forEach(item=>{
-        const button=document.createElement("button");
-        button.type="button";
-        button.className="itemResult";
-        button.dataset.itemId=item.id;
-        button.innerHTML=`<strong>${item.item_name||""}</strong><span>${[item.brand,item.item_model,item.part_number].filter(Boolean).join(" / ")}</span>`;
-        results.appendChild(button);
-    });
-    results.hidden=false;
-}
-function closeItemResults(exceptCombo=null){
-    document.querySelectorAll(".invoiceItemCombo").forEach(combo=>{
-        if(combo!==exceptCombo){
-            const results=combo.querySelector(".itemResults");
-            if(results)results.hidden=true;
-        }
-    });
-}
-function applySelectedItem(combo,item){
-    const line=combo.closest(".invoiceLine");
-    if(!line||!item)return;
+function applySelectedItem(select){
+    const line=select.closest(".invoiceLine");
+    const option=select.options[select.selectedIndex];
+    if(!line||!option)return;
+    if(option.value==="__new__"){
+        openNewItemModal(select);
+        return;
+    }
     const name=line.querySelector(".lineItemName");
-    const id=line.querySelector(".linePartCatalogId");
-    const search=line.querySelector(".lineItemSearch");
     const description=line.querySelector(".lineDescription");
     const price=line.querySelector(".lineUnitPrice");
     const taxable=line.querySelector(".lineTaxable");
-    if(name)name.value=item.item_name||"";
-    if(id)id.value=item.id||"";
-    if(search)search.value=item.item_name||"";
-    if(description&&!description.value)description.value=item.description||"";
-    if(price)price.value=item.unit_price||"0";
-    if(taxable)taxable.checked=!!item.taxable;
+    if(name)name.value=option.dataset.name||option.textContent.trim();
+    if(description&&!description.value)description.value=option.dataset.description||"";
+    if(price)price.value=option.dataset.price||"0";
+    if(taxable)taxable.checked=option.dataset.taxable==="1";
     updateLineAmount(line);
-    closeItemResults();
 }
-function syncTypedItem(input){
-    const line=input.closest(".invoiceLine");
-    if(!line)return;
-    const name=line.querySelector(".lineItemName");
-    const id=line.querySelector(".linePartCatalogId");
-    if(name)name.value=input.value.trim();
-    if(id)id.value="";
-}
-function openNewItemModal(combo){
-    pendingItemCombo=combo;
+function openNewItemModal(select){
+    pendingItemSelect=select;
     newItemForm.reset();
-    const typed=combo?.querySelector(".lineItemSearch")?.value?.trim();
-    const itemName=newItemForm.querySelector('[name="item_name"]');
-    if(itemName&&typed)itemName.value=typed;
     document.getElementById("newItemError").textContent="";
     newItemModal.hidden=false;
 }
@@ -296,61 +256,47 @@ function addInvoiceLine(data={}){
     wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
     const line=wrapper.firstElementChild;
     invoiceLines.appendChild(line);
-    const combo=line.querySelector(".invoiceItemCombo");
-    if(data.part_catalog_id&&combo){
-        const item=catalogItems.find(entry=>entry.id===String(data.part_catalog_id));
-        if(item)applySelectedItem(combo,item);
+    const select=line.querySelector(".lineItemSelect");
+    if(data.part_catalog_id&&select){
+        select.value=String(data.part_catalog_id);
+        applySelectedItem(select);
     }
     refreshLineIndexes();
 }
-function appendCatalogOption(item,targetCombo){
-    const normalized={...item,id:String(item.id),unit_price:item.unit_price||0,taxable:!!item.taxable};
-    if(!catalogItems.some(entry=>entry.id===normalized.id))catalogItems.push(normalized);
-    if(targetCombo)applySelectedItem(targetCombo,normalized);
+function appendCatalogOption(item, targetSelect){
+    document.querySelectorAll(".lineItemSelect").forEach(select=>{
+        if(select.querySelector(`option[value="${item.id}"]`))return;
+        const option=document.createElement("option");
+        option.value=String(item.id);
+        option.dataset.name=item.item_name||"";
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.taxable=item.taxable?"1":"0";
+        option.textContent=[item.item_name,item.brand,item.item_model].filter(Boolean).join(" - ");
+        select.appendChild(option);
+    });
+    if(targetSelect){
+        targetSelect.value=String(item.id);
+        applySelectedItem(targetSelect);
+    }
 }
 
 document.getElementById("addInvoiceLine").addEventListener("click",()=>addInvoiceLine());
 document.getElementById("closeNewItemModal").addEventListener("click",()=>{
     newItemModal.hidden=true;
+    if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
 });
 invoiceLines.addEventListener("change",event=>{
+    if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
 });
 invoiceLines.addEventListener("click",event=>{
-    const dropdown=event.target.closest(".itemDropdownButton");
-    if(dropdown){
-        const combo=dropdown.closest(".invoiceItemCombo");
-        closeItemResults(combo);
-        renderItemResults(combo,"",true);
-        return;
-    }
-    const result=event.target.closest(".itemResult");
-    if(result){
-        const combo=result.closest(".invoiceItemCombo");
-        if(result.dataset.action==="new"){
-            openNewItemModal(combo);
-            return;
-        }
-        const item=catalogItems.find(entry=>entry.id===result.dataset.itemId);
-        if(item)applySelectedItem(combo,item);
-        return;
+    if(event.target.matches(".lineItemSelect")&&event.target.value==="__new__"){
+        openNewItemModal(event.target);
     }
 });
 invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
-    if(event.target.matches(".lineItemSearch")){
-        syncTypedItem(event.target);
-        const combo=event.target.closest(".invoiceItemCombo");
-        closeItemResults(combo);
-        renderItemResults(combo,event.target.value,false);
-    }
-});
-invoiceLines.addEventListener("focusin",event=>{
-    if(event.target.matches(".lineItemSearch")){
-        const combo=event.target.closest(".invoiceItemCombo");
-        closeItemResults(combo);
-        renderItemResults(combo,event.target.value,false);
-    }
 });
 invoiceLines.addEventListener("click",event=>{
     const remove=event.target.closest(".removeInvoiceLine");
@@ -371,14 +317,11 @@ newItemForm.addEventListener("submit",async event=>{
         const response=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:formData});
         const payload=await response.json();
         if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
-        appendCatalogOption(payload.item,pendingItemCombo);
+        appendCatalogOption(payload.item,pendingItemSelect);
         newItemModal.hidden=true;
     }catch(err){
         error.textContent=err.message||"Could not create item.";
     }
-});
-document.addEventListener("click",event=>{
-    if(!event.target.closest(".invoiceItemCombo"))closeItemResults();
 });
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 refreshLineIndexes();
@@ -387,8 +330,7 @@ refreshLineIndexes();
 <style>
 .invoiceLinePanel{position:sticky;top:8px;z-index:5;margin:22px 0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.08);overflow:hidden}
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
-.invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:270px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
-.invoiceItemCombo{position:relative;display:grid;grid-template-columns:1fr 34px}.invoiceItemCombo .lineItemSearch{border-radius:4px 0 0 4px}.itemDropdownButton{min-height:34px;margin:0;border:1px solid #cbd5e1;border-left:0;border-radius:0 4px 4px 0;background:#f8fafc;color:#172033;padding:0;width:34px}.itemResults{position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:30;max-height:360px;overflow-y:auto;border:1px solid #94a3b8;border-radius:6px;background:white;box-shadow:0 16px 34px rgba(15,23,42,.22)}.itemResult{display:block;width:100%;min-height:34px;margin:0;padding:7px 9px;border:0;border-bottom:1px solid #e2e8f0;border-radius:0;background:white;color:#172033;text-align:left;font-weight:700}.itemResult:hover,.itemResult:focus{background:#eaf2ff}.itemResult span{display:block;color:#64748b;font-size:12px;font-weight:600}.addNewItemResult{position:sticky;top:0;background:#fff7ed;color:#9a3412;border-bottom:1px solid #fed7aa}
+.invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:240px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:170px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:120px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:86px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.formError{color:#b91c1c;font-weight:800}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
