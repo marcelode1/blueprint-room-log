@@ -5652,14 +5652,26 @@ def new_invoice():
         if not lines:
             flash("Add at least one invoice item.")
             return redirect(url_for("new_invoice"))
-        invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+        try:
+            invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            flash(f"Invoice could not be saved. {e}")
+            selected_project_id = request.form.get("project_id", type=int)
+            return redirect(url_for("new_invoice", project_id=selected_project_id) if selected_project_id else url_for("new_invoice"))
         if request.form.get("submit_action") == "email":
             invoice, saved_lines = load_invoice(conn, invoice_id)
-            sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
+            try:
+                sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                sent, email_error = False, str(e)
             flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
         else:
             flash("Invoice created.")
-        conn.commit()
         conn.close()
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -5753,11 +5765,23 @@ def send_invoice_preview():
         conn.close()
         flash("Add a customer email before sending this invoice preview.")
         return redirect(url_for("new_invoice"))
-    invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+    try:
+        invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"Invoice could not be saved. {e}")
+        selected_project_id = request.form.get("project_id", type=int)
+        return redirect(url_for("new_invoice", project_id=selected_project_id) if selected_project_id else url_for("new_invoice"))
     invoice, saved_lines = load_invoice(conn, invoice_id)
-    sent, email_error = email_invoice_record(conn, invoice, saved_lines, to_email)
+    try:
+        sent, email_error = email_invoice_record(conn, invoice, saved_lines, to_email)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        sent, email_error = False, str(e)
     flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
-    conn.commit()
     conn.close()
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
@@ -5767,6 +5791,7 @@ def send_invoice_preview():
 def invoice_view(invoice_id):
     conn = db()
     ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
     invoice, lines = load_invoice(conn, invoice_id)
     email_logs = conn.execute(
         "SELECT invoice_email_logs.*, users.name AS sent_by_name FROM invoice_email_logs LEFT JOIN users ON invoice_email_logs.sent_by = users.id WHERE invoice_id = %s ORDER BY sent_at DESC",
