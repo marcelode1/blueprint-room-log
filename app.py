@@ -2327,8 +2327,8 @@ def invoice_pdf_attachment(invoice, lines, company):
     logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
     if logo_bytes:
         try:
-            page.insert_image(fitz.Rect(left, 38, left + 184, 130), stream=logo_bytes, keep_proportion=True)
-            y = 140
+            page.insert_image(fitz.Rect(left, 34, left + 221, 144), stream=logo_bytes, keep_proportion=True)
+            y = 154
         except Exception:
             pass
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
@@ -2346,14 +2346,18 @@ def invoice_pdf_attachment(invoice, lines, company):
         if not value:
             continue
         text(378, meta_y, label, 8)
-        text(450, meta_y, value, 8)
-        meta_y += 16
+        if label == "Terms":
+            next_y = wrapped(450, meta_y, value, 104, 8, 10)
+            meta_y = max(meta_y + 16, next_y + 2)
+        else:
+            text(450, meta_y, value, 8)
+            meta_y += 16
     if invoice.get("due_date"):
         text(378, meta_y, "Due", 8)
         text(450, meta_y, format_date(invoice.get("due_date")), 8)
-    page.draw_line((left, 142), (right, 142), color=line_color, width=1.2)
+    page.draw_line((left, 168), (right, 168), color=line_color, width=1.2)
 
-    y = 158
+    y = 198
     text(left, y + 16, "Customer Name", 9)
     text(312, y + 16, "Job Name", 9)
     text(left, y + 34, invoice.get("customer_name") or "-", 10)
@@ -2368,7 +2372,7 @@ def invoice_pdf_attachment(invoice, lines, company):
     if invoice.get("customer_phone"):
         text(left, customer_y, invoice.get("customer_phone"), 8)
 
-    y = 268
+    y = 306
     table_top = y - 16
     headers = [("#", 52), ("Qty", 82), ("Item", 118), ("Description", 220), ("Location", 386), ("Unit", 466), ("Amount", 522)]
     page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
