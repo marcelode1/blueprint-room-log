@@ -2404,8 +2404,8 @@ def invoice_pdf_attachment(invoice, lines, company):
         text(510, y, value, 9)
         y += 16
     page.draw_line((374, y - 10), (right, y - 10), color=line_color, width=1)
-    text(386, y + 4, "Balance Due", 14)
-    text(500, y + 4, format_invoice_money(totals["balance_due"]), 14)
+    text(386, y + 4, "Balance Due", 9)
+    text(510, y + 4, format_invoice_money(totals["balance_due"]), 9)
 
     y += 34
     if invoice.get("notes"):
