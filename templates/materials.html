@@ -128,7 +128,10 @@
                     </td>
                     <td>{{ inventory_condition_label(m.item_condition) }}</td>
                     <td>
-                        {% if can_edit_inventory() %}
+                        {% set location_unavailable = m.status in ['needs_purchase', 'unavailable', 'backordered'] %}
+                        {% if location_unavailable %}
+                            <span class="locationUnavailable">Unavailable</span>
+                        {% elif can_edit_inventory() %}
                         <form method="post" action="{{ url_for('update_inventory_location', item_id=m.id) }}" class="inventoryCompactForm">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <input type="hidden" name="location_detail" value="{{ m.location_detail or '' }}">
@@ -182,6 +185,7 @@
 .inventoryPic{max-width:28px;border-radius:8px;border:1px solid var(--border)}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
 .inventoryCompactForm{display:grid;gap:6px;min-width:145px}.inventoryCompactForm select,.inventoryCompactForm input{min-height:34px;padding:6px 8px;font-size:13px}.inventorySmall{display:block;font-size:12px;margin-top:4px}
+.locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
 </style>
 <script>
 document.querySelectorAll(".inventoryActionSelect").forEach(select => {

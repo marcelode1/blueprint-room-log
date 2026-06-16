@@ -2494,7 +2494,6 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
 def create_project_invoice_draft(conn, project):
     invoice_date = local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
-    copied_due_date = invoice.get("due_date") or ""
     row = conn.execute(
         """
         INSERT INTO invoices
@@ -3180,7 +3179,8 @@ SUPPLIER_TASK_STATUS_LABELS = {
 INVENTORY_LOCATION_LABELS = {
     "storage": "Storage",
     "warehouse": "Warehouse",
-    "job_site": "Job site"
+    "job_site": "Job site",
+    "truck": "Truck"
 }
 
 INVENTORY_CONDITION_LABELS = {
