@@ -116,20 +116,6 @@
             {% endfor %}
         </select>
     </div>
-    {% if is_main_admin() %}
-    <div class="desktop-only roomAdminList">
-        <h4>Manage Rooms</h4>
-        {% for r in rooms %}
-        <div class="roomAdminRow">
-            <a href="{{ url_for('room', room_id=r.id) }}">{{ r.name }}</a>
-            <form method="post" action="{{ url_for('delete_room', room_id=r.id, next=request.full_path) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
-                <input type="hidden" name="next" value="{{ request.full_path }}">
-                <button type="submit" class="btn-danger">Delete</button>
-            </form>
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
     {% else %}
         <p>No rooms created yet.</p>
     {% endif %}
@@ -278,7 +264,6 @@
 .mobileBlueprintNotice{display:none}
 .roomChooser{display:grid;gap:8px}.roomChooser select{margin:0}
 .duplicateRoomNotice{display:grid;gap:8px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:12px;margin:0 0 12px}.duplicateRoomNotice .btn-link,.duplicateRoomNotice button{width:max-content;min-height:34px!important;margin:0!important;padding:7px 10px!important}
-.roomAdminList{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}.roomAdminList h4{margin:0 0 8px}.roomAdminRow{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:6px 0;background:#f8fafc}.roomAdminRow a{font-weight:800;text-decoration:none}.roomAdminRow form{margin:0}.roomAdminRow button{width:auto!important;min-height:32px!important;padding:6px 10px!important;margin:0!important;border-radius:7px!important}
 @media(max-width:760px){.blueprintDesktopOnly{display:none!important}.mobileBlueprintNotice{display:block!important}}
 </style>
 
