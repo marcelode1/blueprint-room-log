@@ -3327,19 +3327,6 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
     return row["id"] if row else None
 
 
-def part_catalog_options(conn):
-    ensure_part_catalog_tables(conn)
-    rows = conn.execute(
-        """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
-        FROM part_catalog
-        WHERE COALESCE(is_active, TRUE) = TRUE
-        ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
-        """
-    ).fetchall()
-    return [dict(row, description=clean_catalog_description(row.get("description"))) for row in rows]
-
-
 def backfill_part_catalog_from_inventory(conn):
     ensure_part_catalog_tables(conn)
     rows = conn.execute(
@@ -3349,7 +3336,6 @@ def backfill_part_catalog_from_inventory(conn):
         WHERE COALESCE(item_name, '') <> ''
           AND part_catalog_id IS NULL
         ORDER BY id
-        LIMIT 300
         """
     ).fetchall()
     for row in rows:
@@ -3364,6 +3350,53 @@ def backfill_part_catalog_from_inventory(conn):
         if part_id:
             conn.execute("UPDATE inventory_items SET part_catalog_id = %s WHERE id = %s", (part_id, row["id"]))
     conn.commit()
+
+
+def backfill_part_catalog_from_invoice_saved_items(conn):
+    ensure_part_catalog_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT id, item_name, description, unit_price, taxable
+        FROM invoice_saved_items
+        WHERE COALESCE(item_name, '') <> ''
+          AND part_catalog_id IS NULL
+        ORDER BY lower(item_name), id
+        """
+    ).fetchall()
+    for row in rows:
+        part_id = upsert_part_catalog(
+            conn,
+            row.get("item_name"),
+            description=row.get("description") or "",
+            unit_price=row.get("unit_price"),
+            taxable=bool(row.get("taxable")),
+            item_type="part"
+        )
+        if part_id:
+            conn.execute(
+                "UPDATE invoice_saved_items SET part_catalog_id = %s, updated_at = %s WHERE id = %s",
+                (part_id, utc_now_iso(), row["id"])
+            )
+    conn.commit()
+
+
+def sync_part_catalog_sources(conn):
+    backfill_part_catalog_from_inventory(conn)
+    backfill_part_catalog_from_invoice_saved_items(conn)
+
+
+def part_catalog_options(conn):
+    ensure_part_catalog_tables(conn)
+    sync_part_catalog_sources(conn)
+    rows = conn.execute(
+        """
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        FROM part_catalog
+        WHERE COALESCE(is_active, TRUE) = TRUE
+        ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
+        """
+    ).fetchall()
+    return [dict(row, description=clean_catalog_description(row.get("description"))) for row in rows]
 
 
 def fetch_suppliers(conn):
@@ -6751,7 +6784,7 @@ def create_part_catalog_json():
     conn = db()
     ensure_part_catalog_tables(conn)
     item_name = request.form.get("item_name", "").strip()
-    description = request.form.get("description", "").strip()
+    description = clean_catalog_description(request.form.get("description", ""))
     if not item_name:
         conn.close()
         return jsonify({"ok": False, "error": "Item name is required."}), 400
@@ -6801,7 +6834,7 @@ def quick_update_part_catalog_json(part_id):
     if not row:
         conn.close()
         return jsonify({"ok": False, "error": "Catalog item not found."}), 404
-    description = request.form.get("description", "").strip()
+    description = clean_catalog_description(request.form.get("description", ""))
     try:
         unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else 0
     except Exception:
@@ -6814,6 +6847,16 @@ def quick_update_part_catalog_json(part_id):
             unit_price = %s,
             updated_at = %s
         WHERE id = %s
+        """,
+        (description, unit_price, utc_now_iso(), part_id)
+    )
+    conn.execute(
+        """
+        UPDATE invoice_saved_items
+        SET description = %s,
+            unit_price = %s,
+            updated_at = %s
+        WHERE part_catalog_id = %s
         """,
         (description, unit_price, utc_now_iso(), part_id)
     )
