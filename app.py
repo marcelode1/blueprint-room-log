@@ -3983,6 +3983,128 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
         raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
 
 
+def ensure_dtools_import_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dt_cloud_connections (
+            id SERIAL PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'dtools_cloud',
+            base_url TEXT,
+            project_endpoint_path TEXT,
+            proposal_endpoint_path TEXT,
+            id_param TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            last_tested_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dt_import_logs (
+            id SERIAL PRIMARY KEY,
+            connection_id INTEGER REFERENCES dt_cloud_connections(id) ON DELETE SET NULL,
+            dtools_project_id TEXT,
+            dtools_proposal_id TEXT,
+            project_endpoint_path TEXT,
+            proposal_endpoint_path TEXT,
+            status TEXT NOT NULL,
+            message TEXT,
+            material_count INTEGER NOT NULL DEFAULT 0,
+            labor_count INTEGER NOT NULL DEFAULT 0,
+            room_count INTEGER NOT NULL DEFAULT 0,
+            payload_preview TEXT,
+            error_log TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+
+
+def dtools_payload_snippet(payload, limit=8000):
+    try:
+        text = json.dumps(payload or {}, indent=2, sort_keys=True, default=str)
+    except Exception:
+        text = str(payload or "")
+    if len(text) > limit:
+        return text[:limit] + "\n... truncated ..."
+    return text
+
+
+def dtools_project_preview(payload):
+    payload = payload or {}
+    return {
+        "project_name": dtools_pick(payload, ["projectName", "name", "project", "jobName", "title"]),
+        "customer_name": dtools_pick(payload, ["customerName", "clientName", "accountName", "companyName", "contactName"]),
+        "customer_email": dtools_pick(payload, ["customerEmail", "email", "contactEmail"]),
+        "customer_phone": dtools_pick(payload, ["customerPhone", "phone", "contactPhone", "mobilePhone"]),
+        "address": dtools_pick(payload, ["address", "projectAddress", "siteAddress", "streetAddress", "locationAddress"]),
+        "proposal_number": dtools_pick(payload, ["proposalNumber", "quoteNumber", "number", "proposalId", "quoteId"]),
+    }
+
+
+def dtools_preview_locations(items):
+    locations = []
+    seen = set()
+    for item in items or []:
+        location = (item.get("location") or "").strip()
+        key = normalize_lookup_key(location)
+        if location and key not in seen:
+            seen.add(key)
+            locations.append(location)
+    return locations
+
+
+def save_dtools_import_log(conn, project_id, proposal_id, project_endpoint, proposal_endpoint, status, message="", payload_preview="", error_log="", material_count=0, labor_count=0, room_count=0):
+    config = dtools_cloud_config()
+    now = utc_now_iso()
+    connection = conn.execute(
+        """
+        INSERT INTO dt_cloud_connections
+        (base_url, project_endpoint_path, proposal_endpoint_path, id_param, created_by, created_at, updated_at, last_tested_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            config.get("base_url") or "",
+            project_endpoint or "",
+            proposal_endpoint or "",
+            config.get("id_param") or "",
+            session.get("user_id"),
+            now,
+            now,
+            now,
+        )
+    ).fetchone()
+    conn.execute(
+        """
+        INSERT INTO dt_import_logs
+        (connection_id, dtools_project_id, dtools_proposal_id, project_endpoint_path, proposal_endpoint_path, status, message, material_count, labor_count, room_count, payload_preview, error_log, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            connection["id"] if connection else None,
+            project_id or "",
+            proposal_id or "",
+            project_endpoint or "",
+            proposal_endpoint or "",
+            status,
+            message or "",
+            material_count,
+            labor_count,
+            room_count,
+            payload_preview or "",
+            error_log or "",
+            session.get("user_id"),
+            now,
+        )
+    )
+    conn.commit()
+
+
 def normalize_lookup_key(value):
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
@@ -6932,6 +7054,117 @@ def test_dtools_connection():
     except Exception as e:
         flash(str(e))
     return redirect(url_for("settings"))
+
+
+@app.route("/dtools-import", methods=["GET", "POST"])
+@admin_required
+def dtools_import():
+    conn = db()
+    ensure_dtools_import_tables(conn)
+    config = dtools_cloud_config()
+    default_project_endpoint = "Projects/GetProject"
+    default_proposal_endpoint = "Quotes/GetQuote"
+    result = None
+    form_values = {
+        "dtools_project_id": "",
+        "dtools_proposal_id": "",
+        "project_endpoint_path": default_project_endpoint,
+        "proposal_endpoint_path": default_proposal_endpoint,
+    }
+
+    if request.method == "POST":
+        form_values = {
+            "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
+            "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
+            "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
+            "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
+        }
+        status = "error"
+        message = ""
+        error_log = ""
+        payload_preview = ""
+        material_count = 0
+        labor_count = 0
+        room_count = 0
+        try:
+            if not dtools_cloud_configured():
+                raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
+            if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"]:
+                raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or both.")
+
+            project_payload = None
+            proposal_payload = None
+            if form_values["dtools_project_id"]:
+                project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
+            if form_values["dtools_proposal_id"]:
+                proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
+
+            source_payload = proposal_payload or project_payload or {}
+            source_ref = form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
+            items = dtools_extract_materials(source_payload, source_ref)
+            material_count = sum(1 for item in items if item.get("item_type") != "service")
+            labor_count = sum(1 for item in items if item.get("item_type") == "service")
+            locations = dtools_preview_locations(items)
+            room_count = len(locations)
+            project_info = dtools_project_preview(project_payload or proposal_payload or {})
+            message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
+            if not items:
+                message += " No usable BOM/material lines were detected in this response."
+            status = "success"
+            result = {
+                "status": status,
+                "message": message,
+                "project_info": project_info,
+                "items": items[:20],
+                "locations": locations[:30],
+                "material_count": material_count,
+                "labor_count": labor_count,
+                "room_count": room_count,
+                "project_payload_loaded": bool(project_payload),
+                "proposal_payload_loaded": bool(proposal_payload),
+            }
+            payload_preview = dtools_payload_snippet({
+                "project_info": project_info,
+                "counts": {
+                    "materials": material_count,
+                    "labor": labor_count,
+                    "locations": room_count,
+                },
+                "locations": locations[:50],
+                "sample_items": items[:20],
+            })
+            flash(message)
+        except Exception as e:
+            error_log = str(e)
+            result = {"status": status, "message": error_log}
+            flash(error_log)
+
+        save_dtools_import_log(
+            conn,
+            form_values["dtools_project_id"],
+            form_values["dtools_proposal_id"],
+            form_values["project_endpoint_path"],
+            form_values["proposal_endpoint_path"],
+            status,
+            message,
+            payload_preview,
+            error_log,
+            material_count,
+            labor_count,
+            room_count,
+        )
+
+    logs = conn.execute(
+        """
+        SELECT dt_import_logs.*, users.name AS created_by_name
+        FROM dt_import_logs
+        LEFT JOIN users ON dt_import_logs.created_by = users.id
+        ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    conn.close()
+    return render_template("dtools_import.html", config=config, result=result, logs=logs, form_values=form_values)
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>D-Tools Import</h2>
+    <p class="muted">Phase 1 is a manual test/preview. It connects to D-Tools Cloud, reads the project/proposal data, and saves a log without creating a ProjectONus project yet.</p>
+</div>
+
+<div class="card">
+    <h3>Manual Import Preview</h3>
+    {% if not dtools_cloud_configured() %}
+        <p class="flash">D-Tools Cloud API key is missing. Add it in Settings before testing an import.</p>
+    {% endif %}
+    <form method="post">
+        <div class="grid">
+            <div>
+                <label>D-Tools Project ID</label>
+                <input name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="Internal D-Tools project ID">
+            </div>
+            <div>
+                <label>D-Tools Proposal ID</label>
+                <input name="dtools_proposal_id" value="{{ form_values.dtools_proposal_id }}" placeholder="Internal D-Tools proposal/quote ID">
+            </div>
+            <div>
+                <label>Project Endpoint</label>
+                <input name="project_endpoint_path" value="{{ form_values.project_endpoint_path or 'Projects/GetProject' }}">
+            </div>
+            <div>
+                <label>Proposal Endpoint</label>
+                <input name="proposal_endpoint_path" value="{{ form_values.proposal_endpoint_path or 'Quotes/GetQuote' }}">
+            </div>
+        </div>
+        <button type="submit">Import Preview</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">D-Tools Settings</a>
+    </form>
+</div>
+
+{% if result %}
+<div class="card dtoolsResult dtoolsResult-{{ result.status }}">
+    <h3>Import Status</h3>
+    <p><strong>{{ result.status|title }}:</strong> {{ result.message }}</p>
+    {% if result.project_info %}
+        <div class="dtoolsSummaryGrid">
+            <div><span>Project</span><strong>{{ result.project_info.project_name or '-' }}</strong></div>
+            <div><span>Customer</span><strong>{{ result.project_info.customer_name or '-' }}</strong></div>
+            <div><span>Email</span><strong>{{ result.project_info.customer_email or '-' }}</strong></div>
+            <div><span>Phone</span><strong>{{ result.project_info.customer_phone or '-' }}</strong></div>
+            <div><span>Proposal #</span><strong>{{ result.project_info.proposal_number or '-' }}</strong></div>
+            <div><span>Address</span><strong>{{ result.project_info.address or '-' }}</strong></div>
+        </div>
+    {% endif %}
+    {% if result.locations %}
+        <h4>Detected Rooms / Locations</h4>
+        <div class="dtoolsPills">
+            {% for location in result.locations %}
+                <span>{{ location }}</span>
+            {% endfor %}
+        </div>
+    {% endif %}
+    {% if result.items %}
+        <h4>Sample Items</h4>
+        <div class="dtoolsImportTableWrap">
+            <table class="dtoolsImportTable">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Qty</th>
+                        <th>Item</th>
+                        <th>Brand / Model</th>
+                        <th>Location</th>
+                        <th>Unit Price</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in result.items %}
+                    <tr>
+                        <td><span class="dtoolsType">{{ 'Labor' if item.item_type == 'service' else 'Material' }}</span></td>
+                        <td>{{ item.quantity }}</td>
+                        <td>
+                            <strong>{{ item.item_name }}</strong>
+                            {% if item.description %}<span class="muted dtoolsSmall">{{ item.description }}</span>{% endif %}
+                        </td>
+                        <td>{{ item.brand or '-' }}{% if item.model %}<span class="muted dtoolsSmall">{{ item.model }}</span>{% endif %}</td>
+                        <td>{{ item.location or '-' }}</td>
+                        <td>{{ format_invoice_money(item.unit_price or 0) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Recent Import Logs</h3>
+    <div class="dtoolsImportTableWrap">
+        <table class="dtoolsImportTable">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>Project ID</th>
+                    <th>Proposal ID</th>
+                    <th>Counts</th>
+                    <th>Message / Error</th>
+                    <th>Admin</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ format_datetime(log.created_at) }}</td>
+                    <td><span class="dtoolsStatus dtoolsStatus-{{ log.status }}">{{ log.status|title }}</span></td>
+                    <td>{{ log.dtools_project_id or '-' }}</td>
+                    <td>{{ log.dtools_proposal_id or '-' }}</td>
+                    <td>{{ log.material_count }} material / {{ log.labor_count }} labor / {{ log.room_count }} room</td>
+                    <td>
+                        {{ log.message or log.error_log or '-' }}
+                        {% if log.error_log %}<span class="muted dtoolsSmall">{{ log.error_log }}</span>{% endif %}
+                    </td>
+                    <td>{{ log.created_by_name or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7">No D-Tools import logs yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+.dtoolsResult{border-left:4px solid var(--primary)}.dtoolsResult-error{border-left-color:var(--danger)}
+.dtoolsSummaryGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:12px 0}.dtoolsSummaryGrid div{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(248,250,252,.72)}.dtoolsSummaryGrid span{display:block;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase}.dtoolsSummaryGrid strong{display:block;margin-top:4px}
+.dtoolsPills{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 14px}.dtoolsPills span,.dtoolsType,.dtoolsStatus{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
+.dtoolsStatus-success{background:#dcfce7;color:#166534}.dtoolsStatus-error{background:#fee2e2;color:#991b1b}
+.dtoolsImportTableWrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.dtoolsImportTable{width:100%;min-width:980px;border-collapse:collapse}.dtoolsImportTable th,.dtoolsImportTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;font-size:13px}.dtoolsImportTable th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px}.dtoolsSmall{display:block;font-size:12px;margin-top:2px;max-width:420px}
+</style>
+{% endblock %}
