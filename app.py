@@ -7154,6 +7154,7 @@ def dtools_import():
         "customer_name": "",
         "project_name": "",
         "public_proposal_url": "",
+        "public_response_json": "",
         "project_endpoint_path": default_project_endpoint,
         "proposal_endpoint_path": default_proposal_endpoint,
     }
@@ -7177,6 +7178,7 @@ def dtools_import():
                 "customer_name": request.form.get("customer_name", "").strip(),
                 "project_name": request.form.get("project_name", "").strip(),
                 "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
+                "public_response_json": request.form.get("public_response_json", "").strip(),
                 "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
                 "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
             }
@@ -7190,16 +7192,21 @@ def dtools_import():
             try:
                 if table_error:
                     flash(table_error)
-                if not form_values["public_proposal_url"] and not dtools_cloud_configured():
+                if not form_values["public_response_json"] and not form_values["public_proposal_url"] and not dtools_cloud_configured():
                     raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
-                if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"]:
-                    raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or paste the public proposal Request URL from Chrome Network.")
+                if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"] and not form_values["public_response_json"]:
+                    raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, paste the public proposal Request URL, or paste the Response JSON from Chrome Network.")
 
                 project_payload = None
                 proposal_payload = None
                 if form_values["dtools_project_id"]:
                     project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
-                if form_values["public_proposal_url"]:
+                if form_values["public_response_json"]:
+                    try:
+                        proposal_payload = json.loads(form_values["public_response_json"])
+                    except Exception as json_error:
+                        raise RuntimeError(f"The pasted D-Tools Response JSON is not valid JSON: {json_error}")
+                elif form_values["public_proposal_url"]:
                     proposal_payload = dtools_public_fetch_payload(form_values["public_proposal_url"], form_values["dtools_proposal_id"])
                 elif form_values["dtools_proposal_id"]:
                     proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
@@ -7243,7 +7250,9 @@ def dtools_import():
                 error_log = str(e)
                 if "401" in error_log and "Unauthorized" in error_log:
                     error_log += " This means the D-Tools Cloud API key/header cannot access that endpoint. Use the public proposal Request URL from Chrome Network, or update the D-Tools API credentials in Settings."
-                result = {"status": status, "message": error_log}
+                if "403" in error_log and "Access denied" in error_log:
+                    error_log += " D-Tools is blocking server-side access to the public URL. Copy the Response JSON from the Chrome Network request and paste it into the D-Tools Response JSON box."
+                result = {"status": status, "message": error_log, "project_info": {}, "items": [], "locations": []}
                 flash(error_log)
 
             save_dtools_import_log(
@@ -7283,7 +7292,7 @@ def dtools_import():
                 pass
         message = f"D-Tools Import page error: {e}"
         print(message)
-        result = {"status": "error", "message": message}
+        result = {"status": "error", "message": message, "project_info": {}, "items": [], "locations": []}
         flash(message)
         logs = []
     finally:

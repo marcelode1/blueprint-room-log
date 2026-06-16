@@ -27,6 +27,9 @@
                 <input name="dtools_proposal_id" value="{{ form_values.dtools_proposal_id }}" placeholder="Example from Network: 77894">
             </div>
         </div>
+        <label>Paste D-Tools Response JSON</label>
+        <textarea name="public_response_json" rows="7" placeholder="Best test option: click GetProposalData in Chrome Network, open Response, copy the JSON, and paste it here.">{{ form_values.public_response_json }}</textarea>
+        <p class="muted">Use this when the public Request URL returns 403 from Render. It lets ProjectONus preview the same proposal data your browser already loaded.</p>
         <label>Public Proposal Request URL</label>
         <input name="public_proposal_url" value="{{ form_values.public_proposal_url }}" placeholder="Paste full GetProposalData?quoteId=77894 request URL from Chrome Network">
         <details class="dtoolsAdvanced">
@@ -56,28 +59,33 @@
 </div>
 
 {% if result %}
-<div class="card dtoolsResult dtoolsResult-{{ result['status'] }}">
+{% set result_status = result.get('status', 'error') %}
+{% set result_message = result.get('message', '') %}
+{% set result_project_info = result.get('project_info') or {} %}
+{% set result_locations = result.get('locations') or [] %}
+{% set result_items = result.get('items') or [] %}
+<div class="card dtoolsResult dtoolsResult-{{ result_status }}">
     <h3>Import Status</h3>
-    <p><strong>{{ result['status']|title }}:</strong> {{ result['message'] }}</p>
-    {% if result['project_info'] %}
+    <p><strong>{{ result_status|title }}:</strong> {{ result_message }}</p>
+    {% if result_project_info %}
         <div class="dtoolsSummaryGrid">
-            <div><span>Project</span><strong>{{ result['project_info']['project_name'] or '-' }}</strong></div>
-            <div><span>Customer</span><strong>{{ result['project_info']['customer_name'] or '-' }}</strong></div>
-            <div><span>Email</span><strong>{{ result['project_info']['customer_email'] or '-' }}</strong></div>
-            <div><span>Phone</span><strong>{{ result['project_info']['customer_phone'] or '-' }}</strong></div>
-            <div><span>Proposal #</span><strong>{{ result['project_info']['proposal_number'] or '-' }}</strong></div>
-            <div><span>Address</span><strong>{{ result['project_info']['address'] or '-' }}</strong></div>
+            <div><span>Project</span><strong>{{ result_project_info.get('project_name') or '-' }}</strong></div>
+            <div><span>Customer</span><strong>{{ result_project_info.get('customer_name') or '-' }}</strong></div>
+            <div><span>Email</span><strong>{{ result_project_info.get('customer_email') or '-' }}</strong></div>
+            <div><span>Phone</span><strong>{{ result_project_info.get('customer_phone') or '-' }}</strong></div>
+            <div><span>Proposal #</span><strong>{{ result_project_info.get('proposal_number') or '-' }}</strong></div>
+            <div><span>Address</span><strong>{{ result_project_info.get('address') or '-' }}</strong></div>
         </div>
     {% endif %}
-    {% if result['locations'] %}
+    {% if result_locations %}
         <h4>Detected Rooms / Locations</h4>
         <div class="dtoolsPills">
-            {% for location in result['locations'] %}
+            {% for location in result_locations %}
                 <span>{{ location }}</span>
             {% endfor %}
         </div>
     {% endif %}
-    {% if result['items'] %}
+    {% if result_items %}
         <h4>Sample Items</h4>
         <div class="dtoolsImportTableWrap">
             <table class="dtoolsImportTable">
@@ -92,17 +100,17 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in result['items'] %}
+                    {% for item in result_items %}
                     <tr>
-                        <td><span class="dtoolsType">{{ 'Labor' if item['item_type'] == 'service' else 'Material' }}</span></td>
-                        <td>{{ item['quantity'] }}</td>
+                        <td><span class="dtoolsType">{{ 'Labor' if item.get('item_type') == 'service' else 'Material' }}</span></td>
+                        <td>{{ item.get('quantity') }}</td>
                         <td>
-                            <strong>{{ item['item_name'] }}</strong>
-                            {% if item['description'] %}<span class="muted dtoolsSmall">{{ item['description'] }}</span>{% endif %}
+                            <strong>{{ item.get('item_name') }}</strong>
+                            {% if item.get('description') %}<span class="muted dtoolsSmall">{{ item.get('description') }}</span>{% endif %}
                         </td>
-                        <td>{{ item['brand'] or '-' }}{% if item['model'] %}<span class="muted dtoolsSmall">{{ item['model'] }}</span>{% endif %}</td>
-                        <td>{{ item['location'] or '-' }}</td>
-                        <td>{{ format_invoice_money(item['unit_price'] or 0) }}</td>
+                        <td>{{ item.get('brand') or '-' }}{% if item.get('model') %}<span class="muted dtoolsSmall">{{ item.get('model') }}</span>{% endif %}</td>
+                        <td>{{ item.get('location') or '-' }}</td>
+                        <td>{{ format_invoice_money(item.get('unit_price') or 0) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
