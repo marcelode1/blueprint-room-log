@@ -19,6 +19,14 @@
                 <input name="customer_name" value="{{ form_values.customer_name }}" placeholder="Steve Patoon">
             </div>
             <div>
+                <label>Customer Email</label>
+                <input name="customer_email" value="{{ form_values.customer_email }}" placeholder="customer@email.com">
+            </div>
+            <div>
+                <label>Customer Phone</label>
+                <input name="customer_phone" value="{{ form_values.customer_phone }}" placeholder="Customer phone">
+            </div>
+            <div>
                 <label>Project Name</label>
                 <input name="project_name" value="{{ form_values.project_name }}" placeholder="Audio/Video Network Quote V2">
             </div>
@@ -27,6 +35,8 @@
                 <input name="dtools_proposal_id" value="{{ form_values.dtools_proposal_id }}" placeholder="Example from Network: 77894">
             </div>
         </div>
+        <label>Customer Address</label>
+        <input name="customer_address" value="{{ form_values.customer_address }}" placeholder="Customer project/job address">
         <label>Paste D-Tools Response JSON</label>
         <textarea name="public_response_json" rows="7" placeholder="Best test option: click GetProposalData in Chrome Network, open Response, copy the JSON, and paste it here.">{{ form_values.public_response_json }}</textarea>
         <p class="muted">Use this when the public Request URL returns 403 from Render. It lets ProjectONus preview the same proposal data your browser already loaded.</p>

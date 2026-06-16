@@ -4099,7 +4099,11 @@ def dtools_payload_snippet(payload, limit=8000):
 
 def dtools_project_preview(payload):
     payload = payload or {}
-    return {
+    company = account_info()
+    company_email = (company.get("company_email") or "").strip().lower()
+    company_phone = re.sub(r"\D+", "", company.get("company_phone") or "")
+    company_address_key = normalize_lookup_key(company.get("company_address") or "")
+    preview = {
         "project_name": dtools_pick(payload, ["projectName", "name", "project", "jobName", "title"]),
         "customer_name": dtools_pick(payload, ["customerName", "clientName", "accountName", "companyName", "contactName"]),
         "customer_email": dtools_pick(payload, ["customerEmail", "email", "contactEmail"]),
@@ -4107,6 +4111,29 @@ def dtools_project_preview(payload):
         "address": dtools_pick(payload, ["address", "projectAddress", "siteAddress", "streetAddress", "locationAddress"]),
         "proposal_number": dtools_pick(payload, ["proposalNumber", "quoteNumber", "number", "proposalId", "quoteId"]),
     }
+    if preview["customer_email"].strip().lower() == company_email:
+        preview["customer_email"] = ""
+    if company_phone and re.sub(r"\D+", "", preview["customer_phone"]) == company_phone:
+        preview["customer_phone"] = ""
+    if company_address_key and normalize_lookup_key(preview["address"]) == company_address_key:
+        preview["address"] = ""
+    return preview
+
+
+def apply_dtools_manual_preview_overrides(project_info, form_values):
+    project_info = dict(project_info or {})
+    for form_key, info_key in [
+        ("project_name", "project_name"),
+        ("customer_name", "customer_name"),
+        ("customer_email", "customer_email"),
+        ("customer_phone", "customer_phone"),
+        ("customer_address", "address"),
+        ("dtools_proposal_number", "proposal_number"),
+    ]:
+        value = (form_values.get(form_key) or "").strip()
+        if value:
+            project_info[info_key] = format_us_phone(value) if info_key == "customer_phone" else value
+    return project_info
 
 
 def dtools_preview_locations(items):
@@ -7152,6 +7179,9 @@ def dtools_import():
         "dtools_proposal_id": "",
         "dtools_proposal_number": "",
         "customer_name": "",
+        "customer_email": "",
+        "customer_phone": "",
+        "customer_address": "",
         "project_name": "",
         "public_proposal_url": "",
         "public_response_json": "",
@@ -7176,6 +7206,9 @@ def dtools_import():
                 "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
                 "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
                 "customer_name": request.form.get("customer_name", "").strip(),
+                "customer_email": request.form.get("customer_email", "").strip(),
+                "customer_phone": request.form.get("customer_phone", "").strip(),
+                "customer_address": request.form.get("customer_address", "").strip(),
                 "project_name": request.form.get("project_name", "").strip(),
                 "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
                 "public_response_json": request.form.get("public_response_json", "").strip(),
@@ -7218,7 +7251,10 @@ def dtools_import():
                 labor_count = sum(1 for item in items if item.get("item_type") == "service")
                 locations = dtools_preview_locations(items)
                 room_count = len(locations)
-                project_info = dtools_project_preview(project_payload or proposal_payload or {})
+                project_info = apply_dtools_manual_preview_overrides(
+                    dtools_project_preview(project_payload or proposal_payload or {}),
+                    form_values
+                )
                 message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
                 if not items:
                     message += " No usable BOM/material lines were detected in this response."
