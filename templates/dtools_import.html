@@ -7,28 +7,49 @@
 
 <div class="card">
     <h3>Manual Import Preview</h3>
-    {% if not dtools_cloud_configured() %}
-        <p class="flash">D-Tools Cloud API key is missing. Add it in Settings before testing an import.</p>
-    {% endif %}
+    <p class="muted">Use the proposal number/customer/project name for tracking, and paste the public Request URL from Chrome Network if the private D-Tools Cloud API returns Unauthorized.</p>
     <form method="post">
         <div class="grid">
             <div>
-                <label>D-Tools Project ID</label>
-                <input name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="Internal D-Tools project ID">
+                <label>Proposal Number</label>
+                <input name="dtools_proposal_number" value="{{ form_values.dtools_proposal_number }}" placeholder="Q-253">
             </div>
             <div>
-                <label>D-Tools Proposal ID</label>
-                <input name="dtools_proposal_id" value="{{ form_values.dtools_proposal_id }}" placeholder="Internal D-Tools proposal/quote ID">
+                <label>Customer Name</label>
+                <input name="customer_name" value="{{ form_values.customer_name }}" placeholder="Steve Patoon">
             </div>
             <div>
-                <label>Project Endpoint</label>
-                <input name="project_endpoint_path" value="{{ form_values.project_endpoint_path or 'Projects/GetProject' }}">
+                <label>Project Name</label>
+                <input name="project_name" value="{{ form_values.project_name }}" placeholder="Audio/Video Network Quote V2">
             </div>
             <div>
-                <label>Proposal Endpoint</label>
-                <input name="proposal_endpoint_path" value="{{ form_values.proposal_endpoint_path or 'Quotes/GetQuote' }}">
+                <label>D-Tools quoteId</label>
+                <input name="dtools_proposal_id" value="{{ form_values.dtools_proposal_id }}" placeholder="Example from Network: 77894">
             </div>
         </div>
+        <label>Public Proposal Request URL</label>
+        <input name="public_proposal_url" value="{{ form_values.public_proposal_url }}" placeholder="Paste full GetProposalData?quoteId=77894 request URL from Chrome Network">
+        <details class="dtoolsAdvanced">
+            <summary>Advanced Cloud API fields</summary>
+            {% if not dtools_cloud_configured() %}
+                <p class="flash">D-Tools Cloud API key is missing. Add it in Settings before using the private Cloud API endpoints.</p>
+            {% endif %}
+            <div class="grid">
+                <div>
+                    <label>D-Tools Project ID</label>
+                    <input name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="Internal D-Tools project ID">
+                </div>
+                <div>
+                    <label>Project Endpoint</label>
+                    <input name="project_endpoint_path" value="{{ form_values.project_endpoint_path or 'Projects/GetProject' }}">
+                </div>
+                <div>
+                    <label>Proposal Endpoint</label>
+                    <input name="proposal_endpoint_path" value="{{ form_values.proposal_endpoint_path or 'Quotes/GetQuote' }}">
+                    <p class="muted">If D-Tools support gives a quoteId endpoint, use {id} where the number should go.</p>
+                </div>
+            </div>
+        </details>
         <button type="submit">Import Preview</button>
         <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">D-Tools Settings</a>
     </form>
@@ -134,5 +155,6 @@
 .dtoolsPills{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 14px}.dtoolsPills span,.dtoolsType,.dtoolsStatus{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
 .dtoolsStatus-success{background:#dcfce7;color:#166534}.dtoolsStatus-error{background:#fee2e2;color:#991b1b}
 .dtoolsImportTableWrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.dtoolsImportTable{width:100%;min-width:980px;border-collapse:collapse}.dtoolsImportTable th,.dtoolsImportTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;font-size:13px}.dtoolsImportTable th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px}.dtoolsSmall{display:block;font-size:12px;margin-top:2px;max-width:420px}
+.dtoolsAdvanced{margin:10px 0;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsAdvanced summary{cursor:pointer;font-weight:800}
 </style>
 {% endblock %}

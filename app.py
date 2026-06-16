@@ -3983,6 +3983,39 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
         raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
 
 
+def dtools_public_fetch_payload(public_url, quote_id=""):
+    public_url = (public_url or "").strip()
+    if not public_url:
+        raise RuntimeError("Paste the full public D-Tools proposal Request URL from Chrome Network.")
+    quote_id = (quote_id or "").strip()
+    if "{id}" in public_url and quote_id:
+        public_url = public_url.replace("{id}", urllib.parse.quote(quote_id))
+    parsed = urllib.parse.urlparse(public_url)
+    if parsed.scheme not in ["http", "https"] or not parsed.netloc:
+        raise RuntimeError("Public proposal Request URL must start with http:// or https://.")
+    host = parsed.netloc.lower().split(":")[0]
+    if not (host == "d-tools.cloud" or host.endswith(".d-tools.cloud")):
+        raise RuntimeError("For safety, paste a D-Tools URL only.")
+    req = urllib.request.Request(
+        public_url,
+        headers={
+            "Accept": "application/json,text/plain,*/*",
+            "User-Agent": "ProjectONus D-Tools Import",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw or "{}")
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"D-Tools public proposal request returned {e.code}: {details or e.reason}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach D-Tools public proposal request: {e.reason}")
+    except json.JSONDecodeError:
+        raise RuntimeError("D-Tools public proposal request returned a response that was not JSON.")
+
+
 def ensure_dtools_import_tables(conn):
     conn.execute(
         """
@@ -3993,7 +4026,7 @@ def ensure_dtools_import_tables(conn):
             project_endpoint_path TEXT,
             proposal_endpoint_path TEXT,
             id_param TEXT,
-            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT,
             last_tested_at TEXT
@@ -4004,7 +4037,7 @@ def ensure_dtools_import_tables(conn):
         """
         CREATE TABLE IF NOT EXISTS dt_import_logs (
             id SERIAL PRIMARY KEY,
-            connection_id INTEGER REFERENCES dt_cloud_connections(id) ON DELETE SET NULL,
+            connection_id INTEGER,
             dtools_project_id TEXT,
             dtools_proposal_id TEXT,
             project_endpoint_path TEXT,
@@ -4016,11 +4049,41 @@ def ensure_dtools_import_tables(conn):
             room_count INTEGER NOT NULL DEFAULT 0,
             payload_preview TEXT,
             error_log TEXT,
-            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_by INTEGER,
             created_at TEXT NOT NULL
         )
         """
     )
+    for statement in [
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'dtools_cloud'",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS base_url TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS project_endpoint_path TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS proposal_endpoint_path TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS id_param TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS created_by INTEGER",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS created_at TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS updated_at TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS last_tested_at TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS connection_id INTEGER",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS dtools_project_id TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS dtools_proposal_id TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS project_endpoint_path TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS proposal_endpoint_path TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS status TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS material_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS labor_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS room_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS payload_preview TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS error_log TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS created_by INTEGER",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS created_at TEXT",
+    ]:
+        try:
+            conn.execute(statement)
+        except Exception as e:
+            conn.rollback()
+            print("D-Tools import migration skipped:", e)
     conn.commit()
 
 
@@ -4061,48 +4124,68 @@ def dtools_preview_locations(items):
 def save_dtools_import_log(conn, project_id, proposal_id, project_endpoint, proposal_endpoint, status, message="", payload_preview="", error_log="", material_count=0, labor_count=0, room_count=0):
     config = dtools_cloud_config()
     now = utc_now_iso()
-    connection = conn.execute(
-        """
-        INSERT INTO dt_cloud_connections
-        (base_url, project_endpoint_path, proposal_endpoint_path, id_param, created_by, created_at, updated_at, last_tested_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            config.get("base_url") or "",
-            project_endpoint or "",
-            proposal_endpoint or "",
-            config.get("id_param") or "",
-            session.get("user_id"),
-            now,
-            now,
-            now,
+    try:
+        ensure_dtools_import_tables(conn)
+    except Exception as e:
+        conn.rollback()
+        print("D-Tools import log table setup failed:", e)
+        return
+    try:
+        uid = optional_int(session.get("user_id"))
+    except Exception:
+        uid = None
+    try:
+        material_count = int(material_count or 0)
+        labor_count = int(labor_count or 0)
+        room_count = int(room_count or 0)
+    except Exception:
+        material_count, labor_count, room_count = 0, 0, 0
+    try:
+        connection = conn.execute(
+            """
+            INSERT INTO dt_cloud_connections
+            (base_url, project_endpoint_path, proposal_endpoint_path, id_param, created_by, created_at, updated_at, last_tested_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                config.get("base_url") or "",
+                project_endpoint or "",
+                proposal_endpoint or "",
+                config.get("id_param") or "",
+                uid,
+                now,
+                now,
+                now,
+            )
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO dt_import_logs
+            (connection_id, dtools_project_id, dtools_proposal_id, project_endpoint_path, proposal_endpoint_path, status, message, material_count, labor_count, room_count, payload_preview, error_log, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                connection["id"] if connection else None,
+                project_id or "",
+                proposal_id or "",
+                project_endpoint or "",
+                proposal_endpoint or "",
+                status or "error",
+                message or "",
+                material_count,
+                labor_count,
+                room_count,
+                payload_preview or "",
+                error_log or "",
+                uid,
+                now,
+            )
         )
-    ).fetchone()
-    conn.execute(
-        """
-        INSERT INTO dt_import_logs
-        (connection_id, dtools_project_id, dtools_proposal_id, project_endpoint_path, proposal_endpoint_path, status, message, material_count, labor_count, room_count, payload_preview, error_log, created_by, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            connection["id"] if connection else None,
-            project_id or "",
-            proposal_id or "",
-            project_endpoint or "",
-            proposal_endpoint or "",
-            status,
-            message or "",
-            material_count,
-            labor_count,
-            room_count,
-            payload_preview or "",
-            error_log or "",
-            session.get("user_id"),
-            now,
-        )
-    )
-    conn.commit()
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("D-Tools import log save failed:", e)
 
 
 def normalize_lookup_key(value):
@@ -7060,7 +7143,13 @@ def test_dtools_connection():
 @admin_required
 def dtools_import():
     conn = db()
-    ensure_dtools_import_tables(conn)
+    table_error = ""
+    try:
+        ensure_dtools_import_tables(conn)
+    except Exception as e:
+        conn.rollback()
+        table_error = f"D-Tools import log tables could not be prepared: {e}"
+        print(table_error)
     config = dtools_cloud_config()
     default_project_endpoint = "Projects/GetProject"
     default_proposal_endpoint = "Quotes/GetQuote"
@@ -7068,6 +7157,10 @@ def dtools_import():
     form_values = {
         "dtools_project_id": "",
         "dtools_proposal_id": "",
+        "dtools_proposal_number": "",
+        "customer_name": "",
+        "project_name": "",
+        "public_proposal_url": "",
         "project_endpoint_path": default_project_endpoint,
         "proposal_endpoint_path": default_proposal_endpoint,
     }
@@ -7076,6 +7169,10 @@ def dtools_import():
         form_values = {
             "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
             "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
+            "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
+            "customer_name": request.form.get("customer_name", "").strip(),
+            "project_name": request.form.get("project_name", "").strip(),
+            "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
             "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
             "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
         }
@@ -7087,16 +7184,20 @@ def dtools_import():
         labor_count = 0
         room_count = 0
         try:
-            if not dtools_cloud_configured():
+            if table_error:
+                flash(table_error)
+            if not form_values["public_proposal_url"] and not dtools_cloud_configured():
                 raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
-            if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"]:
-                raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or both.")
+            if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"]:
+                raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or paste the public proposal Request URL from Chrome Network.")
 
             project_payload = None
             proposal_payload = None
             if form_values["dtools_project_id"]:
                 project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
-            if form_values["dtools_proposal_id"]:
+            if form_values["public_proposal_url"]:
+                proposal_payload = dtools_public_fetch_payload(form_values["public_proposal_url"], form_values["dtools_proposal_id"])
+            elif form_values["dtools_proposal_id"]:
                 proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
 
             source_payload = proposal_payload or project_payload or {}
@@ -7136,6 +7237,8 @@ def dtools_import():
             flash(message)
         except Exception as e:
             error_log = str(e)
+            if "401" in error_log and "Unauthorized" in error_log:
+                error_log += " This means the D-Tools Cloud API key/header cannot access that endpoint. Use the public proposal Request URL from Chrome Network, or update the D-Tools API credentials in Settings."
             result = {"status": status, "message": error_log}
             flash(error_log)
 
@@ -7144,7 +7247,7 @@ def dtools_import():
             form_values["dtools_project_id"],
             form_values["dtools_proposal_id"],
             form_values["project_endpoint_path"],
-            form_values["proposal_endpoint_path"],
+            form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
             status,
             message,
             payload_preview,
@@ -7154,15 +7257,20 @@ def dtools_import():
             room_count,
         )
 
-    logs = conn.execute(
-        """
-        SELECT dt_import_logs.*, users.name AS created_by_name
-        FROM dt_import_logs
-        LEFT JOIN users ON dt_import_logs.created_by = users.id
-        ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
-        LIMIT 20
-        """
-    ).fetchall()
+    try:
+        logs = conn.execute(
+            """
+            SELECT dt_import_logs.*, users.name AS created_by_name
+            FROM dt_import_logs
+            LEFT JOIN users ON dt_import_logs.created_by = users.id
+            ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
+            LIMIT 20
+            """
+        ).fetchall()
+    except Exception as e:
+        conn.rollback()
+        print("D-Tools import logs could not be loaded:", e)
+        logs = []
     conn.close()
     return render_template("dtools_import.html", config=config, result=result, logs=logs, form_values=form_values)
 
