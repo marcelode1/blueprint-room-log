@@ -3836,6 +3836,33 @@ def fetch_visible_project_rooms(conn, project_id):
     ).fetchall()
 
 
+def invoice_room_options(conn, project_id=None):
+    if project_id:
+        return fetch_visible_project_rooms(conn, project_id)
+    if is_main_admin():
+        return conn.execute(
+            "SELECT id, name, project_id FROM rooms ORDER BY project_id, name, id"
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT rooms.id, rooms.name, rooms.project_id
+        FROM rooms
+        JOIN project_permissions ON project_permissions.project_id = rooms.project_id
+            AND project_permissions.user_id = %s
+        ORDER BY rooms.project_id, rooms.name, rooms.id
+        """,
+        (session.get("user_id"),)
+    ).fetchall()
+
+
+def invoice_rooms_by_project(conn):
+    rows = invoice_room_options(conn)
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(str(row["project_id"]), []).append({"id": row["id"], "name": row["name"]})
+    return grouped
+
+
 def inventory_select_query(where_sql):
     return f"""
         SELECT inventory_items.*,
@@ -5495,6 +5522,14 @@ def mobile_add_room(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("mobile_home"))
+    duplicate_room = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
+        (project_id, name)
+    ).fetchone()
+    if duplicate_room:
+        conn.close()
+        flash(f"Room '{duplicate_room['name']}' already exists. Choose that room or enter a different name.")
+        return redirect(url_for("mobile_project", project_id=project_id, duplicate_room_id=duplicate_room["id"]))
 
     conn.execute(
         "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)",
@@ -6277,6 +6312,8 @@ def new_invoice():
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     selected_project = None
+    invoice_rooms = []
+    rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
     return render_template(
         "invoice_form.html",
@@ -6285,6 +6322,8 @@ def new_invoice():
         projects=projects,
         saved_items=saved_items,
         part_catalog=catalog,
+        invoice_rooms=invoice_rooms,
+        rooms_by_project=rooms_by_project,
         selected_project=selected_project,
         default_tax_rate=default_invoice_tax_rate(),
         today=local_now().date().isoformat(),
@@ -6326,8 +6365,11 @@ def restore_invoice_preview():
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     selected_project = None
+    invoice_rooms = []
     if invoice.get("project_id"):
         selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone()
+        invoice_rooms = invoice_room_options(conn, invoice["project_id"])
+    rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
     return render_template(
         "invoice_form.html",
@@ -6336,6 +6378,8 @@ def restore_invoice_preview():
         projects=projects,
         saved_items=saved_items,
         part_catalog=catalog,
+        invoice_rooms=invoice_rooms,
+        rooms_by_project=rooms_by_project,
         selected_project=selected_project,
         default_tax_rate=default_invoice_tax_rate(),
         today=local_now().date().isoformat(),
@@ -6503,8 +6547,10 @@ def edit_invoice(invoice_id):
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone() if invoice.get("project_id") else None
+    invoice_rooms = invoice_room_options(conn, invoice["project_id"]) if invoice.get("project_id") else []
+    rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
-    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, selected_project=selected_project, default_tax_rate=default_invoice_tax_rate(), today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, invoice_rooms=invoice_rooms, rooms_by_project=rooms_by_project, selected_project=selected_project, default_tax_rate=default_invoice_tax_rate(), today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
@@ -7727,6 +7773,13 @@ def project(project_id):
             "SELECT * FROM rooms WHERE project_id = %s ORDER BY id",
             (project_id,)
         ).fetchall()
+    duplicate_room = None
+    duplicate_room_id = request.args.get("duplicate_room_id", type=int)
+    if duplicate_room_id:
+        duplicate_room = conn.execute(
+            "SELECT id, name FROM rooms WHERE id = %s AND project_id = %s",
+            (duplicate_room_id, project_id)
+        ).fetchone()
 
     conn.close()
     return render_template(
@@ -7734,7 +7787,8 @@ def project(project_id):
         project=project,
         rooms=rooms,
         blueprints=blueprints,
-        active_blueprint=active_blueprint
+        active_blueprint=active_blueprint,
+        duplicate_room=duplicate_room
     )
 
 
@@ -8036,6 +8090,17 @@ def add_room(project_id):
         if blueprint_id:
             return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
         return redirect(url_for("project", project_id=project_id))
+    duplicate_room = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
+        (project_id, name)
+    ).fetchone()
+    if duplicate_room:
+        conn.close()
+        flash(f"Room '{duplicate_room['name']}' already exists. Open the existing room or enter a different room name.")
+        redirect_args = {"project_id": project_id, "duplicate_room_id": duplicate_room["id"]}
+        if blueprint_id:
+            redirect_args["blueprint_id"] = blueprint_id
+        return redirect(url_for("project", **redirect_args))
     conn.execute(
         "INSERT INTO rooms (project_id, blueprint_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
@@ -8059,6 +8124,57 @@ def add_room(project_id):
     if blueprint_id:
         return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
     return redirect(url_for("project", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/rooms/create-json", methods=["POST"])
+@login_required
+def create_room_json(project_id):
+    if not (is_main_admin() or has_perm("create_rooms")):
+        return jsonify({"ok": False, "error": "You do not have permission to create rooms."}), 403
+
+    name = request.form.get("name", "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "Room name is required."}), 400
+
+    conn = db()
+    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        return jsonify({"ok": False, "error": "Project not found."}), 404
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        return jsonify({"ok": False, "error": "You do not have access to this project."}), 403
+
+    duplicate_room = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
+        (project_id, name)
+    ).fetchone()
+    if duplicate_room:
+        conn.close()
+        return jsonify({
+            "ok": False,
+            "duplicate": True,
+            "error": f"Room '{duplicate_room['name']}' already exists.",
+            "room": {"id": duplicate_room["id"], "name": duplicate_room["name"]}
+        }), 409
+
+    row = conn.execute(
+        """
+        INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at)
+        VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)
+        RETURNING id, name, project_id
+        """,
+        (
+            project_id,
+            name,
+            request.form.get("category", "general"),
+            request.form.get("room_color", "blue"),
+            datetime.now().isoformat()
+        )
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "room": dict(row) if row else {}})
 
 
 
