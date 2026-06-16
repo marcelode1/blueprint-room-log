@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib, math
 import psycopg
 from psycopg.rows import dict_row
 
@@ -699,6 +699,17 @@ def init_db():
         success BOOLEAN NOT NULL DEFAULT FALSE,
         error TEXT,
         sent_at TEXT NOT NULL
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS invoice_delete_codes (
+        id SERIAL PRIMARY KEY,
+        invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+        admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        pin_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
     )
     """)
 
@@ -2028,6 +2039,16 @@ def ensure_invoice_tables(conn):
             sent_at TEXT NOT NULL
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS invoice_delete_codes (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            pin_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
     ]
     for statement in statements:
         conn.execute(statement)
@@ -2052,8 +2073,16 @@ def ensure_invoice_tables(conn):
 
 
 def invoice_number_year_key(value=None):
-    dt = local_datetime(value) if value else local_now()
-    return dt.strftime("%Y")
+    dt = local_datetime(value) if value else None
+    if dt:
+        return dt.strftime("%Y")
+    text = str(value or "").strip()
+    if text:
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").strftime("%Y")
+        except Exception:
+            pass
+    return local_now().strftime("%Y")
 
 
 def next_invoice_number(conn, reference_value=None):
@@ -2070,6 +2099,28 @@ def next_invoice_number(conn, reference_value=None):
         (year_key, utc_now_iso())
     ).fetchone()
     return f"INV-{year_key}-{int(row['sequence_number']):04d}"
+
+
+DEFAULT_INVOICE_TERMS = "Payment due upon receipt. Thank you for your business."
+
+
+def invoice_due_date_terms(due_date):
+    due_date = (due_date or "").strip()
+    if not due_date:
+        return DEFAULT_INVOICE_TERMS
+    return f"Payment due by {format_date(due_date)}. Thank you for your business."
+
+
+def invoice_terms_for_due_date(due_date, terms):
+    terms = (terms or "").strip()
+    default_like = (
+        not terms
+        or terms == DEFAULT_INVOICE_TERMS
+        or (terms.startswith("Payment due by ") and terms.endswith(". Thank you for your business."))
+    )
+    if default_like:
+        return invoice_due_date_terms(due_date)
+    return terms
 
 
 def invoice_line_values_from_form():
@@ -2210,15 +2261,21 @@ def invoice_totals_breakdown(invoice, lines):
 
 def preview_invoice_from_form(conn):
     lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    invoice_id = request.form.get("invoice_id", type=int)
     project_id = request.form.get("project_id", type=int)
     project_name = ""
     if project_id:
         project = conn.execute("SELECT name FROM projects WHERE id = %s", (project_id,)).fetchone()
         project_name = project["name"] if project else ""
     invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
+    invoice_number = (request.form.get("invoice_number") or "").strip()
+    if invoice_id and not invoice_number:
+        existing_invoice = conn.execute("SELECT invoice_number FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+        invoice_number = existing_invoice["invoice_number"] if existing_invoice else ""
+    due_date = request.form.get("due_date", "").strip()
     invoice = {
-        "id": None,
-        "invoice_number": "PREVIEW",
+        "id": invoice_id,
+        "invoice_number": invoice_number or "PREVIEW",
         "project_id": project_id,
         "project_name": project_name,
         "customer_name": request.form.get("customer_name", "").strip(),
@@ -2226,14 +2283,14 @@ def preview_invoice_from_form(conn):
         "customer_phone": format_us_phone(request.form.get("customer_phone")),
         "billing_address": request.form.get("billing_address", "").strip(),
         "invoice_date": invoice_date,
-        "due_date": request.form.get("due_date", "").strip(),
+        "due_date": due_date,
         "status": request.form.get("status", "draft"),
         "subtotal": subtotal,
         "tax_rate": tax_rate,
         "tax_total": tax_total,
         "total": total,
         "notes": request.form.get("notes", "").strip(),
-        "terms": request.form.get("terms", "").strip(),
+        "terms": invoice_terms_for_due_date(due_date, request.form.get("terms", "")),
     }
     return invoice, lines
 
@@ -2265,9 +2322,12 @@ def invoice_pdf_attachment(invoice, lines, company):
         return None, "PDF support is not available on this server."
     doc = fitz.open()
     page = doc.new_page(width=612, height=792)
-    y = 48
-    left = 48
-    right = 564
+    y = 42
+    left = 40
+    right = 572
+    line_color = (0.08, 0.12, 0.2)
+    grid_color = (0.70, 0.76, 0.84)
+    fill_color = (0.95, 0.97, 0.99)
 
     def text(x, y_pos, value, size=10, bold=False, align=0):
         font = "helv"
@@ -2295,65 +2355,96 @@ def invoice_pdf_attachment(invoice, lines, company):
     logo_bytes = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
     if logo_bytes:
         try:
-            page.insert_image(fitz.Rect(left, y - 8, left + 92, y + 52), stream=logo_bytes, keep_proportion=True)
-            y += 58
+            page.insert_image(fitz.Rect(left, 28, left + 265, 150), stream=logo_bytes, keep_proportion=True)
+            y = 164
         except Exception:
             pass
-    text(left, y, company.get("company_name") or "ProjectONus", 18)
-    y += 20
+    company_y = y
     for value in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
         if value:
-            text(left, y, value, 9)
-            y += 12
+            text(left, company_y, value, 10)
+            company_y += 15
 
-    text(450, 48, "INVOICE", 22)
-    text(450, 76, invoice.get("invoice_number") or "PREVIEW", 10)
-    text(450, 92, f"Date: {format_date(invoice.get('invoice_date'))}", 9)
+    text(458, 52, "INVOICE", 24)
+    meta_y = 78
+    for label, value in [
+        ("Date", format_date(invoice.get("invoice_date"))),
+        ("Invoice #", invoice.get("invoice_number") or "PREVIEW"),
+        ("Terms", invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms") or "")),
+    ]:
+        if not value:
+            continue
+        text(376, meta_y, label, 8)
+        if label == "Terms":
+            next_y = wrapped(452, meta_y, value, 116, 9, 11)
+            meta_y = max(meta_y + 16, next_y + 2)
+        else:
+            text(452, meta_y, value, 9)
+            meta_y += 16
     if invoice.get("due_date"):
-        text(450, 108, f"Due: {format_date(invoice.get('due_date'))}", 9)
+        text(376, meta_y, "Due", 8)
+        text(452, meta_y, format_date(invoice.get("due_date")), 9)
+        meta_y += 16
+    divider_y = max(214, company_y + 18, meta_y + 12)
+    page.draw_line((left, divider_y), (right, divider_y), color=line_color, width=1.2)
 
-    y = max(y + 18, 145)
-    text(left, y, "Bill To", 12)
-    y += 16
-    text(left, y, invoice.get("customer_name") or "-", 10)
-    y += 13
+    y = divider_y + 34
+    text(left, y, "CUSTOMER NAME", 10)
+    text(318, y, "JOB NAME", 10)
+    text(left, y + 20, invoice.get("customer_name") or "-", 10)
+    text(318, y + 20, invoice.get("project_name") or invoice.get("customer_name") or "-", 10)
+    customer_y = y + 38
     if invoice.get("billing_address"):
-        y = wrapped(left, y, invoice.get("billing_address"), 260, 9)
+        customer_y = wrapped(left, customer_y, invoice.get("billing_address"), 240, 9, 12)
+        wrapped(318, y + 38, invoice.get("billing_address"), 240, 9, 12)
     if invoice.get("customer_email"):
-        text(left, y, invoice.get("customer_email"), 9)
-        y += 12
+        text(left, customer_y, invoice.get("customer_email"), 9)
+        customer_y += 12
     if invoice.get("customer_phone"):
-        text(left, y, invoice.get("customer_phone"), 9)
-        y += 12
-    if invoice.get("project_name"):
-        text(left, y, f"Project: {invoice.get('project_name')}", 9)
-        y += 12
+        text(left, customer_y, invoice.get("customer_phone"), 9)
 
-    y += 18
-    headers = [("#", 48), ("Qty", 78), ("Item", 118), ("Description", 220), ("Location", 390), ("Unit", 470), ("Amount", 525)]
-    page.draw_line((left, y - 10), (right, y - 10), color=(0.75, 0.8, 0.88), width=0.8)
+    y = max(customer_y + 32, divider_y + 126)
+    table_top = y - 16
+    headers = [("#", 48), ("Qty", 82), ("Item", 120), ("Description", 250), ("Location", 426), ("Unit", 486), ("Amount", 535)]
+    page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
+    page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
+    page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
     for label, x in headers:
         text(x, y, label, 8)
-    y += 12
-    page.draw_line((left, y - 7), (right, y - 7), color=(0.75, 0.8, 0.88), width=0.8)
+    y += 18
     for index, line in enumerate(lines, start=1):
         if y > 690:
             page = doc.new_page(width=612, height=792)
-            y = 48
+            y = 70
+            table_top = y - 18
+            page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
+            page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
+            page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
+            for label, x in headers:
+                text(x, y, label, 8)
+            y += 18
         row_top = y
-        text(48, y, index, 8)
-        text(78, y, line.get("quantity"), 8)
-        y_item = wrapped(118, y, line.get("item_name"), 92, 8, 10)
-        y_desc = wrapped(220, y, line.get("description"), 160, 8, 10)
-        y_loc = wrapped(390, y, line.get("location"), 70, 8, 10)
-        text(470, y, format_invoice_money(line.get("unit_price")), 8)
-        text(525, y, format_invoice_money(line.get("line_total")), 8)
-        y = max(y_item, y_desc, y_loc, row_top + 18)
-        page.draw_line((left, y - 4), (right, y - 4), color=(0.88, 0.91, 0.95), width=0.5)
+        text(48, y, index, 9)
+        text(82, y, line.get("quantity"), 9)
+        y_item = wrapped(120, y, line.get("item_name"), 120, 9, 11)
+        y_desc = wrapped(250, y, line.get("description"), 166, 9, 11)
+        y_loc = wrapped(426, y, line.get("location"), 52, 9, 11)
+        text(486, y, format_invoice_money(line.get("unit_price")), 9)
+        text(535, y, format_invoice_money(line.get("line_total")), 9)
+        y = max(y_item, y_desc, y_loc, row_top + 20)
+        page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.5)
         y += 6
-
     totals = invoice_totals_breakdown(invoice, lines)
-    y = max(y + 12, 590)
+    y = 610
+    if y > 640:
+        page = doc.new_page(width=612, height=792)
+        y = 80
+    if invoice.get("notes"):
+        page.draw_line((left, y - 14), (330, y - 14), color=line_color, width=1)
+        text(left, y + 4, "NOTES", 10)
+        wrapped(left, y + 22, invoice.get("notes"), 290, 10, 12)
+    page.draw_line((360, y - 14), (right, y - 14), color=line_color, width=1)
+    totals_y = y + 4
     for label, key in [
         ("Total Material", "material"),
         ("Total Labor", "labor"),
@@ -2364,20 +2455,12 @@ def invoice_pdf_attachment(invoice, lines, company):
         value = format_invoice_money(totals[key])
         if key == "payments_credit":
             value = "-" + value
-        text(400, y, label, 10)
-        text(520, y, value, 10)
-        y += 16
-    page.draw_line((430, y - 10), (right, y - 10), color=(0.08, 0.12, 0.2), width=1)
-    text(400, y, "Balance Due", 15)
-    text(520, y, format_invoice_money(totals["balance_due"]), 15)
-
-    y += 34
-    if invoice.get("notes"):
-        text(left, y, "Notes", 11)
-        y = wrapped(left, y + 14, invoice.get("notes"), 500, 9)
-    if invoice.get("terms"):
-        text(left, y + 6, "Terms", 11)
-        wrapped(left, y + 20, invoice.get("terms"), 500, 9)
+        text(374, totals_y, label, 10)
+        text(512, totals_y, value, 10)
+        totals_y += 17
+    page.draw_line((360, totals_y - 10), (right, totals_y - 10), color=grid_color, width=0.6)
+    text(374, totals_y + 5, "Balance Due", 10)
+    text(512, totals_y + 5, format_invoice_money(totals["balance_due"]), 10)
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -2408,11 +2491,42 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
     return sent, "" if sent else "Invoice could not be emailed. Check SMTP email settings."
 
 
+def create_project_invoice_draft(conn, project):
+    invoice_date = local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', 0, %s, 0, 0, '', %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            project["id"],
+            project.get("customer_name") or project.get("name") or "",
+            project.get("customer_email") or "",
+            format_us_phone(project.get("customer_phone")),
+            project.get("billing_address") or project.get("customer_address") or "",
+            invoice_date,
+            "",
+            default_invoice_tax_rate(),
+            invoice_due_date_terms(""),
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    return row["id"]
+
+
 def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
     if lines is None:
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
     invoice_date = request.form.get("invoice_date") or local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
+    due_date = request.form.get("due_date", "").strip()
+    terms = invoice_terms_for_due_date(due_date, request.form.get("terms", ""))
     row = conn.execute(
         """
         INSERT INTO invoices
@@ -2428,14 +2542,14 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
             format_us_phone(request.form.get("customer_phone")),
             request.form.get("billing_address", "").strip(),
             invoice_date,
-            request.form.get("due_date", "").strip(),
+            due_date,
             request.form.get("status", "draft"),
             subtotal,
             tax_rate,
             tax_total,
             total,
             request.form.get("notes", "").strip(),
-            request.form.get("terms", "").strip(),
+            terms,
             session.get("user_id"),
             utc_now_iso(),
             utc_now_iso(),
@@ -2453,6 +2567,63 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
             (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
         )
     return invoice_id
+
+
+def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
+    if lines is None:
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+    due_date = request.form.get("due_date", "").strip()
+    terms = invoice_terms_for_due_date(due_date, request.form.get("terms", ""))
+    conn.execute(
+        """
+        UPDATE invoices
+        SET project_id = %s,
+            customer_name = %s,
+            customer_email = %s,
+            customer_phone = %s,
+            billing_address = %s,
+            invoice_date = %s,
+            due_date = %s,
+            status = %s,
+            subtotal = %s,
+            tax_rate = %s,
+            tax_total = %s,
+            total = %s,
+            notes = %s,
+            terms = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            request.form.get("project_id", type=int),
+            request.form.get("customer_name", "").strip(),
+            request.form.get("customer_email", "").strip(),
+            format_us_phone(request.form.get("customer_phone")),
+            request.form.get("billing_address", "").strip(),
+            request.form.get("invoice_date") or local_now().date().isoformat(),
+            due_date,
+            request.form.get("status", "draft"),
+            subtotal,
+            tax_rate,
+            tax_total,
+            total,
+            request.form.get("notes", "").strip(),
+            terms,
+            utc_now_iso(),
+            invoice_id,
+        )
+    )
+    conn.execute("DELETE FROM invoice_lines WHERE invoice_id = %s", (invoice_id,))
+    save_invoice_items(conn, lines)
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+        )
 
 
 def vendor_account_email_body(supplier, info, attachment_name=""):
@@ -3008,7 +3179,8 @@ SUPPLIER_TASK_STATUS_LABELS = {
 INVENTORY_LOCATION_LABELS = {
     "storage": "Storage",
     "warehouse": "Warehouse",
-    "job_site": "Job site"
+    "job_site": "Job site",
+    "truck": "Truck"
 }
 
 INVENTORY_CONDITION_LABELS = {
@@ -3309,6 +3481,51 @@ def supplier_items_from_task_form(conn, supplier):
         project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
         if error:
             return [], error
+        inventory_item_id = optional_int(row.get("inventory_item_id"))
+        if inventory_item_id:
+            existing_item = conn.execute(
+                """
+                SELECT * FROM inventory_items
+                WHERE id = %s AND project_id = %s
+                """,
+                (inventory_item_id, project_id)
+            ).fetchone()
+            if not existing_item:
+                return [], "The selected supplier material could not be found in this project."
+            if room_id and existing_item.get("room_id") and existing_item.get("room_id") != room_id:
+                return [], "The selected supplier material room does not match this pickup task."
+            if not inventory_item_access_allowed(conn, existing_item):
+                return [], "You do not have access to that supplier material."
+            pickup_date = (row.get("pickup_date") or existing_item.get("item_date") or local_now().date().isoformat()).strip()
+            pickup_time = (row.get("pickup_time") or existing_item.get("supplier_pickup_time") or "").strip()
+            purchase_note = (row.get("purchase_note") or request.form.get("supplier_purchase_note") or "").strip()
+            used_note = existing_item.get("used_note") or ""
+            if purchase_note and purchase_note not in used_note:
+                used_note = "\n".join(part for part in [used_note, purchase_note] if part).strip()
+            conn.execute(
+                """
+                UPDATE inventory_items
+                SET item_date = %s,
+                    room_id = COALESCE(%s, room_id),
+                    supplier_pickup_time = %s,
+                    supplier_id = %s,
+                    used_note = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    pickup_date,
+                    room_id,
+                    pickup_time,
+                    supplier["id"],
+                    used_note,
+                    utc_now_iso(),
+                    inventory_item_id,
+                )
+            )
+            updated_item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (inventory_item_id,)).fetchone()
+            created.append(updated_item)
+            continue
         item_name = (row.get("item_name") or "").strip()
         if not item_name:
             return [], "Every supplier material needs an item name."
@@ -3811,6 +4028,238 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
         raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
 
 
+def dtools_public_fetch_payload(public_url, quote_id=""):
+    public_url = (public_url or "").strip()
+    if not public_url:
+        raise RuntimeError("Paste the full public D-Tools proposal Request URL from Chrome Network.")
+    quote_id = (quote_id or "").strip()
+    if "{id}" in public_url and quote_id:
+        public_url = public_url.replace("{id}", urllib.parse.quote(quote_id))
+    parsed = urllib.parse.urlparse(public_url)
+    if parsed.scheme not in ["http", "https"] or not parsed.netloc:
+        raise RuntimeError("Public proposal Request URL must start with http:// or https://.")
+    host = parsed.netloc.lower().split(":")[0]
+    if not (host == "d-tools.cloud" or host.endswith(".d-tools.cloud")):
+        raise RuntimeError("For safety, paste a D-Tools URL only.")
+    req = urllib.request.Request(
+        public_url,
+        headers={
+            "Accept": "application/json,text/plain,*/*",
+            "User-Agent": "ProjectONus D-Tools Import",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return json.loads(raw or "{}")
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(f"D-Tools public proposal request returned {e.code}: {details or e.reason}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach D-Tools public proposal request: {e.reason}")
+    except json.JSONDecodeError:
+        raise RuntimeError("D-Tools public proposal request returned a response that was not JSON.")
+
+
+def ensure_dtools_import_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dt_cloud_connections (
+            id SERIAL PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'dtools_cloud',
+            base_url TEXT,
+            project_endpoint_path TEXT,
+            proposal_endpoint_path TEXT,
+            id_param TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            last_tested_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dt_import_logs (
+            id SERIAL PRIMARY KEY,
+            connection_id INTEGER,
+            dtools_project_id TEXT,
+            dtools_proposal_id TEXT,
+            project_endpoint_path TEXT,
+            proposal_endpoint_path TEXT,
+            status TEXT NOT NULL,
+            message TEXT,
+            material_count INTEGER NOT NULL DEFAULT 0,
+            labor_count INTEGER NOT NULL DEFAULT 0,
+            room_count INTEGER NOT NULL DEFAULT 0,
+            payload_preview TEXT,
+            error_log TEXT,
+            created_by INTEGER,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    for statement in [
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'dtools_cloud'",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS base_url TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS project_endpoint_path TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS proposal_endpoint_path TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS id_param TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS created_by INTEGER",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS created_at TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS updated_at TEXT",
+        "ALTER TABLE dt_cloud_connections ADD COLUMN IF NOT EXISTS last_tested_at TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS connection_id INTEGER",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS dtools_project_id TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS dtools_proposal_id TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS project_endpoint_path TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS proposal_endpoint_path TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS status TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS material_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS labor_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS room_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS payload_preview TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS error_log TEXT",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS created_by INTEGER",
+        "ALTER TABLE dt_import_logs ADD COLUMN IF NOT EXISTS created_at TEXT",
+    ]:
+        try:
+            conn.execute(statement)
+        except Exception as e:
+            conn.rollback()
+            print("D-Tools import migration skipped:", e)
+    conn.commit()
+
+
+def dtools_payload_snippet(payload, limit=8000):
+    try:
+        text = json.dumps(payload or {}, indent=2, sort_keys=True, default=str)
+    except Exception:
+        text = str(payload or "")
+    if len(text) > limit:
+        return text[:limit] + "\n... truncated ..."
+    return text
+
+
+def dtools_project_preview(payload):
+    payload = payload or {}
+    company = account_info()
+    company_email = (company.get("company_email") or "").strip().lower()
+    company_phone = re.sub(r"\D+", "", company.get("company_phone") or "")
+    company_address_key = normalize_lookup_key(company.get("company_address") or "")
+    preview = {
+        "project_name": dtools_pick(payload, ["projectName", "name", "project", "jobName", "title"]),
+        "customer_name": dtools_pick(payload, ["customerName", "clientName", "accountName", "companyName", "contactName"]),
+        "customer_email": dtools_pick(payload, ["customerEmail", "email", "contactEmail"]),
+        "customer_phone": dtools_pick(payload, ["customerPhone", "phone", "contactPhone", "mobilePhone"]),
+        "address": dtools_pick(payload, ["address", "projectAddress", "siteAddress", "streetAddress", "locationAddress"]),
+        "proposal_number": dtools_pick(payload, ["proposalNumber", "quoteNumber", "number", "proposalId", "quoteId"]),
+    }
+    if preview["customer_email"].strip().lower() == company_email:
+        preview["customer_email"] = ""
+    if company_phone and re.sub(r"\D+", "", preview["customer_phone"]) == company_phone:
+        preview["customer_phone"] = ""
+    if company_address_key and normalize_lookup_key(preview["address"]) == company_address_key:
+        preview["address"] = ""
+    return preview
+
+
+def apply_dtools_manual_preview_overrides(project_info, form_values):
+    project_info = dict(project_info or {})
+    for form_key, info_key in [
+        ("project_name", "project_name"),
+        ("customer_name", "customer_name"),
+        ("customer_email", "customer_email"),
+        ("customer_phone", "customer_phone"),
+        ("customer_address", "address"),
+        ("dtools_proposal_number", "proposal_number"),
+    ]:
+        value = (form_values.get(form_key) or "").strip()
+        if value:
+            project_info[info_key] = format_us_phone(value) if info_key == "customer_phone" else value
+    return project_info
+
+
+def dtools_preview_locations(items):
+    locations = []
+    seen = set()
+    for item in items or []:
+        location = (item.get("location") or "").strip()
+        key = normalize_lookup_key(location)
+        if location and key not in seen:
+            seen.add(key)
+            locations.append(location)
+    return locations
+
+
+def save_dtools_import_log(conn, project_id, proposal_id, project_endpoint, proposal_endpoint, status, message="", payload_preview="", error_log="", material_count=0, labor_count=0, room_count=0):
+    config = dtools_cloud_config()
+    now = utc_now_iso()
+    try:
+        ensure_dtools_import_tables(conn)
+    except Exception as e:
+        conn.rollback()
+        print("D-Tools import log table setup failed:", e)
+        return
+    try:
+        uid = optional_int(session.get("user_id"))
+    except Exception:
+        uid = None
+    try:
+        material_count = int(material_count or 0)
+        labor_count = int(labor_count or 0)
+        room_count = int(room_count or 0)
+    except Exception:
+        material_count, labor_count, room_count = 0, 0, 0
+    try:
+        connection = conn.execute(
+            """
+            INSERT INTO dt_cloud_connections
+            (base_url, project_endpoint_path, proposal_endpoint_path, id_param, created_by, created_at, updated_at, last_tested_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                config.get("base_url") or "",
+                project_endpoint or "",
+                proposal_endpoint or "",
+                config.get("id_param") or "",
+                uid,
+                now,
+                now,
+                now,
+            )
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO dt_import_logs
+            (connection_id, dtools_project_id, dtools_proposal_id, project_endpoint_path, proposal_endpoint_path, status, message, material_count, labor_count, room_count, payload_preview, error_log, created_by, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                connection["id"] if connection else None,
+                project_id or "",
+                proposal_id or "",
+                project_endpoint or "",
+                proposal_endpoint or "",
+                status or "error",
+                message or "",
+                material_count,
+                labor_count,
+                room_count,
+                payload_preview or "",
+                error_log or "",
+                uid,
+                now,
+            )
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("D-Tools import log save failed:", e)
+
+
 def normalize_lookup_key(value):
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
@@ -4062,6 +4511,109 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
         (external_ref, project_id)
     )
     return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
+
+
+def create_project_from_dtools_preview(conn, project_info, locations, payload, external_ref):
+    project_info = project_info or {}
+    project_name = (project_info.get("project_name") or "").strip()
+    customer_name = (project_info.get("customer_name") or "").strip()
+    customer_email = (project_info.get("customer_email") or "").strip()
+    customer_phone = format_us_phone(project_info.get("customer_phone") or "")
+    customer_address = (project_info.get("address") or "").strip()
+    proposal_number = (project_info.get("proposal_number") or "").strip()
+    external_ref = (external_ref or proposal_number or project_name or customer_name).strip()
+    if not project_name and not customer_name:
+        raise RuntimeError("Add at least the Project Name or Customer Name before creating a ProjectONus project.")
+    if not project_name:
+        project_name = customer_name
+
+    now = utc_now_iso()
+    existing_project = None
+    if external_ref:
+        existing_project = conn.execute(
+            "SELECT * FROM projects WHERE dtools_cloud_project_ref = %s ORDER BY id DESC LIMIT 1",
+            (external_ref,)
+        ).fetchone()
+
+    if existing_project:
+        project_id = existing_project["id"]
+        conn.execute(
+            """
+            UPDATE projects
+            SET name = COALESCE(NULLIF(%s, ''), name),
+                customer_name = COALESCE(NULLIF(%s, ''), customer_name),
+                customer_street = COALESCE(NULLIF(%s, ''), customer_street),
+                customer_address = COALESCE(NULLIF(%s, ''), customer_address),
+                billing_street = COALESCE(NULLIF(%s, ''), billing_street),
+                billing_address = COALESCE(NULLIF(%s, ''), billing_address),
+                customer_phone = COALESCE(NULLIF(%s, ''), customer_phone),
+                customer_email = COALESCE(NULLIF(%s, ''), customer_email),
+                dtools_cloud_project_ref = COALESCE(NULLIF(%s, ''), dtools_cloud_project_ref)
+            WHERE id = %s
+            """,
+            (
+                project_name,
+                customer_name,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_phone,
+                customer_email,
+                external_ref,
+                project_id,
+            )
+        )
+        created_project = False
+    else:
+        row = conn.execute(
+            """
+            INSERT INTO projects
+            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, dtools_cloud_project_ref, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, '', '', '', %s, %s, '', '', '', TRUE, %s, %s, %s, '', '', NULL, NULL, %s)
+            RETURNING id
+            """,
+            (
+                project_name,
+                customer_name,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_address,
+                external_ref,
+                customer_phone,
+                customer_email,
+                now,
+            )
+        ).fetchone()
+        project_id = row["id"]
+        created_project = True
+
+    existing_rooms = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s",
+        (project_id,)
+    ).fetchall()
+    room_lookup = {normalize_lookup_key(room["name"]) for room in existing_rooms}
+    rooms_created = 0
+    for location in locations or []:
+        room_name = (location or "").strip()
+        room_key = normalize_lookup_key(room_name)
+        if not room_name or room_key in room_lookup:
+            continue
+        conn.execute(
+            "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)",
+            (project_id, room_name, "general", "blue", now)
+        )
+        room_lookup.add(room_key)
+        rooms_created += 1
+
+    import_result = import_dtools_materials(conn, project_id, external_ref or str(project_id), payload or {})
+    import_result.update({
+        "project_id": project_id,
+        "created_project": created_project,
+        "rooms_created": rooms_created,
+    })
+    return import_result
 
 
 def zoneinfo_or_none(name):
@@ -4535,6 +5087,7 @@ def utility_processor():
         format_date=format_date,
         format_datetime=format_datetime,
         format_invoice_money=format_invoice_money,
+        invoice_terms_for_due_date=invoice_terms_for_due_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
@@ -5675,13 +6228,22 @@ def new_invoice():
         conn.close()
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
+    selected_project_id = request.args.get("project_id", type=int)
+    if selected_project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        if not selected_project:
+            conn.close()
+            flash("Project not found.")
+            return redirect(url_for("invoices"))
+        invoice_id = create_project_invoice_draft(conn, selected_project)
+        conn.commit()
+        conn.close()
+        return redirect(url_for("edit_invoice", invoice_id=invoice_id))
+
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
-    selected_project_id = request.args.get("project_id", type=int)
     selected_project = None
-    if selected_project_id:
-        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
     conn.close()
     return render_template(
         "invoice_form.html",
@@ -5744,7 +6306,7 @@ def restore_invoice_preview():
         selected_project=selected_project,
         default_tax_rate=default_invoice_tax_rate(),
         today=local_now().date().isoformat(),
-        form_action=url_for("new_invoice"),
+        form_action=url_for("edit_invoice", invoice_id=invoice["id"]) if invoice.get("id") else url_for("new_invoice"),
     )
 
 
@@ -5765,13 +6327,19 @@ def send_invoice_preview():
         conn.close()
         flash("Add a customer email before sending this invoice preview.")
         return redirect(url_for("new_invoice"))
+    invoice_id = request.form.get("invoice_id", type=int)
     try:
-        invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+        if invoice_id:
+            update_invoice_record_from_form(conn, invoice_id, lines, subtotal, tax_rate, tax_total, total)
+        else:
+            invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
         conn.commit()
     except Exception as e:
         conn.rollback()
         conn.close()
         flash(f"Invoice could not be saved. {e}")
+        if invoice_id:
+            return redirect(url_for("edit_invoice", invoice_id=invoice_id))
         selected_project_id = request.form.get("project_id", type=int)
         return redirect(url_for("new_invoice", project_id=selected_project_id) if selected_project_id else url_for("new_invoice"))
     invoice, saved_lines = load_invoice(conn, invoice_id)
@@ -5784,6 +6352,73 @@ def send_invoice_preview():
     flash("Invoice created and emailed to customer." if sent else f"Invoice created, but email was not sent. {email_error}")
     conn.close()
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/copy", methods=["POST"])
+@admin_required
+def copy_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_part_catalog_tables(conn)
+    invoice, lines = load_invoice(conn, invoice_id)
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    invoice_date = local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            invoice.get("project_id"),
+            invoice.get("customer_name") or "",
+            invoice.get("customer_email") or "",
+            invoice.get("customer_phone") or "",
+            invoice.get("billing_address") or "",
+            invoice_date,
+            copied_due_date,
+            invoice.get("subtotal") or 0,
+            invoice.get("tax_rate") or 0,
+            invoice.get("tax_total") or 0,
+            invoice.get("total") or 0,
+            invoice.get("notes") or "",
+            invoice_terms_for_due_date(copied_due_date, invoice.get("terms") or ""),
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    new_invoice_id = row["id"]
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                new_invoice_id,
+                line.get("part_catalog_id"),
+                line.get("item_name") or "",
+                line.get("description") or "",
+                line.get("location") or "",
+                line.get("quantity") or 0,
+                line.get("unit_price") or 0,
+                bool(line.get("taxable")),
+                line.get("line_total") or 0,
+                line.get("position") or 0,
+            )
+        )
+    conn.commit()
+    conn.close()
+    flash(f"Invoice copied as {invoice_number}.")
+    return redirect(url_for("edit_invoice", invoice_id=new_invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>")
@@ -5821,56 +6456,7 @@ def edit_invoice(invoice_id):
             conn.close()
             flash("Add at least one invoice item.")
             return redirect(url_for("edit_invoice", invoice_id=invoice_id))
-        conn.execute(
-            """
-            UPDATE invoices
-            SET project_id = %s,
-                customer_name = %s,
-                customer_email = %s,
-                customer_phone = %s,
-                billing_address = %s,
-                invoice_date = %s,
-                due_date = %s,
-                status = %s,
-                subtotal = %s,
-                tax_rate = %s,
-                tax_total = %s,
-                total = %s,
-                notes = %s,
-                terms = %s,
-                updated_at = %s
-            WHERE id = %s
-            """,
-            (
-                request.form.get("project_id", type=int),
-                request.form.get("customer_name", "").strip(),
-                request.form.get("customer_email", "").strip(),
-                format_us_phone(request.form.get("customer_phone")),
-                request.form.get("billing_address", "").strip(),
-                request.form.get("invoice_date") or invoice.get("invoice_date"),
-                request.form.get("due_date", "").strip(),
-                request.form.get("status", "draft"),
-                subtotal,
-                tax_rate,
-                tax_total,
-                total,
-                request.form.get("notes", "").strip(),
-                request.form.get("terms", "").strip(),
-                utc_now_iso(),
-                invoice_id,
-            )
-        )
-        conn.execute("DELETE FROM invoice_lines WHERE invoice_id = %s", (invoice_id,))
-        save_invoice_items(conn, lines)
-        for line in lines:
-            conn.execute(
-                """
-                INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
-            )
+        update_invoice_record_from_form(conn, invoice_id, lines, subtotal, tax_rate, tax_total, total)
         if request.form.get("submit_action") == "email":
             invoice, saved_lines = load_invoice(conn, invoice_id)
             sent, email_error = email_invoice_record(conn, invoice, saved_lines, request.form.get("customer_email", "").strip())
@@ -5929,6 +6515,100 @@ def send_invoice(invoice_id):
     return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
 
+@app.route("/invoices/<int:invoice_id>/delete", methods=["POST"])
+@admin_required
+def delete_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT id, invoice_number, customer_name, project_id FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+
+    pin = f"{secrets.randbelow(10000):04d}"
+    conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s AND admin_id = %s", (invoice_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO invoice_delete_codes (invoice_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (invoice_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete invoice PIN",
+        "\n".join([
+            f"Your 4-digit PIN to delete invoice {invoice.get('invoice_number') or invoice_id} is:",
+            "",
+            pin,
+            "",
+            f"Customer: {invoice.get('customer_name') or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s AND admin_id = %s", (invoice_id, admin["id"]))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
+    conn.close()
+    flash("A 4-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_invoice", invoice_id=invoice_id))
+
+
+@app.route("/invoices/<int:invoice_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_invoice(invoice_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT id, invoice_number, customer_name, project_id FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoices"))
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM invoice_delete_codes
+            WHERE invoice_id = %s AND admin_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (invoice_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("invoice_view", invoice_id=invoice_id))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_invoice", invoice_id=invoice_id))
+
+        project_id = invoice.get("project_id")
+        conn.execute("DELETE FROM invoice_delete_codes WHERE invoice_id = %s", (invoice_id,))
+        conn.execute("DELETE FROM invoices WHERE id = %s", (invoice_id,))
+        conn.commit()
+        conn.close()
+        flash("Invoice deleted.")
+        return redirect(url_for("invoices", project_id=project_id) if project_id else url_for("invoices"))
+
+    conn.close()
+    return render_template("delete_invoice_confirm.html", invoice=invoice)
+
+
 @app.route("/parts-catalog", methods=["GET", "POST"])
 @admin_required
 def parts_catalog():
@@ -5943,6 +6623,12 @@ def parts_catalog():
             conn.commit()
             conn.close()
             flash("Catalog item archived.")
+            return redirect(url_for("parts_catalog"))
+        if action == "delete" and part_id:
+            conn.execute("DELETE FROM part_catalog WHERE id = %s", (part_id,))
+            conn.commit()
+            conn.close()
+            flash("Catalog item deleted.")
             return redirect(url_for("parts_catalog"))
 
         item_name = request.form.get("item_name", "").strip()
@@ -6009,6 +6695,16 @@ def parts_catalog():
         return redirect(url_for("parts_catalog"))
 
     q = request.args.get("q", "").strip()
+    edit_id = request.args.get("edit_id", type=int)
+    edit_part = None
+    if edit_id:
+        edit_part = conn.execute(
+            "SELECT * FROM part_catalog WHERE id = %s AND COALESCE(is_active, TRUE) = TRUE",
+            (edit_id,)
+        ).fetchone()
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    per_page = 10
+    offset = (page - 1) * per_page
     params = []
     where = "WHERE COALESCE(part_catalog.is_active, TRUE) = TRUE"
     if q:
@@ -6024,6 +6720,15 @@ def parts_catalog():
             )
         """
         params.extend([like, like, like, like, like, like])
+    total_row = conn.execute(
+        f"SELECT COUNT(*) AS total FROM part_catalog {where}",
+        tuple(params)
+    ).fetchone()
+    total_count = int(total_row["total"] if total_row else 0)
+    total_pages = max(1, math.ceil(total_count / per_page))
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * per_page
     rows = conn.execute(
         f"""
         SELECT part_catalog.*,
@@ -6032,11 +6737,12 @@ def parts_catalog():
         FROM part_catalog
         {where}
         ORDER BY lower(part_catalog.item_name), lower(COALESCE(part_catalog.brand, '')), lower(COALESCE(part_catalog.item_model, ''))
+        LIMIT %s OFFSET %s
         """,
-        tuple(params)
+        tuple(params + [per_page, offset])
     ).fetchall()
     conn.close()
-    return render_template("parts_catalog.html", parts=rows, q=q)
+    return render_template("parts_catalog.html", parts=rows, q=q, edit_part=edit_part, page=page, total_pages=total_pages, total_count=total_count, per_page=per_page)
 
 
 @app.route("/parts-catalog/create-json", methods=["POST"])
@@ -6081,6 +6787,47 @@ def create_part_catalog_json():
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "item": dict(row) if row else {}})
+
+
+@app.route("/parts-catalog/<int:part_id>/quick-update-json", methods=["POST"])
+@admin_required
+def quick_update_part_catalog_json(part_id):
+    conn = db()
+    ensure_part_catalog_tables(conn)
+    row = conn.execute(
+        "SELECT id FROM part_catalog WHERE id = %s AND COALESCE(is_active, TRUE) = TRUE",
+        (part_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Catalog item not found."}), 404
+    description = request.form.get("description", "").strip()
+    try:
+        unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else 0
+    except Exception:
+        conn.close()
+        return jsonify({"ok": False, "error": "Unit price is not valid."}), 400
+    conn.execute(
+        """
+        UPDATE part_catalog
+        SET description = %s,
+            unit_price = %s,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (description, unit_price, utc_now_iso(), part_id)
+    )
+    updated = conn.execute(
+        """
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        FROM part_catalog
+        WHERE id = %s
+        """,
+        (part_id,)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "item": dict(updated) if updated else {}})
 
 
 @app.route("/suppliers", methods=["GET", "POST"])
@@ -6408,6 +7155,41 @@ def update_inventory_location(item_id):
     return redirect(safe_next_url("inventory"))
 
 
+@app.route("/inventory/<int:item_id>/supplier", methods=["POST"])
+@login_required
+def update_inventory_supplier(item_id):
+    if not can_edit_inventory():
+        flash("You do not have permission to update inventory.")
+        return redirect(safe_next_url("inventory"))
+
+    supplier_id = optional_int(request.form.get("supplier_id"))
+    conn = db()
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(safe_next_url("inventory"))
+    if not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("You do not have access to that inventory item.")
+        return redirect(url_for("inventory"))
+    if supplier_id:
+        supplier = conn.execute("SELECT id FROM suppliers WHERE id = %s", (supplier_id,)).fetchone()
+        if not supplier:
+            conn.close()
+            flash("Supplier not found.")
+            return redirect(safe_next_url("inventory"))
+
+    conn.execute(
+        "UPDATE inventory_items SET supplier_id = %s, updated_at = %s WHERE id = %s",
+        (supplier_id, utc_now_iso(), item_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Inventory supplier updated.")
+    return redirect(safe_next_url("inventory"))
+
+
 @app.route("/inventory/<int:item_id>/delete", methods=["POST"])
 @admin_required
 def delete_inventory_item(item_id):
@@ -6456,6 +7238,7 @@ def project_materials(project_id):
 
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
+    suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
@@ -6463,6 +7246,7 @@ def project_materials(project_id):
         project=project,
         materials=materials,
         rooms=rooms,
+        suppliers=suppliers,
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
@@ -6565,6 +7349,229 @@ def test_dtools_connection():
     except Exception as e:
         flash(str(e))
     return redirect(url_for("settings"))
+
+
+@app.route("/dtools-import", methods=["GET", "POST"])
+@admin_required
+def dtools_import():
+    default_project_endpoint = "Projects/GetProject"
+    default_proposal_endpoint = "Quotes/GetQuote"
+    config = dtools_cloud_config()
+    result = None
+    logs = []
+    form_values = {
+        "dtools_project_id": "",
+        "dtools_proposal_id": "",
+        "dtools_proposal_number": "",
+        "customer_name": "",
+        "customer_email": "",
+        "customer_phone": "",
+        "customer_address": "",
+        "project_name": "",
+        "public_proposal_url": "",
+        "public_response_json": "",
+        "project_endpoint_path": default_project_endpoint,
+        "proposal_endpoint_path": default_proposal_endpoint,
+    }
+    conn = None
+    table_error = ""
+
+    try:
+        conn = db()
+        try:
+            ensure_dtools_import_tables(conn)
+        except Exception as e:
+            conn.rollback()
+            table_error = f"D-Tools import log tables could not be prepared: {e}"
+            print(table_error)
+
+        if request.method == "POST":
+            form_values = {
+                "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
+                "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
+                "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
+                "customer_name": request.form.get("customer_name", "").strip(),
+                "customer_email": request.form.get("customer_email", "").strip(),
+                "customer_phone": request.form.get("customer_phone", "").strip(),
+                "customer_address": request.form.get("customer_address", "").strip(),
+                "project_name": request.form.get("project_name", "").strip(),
+                "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
+                "public_response_json": request.form.get("public_response_json", "").strip(),
+                "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
+                "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
+            }
+            import_action = request.form.get("action", "preview")
+            status = "error"
+            message = ""
+            error_log = ""
+            payload_preview = ""
+            material_count = 0
+            labor_count = 0
+            room_count = 0
+            try:
+                if table_error:
+                    flash(table_error)
+                if not form_values["public_response_json"] and not form_values["public_proposal_url"] and not dtools_cloud_configured():
+                    raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
+                if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"] and not form_values["public_response_json"]:
+                    raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, paste the public proposal Request URL, or paste the Response JSON from Chrome Network.")
+
+                project_payload = None
+                proposal_payload = None
+                if form_values["dtools_project_id"]:
+                    project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
+                if form_values["public_response_json"]:
+                    try:
+                        proposal_payload = json.loads(form_values["public_response_json"])
+                    except Exception as json_error:
+                        raise RuntimeError(f"The pasted D-Tools Response JSON is not valid JSON: {json_error}")
+                elif form_values["public_proposal_url"]:
+                    proposal_payload = dtools_public_fetch_payload(form_values["public_proposal_url"], form_values["dtools_proposal_id"])
+                elif form_values["dtools_proposal_id"]:
+                    proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
+
+                source_payload = proposal_payload or project_payload or {}
+                source_ref = form_values["dtools_proposal_number"] or form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
+                items = dtools_extract_materials(source_payload, source_ref)
+                material_count = sum(1 for item in items if item.get("item_type") != "service")
+                labor_count = sum(1 for item in items if item.get("item_type") == "service")
+                locations = dtools_preview_locations(items)
+                room_count = len(locations)
+                project_info = apply_dtools_manual_preview_overrides(
+                    dtools_project_preview(project_payload or proposal_payload or {}),
+                    form_values
+                )
+                message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
+                if not items:
+                    message += " No usable BOM/material lines were detected in this response."
+                status = "success"
+                result = {
+                    "status": status,
+                    "message": message,
+                    "project_info": project_info,
+                    "items": items[:20],
+                    "locations": locations[:30],
+                    "material_count": material_count,
+                    "labor_count": labor_count,
+                    "room_count": room_count,
+                    "project_payload_loaded": bool(project_payload),
+                    "proposal_payload_loaded": bool(proposal_payload),
+                }
+                payload_preview = dtools_payload_snippet({
+                    "project_info": project_info,
+                    "counts": {
+                        "materials": material_count,
+                        "labor": labor_count,
+                        "locations": room_count,
+                    },
+                    "locations": locations[:50],
+                    "sample_items": items[:20],
+                })
+                if import_action == "create_project":
+                    create_result = create_project_from_dtools_preview(
+                        conn,
+                        project_info,
+                        locations,
+                        source_payload,
+                        source_ref,
+                    )
+                    conn.commit()
+                    action_text = "created" if create_result.get("created_project") else "updated"
+                    message = (
+                        f"ProjectONus project {action_text}. "
+                        f"{create_result.get('rooms_created', 0)} room(s) created. "
+                        f"{create_result.get('imported', 0)} inventory item(s) added as Needs Purchase. "
+                        f"{create_result.get('catalog_saved', 0)} catalog item(s) saved."
+                    )
+                    if create_result.get("services_saved"):
+                        message += f" {create_result['services_saved']} service/labor item(s) saved to Items & Catalog."
+                    if create_result.get("skipped"):
+                        message += f" {create_result['skipped']} duplicate item(s) skipped."
+                    if create_result.get("unmatched_rooms"):
+                        message += f" {create_result['unmatched_rooms']} item(s) did not match a room and stayed at the project level."
+                    payload_preview = dtools_payload_snippet({
+                        "project_info": project_info,
+                        "created_project_id": create_result.get("project_id"),
+                        "created_project": create_result.get("created_project"),
+                        "rooms_created": create_result.get("rooms_created"),
+                        "import": create_result,
+                    })
+                    save_dtools_import_log(
+                        conn,
+                        form_values["dtools_project_id"],
+                        form_values["dtools_proposal_id"] or form_values["dtools_proposal_number"],
+                        form_values["project_endpoint_path"],
+                        form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
+                        status,
+                        message,
+                        payload_preview,
+                        "",
+                        material_count,
+                        labor_count,
+                        room_count,
+                    )
+                    flash(message)
+                    return redirect(url_for("project_materials", project_id=create_result["project_id"]))
+                flash(message)
+            except Exception as e:
+                error_log = str(e)
+                if "401" in error_log and "Unauthorized" in error_log:
+                    error_log += " This means the D-Tools Cloud API key/header cannot access that endpoint. Use the public proposal Request URL from Chrome Network, or update the D-Tools API credentials in Settings."
+                if "403" in error_log and "Access denied" in error_log:
+                    error_log += " D-Tools is blocking server-side access to the public URL. Copy the Response JSON from the Chrome Network request and paste it into the D-Tools Response JSON box."
+                result = {"status": status, "message": error_log, "project_info": {}, "items": [], "locations": []}
+                flash(error_log)
+
+            save_dtools_import_log(
+                conn,
+                form_values["dtools_project_id"],
+                form_values["dtools_proposal_id"] or form_values["dtools_proposal_number"],
+                form_values["project_endpoint_path"],
+                form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
+                status,
+                message,
+                payload_preview,
+                error_log,
+                material_count,
+                labor_count,
+                room_count,
+            )
+
+        try:
+            logs = conn.execute(
+                """
+                SELECT dt_import_logs.*, users.name AS created_by_name
+                FROM dt_import_logs
+                LEFT JOIN users ON dt_import_logs.created_by = users.id
+                ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
+                LIMIT 20
+                """
+            ).fetchall()
+        except Exception as e:
+            conn.rollback()
+            print("D-Tools import logs could not be loaded:", e)
+            logs = []
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        message = f"D-Tools Import page error: {e}"
+        print(message)
+        result = {"status": "error", "message": message, "project_info": {}, "items": [], "locations": []}
+        flash(message)
+        logs = []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    try:
+        return render_template("dtools_import.html", config=config, result=result, logs=logs, form_values=form_values)
+    except Exception as e:
+        return f"D-Tools Import page error: {e}", 200
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
@@ -7977,6 +8984,36 @@ def create_global_task():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
+    selected_supplier_id = request.args.get("supplier_id", type=int)
+    pickup_item_id = request.args.get("pickup_item_id", type=int)
+    pickup_prefill = None
+    if pickup_item_id:
+        pickup_item = conn.execute(
+            """
+            SELECT inventory_items.*, suppliers.name AS supplier_name, rooms.name AS room_name
+            FROM inventory_items
+            LEFT JOIN suppliers ON inventory_items.supplier_id = suppliers.id
+            LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+            WHERE inventory_items.id = %s
+            """,
+            (pickup_item_id,)
+        ).fetchone()
+        if pickup_item and inventory_item_access_allowed(conn, pickup_item):
+            selected_project_id = pickup_item.get("project_id") or selected_project_id
+            selected_room_id = pickup_item.get("room_id") or selected_room_id
+            selected_supplier_id = pickup_item.get("supplier_id") or selected_supplier_id
+            pickup_prefill = {
+                "inventory_item_id": pickup_item["id"],
+                "pickup_date": pickup_item.get("item_date") or local_now().date().isoformat(),
+                "pickup_time": pickup_item.get("supplier_pickup_time") or "",
+                "quantity": pickup_item.get("quantity") or 1,
+                "item_name": pickup_item.get("item_name") or "",
+                "brand": pickup_item.get("brand") or "",
+                "model": pickup_item.get("item_model") or "",
+                "project_id": pickup_item.get("project_id") or "",
+                "room_id": pickup_item.get("room_id") or "",
+                "room_name": pickup_item.get("room_name") or "Project general",
+            }
     if selected_room_id and not selected_project_id:
         selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
         if selected_room:
@@ -8188,7 +9225,9 @@ def create_global_task():
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         selected_project_id=selected_project_id,
-        selected_room_id=selected_room_id
+        selected_room_id=selected_room_id,
+        selected_supplier_id=selected_supplier_id,
+        pickup_prefill=pickup_prefill
     )
 
 

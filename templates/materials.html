@@ -18,6 +18,13 @@
             <div><label>Item Model #</label><input name="item_model" class="js-part-model" list="partCatalogModelList"></div>
             <div><label>Brand</label><input name="brand" class="js-part-brand" list="partCatalogBrandList"></div>
             <div>
+                <label>Supplier</label>
+                <select name="supplier_id">
+                    <option value="">No supplier</option>
+                    {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
                 <label>New or Used</label>
                 <select name="item_condition">{% for value, label in condition_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
             </div>
@@ -87,7 +94,8 @@
                     <th>Brand</th>
                     <th>Supplier</th>
                     <th>Condition</th>
-                    <th>Room / Location</th>
+                    <th>Located</th>
+                    <th>Room</th>
                     <th>Status</th>
                     <th>Picture</th>
                     {% if can_edit_inventory() %}<th>Action</th>{% endif %}
@@ -102,9 +110,42 @@
                     <td><strong>{{ m.item_name }}</strong>{% if m.used_note %}<p class="muted">{{ m.used_note }}</p>{% endif %}</td>
                     <td>{{ m.item_model or '-' }}</td>
                     <td>{{ m.brand or '-' }}</td>
-                    <td>{{ m.supplier_name or '-' }}{% if m.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Map</a>{% endif %}</td>
+                    <td>
+                        {% if can_edit_inventory() %}
+                        <form method="post" action="{{ url_for('update_inventory_supplier', item_id=m.id) }}" class="inventoryCompactForm">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <select name="supplier_id" onchange="this.form.submit()">
+                                <option value="">No supplier</option>
+                                {% for s in suppliers %}
+                                    <option value="{{ s.id }}" {% if m.supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        {% else %}
+                            {{ m.supplier_name or '-' }}
+                        {% endif %}
+                        {% if m.supplier_address %}<a class="muted inventorySmall" target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Map</a>{% endif %}
+                    </td>
                     <td>{{ inventory_condition_label(m.item_condition) }}</td>
-                    <td>{{ m.room_name or 'Project general' }}<br><span class="muted">{{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</span></td>
+                    <td>
+                        {% set location_unavailable = m.status in ['needs_purchase', 'unavailable', 'backordered'] %}
+                        {% if location_unavailable %}
+                            <span class="locationUnavailable">Unavailable</span>
+                        {% elif can_edit_inventory() %}
+                        <form method="post" action="{{ url_for('update_inventory_location', item_id=m.id) }}" class="inventoryCompactForm">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="location_detail" value="{{ m.location_detail or '' }}">
+                            <select name="location_type" onchange="this.form.submit()">
+                                {% for value, label in location_options.items() %}
+                                    <option value="{{ value }}" {% if m.location_type == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        {% else %}
+                            {{ inventory_location_label(m.location_type) }}{% if m.location_detail %}<br><span class="muted">{{ m.location_detail }}</span>{% endif %}
+                        {% endif %}
+                    </td>
+                    <td>{{ m.room_name or 'Project general' }}</td>
                     <td><span class="statusBadge">{{ inventory_status_label(m.status) }}</span>{% if m.used_by_name %}<br><span class="muted">By {{ m.used_by_name }}</span>{% endif %}</td>
                     <td>{% if m.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=m.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
@@ -112,7 +153,10 @@
                         <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <input type="hidden" name="project_id" value="{{ project.id }}">
-                            <select name="status" onchange="this.form.submit()">{% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+                            <select name="status" class="inventoryActionSelect" data-current-status="{{ m.status }}" data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, supplier_id=m.supplier_id, pickup_item_id=m.id) }}">
+                                {% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                                <option value="__create_pickup_task__">Create a pickup task</option>
+                            </select>
                         </form>
                     </td>
                     {% endif %}
@@ -126,7 +170,7 @@
                     {% endif %}
                 </tr>
             {% else %}
-                <tr><td colspan="12">No project inventory yet.</td></tr>
+                <tr><td colspan="13">No project inventory yet.</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -140,6 +184,20 @@
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}
 .inventoryPic{max-width:28px;border-radius:8px;border:1px solid var(--border)}
 .inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}
+.inventoryCompactForm{display:grid;gap:6px;min-width:145px}.inventoryCompactForm select,.inventoryCompactForm input{min-height:34px;padding:6px 8px;font-size:13px}.inventorySmall{display:block;font-size:12px;margin-top:4px}
+.locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
 </style>
+<script>
+document.querySelectorAll(".inventoryActionSelect").forEach(select => {
+    select.addEventListener("change", () => {
+        if (select.value === "__create_pickup_task__") {
+            window.location.href = select.dataset.pickupUrl;
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
+        select.form.submit();
+    });
+});
+</script>
 {% include "_part_catalog_autocomplete.html" %}
 {% endblock %}

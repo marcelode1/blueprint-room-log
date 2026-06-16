@@ -25,7 +25,7 @@
         <label>Create Task For</label>
         <select id="taskTypeSelect" name="task_type">
             <option value="project">Project</option>
-            <option value="supplier">Supplier</option>
+            <option value="supplier" {% if pickup_prefill %}selected{% endif %}>Supplier</option>
         </select>
 
         <input type="hidden" name="supplier_enabled" id="supplierEnabled" value="0">
@@ -37,17 +37,17 @@
                     <select name="supplier_id" id="supplierSelect">
                         <option value="">Choose supplier</option>
                         {% for s in suppliers %}
-                            <option value="{{ s.id }}">{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
+                            <option value="{{ s.id }}" {% if selected_supplier_id == s.id %}selected{% endif %}>{{ s.name }}{% if s.phone %} - {{ s.phone }}{% endif %}</option>
                         {% endfor %}
                         <option value="__new__">Add new supplier...</option>
                     </select>
                 </div>
-                <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ today }}"></div>
-                <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time"></div>
-                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0"></div>
-                <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers"></div>
-                <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList"></div>
-                <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList"></div>
+                <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ pickup_prefill.pickup_date if pickup_prefill else today }}"></div>
+                <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time" value="{{ pickup_prefill.pickup_time if pickup_prefill else '' }}"></div>
+                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0" value="{{ pickup_prefill.quantity if pickup_prefill else '' }}"></div>
+                <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers" value="{{ pickup_prefill.item_name if pickup_prefill else '' }}"></div>
+                <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList" value="{{ pickup_prefill.brand if pickup_prefill else '' }}"></div>
+                <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList" value="{{ pickup_prefill.model if pickup_prefill else '' }}"></div>
             </div>
             <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
             <input type="hidden" name="new_supplier_name" id="newSupplierName">
@@ -224,7 +224,8 @@
         model:document.querySelector('[name="supplier_model"]'),
         note:document.querySelector('[name="supplier_purchase_note"]')
     };
-    let supplierItems=[];
+    let supplierItems={{ ([pickup_prefill] if pickup_prefill else [])|tojson }};
+    const hadInitialSupplierItems=supplierItems.length>0;
     let taskDrafts=[];
     const hiddenSupplierFields={
         name:document.getElementById("newSupplierName"),
@@ -301,6 +302,7 @@
             supplierItemList.appendChild(row);
         });
     }
+    renderSupplierItems();
     function taskField(name){
         return document.querySelector('[name="'+name+'"]');
     }
@@ -414,7 +416,7 @@
             return;
         }
         const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
-        if(hasDraft||!supplierItems.length){
+        if((hasDraft&&!hadInitialSupplierItems)||!supplierItems.length){
             addSupplierItem(false);
         }
         if(!supplierItems.length){

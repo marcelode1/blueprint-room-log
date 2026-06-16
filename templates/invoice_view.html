@@ -14,6 +14,12 @@
     {% endif %}
     {% if not is_preview %}
     <a class="btn-link btn-secondary" href="{{ url_for('edit_invoice', invoice_id=invoice.id) }}">Edit</a>
+    <form method="post" action="{{ url_for('copy_invoice', invoice_id=invoice.id) }}" class="inlineInvoiceForm">
+        <button type="submit" class="btn-secondary">Copy Invoice</button>
+    </form>
+    <form method="post" action="{{ url_for('delete_invoice', invoice_id=invoice.id) }}" class="inlineInvoiceForm">
+        <button type="submit" class="btn-danger">Delete</button>
+    </form>
     {% endif %}
     <button type="button" onclick="window.print()">Print / Save PDF</button>
     {% if not is_preview %}
@@ -27,30 +33,39 @@
 
 <div class="card invoicePaper">
     <div class="invoiceHeader">
-        <div>
+        <div class="invoiceCompanyBox">
             {% set logo = get_app_setting("company_logo") %}
             {% if logo %}<img class="invoiceLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
-            <h2>{{ company.company_name or 'ProjectONus' }}</h2>
             {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
             {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
             {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
         </div>
         <div class="invoiceMeta">
             <h1>Invoice</h1>
-            <p><strong>{{ invoice.invoice_number }}</strong></p>
-            <p>Status: {{ invoice.status|title }}</p>
-            <p>Date: {{ format_date(invoice.invoice_date) }}</p>
-            {% if invoice.due_date %}<p>Due: {{ format_date(invoice.due_date) }}</p>{% endif %}
+            <div class="invoiceMetaGrid">
+                <span>Date</span><strong>{{ format_date(invoice.invoice_date) }}</strong>
+                <span>Invoice #</span><strong>{{ invoice.invoice_number }}</strong>
+                {% set displayed_terms = invoice_terms_for_due_date(invoice.due_date, invoice.terms) %}
+                {% if displayed_terms %}<span>Terms</span><strong>{{ displayed_terms }}</strong>{% endif %}
+                {% if invoice.due_date %}<span>Due</span><strong>{{ format_date(invoice.due_date) }}</strong>{% endif %}
+            </div>
         </div>
     </div>
 
     <div class="invoiceBillTo">
-        <h3>Bill To</h3>
-        <p><strong>{{ invoice.customer_name or '-' }}</strong></p>
-        {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
-        {% if invoice.customer_email %}<p>{{ invoice.customer_email }}</p>{% endif %}
-        {% if invoice.customer_phone %}<p>{{ invoice.customer_phone }}</p>{% endif %}
-        {% if invoice.project_name %}<p>Project: {{ invoice.project_name }}</p>{% endif %}
+        <div>
+            <h3>Customer Name</h3>
+            <p><strong>{{ invoice.customer_name or '-' }}</strong></p>
+            {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
+            {% if invoice.customer_email %}<p>{{ invoice.customer_email }}</p>{% endif %}
+            {% if invoice.customer_phone %}<p>{{ invoice.customer_phone }}</p>{% endif %}
+        </div>
+        <div>
+            <h3>Job Name</h3>
+            <p><strong>{{ invoice.project_name or invoice.customer_name or '-' }}</strong></p>
+            {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
+            {% if invoice.due_date %}<p>Due: {{ format_date(invoice.due_date) }}</p>{% endif %}
+        </div>
     </div>
 
     <table class="invoiceLinesTable">
@@ -80,17 +95,19 @@
         </tbody>
     </table>
 
-    <div class="invoiceTotals">
-        <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
-        <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
-        <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
-        <p><span>Total Amount</span><strong>{{ format_invoice_money(totals_breakdown.total_amount) }}</strong></p>
-        <p><span>Payments/Credit</span><strong>{% if totals_breakdown.payments_credit %}-{{ format_invoice_money(totals_breakdown.payments_credit) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
-        <p class="invoiceGrandTotal"><span>Balance Due</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+    <div class="invoiceSummary">
+        <div class="invoiceNotes">
+            {% if invoice.notes %}<h3>Notes</h3><p>{{ invoice.notes }}</p>{% endif %}
+        </div>
+        <div class="invoiceTotals">
+            <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
+            <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
+            <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
+            <p><span>Total Amount</span><strong>{{ format_invoice_money(totals_breakdown.total_amount) }}</strong></p>
+            <p><span>Payments/Credit</span><strong>{% if totals_breakdown.payments_credit %}-{{ format_invoice_money(totals_breakdown.payments_credit) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
+            <p class="invoiceGrandTotal"><span>Balance Due</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+        </div>
     </div>
-
-    {% if invoice.notes %}<div class="invoiceNotes"><h3>Notes</h3><p>{{ invoice.notes }}</p></div>{% endif %}
-    {% if invoice.terms %}<div class="invoiceNotes"><h3>Terms</h3><p>{{ invoice.terms }}</p></div>{% endif %}
 </div>
 
 <div class="card noPrint invoicePreviewActions">
@@ -123,6 +140,6 @@
 {% endif %}
 
 <style>
-.inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}.invoiceLogo{max-width:150px;max-height:90px;object-fit:contain;margin-bottom:10px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:4px 0}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin-bottom:10px}.invoiceBillTo{margin:22px 0}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f3f4f6}.invoiceTotals{max-width:390px;margin:18px 0 0 auto}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:2px solid #172033;padding-top:12px;font-size:26px}.invoiceNotes{margin-top:18px;border-top:1px solid #d7dee9;padding-top:12px}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
+.inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:34px;align-items:start;border-bottom:2px solid #172033;padding-bottom:22px}.invoiceCompanyBox{line-height:1.35}.invoiceLogo{max-width:360px;max-height:216px;object-fit:contain;margin-bottom:14px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:3px 0}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin:0 0 12px}.invoiceMetaGrid{display:grid;grid-template-columns:82px minmax(0,1fr);gap:5px 12px;font-size:13px;align-items:start}.invoiceMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}.invoiceMetaGrid strong{overflow-wrap:anywhere;word-break:normal}.invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin:42px 0 24px;align-items:start}.invoiceBillTo h3,.invoiceNotes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}.invoiceSummary{display:grid;grid-template-columns:1fr 390px;gap:34px;margin-top:18px;align-items:start}.invoiceTotals{border-top:2px solid #172033;padding:10px 0 0;background:#fff;font-size:13px}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:1px solid #d7dee9;padding-top:10px;font-size:13px}.invoiceNotes{border-top:2px solid #172033;padding-top:10px;min-height:1px}@media(max-width:760px){.invoiceHeader,.invoiceBillTo,.invoiceSummary{grid-template-columns:1fr}.invoiceMeta{text-align:left}.invoiceLogo{max-width:100%;max-height:190px}}@media print{header,.bottom-nav,.backButton,.noPrint{display:none!important}body{background:white;color:#111}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.invoicePaper{max-width:none;margin:0;padding:0}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
 </style>
 {% endblock %}

@@ -174,7 +174,10 @@
                     </td>
                     <td>{{ inventory_condition_label(item.item_condition) }}</td>
                     <td>
-                        {% if can_edit_inventory() %}
+                        {% set location_unavailable = item.status in ['needs_purchase', 'unavailable', 'backordered'] %}
+                        {% if location_unavailable %}
+                            <span class="locationUnavailable">Unavailable</span>
+                        {% elif can_edit_inventory() %}
                             <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryLocationForm">
                                 <input type="hidden" name="next" value="{{ request.full_path }}">
                                 <select name="location_type" onchange="this.form.submit()">
@@ -267,6 +270,7 @@
 .inventoryAllocationForm,.inventoryLocationForm,.inventoryStatusForm{display:grid;gap:6px;min-width:180px}
 .inventoryAllocationForm select,.inventoryLocationForm select,.inventoryStatusForm select{min-width:180px}
 .inventoryAllocationForm button{margin:0!important;width:auto!important}
+.locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
 </style>
 <script>
 function filterInventoryRooms(projectSelect){
