@@ -7142,18 +7142,11 @@ def test_dtools_connection():
 @app.route("/dtools-import", methods=["GET", "POST"])
 @admin_required
 def dtools_import():
-    conn = db()
-    table_error = ""
-    try:
-        ensure_dtools_import_tables(conn)
-    except Exception as e:
-        conn.rollback()
-        table_error = f"D-Tools import log tables could not be prepared: {e}"
-        print(table_error)
-    config = dtools_cloud_config()
     default_project_endpoint = "Projects/GetProject"
     default_proposal_endpoint = "Quotes/GetQuote"
+    config = dtools_cloud_config()
     result = None
+    logs = []
     form_values = {
         "dtools_project_id": "",
         "dtools_proposal_id": "",
@@ -7164,115 +7157,145 @@ def dtools_import():
         "project_endpoint_path": default_project_endpoint,
         "proposal_endpoint_path": default_proposal_endpoint,
     }
-
-    if request.method == "POST":
-        form_values = {
-            "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
-            "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
-            "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
-            "customer_name": request.form.get("customer_name", "").strip(),
-            "project_name": request.form.get("project_name", "").strip(),
-            "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
-            "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
-            "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
-        }
-        status = "error"
-        message = ""
-        error_log = ""
-        payload_preview = ""
-        material_count = 0
-        labor_count = 0
-        room_count = 0
-        try:
-            if table_error:
-                flash(table_error)
-            if not form_values["public_proposal_url"] and not dtools_cloud_configured():
-                raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
-            if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"]:
-                raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or paste the public proposal Request URL from Chrome Network.")
-
-            project_payload = None
-            proposal_payload = None
-            if form_values["dtools_project_id"]:
-                project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
-            if form_values["public_proposal_url"]:
-                proposal_payload = dtools_public_fetch_payload(form_values["public_proposal_url"], form_values["dtools_proposal_id"])
-            elif form_values["dtools_proposal_id"]:
-                proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
-
-            source_payload = proposal_payload or project_payload or {}
-            source_ref = form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
-            items = dtools_extract_materials(source_payload, source_ref)
-            material_count = sum(1 for item in items if item.get("item_type") != "service")
-            labor_count = sum(1 for item in items if item.get("item_type") == "service")
-            locations = dtools_preview_locations(items)
-            room_count = len(locations)
-            project_info = dtools_project_preview(project_payload or proposal_payload or {})
-            message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
-            if not items:
-                message += " No usable BOM/material lines were detected in this response."
-            status = "success"
-            result = {
-                "status": status,
-                "message": message,
-                "project_info": project_info,
-                "items": items[:20],
-                "locations": locations[:30],
-                "material_count": material_count,
-                "labor_count": labor_count,
-                "room_count": room_count,
-                "project_payload_loaded": bool(project_payload),
-                "proposal_payload_loaded": bool(proposal_payload),
-            }
-            payload_preview = dtools_payload_snippet({
-                "project_info": project_info,
-                "counts": {
-                    "materials": material_count,
-                    "labor": labor_count,
-                    "locations": room_count,
-                },
-                "locations": locations[:50],
-                "sample_items": items[:20],
-            })
-            flash(message)
-        except Exception as e:
-            error_log = str(e)
-            if "401" in error_log and "Unauthorized" in error_log:
-                error_log += " This means the D-Tools Cloud API key/header cannot access that endpoint. Use the public proposal Request URL from Chrome Network, or update the D-Tools API credentials in Settings."
-            result = {"status": status, "message": error_log}
-            flash(error_log)
-
-        save_dtools_import_log(
-            conn,
-            form_values["dtools_project_id"],
-            form_values["dtools_proposal_id"],
-            form_values["project_endpoint_path"],
-            form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
-            status,
-            message,
-            payload_preview,
-            error_log,
-            material_count,
-            labor_count,
-            room_count,
-        )
+    conn = None
+    table_error = ""
 
     try:
-        logs = conn.execute(
-            """
-            SELECT dt_import_logs.*, users.name AS created_by_name
-            FROM dt_import_logs
-            LEFT JOIN users ON dt_import_logs.created_by = users.id
-            ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
-            LIMIT 20
-            """
-        ).fetchall()
+        conn = db()
+        try:
+            ensure_dtools_import_tables(conn)
+        except Exception as e:
+            conn.rollback()
+            table_error = f"D-Tools import log tables could not be prepared: {e}"
+            print(table_error)
+
+        if request.method == "POST":
+            form_values = {
+                "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
+                "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
+                "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
+                "customer_name": request.form.get("customer_name", "").strip(),
+                "project_name": request.form.get("project_name", "").strip(),
+                "public_proposal_url": request.form.get("public_proposal_url", "").strip(),
+                "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
+                "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
+            }
+            status = "error"
+            message = ""
+            error_log = ""
+            payload_preview = ""
+            material_count = 0
+            labor_count = 0
+            room_count = 0
+            try:
+                if table_error:
+                    flash(table_error)
+                if not form_values["public_proposal_url"] and not dtools_cloud_configured():
+                    raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings first.")
+                if not form_values["dtools_project_id"] and not form_values["dtools_proposal_id"] and not form_values["public_proposal_url"]:
+                    raise RuntimeError("Enter a D-Tools Project ID, Proposal ID, or paste the public proposal Request URL from Chrome Network.")
+
+                project_payload = None
+                proposal_payload = None
+                if form_values["dtools_project_id"]:
+                    project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
+                if form_values["public_proposal_url"]:
+                    proposal_payload = dtools_public_fetch_payload(form_values["public_proposal_url"], form_values["dtools_proposal_id"])
+                elif form_values["dtools_proposal_id"]:
+                    proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
+
+                source_payload = proposal_payload or project_payload or {}
+                source_ref = form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
+                items = dtools_extract_materials(source_payload, source_ref)
+                material_count = sum(1 for item in items if item.get("item_type") != "service")
+                labor_count = sum(1 for item in items if item.get("item_type") == "service")
+                locations = dtools_preview_locations(items)
+                room_count = len(locations)
+                project_info = dtools_project_preview(project_payload or proposal_payload or {})
+                message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
+                if not items:
+                    message += " No usable BOM/material lines were detected in this response."
+                status = "success"
+                result = {
+                    "status": status,
+                    "message": message,
+                    "project_info": project_info,
+                    "items": items[:20],
+                    "locations": locations[:30],
+                    "material_count": material_count,
+                    "labor_count": labor_count,
+                    "room_count": room_count,
+                    "project_payload_loaded": bool(project_payload),
+                    "proposal_payload_loaded": bool(proposal_payload),
+                }
+                payload_preview = dtools_payload_snippet({
+                    "project_info": project_info,
+                    "counts": {
+                        "materials": material_count,
+                        "labor": labor_count,
+                        "locations": room_count,
+                    },
+                    "locations": locations[:50],
+                    "sample_items": items[:20],
+                })
+                flash(message)
+            except Exception as e:
+                error_log = str(e)
+                if "401" in error_log and "Unauthorized" in error_log:
+                    error_log += " This means the D-Tools Cloud API key/header cannot access that endpoint. Use the public proposal Request URL from Chrome Network, or update the D-Tools API credentials in Settings."
+                result = {"status": status, "message": error_log}
+                flash(error_log)
+
+            save_dtools_import_log(
+                conn,
+                form_values["dtools_project_id"],
+                form_values["dtools_proposal_id"],
+                form_values["project_endpoint_path"],
+                form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
+                status,
+                message,
+                payload_preview,
+                error_log,
+                material_count,
+                labor_count,
+                room_count,
+            )
+
+        try:
+            logs = conn.execute(
+                """
+                SELECT dt_import_logs.*, users.name AS created_by_name
+                FROM dt_import_logs
+                LEFT JOIN users ON dt_import_logs.created_by = users.id
+                ORDER BY dt_import_logs.created_at DESC, dt_import_logs.id DESC
+                LIMIT 20
+                """
+            ).fetchall()
+        except Exception as e:
+            conn.rollback()
+            print("D-Tools import logs could not be loaded:", e)
+            logs = []
     except Exception as e:
-        conn.rollback()
-        print("D-Tools import logs could not be loaded:", e)
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        message = f"D-Tools Import page error: {e}"
+        print(message)
+        result = {"status": "error", "message": message}
+        flash(message)
         logs = []
-    conn.close()
-    return render_template("dtools_import.html", config=config, result=result, logs=logs, form_values=form_values)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    try:
+        return render_template("dtools_import.html", config=config, result=result, logs=logs, form_values=form_values)
+    except Exception as e:
+        return f"D-Tools Import page error: {e}", 200
 
 
 @app.route("/project/<int:project_id>/materials/<int:material_id>/status", methods=["POST"])
