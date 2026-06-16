@@ -1,56 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Items & Catalog</h2>
-    <p class="muted">Reusable material and labor records used by inventory, supplier tasks, rooms, notes, and invoices.</p>
+    <h2>Parts / Services Catalog</h2>
+    <p class="muted">Reusable product and service records used by inventory, supplier tasks, rooms, notes, and invoices.</p>
 </div>
-
-{% if edit_part %}
-<div class="card catalogEditorCard">
-    <div class="catalogEditorHeader">
-        <div>
-            <h3>Edit Item</h3>
-            <p class="muted">{{ edit_part.item_name }}</p>
-        </div>
-        <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page) }}">Cancel Edit</a>
-    </div>
-    <form method="post">
-        <input type="hidden" name="part_id" value="{{ edit_part.id }}">
-        <div class="grid">
-            <div>
-                <label>Classification</label>
-                <select name="item_type">
-                    <option value="part" {% if edit_part.item_type != 'service' %}selected{% endif %}>Material</option>
-                    <option value="service" {% if edit_part.item_type == 'service' %}selected{% endif %}>Labor</option>
-                </select>
-            </div>
-            <div><label>Item Name</label><input name="item_name" value="{{ edit_part.item_name }}" required></div>
-            <div><label>Manufacturer / Brand</label><input name="brand" value="{{ edit_part.brand or '' }}"></div>
-            <div><label>Model #</label><input name="item_model" value="{{ edit_part.item_model or '' }}"></div>
-            <div><label>Part Number</label><input name="part_number" value="{{ edit_part.part_number or '' }}"></div>
-            <div><label>Category</label><input name="category" value="{{ edit_part.category or '' }}"></div>
-            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ edit_part.unit_price or '' }}"></div>
-            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0" value="{{ edit_part.unit_cost or '' }}"></div>
-        </div>
-        <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if edit_part.taxable %}checked{% endif %}> Taxable</label>
-        <label>Description</label>
-        <textarea name="description" rows="3">{{ edit_part.description or '' }}</textarea>
-        <button type="submit">Save Changes</button>
-    </form>
-</div>
-{% endif %}
 
 <div class="card">
     <h3>Add Catalog Item</h3>
     <form method="post">
         <div class="grid">
-            <div>
-                <label>Classification</label>
-                <select name="item_type">
-                    <option value="part">Material</option>
-                    <option value="service">Labor</option>
-                </select>
-            </div>
+            <div><label>Type</label><select name="item_type"><option value="part">Part</option><option value="service">Service</option></select></div>
             <div><label>Item Name</label><input name="item_name" required></div>
             <div><label>Manufacturer / Brand</label><input name="brand"></div>
             <div><label>Model #</label><input name="item_model"></div>
@@ -67,115 +26,55 @@
 </div>
 
 <div class="card">
-    <div class="catalogLibraryHeader">
-        <div>
-            <h3>Catalog Library</h3>
-            <p class="muted">{{ total_count }} item{{ '' if total_count == 1 else 's' }} sorted alphabetically. Showing {{ per_page }} per page.</p>
-        </div>
-        <span class="catalogPagePill">Page {{ page }} of {{ total_pages }}</span>
-    </div>
+    <h3>Catalog Library</h3>
     <form method="get" class="catalogSearch">
         <input name="q" value="{{ q or '' }}" placeholder="Search item, model, brand, category">
         <button type="submit">Search</button>
         <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog') }}">Clear</a>
     </form>
-
-    <div class="catalogTableWrap">
-        <table class="catalogTable">
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th>Type</th>
-                    <th>Brand / Model</th>
-                    <th>Category</th>
-                    <th>Price</th>
-                    <th>Used</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for part in parts %}
-                <tr>
-                    <td>
-                        <strong>{{ part.item_name }}</strong>
-                        {% if part.description %}<span class="catalogDescription">{{ part.description }}</span>{% endif %}
-                        {% if part.part_number %}<span class="catalogSmall">Part #: {{ part.part_number }}</span>{% endif %}
-                    </td>
-                    <td><span class="catalogType {{ 'catalogLabor' if part.item_type == 'service' else 'catalogMaterial' }}">{{ 'Labor' if part.item_type == 'service' else 'Material' }}</span></td>
-                    <td>
-                        <span>{{ part.brand or '-' }}</span>
-                        {% if part.item_model %}<span class="catalogSmall">{{ part.item_model }}</span>{% endif %}
-                    </td>
-                    <td>{{ part.category or '-' }}</td>
-                    <td>{{ format_invoice_money(part.unit_price or 0) }}</td>
-                    <td>{{ part.inventory_count }} inv. / {{ part.invoice_count }} invoice</td>
-                    <td>
-                        <div class="catalogActions">
-                            <a class="btn-link" href="{{ url_for('parts_catalog', q=q, page=page, edit_id=part.id) }}">Edit</a>
-                            <form method="post" onsubmit="return confirm('Archive this catalog item? Existing inventory and invoice records will keep their links.');">
-                                <input type="hidden" name="part_id" value="{{ part.id }}">
-                                <input type="hidden" name="action" value="archive">
-                                <button type="submit" class="btn-secondary">Archive</button>
-                            </form>
-                            <form method="post" onsubmit="return confirm('Permanently delete this catalog item? Existing inventory and invoice lines will keep their saved text, but the reusable catalog link will be removed.');">
-                                <input type="hidden" name="part_id" value="{{ part.id }}">
-                                <input type="hidden" name="action" value="delete">
-                                <button type="submit" class="btn-danger">Delete</button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {% else %}
-                <tr><td colspan="7">No catalog items found.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    {% if total_pages > 1 %}
-        <div class="catalogPagination">
-            {% if page > 1 %}
-                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page-1) }}">Previous</a>
-            {% endif %}
-            {% for p in range(1, total_pages + 1) %}
-                {% if p == page %}
-                    <span class="catalogPageCurrent">{{ p }}</span>
-                {% elif p <= 2 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
-                    <a class="catalogPageLink" href="{{ url_for('parts_catalog', q=q, page=p) }}">{{ p }}</a>
-                {% elif p == 3 or p == total_pages - 2 %}
-                    <span class="catalogPageDots">...</span>
-                {% endif %}
-            {% endfor %}
-            {% if page < total_pages %}
-                <a class="btn-link btn-secondary" href="{{ url_for('parts_catalog', q=q, page=page+1) }}">Next</a>
-            {% endif %}
-        </div>
-    {% endif %}
+    {% for part in parts %}
+        <details class="catalogItem">
+            <summary>
+                <strong>{{ part.item_name }}</strong>
+                {% if part.brand %}<span>{{ part.brand }}</span>{% endif %}
+                {% if part.item_model %}<span>{{ part.item_model }}</span>{% endif %}
+                {% if part.part_number %}<span>{{ part.part_number }}</span>{% endif %}
+                <span class="catalogType">{{ part.item_type|title }}</span>
+            </summary>
+            <form method="post">
+                <input type="hidden" name="part_id" value="{{ part.id }}">
+                <div class="grid">
+                    <div><label>Type</label><select name="item_type"><option value="part" {% if part.item_type != 'service' %}selected{% endif %}>Part</option><option value="service" {% if part.item_type == 'service' %}selected{% endif %}>Service</option></select></div>
+                    <div><label>Item Name</label><input name="item_name" value="{{ part.item_name }}" required></div>
+                    <div><label>Manufacturer / Brand</label><input name="brand" value="{{ part.brand or '' }}"></div>
+                    <div><label>Model #</label><input name="item_model" value="{{ part.item_model or '' }}"></div>
+                    <div><label>Part Number</label><input name="part_number" value="{{ part.part_number or '' }}"></div>
+                    <div><label>Category</label><input name="category" value="{{ part.category or '' }}"></div>
+                    <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ part.unit_price or '' }}"></div>
+                    <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0" value="{{ part.unit_cost or '' }}"></div>
+                </div>
+                <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if part.taxable %}checked{% endif %}> Taxable</label>
+                <label>Description</label>
+                <textarea name="description" rows="3">{{ part.description or '' }}</textarea>
+                <p class="muted">Linked inventory items: {{ part.inventory_count }} | Linked invoice lines: {{ part.invoice_count }}</p>
+                <button type="submit">Update Catalog Item</button>
+            </form>
+            <form method="post" onsubmit="return confirm('Archive this catalog item? Existing inventory and invoice records will keep their links.');">
+                <input type="hidden" name="part_id" value="{{ part.id }}">
+                <input type="hidden" name="action" value="archive">
+                <button type="submit" class="btn-danger">Archive</button>
+            </form>
+        </details>
+    {% else %}
+        <p>No catalog items found.</p>
+    {% endfor %}
 </div>
 
 <style>
-.catalogEditorCard{border-left:4px solid var(--primary)}
-.catalogEditorHeader,.catalogLibraryHeader{display:flex;align-items:start;justify-content:space-between;gap:14px;flex-wrap:wrap}
-.catalogEditorHeader h3,.catalogLibraryHeader h3{margin-bottom:4px}
-.catalogSearch{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:10px 0 12px}.catalogSearch input{max-width:420px}
-.catalogPagePill{border:1px solid var(--border);border-radius:999px;padding:5px 10px;color:var(--muted);font-weight:800;font-size:12px;background:rgba(148,163,184,.08)}
-.catalogTableWrap{overflow:auto;border:1px solid var(--border);border-radius:8px}
-.catalogTable{width:100%;min-width:980px;border-collapse:collapse;background:var(--card)}
-.catalogTable th,.catalogTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
-.catalogTable th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px}
-.catalogTable td{font-size:13px}
-.catalogTable tbody tr:hover{background:rgba(37,99,235,.05)}
-.catalogDescription,.catalogSmall{display:block;color:var(--muted);font-size:12px;line-height:1.25;margin-top:2px}
-.catalogDescription{max-width:430px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.catalogType{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;white-space:nowrap}
-.catalogMaterial{color:#166534;background:#dcfce7}.catalogLabor{color:#1d4ed8;background:#dbeafe}
-.catalogActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.catalogActions form{margin:0}.catalogActions .btn-link,.catalogActions button{min-height:30px!important;padding:5px 9px!important;font-size:12px!important;margin:0!important}
+.catalogSearch{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.catalogSearch input{max-width:420px}
+.catalogItem{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:var(--card)}
+.catalogItem summary{cursor:pointer;min-height:42px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.catalogType{border:1px solid var(--border);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800;color:#1d4ed8;background:#eef2ff}
 .catalogCheck{display:flex!important;gap:8px;align-items:center;font-weight:800}.catalogCheck input{width:auto;min-height:auto}
-.catalogPagination{display:flex;gap:7px;align-items:center;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}
-.catalogPageLink,.catalogPageCurrent,.catalogPageDots{display:inline-flex;align-items:center;justify-content:center;min-width:34px;min-height:34px;border-radius:7px;text-decoration:none;font-weight:800}
-.catalogPageLink{border:1px solid var(--border);color:var(--text);background:var(--card)}
-.catalogPageCurrent{background:var(--primary);color:white}
-.catalogPageDots{color:var(--muted)}
-@media(max-width:760px){.catalogEditorHeader,.catalogLibraryHeader{display:block}.catalogDescription{white-space:normal}.catalogPagination{justify-content:center}}
 </style>
 {% endblock %}
