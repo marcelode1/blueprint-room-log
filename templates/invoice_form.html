@@ -347,122 +347,6 @@ function formatMoneyInput(input){
 function lineRows(){
     return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
 }
-function catalogOptionsForSelect(select){
-    return Array.from(select?.options||[]).filter(option=>option.value&&option.value!=="__new__"&&option.value!==""&&option.dataset.name);
-}
-function optionSearchText(option){
-    return [option.dataset.name,option.dataset.description,option.dataset.type==="service"?"labor service":"material part",option.textContent].filter(Boolean).join(" ").toLowerCase();
-}
-function optionDisplayName(option){
-    return option?.dataset?.name||option?.textContent?.trim()||"";
-}
-function optionDetailText(option){
-    return option?.dataset?.description||"No description saved for this item.";
-}
-function syncPickerFromSelect(select){
-    const picker=select?.closest(".invoiceLine")?.querySelector(".invoiceItemPicker");
-    const input=picker?.querySelector(".lineItemSearch");
-    const selected=select?.options?.[select.selectedIndex];
-    if(input)input.value=(selected&&selected.value&&selected.value!=="__new__")?optionDisplayName(selected):"";
-}
-function closeInvoiceItemPickers(exceptPicker=null){
-    document.querySelectorAll(".invoiceItemPicker.isOpen").forEach(picker=>{
-        if(picker!==exceptPicker){
-            picker.classList.remove("isOpen");
-            const results=picker.querySelector(".invoiceItemResults");
-            if(results)results.hidden=true;
-        }
-    });
-}
-function initializeInvoiceItemPicker(line){
-    const select=line?.querySelector(".lineItemSelect");
-    if(!select||line.querySelector(".invoiceItemPicker"))return;
-    const picker=document.createElement("div");
-    picker.className="invoiceItemPicker";
-    picker.innerHTML='<input type="text" class="lineItemSearch" autocomplete="off" placeholder="Click and type item name"><div class="invoiceItemResults" hidden></div>';
-    select.insertAdjacentElement("beforebegin",picker);
-    select.classList.add("lineItemSelectNative");
-    const input=picker.querySelector(".lineItemSearch");
-    const results=picker.querySelector(".invoiceItemResults");
-    function chooseOption(option){
-        if(!option)return;
-        select.value=option.value;
-        applySelectedItem(select);
-        syncPickerFromSelect(select);
-        closeInvoiceItemPickers();
-        markInvoiceDirty();
-    }
-    function openNewFromPicker(){
-        select.value="__new__";
-        openNewItemModal(select);
-        closeInvoiceItemPickers();
-    }
-    function renderResults(){
-        const query=input.value.trim().toLowerCase();
-        const options=catalogOptionsForSelect(select);
-        const matches=(query?options.filter(option=>optionSearchText(option).includes(query)):options).slice(0,20);
-        results.innerHTML="";
-        let previewOption=null;
-        const preview=document.createElement("div");
-        preview.className="invoiceItemPreview";
-        preview.hidden=true;
-        const previewName=document.createElement("strong");
-        const previewDescription=document.createElement("p");
-        const previewAdd=document.createElement("button");
-        previewAdd.type="button";
-        previewAdd.textContent="Add";
-        previewAdd.addEventListener("click",()=>chooseOption(previewOption));
-        preview.appendChild(previewName);
-        preview.appendChild(previewDescription);
-        preview.appendChild(previewAdd);
-        const newButton=document.createElement("button");
-        newButton.type="button";
-        newButton.className="invoiceItemResult invoiceItemResultNew";
-        newButton.textContent="NEW ITEM";
-        newButton.addEventListener("click",openNewFromPicker);
-        results.appendChild(newButton);
-        results.appendChild(preview);
-        function showPreview(option){
-            previewOption=option;
-            previewName.textContent=optionDisplayName(option);
-            previewDescription.textContent=optionDetailText(option);
-            preview.hidden=false;
-        }
-        matches.forEach(option=>{
-            const itemButton=document.createElement("button");
-            itemButton.type="button";
-            itemButton.className="invoiceItemResult";
-            itemButton.textContent=optionDisplayName(option);
-            itemButton.addEventListener("click",()=>showPreview(option));
-            results.appendChild(itemButton);
-        });
-        if(!matches.length){
-            const empty=document.createElement("p");
-            empty.className="invoiceItemEmpty";
-            empty.textContent="No matching items. Choose NEW ITEM to create it.";
-            results.appendChild(empty);
-        }
-        results.hidden=false;
-        picker.classList.add("isOpen");
-    }
-    input.addEventListener("focus",()=>{closeInvoiceItemPickers(picker);renderResults();});
-    input.addEventListener("click",()=>{closeInvoiceItemPickers(picker);renderResults();});
-    input.addEventListener("input",()=>{closeInvoiceItemPickers(picker);renderResults();markInvoiceDirty();});
-    input.addEventListener("keydown",event=>{
-        if(event.key==="Escape"){
-            picker.classList.remove("isOpen");
-        }
-        if(event.key==="Enter"){
-            event.preventDefault();
-            const firstResult=results.querySelector(".invoiceItemResult:not(.invoiceItemResultNew)");
-            if(firstResult)firstResult.click();
-        }
-    });
-    syncPickerFromSelect(select);
-}
-function initializeInvoiceItemPickers(scope=invoiceLines){
-    scope.querySelectorAll(".invoiceLine").forEach(initializeInvoiceItemPicker);
-}
 function selectedCatalogOption(line){
     const select=line?.querySelector(".lineItemSelect");
     if(!select||!select.value||select.value==="__new__"||!/^\d+$/.test(select.value))return null;
@@ -548,7 +432,6 @@ function applySelectedItem(select){
     if(price)price.value=money(option.dataset.price||0);
     if(taxable)taxable.checked=option.dataset.taxable==="1";
     lockSelectedItem(select);
-    syncPickerFromSelect(select);
     markCatalogBaseline(line);
     updateLineAmount(line);
     updateInvoiceLiveTotals();
@@ -591,7 +474,6 @@ function updateCatalogOptionEverywhere(item){
         option.dataset.type=item.item_type||option.dataset.type||"part";
         option.dataset.taxable=item.taxable?"1":"0";
     });
-    document.querySelectorAll(".lineItemSelect").forEach(syncPickerFromSelect);
 }
 function openNewItemModal(select){
     pendingItemSelect=select;
@@ -605,7 +487,6 @@ function addInvoiceLine(data={}){
     wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
     const line=wrapper.firstElementChild;
     invoiceLines.appendChild(line);
-    initializeInvoiceItemPicker(line);
     const select=line.querySelector(".lineItemSelect");
     if(data.part_catalog_id&&select){
         select.value=String(data.part_catalog_id);
@@ -617,7 +498,7 @@ function addInvoiceLine(data={}){
         const gridWrap=document.querySelector(".invoiceGridWrap");
         if(gridWrap)gridWrap.scrollTop=gridWrap.scrollHeight;
         line.scrollIntoView({block:"nearest",inline:"nearest"});
-        const firstInput=line.querySelector(".lineItemSearch");
+        const firstInput=line.querySelector(".lineItemSelect");
         if(firstInput)firstInput.focus({preventScroll:true});
     });
     markInvoiceDirty();
@@ -639,8 +520,6 @@ function appendCatalogOption(item, targetSelect){
     if(targetSelect){
         targetSelect.value=String(item.id);
         applySelectedItem(targetSelect);
-        initializeInvoiceItemPickers();
-        syncPickerFromSelect(targetSelect);
     }
 }
 
@@ -756,7 +635,6 @@ if(invoiceForm){
     });
 }
 document.addEventListener("click",event=>{
-    if(!event.target.closest(".invoiceItemPicker"))closeInvoiceItemPickers();
     if(!invoiceDirty||allowInvoiceLeave)return;
     const link=event.target.closest("a[href]");
     const backButton=event.target.closest(".backButton");
@@ -806,9 +684,7 @@ if(keepEditingInvoice){
     keepEditingInvoice.addEventListener("click",hideUnsavedInvoicePrompt);
 }
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
-initializeInvoiceItemPickers();
 lockAllSelectedItems();
-document.querySelectorAll(".lineItemSelect").forEach(syncPickerFromSelect);
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 lineRows().forEach(markCatalogBaseline);
 refreshLineIndexes();
@@ -820,8 +696,6 @@ invoiceDirty=false;
 .invoiceLinePanel{position:sticky;top:8px;z-index:5;margin:22px 0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.08);overflow:hidden}
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1260px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:230px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:320px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:118px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:82px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
-.lineItemSelectNative{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important}
-.invoiceItemPicker{position:relative;min-width:250px}.invoiceItemPicker .lineItemSearch{width:100%;min-height:34px;padding:6px 8px}.invoiceItemResults{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:300px;overflow:auto;border:1px solid #94a3b8;border-radius:6px;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.22);padding:6px}.invoiceItemResult{display:block;width:100%;border:0;border-bottom:1px solid #e2e8f0;background:#fff;color:#0f172a;text-align:left;font-size:13px;font-weight:800;line-height:1.25;margin:0;min-height:32px;padding:7px 8px}.invoiceItemResult:hover{background:#f8fafc}.invoiceItemResult:last-child{border-bottom:0}.invoiceItemResultNew{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;font-weight:900;margin:0 0 6px}.invoiceItemPreview{border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;margin:0 0 6px;padding:8px}.invoiceItemPreview[hidden]{display:none}.invoiceItemPreview strong{display:block;font-size:13px;margin-bottom:4px}.invoiceItemPreview p{font-size:12px;color:#475569;line-height:1.3;margin:0 0 8px}.invoiceItemPreview button{min-height:30px;margin:0;padding:5px 10px;width:auto}.invoiceItemEmpty{color:#64748b;font-size:12px;margin:8px}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
 @media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
