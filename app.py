@@ -4468,6 +4468,109 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
 
 
+def create_project_from_dtools_preview(conn, project_info, locations, payload, external_ref):
+    project_info = project_info or {}
+    project_name = (project_info.get("project_name") or "").strip()
+    customer_name = (project_info.get("customer_name") or "").strip()
+    customer_email = (project_info.get("customer_email") or "").strip()
+    customer_phone = format_us_phone(project_info.get("customer_phone") or "")
+    customer_address = (project_info.get("address") or "").strip()
+    proposal_number = (project_info.get("proposal_number") or "").strip()
+    external_ref = (external_ref or proposal_number or project_name or customer_name).strip()
+    if not project_name and not customer_name:
+        raise RuntimeError("Add at least the Project Name or Customer Name before creating a ProjectONus project.")
+    if not project_name:
+        project_name = customer_name
+
+    now = utc_now_iso()
+    existing_project = None
+    if external_ref:
+        existing_project = conn.execute(
+            "SELECT * FROM projects WHERE dtools_cloud_project_ref = %s ORDER BY id DESC LIMIT 1",
+            (external_ref,)
+        ).fetchone()
+
+    if existing_project:
+        project_id = existing_project["id"]
+        conn.execute(
+            """
+            UPDATE projects
+            SET name = COALESCE(NULLIF(%s, ''), name),
+                customer_name = COALESCE(NULLIF(%s, ''), customer_name),
+                customer_street = COALESCE(NULLIF(%s, ''), customer_street),
+                customer_address = COALESCE(NULLIF(%s, ''), customer_address),
+                billing_street = COALESCE(NULLIF(%s, ''), billing_street),
+                billing_address = COALESCE(NULLIF(%s, ''), billing_address),
+                customer_phone = COALESCE(NULLIF(%s, ''), customer_phone),
+                customer_email = COALESCE(NULLIF(%s, ''), customer_email),
+                dtools_cloud_project_ref = COALESCE(NULLIF(%s, ''), dtools_cloud_project_ref)
+            WHERE id = %s
+            """,
+            (
+                project_name,
+                customer_name,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_phone,
+                customer_email,
+                external_ref,
+                project_id,
+            )
+        )
+        created_project = False
+    else:
+        row = conn.execute(
+            """
+            INSERT INTO projects
+            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, dtools_cloud_project_ref, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, '', '', '', %s, %s, '', '', '', TRUE, %s, %s, %s, '', '', NULL, NULL, %s)
+            RETURNING id
+            """,
+            (
+                project_name,
+                customer_name,
+                customer_address,
+                customer_address,
+                customer_address,
+                customer_address,
+                external_ref,
+                customer_phone,
+                customer_email,
+                now,
+            )
+        ).fetchone()
+        project_id = row["id"]
+        created_project = True
+
+    existing_rooms = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s",
+        (project_id,)
+    ).fetchall()
+    room_lookup = {normalize_lookup_key(room["name"]) for room in existing_rooms}
+    rooms_created = 0
+    for location in locations or []:
+        room_name = (location or "").strip()
+        room_key = normalize_lookup_key(room_name)
+        if not room_name or room_key in room_lookup:
+            continue
+        conn.execute(
+            "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)",
+            (project_id, room_name, "general", "blue", now)
+        )
+        room_lookup.add(room_key)
+        rooms_created += 1
+
+    import_result = import_dtools_materials(conn, project_id, external_ref or str(project_id), payload or {})
+    import_result.update({
+        "project_id": project_id,
+        "created_project": created_project,
+        "rooms_created": rooms_created,
+    })
+    return import_result
+
+
 def zoneinfo_or_none(name):
     if not name:
         return None
@@ -7215,6 +7318,7 @@ def dtools_import():
                 "project_endpoint_path": request.form.get("project_endpoint_path", "").strip() or default_project_endpoint,
                 "proposal_endpoint_path": request.form.get("proposal_endpoint_path", "").strip() or default_proposal_endpoint,
             }
+            import_action = request.form.get("action", "preview")
             status = "error"
             message = ""
             error_log = ""
@@ -7245,7 +7349,7 @@ def dtools_import():
                     proposal_payload = dtools_cloud_fetch_payload(form_values["dtools_proposal_id"], form_values["proposal_endpoint_path"])
 
                 source_payload = proposal_payload or project_payload or {}
-                source_ref = form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
+                source_ref = form_values["dtools_proposal_number"] or form_values["dtools_proposal_id"] or form_values["dtools_project_id"]
                 items = dtools_extract_materials(source_payload, source_ref)
                 material_count = sum(1 for item in items if item.get("item_type") != "service")
                 labor_count = sum(1 for item in items if item.get("item_type") == "service")
@@ -7281,6 +7385,51 @@ def dtools_import():
                     "locations": locations[:50],
                     "sample_items": items[:20],
                 })
+                if import_action == "create_project":
+                    create_result = create_project_from_dtools_preview(
+                        conn,
+                        project_info,
+                        locations,
+                        source_payload,
+                        source_ref,
+                    )
+                    conn.commit()
+                    action_text = "created" if create_result.get("created_project") else "updated"
+                    message = (
+                        f"ProjectONus project {action_text}. "
+                        f"{create_result.get('rooms_created', 0)} room(s) created. "
+                        f"{create_result.get('imported', 0)} inventory item(s) added as Needs Purchase. "
+                        f"{create_result.get('catalog_saved', 0)} catalog item(s) saved."
+                    )
+                    if create_result.get("services_saved"):
+                        message += f" {create_result['services_saved']} service/labor item(s) saved to Items & Catalog."
+                    if create_result.get("skipped"):
+                        message += f" {create_result['skipped']} duplicate item(s) skipped."
+                    if create_result.get("unmatched_rooms"):
+                        message += f" {create_result['unmatched_rooms']} item(s) did not match a room and stayed at the project level."
+                    payload_preview = dtools_payload_snippet({
+                        "project_info": project_info,
+                        "created_project_id": create_result.get("project_id"),
+                        "created_project": create_result.get("created_project"),
+                        "rooms_created": create_result.get("rooms_created"),
+                        "import": create_result,
+                    })
+                    save_dtools_import_log(
+                        conn,
+                        form_values["dtools_project_id"],
+                        form_values["dtools_proposal_id"] or form_values["dtools_proposal_number"],
+                        form_values["project_endpoint_path"],
+                        form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
+                        status,
+                        message,
+                        payload_preview,
+                        "",
+                        material_count,
+                        labor_count,
+                        room_count,
+                    )
+                    flash(message)
+                    return redirect(url_for("project_materials", project_id=create_result["project_id"]))
                 flash(message)
             except Exception as e:
                 error_log = str(e)
@@ -7294,7 +7443,7 @@ def dtools_import():
             save_dtools_import_log(
                 conn,
                 form_values["dtools_project_id"],
-                form_values["dtools_proposal_id"],
+                form_values["dtools_proposal_id"] or form_values["dtools_proposal_number"],
                 form_values["project_endpoint_path"],
                 form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
                 status,
