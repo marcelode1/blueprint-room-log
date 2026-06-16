@@ -136,7 +136,20 @@
                                 </select>
                             </td>
                             <td><textarea name="line_description" class="lineDescription" rows="2">{{ line.description or '' }}</textarea></td>
-                            <td><input name="line_location" class="lineLocation" value="{{ line.location or '' }}" placeholder="Room, rack, area"></td>
+                            <td>
+                                {% set location_match = namespace(found=false) %}
+                                <select name="line_location" class="lineLocation">
+                                    <option value="">Choose location</option>
+                                    {% for room_option in invoice_rooms %}
+                                        {% if (line.location or '') == room_option.name %}{% set location_match.found = true %}{% endif %}
+                                        <option value="{{ room_option.name }}" data-room-id="{{ room_option.id }}" {% if (line.location or '') == room_option.name %}selected{% endif %}>{{ room_option.name }}</option>
+                                    {% endfor %}
+                                    {% if line.location and not location_match.found %}
+                                        <option value="{{ line.location }}" selected>{{ line.location }}</option>
+                                    {% endif %}
+                                    <option value="__new_room__">NEW ROOM</option>
+                                </select>
+                            </td>
                             <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="{{ format_invoice_money(line.unit_price) }}"></td>
                             <td><input class="lineAmount" value="{{ format_invoice_money(line.line_total) }}" readonly></td>
                             <td>
@@ -181,7 +194,15 @@
                     </select>
                 </td>
                 <td><textarea name="line_description" class="lineDescription" rows="2"></textarea></td>
-                <td><input name="line_location" class="lineLocation" placeholder="Room, rack, area"></td>
+                <td>
+                    <select name="line_location" class="lineLocation">
+                        <option value="">Choose location</option>
+                        {% for room_option in invoice_rooms %}
+                            <option value="{{ room_option.name }}" data-room-id="{{ room_option.id }}">{{ room_option.name }}</option>
+                        {% endfor %}
+                        <option value="__new_room__">NEW ROOM</option>
+                    </select>
+                </td>
                 <td><input name="line_unit_price" class="lineUnitPrice" inputmode="decimal" value="$0.00"></td>
                 <td><input class="lineAmount" value="$0.00" readonly></td>
                 <td>
@@ -199,6 +220,44 @@
         <button type="submit" class="btn-secondary" name="submit_action" value="email">Email Invoice</button>
         <button type="submit">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
     </form>
+</div>
+
+<div class="invoiceModal" id="newRoomModal" hidden>
+    <div class="invoiceModalDialog newRoomDialog">
+        <div class="invoiceModalHeader">
+            <h3>New Room</h3>
+            <button type="button" class="btn-secondary" id="closeNewRoomModal">Close</button>
+        </div>
+        <form id="newInvoiceRoomForm">
+            <label>Room Name</label>
+            <input name="name" id="newInvoiceRoomName" placeholder="Kitchen, Theater, Rack Room" required>
+            <div class="invoiceItemOptions">
+                <label>
+                    Room Type
+                    <select name="category">
+                        <option value="general">General</option>
+                        <option value="electrical">Electrical</option>
+                        <option value="av">AV / Low Voltage</option>
+                        <option value="lighting">Lighting</option>
+                    </select>
+                </label>
+                <label>
+                    Highlight Color
+                    <select name="room_color">
+                        <option value="blue">Blue</option>
+                        <option value="red">Red</option>
+                        <option value="green">Green</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="purple">Purple</option>
+                        <option value="orange">Orange</option>
+                        <option value="gray">Gray</option>
+                    </select>
+                </label>
+            </div>
+            <p class="formError" id="newRoomError"></p>
+            <button type="submit">Create Room</button>
+        </form>
+    </div>
 </div>
 
 <div class="invoiceModal" id="newItemModal" hidden>
@@ -271,12 +330,17 @@ const invoiceForm=document.getElementById("invoiceForm");
 if(projectSelect){
     projectSelect.addEventListener("change",()=>{
         const option=projectSelect.options[projectSelect.selectedIndex];
-        if(!option||!option.value)return;
+        currentInvoiceProjectId=option?.value||"";
+        if(!option||!option.value){
+            document.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+            return;
+        }
         const fill=(id,value)=>{const el=document.getElementById(id);if(el&&!el.value)el.value=value||""};
         fill("customerName",option.dataset.customerName);
         fill("customerEmail",option.dataset.customerEmail);
         fill("customerPhone",option.dataset.customerPhone);
         fill("billingAddress",option.dataset.billingAddress);
+        document.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
     });
 }
 function formattedInvoiceDueDate(value){
@@ -314,7 +378,14 @@ const saveBeforeLeaving=document.getElementById("saveBeforeLeaving");
 const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
 const keepEditingInvoice=document.getElementById("keepEditingInvoice");
 const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
+const newRoomModal=document.getElementById("newRoomModal");
+const newRoomForm=document.getElementById("newInvoiceRoomForm");
+const newRoomError=document.getElementById("newRoomError");
+const closeNewRoomModal=document.getElementById("closeNewRoomModal");
+const invoiceRoomsByProject={{ rooms_by_project|default({})|tojson }};
+let currentInvoiceProjectId="{{ selected_project.id if selected_project else (invoice.project_id if invoice and invoice.project_id else '') }}";
 let pendingItemSelect=null;
+let pendingLocationSelect=null;
 let pendingCatalogUpdate=null;
 let invoiceDirty=false;
 let allowInvoiceLeave=false;
@@ -346,6 +417,69 @@ function formatMoneyInput(input){
 }
 function lineRows(){
     return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
+}
+function invoiceProjectRooms(projectId=currentInvoiceProjectId){
+    return invoiceRoomsByProject[String(projectId||"")]||[];
+}
+function refreshLocationSelect(select,currentValue=""){
+    if(!select)return;
+    const value=String(currentValue||"");
+    const rooms=invoiceProjectRooms();
+    select.innerHTML="";
+    const empty=document.createElement("option");
+    empty.value="";
+    empty.textContent=currentInvoiceProjectId ? "Choose location" : "Choose project first";
+    select.appendChild(empty);
+    let matched=false;
+    rooms.forEach(room=>{
+        const option=document.createElement("option");
+        option.value=room.name||"";
+        option.textContent=room.name||"";
+        option.dataset.roomId=room.id;
+        if(value&&value===option.value){
+            option.selected=true;
+            matched=true;
+        }
+        select.appendChild(option);
+    });
+    if(value&&value!=="__new_room__"&&!matched){
+        const current=document.createElement("option");
+        current.value=value;
+        current.textContent=value;
+        current.selected=true;
+        select.appendChild(current);
+    }
+    const newRoom=document.createElement("option");
+    newRoom.value="__new_room__";
+    newRoom.textContent="NEW ROOM";
+    select.appendChild(newRoom);
+}
+function openNewRoomModal(select){
+    pendingLocationSelect=select;
+    if(!currentInvoiceProjectId){
+        alert("Choose a project before creating a room.");
+        if(select)select.value="";
+        return;
+    }
+    if(newRoomForm)newRoomForm.reset();
+    if(newRoomError)newRoomError.textContent="";
+    if(newRoomModal)newRoomModal.hidden=false;
+    requestAnimationFrame(()=>document.getElementById("newInvoiceRoomName")?.focus());
+}
+function closeInvoiceRoomModal(){
+    if(newRoomModal)newRoomModal.hidden=true;
+}
+function addRoomToInvoiceOptions(room, selectToChoose=null){
+    if(!room||!room.id||!room.name)return;
+    const key=String(room.project_id||currentInvoiceProjectId||"");
+    if(!invoiceRoomsByProject[key])invoiceRoomsByProject[key]=[];
+    const exists=invoiceRoomsByProject[key].some(existing=>String(existing.id)===String(room.id)||String(existing.name||"").toLowerCase()===String(room.name||"").toLowerCase());
+    if(!exists)invoiceRoomsByProject[key].push({id:room.id,name:room.name});
+    invoiceRoomsByProject[key].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
+    document.querySelectorAll(".lineLocation").forEach(select=>{
+        const keepValue=select===selectToChoose ? room.name : (select.value==="__new_room__" ? "" : select.value);
+        refreshLocationSelect(select, keepValue);
+    });
 }
 function selectedCatalogOption(line){
     const select=line?.querySelector(".lineItemSelect");
@@ -474,6 +608,15 @@ function updateCatalogOptionEverywhere(item){
         option.dataset.type=item.item_type||option.dataset.type||"part";
         option.dataset.taxable=item.taxable?"1":"0";
     });
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
+            option.dataset.description=item.description||"";
+            option.dataset.price=item.unit_price||0;
+            option.dataset.name=item.item_name||option.dataset.name||"";
+            option.dataset.type=item.item_type||option.dataset.type||"part";
+            option.dataset.taxable=item.taxable?"1":"0";
+        });
+    }
 }
 function openNewItemModal(select){
     pendingItemSelect=select;
@@ -528,9 +671,18 @@ document.getElementById("closeNewItemModal").addEventListener("click",()=>{
     newItemModal.hidden=true;
     if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
 });
+if(closeNewRoomModal){
+    closeNewRoomModal.addEventListener("click",()=>{
+        if(pendingLocationSelect&&pendingLocationSelect.value==="__new_room__")pendingLocationSelect.value="";
+        closeInvoiceRoomModal();
+    });
+}
 invoiceLines.addEventListener("change",event=>{
     if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    if(event.target.matches(".lineLocation")&&event.target.value==="__new_room__"){
+        openNewRoomModal(event.target);
+    }
     markInvoiceDirty();
 });
 invoiceLines.addEventListener("click",event=>{
@@ -613,6 +765,37 @@ newItemForm.addEventListener("submit",async event=>{
         error.textContent=err.message||"Could not create item.";
     }
 });
+if(newRoomForm){
+    newRoomForm.addEventListener("submit",async event=>{
+        event.preventDefault();
+        if(newRoomError)newRoomError.textContent="";
+        if(!currentInvoiceProjectId){
+            if(newRoomError)newRoomError.textContent="Choose a project before creating a room.";
+            return;
+        }
+        const formData=new FormData(newRoomForm);
+        try{
+            const response=await fetch(`/project/${currentInvoiceProjectId}/rooms/create-json`,{method:"POST",body:formData});
+            const payload=await response.json();
+            if(response.status===409&&payload.duplicate&&payload.room){
+                const useExisting=confirm(`${payload.error} Use the existing room for this invoice line?`);
+                if(useExisting){
+                    addRoomToInvoiceOptions({...payload.room,project_id:currentInvoiceProjectId},pendingLocationSelect);
+                    closeInvoiceRoomModal();
+                }else if(newRoomError){
+                    newRoomError.textContent="Change the room name to create a new room.";
+                }
+                return;
+            }
+            if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create room.");
+            addRoomToInvoiceOptions(payload.room,pendingLocationSelect);
+            closeInvoiceRoomModal();
+            markInvoiceDirty();
+        }catch(err){
+            if(newRoomError)newRoomError.textContent=err.message||"Could not create room.";
+        }
+    });
+}
 if(invoiceForm){
     invoiceForm.addEventListener("input",event=>{
         if(event.target.closest("#newCatalogItemForm"))return;
@@ -684,6 +867,7 @@ if(keepEditingInvoice){
     keepEditingInvoice.addEventListener("click",hideUnsavedInvoicePrompt);
 }
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
+invoiceLines.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
 lockAllSelectedItems();
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 lineRows().forEach(markCatalogBaseline);
@@ -697,7 +881,7 @@ invoiceDirty=false;
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1260px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:6px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:34px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:38px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:230px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:320px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:118px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:82px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
-.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog,.newRoomDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
 @media(min-width:901px){.invoiceLinePanel{margin:14px 0}.invoiceLineToolbar{padding:6px 10px}.invoiceLineToolbar button{min-height:32px;padding:6px 10px;margin:0}.invoiceGridWrap{max-height:43vh}.invoiceGridTable th,.invoiceGridTable td{padding:3px 4px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:28px;padding:4px 6px;font-size:13px}.invoiceGridTable textarea{min-height:30px;line-height:1.2}.invoiceGridTable .removeInvoiceLine{min-height:28px;padding:4px 8px;font-size:12px;margin:0}.invoiceLiveTotals{margin:8px 10px 8px auto;padding:8px 10px;font-size:13px}.invoiceLiveTotals p{margin:3px 0}.invoiceLiveBalance{padding-top:6px;font-size:19px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
