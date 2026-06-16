@@ -651,7 +651,7 @@ function addInvoiceLine(data={}){
     markInvoiceDirty();
 }
 function appendCatalogOption(item, targetSelect){
-    document.querySelectorAll(".lineItemSelect").forEach(select=>{
+    const addOptionToSelect=(select)=>{
         if(select.querySelector(`option[value="${item.id}"]`))return;
         const option=document.createElement("option");
         option.value=String(item.id);
@@ -663,7 +663,11 @@ function appendCatalogOption(item, targetSelect){
         const typeLabel=option.dataset.type==="service"?" (Labor)":"";
         option.textContent=[`${item.item_name||""}${typeLabel}`,item.brand,item.item_model].filter(Boolean).join(" - ");
         select.appendChild(option);
-    });
+    };
+    document.querySelectorAll(".lineItemSelect").forEach(addOptionToSelect);
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(".lineItemSelect").forEach(addOptionToSelect);
+    }
     if(targetSelect){
         targetSelect.value=String(item.id);
         applySelectedItem(targetSelect);
