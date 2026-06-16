@@ -480,6 +480,9 @@ function addRoomToInvoiceOptions(room, selectToChoose=null){
         const keepValue=select===selectToChoose ? room.name : (select.value==="__new_room__" ? "" : select.value);
         refreshLocationSelect(select, keepValue);
     });
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+    }
 }
 function selectedCatalogOption(line){
     const select=line?.querySelector(".lineItemSelect");
@@ -630,6 +633,7 @@ function addInvoiceLine(data={}){
     wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
     const line=wrapper.firstElementChild;
     invoiceLines.appendChild(line);
+    refreshLocationSelect(line.querySelector(".lineLocation"), data.location||"");
     const select=line.querySelector(".lineItemSelect");
     if(data.part_catalog_id&&select){
         select.value=String(data.part_catalog_id);
