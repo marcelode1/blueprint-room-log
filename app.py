@@ -3481,6 +3481,51 @@ def supplier_items_from_task_form(conn, supplier):
         project_id, room_id, error = validate_inventory_allocation(conn, project_id, room_id)
         if error:
             return [], error
+        inventory_item_id = optional_int(row.get("inventory_item_id"))
+        if inventory_item_id:
+            existing_item = conn.execute(
+                """
+                SELECT * FROM inventory_items
+                WHERE id = %s AND project_id = %s
+                """,
+                (inventory_item_id, project_id)
+            ).fetchone()
+            if not existing_item:
+                return [], "The selected supplier material could not be found in this project."
+            if room_id and existing_item.get("room_id") and existing_item.get("room_id") != room_id:
+                return [], "The selected supplier material room does not match this pickup task."
+            if not inventory_item_access_allowed(conn, existing_item):
+                return [], "You do not have access to that supplier material."
+            pickup_date = (row.get("pickup_date") or existing_item.get("item_date") or local_now().date().isoformat()).strip()
+            pickup_time = (row.get("pickup_time") or existing_item.get("supplier_pickup_time") or "").strip()
+            purchase_note = (row.get("purchase_note") or request.form.get("supplier_purchase_note") or "").strip()
+            used_note = existing_item.get("used_note") or ""
+            if purchase_note and purchase_note not in used_note:
+                used_note = "\n".join(part for part in [used_note, purchase_note] if part).strip()
+            conn.execute(
+                """
+                UPDATE inventory_items
+                SET item_date = %s,
+                    room_id = COALESCE(%s, room_id),
+                    supplier_pickup_time = %s,
+                    supplier_id = %s,
+                    used_note = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    pickup_date,
+                    room_id,
+                    pickup_time,
+                    supplier["id"],
+                    used_note,
+                    utc_now_iso(),
+                    inventory_item_id,
+                )
+            )
+            updated_item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (inventory_item_id,)).fetchone()
+            created.append(updated_item)
+            continue
         item_name = (row.get("item_name") or "").strip()
         if not item_name:
             return [], "Every supplier material needs an item name."
@@ -7110,6 +7155,41 @@ def update_inventory_location(item_id):
     return redirect(safe_next_url("inventory"))
 
 
+@app.route("/inventory/<int:item_id>/supplier", methods=["POST"])
+@login_required
+def update_inventory_supplier(item_id):
+    if not can_edit_inventory():
+        flash("You do not have permission to update inventory.")
+        return redirect(safe_next_url("inventory"))
+
+    supplier_id = optional_int(request.form.get("supplier_id"))
+    conn = db()
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+    if not item:
+        conn.close()
+        flash("Inventory item not found.")
+        return redirect(safe_next_url("inventory"))
+    if not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("You do not have access to that inventory item.")
+        return redirect(url_for("inventory"))
+    if supplier_id:
+        supplier = conn.execute("SELECT id FROM suppliers WHERE id = %s", (supplier_id,)).fetchone()
+        if not supplier:
+            conn.close()
+            flash("Supplier not found.")
+            return redirect(safe_next_url("inventory"))
+
+    conn.execute(
+        "UPDATE inventory_items SET supplier_id = %s, updated_at = %s WHERE id = %s",
+        (supplier_id, utc_now_iso(), item_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Inventory supplier updated.")
+    return redirect(safe_next_url("inventory"))
+
+
 @app.route("/inventory/<int:item_id>/delete", methods=["POST"])
 @admin_required
 def delete_inventory_item(item_id):
@@ -7158,6 +7238,7 @@ def project_materials(project_id):
 
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
+    suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
@@ -7165,6 +7246,7 @@ def project_materials(project_id):
         project=project,
         materials=materials,
         rooms=rooms,
+        suppliers=suppliers,
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
@@ -8902,6 +8984,36 @@ def create_global_task():
     conn = db()
     selected_project_id = request.args.get("project_id", type=int)
     selected_room_id = request.args.get("room_id", type=int)
+    selected_supplier_id = request.args.get("supplier_id", type=int)
+    pickup_item_id = request.args.get("pickup_item_id", type=int)
+    pickup_prefill = None
+    if pickup_item_id:
+        pickup_item = conn.execute(
+            """
+            SELECT inventory_items.*, suppliers.name AS supplier_name, rooms.name AS room_name
+            FROM inventory_items
+            LEFT JOIN suppliers ON inventory_items.supplier_id = suppliers.id
+            LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+            WHERE inventory_items.id = %s
+            """,
+            (pickup_item_id,)
+        ).fetchone()
+        if pickup_item and inventory_item_access_allowed(conn, pickup_item):
+            selected_project_id = pickup_item.get("project_id") or selected_project_id
+            selected_room_id = pickup_item.get("room_id") or selected_room_id
+            selected_supplier_id = pickup_item.get("supplier_id") or selected_supplier_id
+            pickup_prefill = {
+                "inventory_item_id": pickup_item["id"],
+                "pickup_date": pickup_item.get("item_date") or local_now().date().isoformat(),
+                "pickup_time": pickup_item.get("supplier_pickup_time") or "",
+                "quantity": pickup_item.get("quantity") or 1,
+                "item_name": pickup_item.get("item_name") or "",
+                "brand": pickup_item.get("brand") or "",
+                "model": pickup_item.get("item_model") or "",
+                "project_id": pickup_item.get("project_id") or "",
+                "room_id": pickup_item.get("room_id") or "",
+                "room_name": pickup_item.get("room_name") or "Project general",
+            }
     if selected_room_id and not selected_project_id:
         selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
         if selected_room:
@@ -9113,7 +9225,9 @@ def create_global_task():
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         selected_project_id=selected_project_id,
-        selected_room_id=selected_room_id
+        selected_room_id=selected_room_id,
+        selected_supplier_id=selected_supplier_id,
+        pickup_prefill=pickup_prefill
     )
 
 
