@@ -56,28 +56,28 @@
 </div>
 
 {% if result %}
-<div class="card dtoolsResult dtoolsResult-{{ result.status }}">
+<div class="card dtoolsResult dtoolsResult-{{ result['status'] }}">
     <h3>Import Status</h3>
-    <p><strong>{{ result.status|title }}:</strong> {{ result.message }}</p>
-    {% if result.project_info %}
+    <p><strong>{{ result['status']|title }}:</strong> {{ result['message'] }}</p>
+    {% if result['project_info'] %}
         <div class="dtoolsSummaryGrid">
-            <div><span>Project</span><strong>{{ result.project_info.project_name or '-' }}</strong></div>
-            <div><span>Customer</span><strong>{{ result.project_info.customer_name or '-' }}</strong></div>
-            <div><span>Email</span><strong>{{ result.project_info.customer_email or '-' }}</strong></div>
-            <div><span>Phone</span><strong>{{ result.project_info.customer_phone or '-' }}</strong></div>
-            <div><span>Proposal #</span><strong>{{ result.project_info.proposal_number or '-' }}</strong></div>
-            <div><span>Address</span><strong>{{ result.project_info.address or '-' }}</strong></div>
+            <div><span>Project</span><strong>{{ result['project_info']['project_name'] or '-' }}</strong></div>
+            <div><span>Customer</span><strong>{{ result['project_info']['customer_name'] or '-' }}</strong></div>
+            <div><span>Email</span><strong>{{ result['project_info']['customer_email'] or '-' }}</strong></div>
+            <div><span>Phone</span><strong>{{ result['project_info']['customer_phone'] or '-' }}</strong></div>
+            <div><span>Proposal #</span><strong>{{ result['project_info']['proposal_number'] or '-' }}</strong></div>
+            <div><span>Address</span><strong>{{ result['project_info']['address'] or '-' }}</strong></div>
         </div>
     {% endif %}
-    {% if result.locations %}
+    {% if result['locations'] %}
         <h4>Detected Rooms / Locations</h4>
         <div class="dtoolsPills">
-            {% for location in result.locations %}
+            {% for location in result['locations'] %}
                 <span>{{ location }}</span>
             {% endfor %}
         </div>
     {% endif %}
-    {% if result.items %}
+    {% if result['items'] %}
         <h4>Sample Items</h4>
         <div class="dtoolsImportTableWrap">
             <table class="dtoolsImportTable">
@@ -92,17 +92,17 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in result.items %}
+                    {% for item in result['items'] %}
                     <tr>
-                        <td><span class="dtoolsType">{{ 'Labor' if item.item_type == 'service' else 'Material' }}</span></td>
-                        <td>{{ item.quantity }}</td>
+                        <td><span class="dtoolsType">{{ 'Labor' if item['item_type'] == 'service' else 'Material' }}</span></td>
+                        <td>{{ item['quantity'] }}</td>
                         <td>
-                            <strong>{{ item.item_name }}</strong>
-                            {% if item.description %}<span class="muted dtoolsSmall">{{ item.description }}</span>{% endif %}
+                            <strong>{{ item['item_name'] }}</strong>
+                            {% if item['description'] %}<span class="muted dtoolsSmall">{{ item['description'] }}</span>{% endif %}
                         </td>
-                        <td>{{ item.brand or '-' }}{% if item.model %}<span class="muted dtoolsSmall">{{ item.model }}</span>{% endif %}</td>
-                        <td>{{ item.location or '-' }}</td>
-                        <td>{{ format_invoice_money(item.unit_price or 0) }}</td>
+                        <td>{{ item['brand'] or '-' }}{% if item['model'] %}<span class="muted dtoolsSmall">{{ item['model'] }}</span>{% endif %}</td>
+                        <td>{{ item['location'] or '-' }}</td>
+                        <td>{{ format_invoice_money(item['unit_price'] or 0) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
