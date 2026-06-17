@@ -31,6 +31,10 @@ if(!window.partCatalogAutocompleteReady){
         const line=input.closest(".invoiceLine,.grid,form,.supplierMaterialItem,.supplierEditDetails,.card")||document;
         return line.querySelector(selector);
     }
+    function catalogMoney(value){
+        const number=Number(value||0);
+        return number.toLocaleString(undefined,{style:"currency",currency:"USD"});
+    }
     function fillPartFields(input){
         const part=findPart(input.value);
         if(!part)return;
@@ -42,7 +46,7 @@ if(!window.partCatalogAutocompleteReady){
         if(model&&!model.value)model.value=part.item_model||"";
         if(brand&&!brand.value)brand.value=part.brand||"";
         if(description&&!description.value)description.value=part.description||"";
-        if(price&&(!price.value||price.value==="0"))price.value=part.unit_price||"0";
+        if(price&&(!price.value||price.value==="0"))price.value=catalogMoney(part.unit_price||0);
         if(taxable&&part.taxable!==null&&part.taxable!==undefined)taxable.checked=!!part.taxable;
     }
     document.addEventListener("input",event=>{

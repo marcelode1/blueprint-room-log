@@ -29,8 +29,8 @@
             <div><label>Model #</label><input name="item_model" value="{{ edit_part.item_model or '' }}"></div>
             <div><label>Part Number</label><input name="part_number" value="{{ edit_part.part_number or '' }}"></div>
             <div><label>Category</label><input name="category" value="{{ edit_part.category or '' }}"></div>
-            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0" value="{{ edit_part.unit_price or '' }}"></div>
-            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0" value="{{ edit_part.unit_cost or '' }}"></div>
+            <div><label>Unit Price</label><input name="unit_price" class="catalogCurrencyInput" type="text" inputmode="text" value="{{ format_invoice_money(edit_part.unit_price) if edit_part.unit_price is not none else '' }}" placeholder="$0.00"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" class="catalogCurrencyInput" type="text" inputmode="text" value="{{ format_invoice_money(edit_part.unit_cost) if edit_part.unit_cost is not none else '' }}" placeholder="$0.00"></div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if edit_part.taxable %}checked{% endif %}> Taxable</label>
         <label>Description</label>
@@ -56,8 +56,8 @@
             <div><label>Model #</label><input name="item_model"></div>
             <div><label>Part Number</label><input name="part_number"></div>
             <div><label>Category</label><input name="category" placeholder="Audio, network, labor, camera"></div>
-            <div><label>Unit Price</label><input name="unit_price" type="number" step="0.01" min="0"></div>
-            <div><label>Unit Cost</label><input name="unit_cost" type="number" step="0.01" min="0"></div>
+            <div><label>Unit Price</label><input name="unit_price" class="catalogCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" class="catalogCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
         <label>Description</label>
@@ -152,6 +152,26 @@
         </div>
     {% endif %}
 </div>
+
+<script>
+function parseCatalogMoney(value){
+    const text=String(value||"").trim().replace(/[$,]/g,"");
+    if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);
+    return Number(text||0);
+}
+function formatCatalogMoneyInput(input){
+    if(!input||!String(input.value||"").trim())return;
+    input.value=parseCatalogMoney(input.value).toLocaleString(undefined,{style:"currency",currency:"USD"});
+}
+document.querySelectorAll(".catalogCurrencyInput").forEach(input=>{
+    input.addEventListener("blur",()=>formatCatalogMoneyInput(input));
+});
+document.querySelectorAll("form").forEach(form=>{
+    form.addEventListener("submit",()=>{
+        form.querySelectorAll(".catalogCurrencyInput").forEach(formatCatalogMoneyInput);
+    });
+});
+</script>
 
 <style>
 .catalogEditorCard{border-left:4px solid var(--primary)}

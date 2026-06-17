@@ -6722,14 +6722,8 @@ def parts_catalog():
             conn.close()
             flash("Item name is required.")
             return redirect(url_for("parts_catalog"))
-        try:
-            unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
-        except Exception:
-            unit_price = None
-        try:
-            unit_cost = float(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
-        except Exception:
-            unit_cost = None
+        unit_price = parse_invoice_money(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
+        unit_cost = parse_invoice_money(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
         item_model = request.form.get("item_model", "").strip()
         part_number = request.form.get("part_number", "").strip()
         brand = request.form.get("brand", "").strip()
@@ -6841,14 +6835,8 @@ def create_part_catalog_json():
     if not item_name:
         conn.close()
         return jsonify({"ok": False, "error": "Item name is required."}), 400
-    try:
-        unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
-    except Exception:
-        unit_price = None
-    try:
-        unit_cost = float(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
-    except Exception:
-        unit_cost = None
+    unit_price = parse_invoice_money(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
+    unit_cost = parse_invoice_money(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
     part_id = upsert_part_catalog(
         conn,
         item_name,
@@ -6888,11 +6876,7 @@ def quick_update_part_catalog_json(part_id):
         conn.close()
         return jsonify({"ok": False, "error": "Catalog item not found."}), 404
     description = clean_catalog_description(request.form.get("description", ""))
-    try:
-        unit_price = float(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else 0
-    except Exception:
-        conn.close()
-        return jsonify({"ok": False, "error": "Unit price is not valid."}), 400
+    unit_price = parse_invoice_money(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else 0
     conn.execute(
         """
         UPDATE part_catalog
