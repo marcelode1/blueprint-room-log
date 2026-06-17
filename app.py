@@ -2405,7 +2405,7 @@ def invoice_pdf_attachment(invoice, lines, company):
 
     y = max(customer_y + 32, divider_y + 126)
     table_top = y - 16
-    headers = [("#", 48), ("Qty", 82), ("Item", 120), ("Description", 250), ("Location", 426), ("Unit", 486), ("Amount", 535)]
+    headers = [("Line #", 48), ("Qty", 82), ("Item", 120), ("Description", 250), ("Location", 426), ("Unit Price", 486), ("Total", 535)]
     page.draw_rect(fitz.Rect(left, table_top, right, table_top + 24), color=None, fill=fill_color)
     page.draw_line((left, table_top), (right, table_top), color=line_color, width=1)
     page.draw_line((left, table_top + 24), (right, table_top + 24), color=grid_color, width=0.6)
@@ -2453,7 +2453,7 @@ def invoice_pdf_attachment(invoice, lines, company):
         ("Payments/Credit", "payments_credit"),
     ]:
         value = format_invoice_money(totals[key])
-        if key == "payments_credit":
+        if key == "payments_credit" and totals[key]:
             value = "-" + value
         text(374, totals_y, label, 10)
         text(512, totals_y, value, 10)
