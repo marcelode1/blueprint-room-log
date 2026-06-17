@@ -6734,6 +6734,22 @@ def parts_catalog():
             item_type = "part"
         taxable = request.form.get("taxable") == "1"
         now = utc_now_iso()
+        duplicate_item = conn.execute(
+            """
+            SELECT id, item_name FROM part_catalog
+            WHERE COALESCE(is_active, TRUE) = TRUE
+              AND lower(item_name) = lower(%s)
+              AND lower(COALESCE(item_model, '')) = lower(%s)
+              AND lower(COALESCE(brand, '')) = lower(%s)
+              AND (%s IS NULL OR id <> %s)
+            LIMIT 1
+            """,
+            (item_name, item_model, brand, part_id, part_id)
+        ).fetchone()
+        if duplicate_item:
+            conn.close()
+            flash(f"Item '{duplicate_item['item_name']}' already exists. Edit the existing item or change the name, brand, or model.")
+            return redirect(url_for("parts_catalog", edit_id=duplicate_item["id"], duplicate_item=1))
         if part_id:
             conn.execute(
                 """
@@ -6831,17 +6847,39 @@ def create_part_catalog_json():
     conn = db()
     ensure_part_catalog_tables(conn)
     item_name = request.form.get("item_name", "").strip()
+    item_model = request.form.get("item_model", "").strip()
+    brand = request.form.get("brand", "").strip()
     description = clean_catalog_description(request.form.get("description", ""))
     if not item_name:
         conn.close()
         return jsonify({"ok": False, "error": "Item name is required."}), 400
+    duplicate_item = conn.execute(
+        """
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        FROM part_catalog
+        WHERE COALESCE(is_active, TRUE) = TRUE
+          AND lower(item_name) = lower(%s)
+          AND lower(COALESCE(item_model, '')) = lower(%s)
+          AND lower(COALESCE(brand, '')) = lower(%s)
+        LIMIT 1
+        """,
+        (item_name, item_model, brand)
+    ).fetchone()
+    if duplicate_item:
+        conn.close()
+        return jsonify({
+            "ok": False,
+            "duplicate": True,
+            "error": f"Item '{duplicate_item['item_name']}' already exists.",
+            "item": dict(duplicate_item)
+        }), 409
     unit_price = parse_invoice_money(request.form.get("unit_price")) if request.form.get("unit_price", "").strip() else None
     unit_cost = parse_invoice_money(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
     part_id = upsert_part_catalog(
         conn,
         item_name,
-        request.form.get("item_model", "").strip(),
-        request.form.get("brand", "").strip(),
+        item_model,
+        brand,
         description,
         unit_price,
         request.form.get("taxable") == "1",

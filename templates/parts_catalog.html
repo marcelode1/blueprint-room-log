@@ -154,6 +154,9 @@
 </div>
 
 <script>
+{% if request.args.get('duplicate_item') %}
+window.addEventListener("load",()=>alert("This item already exists. Edit the existing item or change the name, brand, or model."));
+{% endif %}
 function parseCatalogMoney(value){
     const text=String(value||"").trim().replace(/[$,]/g,"");
     if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);

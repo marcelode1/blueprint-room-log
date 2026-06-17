@@ -792,6 +792,16 @@ newItemForm.addEventListener("submit",async event=>{
     try{
         const response=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:formData});
         const payload=await response.json();
+        if(response.status===409&&payload.duplicate&&payload.item){
+            const useExisting=confirm(`${payload.error} Use the existing item for this invoice line?`);
+            if(useExisting){
+                appendCatalogOption(payload.item,pendingItemSelect);
+                newItemModal.hidden=true;
+            }else{
+                error.textContent="Change the item name, brand, or model to create a new item.";
+            }
+            return;
+        }
         if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
         appendCatalogOption(payload.item,pendingItemSelect);
         newItemModal.hidden=true;
@@ -827,6 +837,7 @@ if(newRoomForm){
             if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create room.");
             addRoomToInvoiceOptions(payload.room,pendingLocationSelect);
             closeInvoiceRoomModal();
+            alert(`Room '${payload.room.name}' was created in this project and added to the invoice location list.`);
             markInvoiceDirty();
         }catch(err){
             if(newRoomError)newRoomError.textContent=err.message||"Could not create room.";
