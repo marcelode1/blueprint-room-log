@@ -2494,7 +2494,6 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
 def create_project_invoice_draft(conn, project):
     invoice_date = local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
-    copied_due_date = invoice.get("due_date") or ""
     row = conn.execute(
         """
         INSERT INTO invoices
@@ -6443,57 +6442,64 @@ def copy_invoice(invoice_id):
         conn.close()
         flash("Invoice not found.")
         return redirect(url_for("invoices"))
-    invoice_date = local_now().date().isoformat()
-    invoice_number = next_invoice_number(conn, invoice_date)
-    row = conn.execute(
-        """
-        INSERT INTO invoices
-        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            invoice_number,
-            invoice.get("project_id"),
-            invoice.get("customer_name") or "",
-            invoice.get("customer_email") or "",
-            invoice.get("customer_phone") or "",
-            invoice.get("billing_address") or "",
-            invoice_date,
-            copied_due_date,
-            invoice.get("subtotal") or 0,
-            invoice.get("tax_rate") or 0,
-            invoice.get("tax_total") or 0,
-            invoice.get("total") or 0,
-            invoice.get("notes") or "",
-            invoice_terms_for_due_date(copied_due_date, invoice.get("terms") or ""),
-            session.get("user_id"),
-            utc_now_iso(),
-            utc_now_iso(),
-        )
-    ).fetchone()
-    new_invoice_id = row["id"]
-    for line in lines:
-        conn.execute(
+    try:
+        invoice_date = local_now().date().isoformat()
+        invoice_number = next_invoice_number(conn, invoice_date)
+        copied_due_date = invoice.get("due_date") or ""
+        row = conn.execute(
             """
-            INSERT INTO invoice_lines
-            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO invoices
+            (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
-                new_invoice_id,
-                line.get("part_catalog_id"),
-                line.get("item_name") or "",
-                line.get("description") or "",
-                line.get("location") or "",
-                line.get("quantity") or 0,
-                line.get("unit_price") or 0,
-                bool(line.get("taxable")),
-                line.get("line_total") or 0,
-                line.get("position") or 0,
+                invoice_number,
+                invoice.get("project_id"),
+                invoice.get("customer_name") or "",
+                invoice.get("customer_email") or "",
+                invoice.get("customer_phone") or "",
+                invoice.get("billing_address") or "",
+                invoice_date,
+                copied_due_date,
+                invoice.get("subtotal") or 0,
+                invoice.get("tax_rate") or 0,
+                invoice.get("tax_total") or 0,
+                invoice.get("total") or 0,
+                invoice.get("notes") or "",
+                invoice_terms_for_due_date(copied_due_date, invoice.get("terms") or ""),
+                session.get("user_id"),
+                utc_now_iso(),
+                utc_now_iso(),
             )
-        )
-    conn.commit()
+        ).fetchone()
+        new_invoice_id = row["id"]
+        for line in lines:
+            conn.execute(
+                """
+                INSERT INTO invoice_lines
+                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    new_invoice_id,
+                    line.get("part_catalog_id"),
+                    line.get("item_name") or "",
+                    line.get("description") or "",
+                    line.get("location") or "",
+                    line.get("quantity") or 0,
+                    line.get("unit_price") or 0,
+                    bool(line.get("taxable")),
+                    line.get("line_total") or 0,
+                    line.get("position") or 0,
+                )
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"Invoice could not be copied. {e}")
+        return redirect(url_for("invoice_view", invoice_id=invoice_id))
     conn.close()
     flash(f"Invoice copied as {invoice_number}.")
     return redirect(url_for("edit_invoice", invoice_id=new_invoice_id))
