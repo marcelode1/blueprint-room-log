@@ -2325,8 +2325,8 @@ def invoice_pdf_attachment(invoice, lines, company):
     page_height = 792
     page = doc.new_page(width=page_width, height=page_height)
     y = 42
-    left = 36
-    right = 576
+    left = 28
+    right = 588
     footer_top = page_height - 28
     line_color = (0.08, 0.12, 0.2)
     grid_color = (0.70, 0.76, 0.84)
@@ -2446,35 +2446,35 @@ def invoice_pdf_attachment(invoice, lines, company):
 
     y = max(customer_y, job_y, divider_y + 104) + 18
     headers = [
-        ("LINE #", 42, 28, fitz.TEXT_ALIGN_LEFT),
-        ("QTY", 74, 28, fitz.TEXT_ALIGN_LEFT),
-        ("ITEM", 104, 78, fitz.TEXT_ALIGN_LEFT),
-        ("DESCRIPTION", 190, 210, fitz.TEXT_ALIGN_LEFT),
-        ("LOCATION", 410, 58, fitz.TEXT_ALIGN_LEFT),
-        ("UNIT PRICE", 475, 50, fitz.TEXT_ALIGN_LEFT),
-        ("TOTAL", 530, 46, fitz.TEXT_ALIGN_LEFT),
+        ("LINE #", 34, 26, fitz.TEXT_ALIGN_LEFT),
+        ("QTY", 66, 26, fitz.TEXT_ALIGN_LEFT),
+        ("ITEM", 96, 82, fitz.TEXT_ALIGN_LEFT),
+        ("DESCRIPTION", 188, 198, fitz.TEXT_ALIGN_LEFT),
+        ("LOCATION", 398, 62, fitz.TEXT_ALIGN_LEFT),
+        ("UNIT PRICE", 466, 54, fitz.TEXT_ALIGN_RIGHT),
+        ("TOTAL", 524, 64, fitz.TEXT_ALIGN_RIGHT),
     ]
     y = draw_table_header(y)
     for index, line in enumerate(lines, start=1):
-        item_lines = wrapped_lines(line.get("item_name"), 78, 6.8)
-        desc_lines = wrapped_lines(line.get("description"), 210, 6.8)
-        loc_lines = wrapped_lines(line.get("location"), 58, 6.8)
+        item_lines = wrapped_lines(line.get("item_name"), 82, 6.8)
+        desc_lines = wrapped_lines(line.get("description"), 198, 6.8)
+        loc_lines = wrapped_lines(line.get("location"), 62, 6.8)
         line_gap = 7.6
         row_height = max(15, len(item_lines) * line_gap, len(desc_lines) * line_gap, len(loc_lines) * line_gap) + 8
         if y + row_height > footer_top - 8:
             page = doc.new_page(width=page_width, height=page_height)
             y = draw_table_header(44)
         row_top = y
-        text(42, y, index, 6.8)
-        text(74, y, line.get("quantity"), 6.8)
+        text(34, y, index, 6.8)
+        text(66, y, line.get("quantity"), 6.8)
         for offset, value in enumerate(item_lines):
-            text(104, y + offset * line_gap, value, 6.8)
+            text(96, y + offset * line_gap, value, 6.8)
         for offset, value in enumerate(desc_lines):
-            text(190, y + offset * line_gap, value, 6.8)
+            text(188, y + offset * line_gap, value, 6.8)
         for offset, value in enumerate(loc_lines):
-            text(410, y + offset * line_gap, value, 6.8)
-        box_text(475, y, 46, format_invoice_money(line.get("unit_price")), 6.8, align=fitz.TEXT_ALIGN_RIGHT)
-        box_text(530, y, 46, format_invoice_money(line.get("line_total")), 6.8, align=fitz.TEXT_ALIGN_RIGHT)
+            text(398, y + offset * line_gap, value, 6.8)
+        box_text(466, y, 54, format_invoice_money(line.get("unit_price")), 6.6, align=fitz.TEXT_ALIGN_RIGHT)
+        box_text(524, y, 64, format_invoice_money(line.get("line_total")), 6.6, align=fitz.TEXT_ALIGN_RIGHT)
         y = row_top + row_height
         page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.45)
         y += 2
