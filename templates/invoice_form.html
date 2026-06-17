@@ -126,39 +126,36 @@
                             <td>
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
                                 <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
-                                {% set catalog_match = namespace(found=false) %}
                                 <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                    <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
+                                        data-name="{{ line.item_name }}"
+                                        data-description="{{ line.description or '' }}"
+                                        data-price="{{ line.unit_price or 0 }}"
+                                        data-type="{{ line.item_type or 'part' }}"
+                                        data-taxable="{{ '1' if line.taxable else '0' }}"
+                                        selected>
+                                        {{ line.item_name or 'Saved item' }}{% if line.item_type == 'service' %} (Labor){% endif %}
+                                    </option>
                                     <option value="__new__">NEW ITEM</option>
                                     {% for item in part_catalog %}
-                                        {% if line.part_catalog_id and line.part_catalog_id == item.id %}{% set catalog_match.found = true %}{% endif %}
+                                        {% if not line.part_catalog_id or line.part_catalog_id != item.id %}
                                         <option value="{{ item.id }}"
                                             data-name="{{ item.item_name }}"
                                             data-description="{{ item.description or '' }}"
                                             data-price="{{ item.unit_price or 0 }}"
                                             data-type="{{ item.item_type or 'part' }}"
                                             data-taxable="{{ '1' if item.taxable else '0' }}"
-                                            {% if line.part_catalog_id and line.part_catalog_id == item.id %}selected{% endif %}>
+                                            >
                                             {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
                                         </option>
+                                        {% endif %}
                                     {% endfor %}
-                                    {% if line.item_name and (not line.part_catalog_id or not catalog_match.found) %}
-                                        <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
-                                            data-name="{{ line.item_name }}"
-                                            data-description="{{ line.description or '' }}"
-                                            data-price="{{ line.unit_price or 0 }}"
-                                            data-type="{{ line.item_type or 'part' }}"
-                                            data-taxable="{{ '1' if line.taxable else '0' }}"
-                                            selected>
-                                            {{ line.item_name or 'Saved item' }}{% if line.item_type == 'service' %} (Labor){% endif %}
-                                        </option>
-                                    {% endif %}
                                 </select>
                             </td>
                             <td><textarea name="line_description" class="lineDescription" rows="1">{{ line.description or '' }}</textarea></td>
                             <td>
                                 {% set location_match = namespace(found=false) %}
                                 <select name="line_location" class="lineLocation">
-                                    <option value="__new_room__">NEW ROOM</option>
                                     <option value="">Choose location</option>
                                     {% for room_option in invoice_rooms %}
                                         {% if (line.location or '') == room_option.name %}{% set location_match.found = true %}{% endif %}
@@ -167,6 +164,7 @@
                                     {% if line.location and not location_match.found %}
                                         <option value="{{ line.location }}" selected>{{ line.location }}</option>
                                     {% endif %}
+                                    <option value="__new_room__">NEW ROOM</option>
                                 </select>
                             </td>
                             <td><input name="line_unit_price" class="lineUnitPrice" type="text" inputmode="text" value="{{ format_invoice_money(line.unit_price) }}"></td>
@@ -218,11 +216,11 @@
                 <td><textarea name="line_description" class="lineDescription" rows="1"></textarea></td>
                 <td>
                     <select name="line_location" class="lineLocation">
-                        <option value="__new_room__">NEW ROOM</option>
                         <option value="">Choose location</option>
                         {% for room_option in invoice_rooms %}
                             <option value="{{ room_option.name }}" data-room-id="{{ room_option.id }}">{{ room_option.name }}</option>
                         {% endfor %}
+                        <option value="__new_room__">NEW ROOM</option>
                     </select>
                 </td>
                 <td><input name="line_unit_price" class="lineUnitPrice" type="text" inputmode="text" value="$0.00"></td>
@@ -442,12 +440,8 @@ function invoiceProjectRooms(projectId=currentInvoiceProjectId){
 function refreshLocationSelect(select,currentValue=""){
     if(!select)return;
     const value=String(currentValue||"");
-    const rooms=[...invoiceProjectRooms()].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
+    const rooms=invoiceProjectRooms();
     select.innerHTML="";
-    const newRoom=document.createElement("option");
-    newRoom.value="__new_room__";
-    newRoom.textContent="NEW ROOM";
-    select.appendChild(newRoom);
     const empty=document.createElement("option");
     empty.value="";
     empty.textContent=currentInvoiceProjectId ? "Choose location" : "Choose project first";
@@ -471,6 +465,10 @@ function refreshLocationSelect(select,currentValue=""){
         current.selected=true;
         select.appendChild(current);
     }
+    const newRoom=document.createElement("option");
+    newRoom.value="__new_room__";
+    newRoom.textContent="NEW ROOM";
+    select.appendChild(newRoom);
 }
 function openNewRoomModal(select){
     pendingLocationSelect=select;
@@ -684,13 +682,7 @@ function appendCatalogOption(item, targetSelect){
         option.dataset.type=item.item_type||"part";
         const typeLabel=option.dataset.type==="service"?" (Labor)":"";
         option.textContent=[`${item.item_name||""}${typeLabel}`,item.brand,item.item_model].filter(Boolean).join(" - ");
-        const newText=option.textContent.toLowerCase();
-        const before=Array.from(select.options).find(existing=>{
-            if(existing.value==="__new__"||existing.value==="")return false;
-            return existing.textContent.toLowerCase().localeCompare(newText)>0;
-        });
-        if(before)select.insertBefore(option,before);
-        else select.appendChild(option);
+        select.appendChild(option);
     };
     document.querySelectorAll(".lineItemSelect").forEach(addOptionToSelect);
     if(lineTemplate&&lineTemplate.content){
