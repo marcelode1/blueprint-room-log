@@ -8380,6 +8380,53 @@ def delete_project_file(project_id, file_id):
     return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=dir_id))
 
 
+@app.route("/project/<int:project_id>/files/<int:file_id>/move", methods=["POST"])
+@admin_required
+def move_project_file(project_id, file_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not file_row:
+        conn.close()
+        flash("Project file not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+    dest_kind = request.form.get("dest_kind", "")
+    if dest_kind == "root":
+        new_key = request.form.get("dest_key", "").strip()
+        if new_key not in valid_project_folder_keys():
+            conn.close()
+            flash("Destination folder not found.")
+            return redirect(url_for("project_files", project_id=project_id, folder=file_row.get("folder_key")))
+        new_folder_id = None
+    elif dest_kind == "folder":
+        dest_folder_id = request.form.get("dest_folder_id", type=int)
+        dest_folder = load_project_folder(conn, project_id, dest_folder_id)
+        if not dest_folder:
+            conn.close()
+            flash("Destination folder not found.")
+            return redirect(url_for("project_files", project_id=project_id, folder=file_row.get("folder_key")))
+        new_folder_id = dest_folder_id
+        new_key = dest_folder["folder_key"]
+    else:
+        conn.close()
+        flash("Choose where to move the file.")
+        return redirect(url_for("project_files", project_id=project_id, folder=file_row.get("folder_key")))
+    conn.execute(
+        "UPDATE project_files SET folder_key = %s, folder_id = %s WHERE id = %s",
+        (new_key, new_folder_id, file_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("File moved.")
+    return redirect(url_for("project_files", project_id=project_id, folder=new_key, dir=new_folder_id or None))
+
+
 
 
 @app.route("/project/<int:project_id>/blueprints/add", methods=["POST"])

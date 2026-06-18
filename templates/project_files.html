@@ -40,28 +40,29 @@
             </div>
 
             {% if current_files %}
-                <div class="projectFileList">
+                <div class="pfFileTable">
+                    <div class="pfFileHead">
+                        <div>File Name</div>
+                        <div>Uploaded Date</div>
+                        <div></div>
+                    </div>
                     {% for file in current_files %}
-                        <div class="projectFileRow">
-                            <div class="projectFileIcon" aria-hidden="true">{{ (file.original_filename or 'F')[:1]|upper }}</div>
-                            <div class="projectFileMeta">
-                                <strong>{{ file.original_filename or 'Project file' }}</strong>
-                                <span>
-                                    {{ format_file_size(file.file_size) }}
-                                    {% if file.uploaded_by_name %} - Uploaded by {{ file.uploaded_by_name }}{% endif %}
-                                    {% if file.created_at %} - {{ format_datetime(file.created_at) }}{% endif %}
-                                </span>
+                        <div class="pfFileRow"
+                            data-id="{{ file.id }}"
+                            data-name="{{ file.original_filename or 'Project file' }}"
+                            data-url="{{ url_for('storage_file', storage_path=file.storage_path) }}"
+                            data-key="{{ selected_folder.key }}"
+                            {% if current_dir %}data-dir="{{ current_dir.id }}"{% endif %}>
+                            <div class="pfFileName">
+                                <span class="pfFileIcon" aria-hidden="true">📄</span>
+                                <span class="pfFileNameText">{{ file.original_filename or 'Project file' }}</span>
                             </div>
-                            <div class="projectFileActions">
-                                <a class="btn-link btn-secondary" target="_blank" rel="noopener" href="{{ url_for('storage_file', storage_path=file.storage_path) }}">Open</a>
-                                {% if is_main_admin() %}
-                                    <form method="post" action="{{ url_for('delete_project_file', project_id=project.id, file_id=file.id) }}" onsubmit="return confirm('Remove this file from ProjectONus?');">
-                                        <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
-                                        {% if current_dir %}<input type="hidden" name="dir" value="{{ current_dir.id }}">{% endif %}
-                                        <button type="submit" class="btn-danger">Delete</button>
-                                    </form>
-                                {% endif %}
-                            </div>
+                            <div class="pfFileDate">{% if file.created_at %}{{ format_datetime(file.created_at) }}{% else %}-{% endif %}</div>
+                            {% if is_main_admin() %}
+                                <button type="button" class="pfKebab pfFileKebab" title="File options">&#8942;</button>
+                            {% else %}
+                                <div></div>
+                            {% endif %}
                         </div>
                     {% endfor %}
                 </div>
@@ -101,11 +102,11 @@
 
 <style>
 .projectFileExplorer{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}
-.pfTree,.pfTree ul{list-style:none;margin:0;padding:0}.pfTree ul{margin-left:0}.pfNodeRow{display:flex;align-items:center;gap:4px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}.pfNodeRow:hover{background:rgba(37,99,235,.08)}.pfNodeRow.active{background:var(--primary);color:#fff}.pfNodeRow.active .pfNodeCount{background:#fff;color:var(--primary)}.pfCaret{width:18px;flex:0 0 18px;text-align:center;color:var(--muted);font-size:.8rem;transition:transform .12s ease}.pfCaret.open{transform:rotate(90deg)}.pfCaret.empty{visibility:hidden}.pfNodeIcon{flex:0 0 auto}.pfNodeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.pfNodeCount{flex:0 0 auto;min-width:24px;text-align:center;border-radius:999px;padding:1px 7px;font-size:.8rem;color:var(--muted);background:var(--card);border:1px solid var(--border)}.pfKebab{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;font-size:1.1rem;line-height:1;padding:2px 6px;border-radius:6px}.pfKebab:hover{background:rgba(0,0,0,.12)}.pfChildren{margin-left:14px;border-left:1px solid var(--border)}
+.pfTree,.pfTree ul{list-style:none;margin:0;padding:0}.pfTree ul{margin-left:0}.pfNodeRow{display:flex;align-items:center;gap:4px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}.pfNodeRow:hover{background:rgba(37,99,235,.08)}.pfNodeRow.active{background:var(--primary);color:#fff}.pfNodeRow.active .pfNodeCount{background:#fff;color:var(--primary)}.pfCaret{width:18px;flex:0 0 18px;text-align:center;color:var(--muted);font-size:.8rem;transition:transform .12s ease}.pfCaret.open{transform:rotate(90deg)}.pfCaret.empty{visibility:hidden}.pfNodeIcon{flex:0 0 auto}.pfNodeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.pfNodeCount{flex:0 0 auto;min-width:24px;text-align:center;border-radius:999px;padding:1px 7px;font-size:.8rem;color:var(--muted);background:var(--card);border:1px solid var(--border)}.pfKebab{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;font-size:1.1rem;line-height:1;padding:2px 6px;border-radius:6px}.pfKebab:hover{background:rgba(0,0,0,.12)}.pfChildren{margin-left:24px;padding-left:4px;border-left:2px solid var(--border)}
 .pfMenu{position:fixed;z-index:1000;min-width:190px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:6px;max-height:70vh;overflow:auto}.pfMenuBackdrop{position:fixed;inset:0;z-index:999}.pfMenu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);padding:9px 12px;border-radius:6px;cursor:pointer;font-size:.95rem;margin:0}.pfMenu button:hover{background:rgba(37,99,235,.12)}.pfMenu .pfMenuDanger{color:#dc2626}.pfMenuLabel{padding:6px 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}.pfMenuSep{height:1px;background:var(--border);margin:6px 4px}
 .projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:6px;border-top:1px solid var(--border);padding-top:14px}
-.projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
-@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
+.pfFileTable{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px}.pfFileHead,.pfFileRow{display:grid;grid-template-columns:1fr 200px 42px;gap:10px;align-items:center;padding:10px 12px}.pfFileHead{background:rgba(255,255,255,.04);font-weight:800;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);border-bottom:1px solid var(--border)}.pfFileRow{border-bottom:1px solid var(--border);cursor:pointer}.pfFileRow:last-child{border-bottom:0}.pfFileRow:hover{background:rgba(37,99,235,.08)}.pfFileName{display:flex;align-items:center;gap:8px;min-width:0}.pfFileIcon{flex:0 0 auto}.pfFileNameText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.pfFileDate{color:var(--muted);font-size:.92rem;white-space:nowrap}.pfFileKebab{justify-self:end}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
+@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.pfNodeName{white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word}.pfNodeRow{padding:11px 10px}.pfFileHead{display:none}.pfFileRow{grid-template-columns:1fr 42px}.pfFileName{grid-column:1;grid-row:1}.pfFileDate{grid-column:1;grid-row:2;margin-top:2px}.pfFileKebab{grid-column:2;grid-row:1/3;align-self:center}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
 </style>
 
 <script>
@@ -326,6 +327,63 @@ window.PF = {
         menuEl.style.left = Math.max(8,left) + "px";
         menuEl.style.top = Math.max(8,top) + "px";
     }
+
+    // ---- File rows: left-click opens, right-click / kebab shows menu ----
+    function fileOpen(url){ window.open(url, "_blank", "noopener"); }
+    function openFileMenu(file, x, y){
+        menuEl.innerHTML = "";
+        menuEl.appendChild(menuLabel(file.name));
+        menuEl.appendChild(menuButton("Open", ()=>{ closeMenu(); fileOpen(file.url); }));
+        menuEl.appendChild(menuButton("Move To…", ()=> showFileMoveMenu(file, x, y)));
+        menuEl.appendChild(menuSep());
+        menuEl.appendChild(menuButton("Delete", ()=>{
+            closeMenu();
+            if(!window.confirm('Remove "'+file.name+'" from ProjectONus?')) return;
+            postForm("/project/"+PF.projectId+"/files/"+file.id+"/delete", {folder_key:file.key, dir:file.dir});
+        }, true));
+        positionMenu(x, y);
+    }
+    function showFileMoveMenu(file, x, y){
+        menuEl.innerHTML = "";
+        menuEl.appendChild(menuLabel("Move “"+file.name+"” to"));
+        const curDir = file.dir ? parseInt(file.dir, 10) : null;
+        PF.topFolders.forEach(t=>{
+            if(!curDir && file.key===t.key) return; // already at this root
+            menuEl.appendChild(menuButton(t.label, ()=>{
+                closeMenu();
+                postForm("/project/"+PF.projectId+"/files/"+file.id+"/move", {dest_kind:"root", dest_key:t.key});
+            }));
+        });
+        const candidates = PF.folders
+            .filter(f=>f.id!==curDir)
+            .sort((a,b)=>folderPath(a).toLowerCase().localeCompare(folderPath(b).toLowerCase()));
+        if(candidates.length){
+            menuEl.appendChild(menuSep());
+            menuEl.appendChild(menuLabel("Into a subfolder"));
+            candidates.forEach(f=>{
+                menuEl.appendChild(menuButton(folderPath(f), ()=>{
+                    closeMenu();
+                    postForm("/project/"+PF.projectId+"/files/"+file.id+"/move", {dest_kind:"folder", dest_folder_id:f.id});
+                }));
+            });
+        }
+        positionMenu(x, y);
+    }
+    document.querySelectorAll(".pfFileRow").forEach(row=>{
+        const data = {
+            id: row.getAttribute("data-id"),
+            name: row.getAttribute("data-name"),
+            url: row.getAttribute("data-url"),
+            key: row.getAttribute("data-key"),
+            dir: row.getAttribute("data-dir") || ""
+        };
+        row.addEventListener("click", e=>{ if(e.target.closest(".pfKebab")) return; fileOpen(data.url); });
+        if(PF.isAdmin){
+            row.addEventListener("contextmenu", e=>{ e.preventDefault(); openFileMenu(data, e.clientX, e.clientY); });
+            const kebab = row.querySelector(".pfFileKebab");
+            if(kebab) kebab.addEventListener("click", e=>{ e.stopPropagation(); const r=kebab.getBoundingClientRect(); openFileMenu(data, r.left, r.bottom); });
+        }
+    });
 })();
 
 // ---- Upload drop zone ----
