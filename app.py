@@ -2428,14 +2428,20 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
 
     def box_text(x, y_pos, width, value, size=8, align=0, bold=False):
         font = "hebo" if bold else "helv"
-        page.insert_textbox(
-            fitz.Rect(x, y_pos - size - 1, x + width, y_pos + 3),
-            str(value or ""),
-            fontsize=size,
-            fontname=font,
-            color=(0.08, 0.12, 0.2),
-            align=align,
-        )
+        s = str(value or "")
+        if not s:
+            return
+        try:
+            text_w = fitz.get_text_length(s, fontname=font, fontsize=size)
+        except Exception:
+            text_w = len(s) * size * 0.5
+        if align == fitz.TEXT_ALIGN_RIGHT:
+            draw_x = x + width - text_w
+        elif align == fitz.TEXT_ALIGN_CENTER:
+            draw_x = x + (width - text_w) / 2
+        else:
+            draw_x = x
+        page.insert_text((draw_x, y_pos), s, fontsize=size, fontname=font, color=(0.08, 0.12, 0.2))
 
     def wrapped_lines(value, width, size=8):
         all_lines = []
