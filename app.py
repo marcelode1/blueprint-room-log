@@ -2504,8 +2504,12 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
             continue
         text(382, meta_y, label, 6.4)
         if label == "TERMS":
-            next_y = wrapped(444, meta_y, value, 132, 7.4, 8.4)
-            meta_y = max(meta_y + 13, next_y + 1)
+            term_lines = wrapped_lines(value, 132, 7.8)
+            line_y = meta_y
+            for term_line in term_lines:
+                box_text(444, line_y, 132, term_line, 7.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
+                line_y += 10
+            meta_y = max(meta_y + 13, line_y - 10 + 13)
         else:
             box_text(444, meta_y, 132, value, 7.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
             meta_y += 13
