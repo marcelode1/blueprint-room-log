@@ -12,7 +12,7 @@
         <div class="projectFileRoot">Project Files</div>
         <div class="projectFileFolders">
             {% for folder in project_file_folders %}
-                <a class="projectFileFolder {% if folder.key == selected_folder_key %}active{% endif %}" href="{{ url_for('project_files', project_id=project.id, folder=folder.key) }}">
+                <a class="projectFileFolder {% if folder.key == selected_folder_key and not current_dir %}active{% endif %}" href="{{ url_for('project_files', project_id=project.id, folder=folder.key) }}">
                     <span>{{ folder.label }}</span>
                     <small>{{ folder_file_counts.get(folder.key, 0) }}</small>
                 </a>
@@ -22,20 +22,68 @@
 
     <section class="projectFilePane">
         {% if selected_folder %}
-            {% set files = files_by_folder.get(selected_folder.key, []) %}
             <div class="projectFilePaneHeader">
-                <div>
-                    <h3>{{ selected_folder.label }}</h3>
-                    <p class="muted">{{ files|length }} file{% if files|length != 1 %}s{% endif %} in this folder</p>
+                <div class="projectFileBreadcrumb">
+                    <a href="{{ url_for('project_files', project_id=project.id, folder=selected_folder.key) }}">{{ selected_folder.label }}</a>
+                    {% for crumb in breadcrumb %}
+                        <span class="projectFileCrumbSep">/</span>
+                        {% if loop.last %}
+                            <span class="projectFileCrumbCurrent">{{ crumb.name }}</span>
+                        {% else %}
+                            <a href="{{ url_for('project_files', project_id=project.id, folder=selected_folder.key, dir=crumb.id) }}">{{ crumb.name }}</a>
+                        {% endif %}
+                    {% endfor %}
                 </div>
                 {% if is_main_admin() %}
                     <a class="btn-link btn-secondary" href="{{ url_for('settings', tab='permissions') }}">Manage Access</a>
                 {% endif %}
             </div>
 
-            {% if files %}
+            {% if is_main_admin() %}
+                <form method="post" action="{{ url_for('create_project_folder', project_id=project.id) }}" class="projectFileNewFolder">
+                    <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
+                    {% if current_dir %}<input type="hidden" name="parent_id" value="{{ current_dir.id }}">{% endif %}
+                    <input type="text" name="name" placeholder="New folder name" maxlength="120" required>
+                    <button type="submit" class="btn-secondary">+ New Folder</button>
+                </form>
+            {% endif %}
+
+            {% if subfolders %}
+                <div class="projectFolderGrid">
+                    {% for folder in subfolders %}
+                        <div class="projectFolderCard">
+                            <a class="projectFolderOpen" href="{{ url_for('project_files', project_id=project.id, folder=selected_folder.key, dir=folder.id) }}">
+                                <span class="projectFolderIcon" aria-hidden="true">📁</span>
+                                <span class="projectFolderInfo">
+                                    <strong>{{ folder.name }}</strong>
+                                    <small>{{ folder.subfolder_count }} folder{% if folder.subfolder_count != 1 %}s{% endif %} · {{ folder.file_count }} file{% if folder.file_count != 1 %}s{% endif %}</small>
+                                </span>
+                            </a>
+                            {% if is_main_admin() %}
+                                <div class="projectFolderActions">
+                                    <button type="button" class="btn-link btn-secondary projectFolderRename"
+                                        data-action="{{ url_for('rename_project_folder', project_id=project.id, folder_id=folder.id) }}"
+                                        data-name="{{ folder.name }}">Rename</button>
+                                    <form method="post" action="{{ url_for('delete_project_folder', project_id=project.id, folder_id=folder.id) }}" onsubmit="return confirm('Delete this folder and everything inside it?');">
+                                        <button type="submit" class="btn-danger">Delete</button>
+                                    </form>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="projectFilePaneHeader projectFileFilesHeader">
+                <div>
+                    <h3>{% if current_dir %}{{ current_dir.name }}{% else %}{{ selected_folder.label }}{% endif %}</h3>
+                    <p class="muted">{{ current_files|length }} file{% if current_files|length != 1 %}s{% endif %} in this folder</p>
+                </div>
+            </div>
+
+            {% if current_files %}
                 <div class="projectFileList">
-                    {% for file in files %}
+                    {% for file in current_files %}
                         <div class="projectFileRow">
                             <div class="projectFileIcon" aria-hidden="true">{{ (file.original_filename or 'F')[:1]|upper }}</div>
                             <div class="projectFileMeta">
@@ -51,6 +99,7 @@
                                 {% if is_main_admin() %}
                                     <form method="post" action="{{ url_for('delete_project_file', project_id=project.id, file_id=file.id) }}" onsubmit="return confirm('Remove this file from ProjectONus?');">
                                         <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
+                                        {% if current_dir %}<input type="hidden" name="dir" value="{{ current_dir.id }}">{% endif %}
                                         <button type="submit" class="btn-danger">Delete</button>
                                     </form>
                                 {% endif %}
@@ -58,17 +107,18 @@
                         </div>
                     {% endfor %}
                 </div>
-            {% else %}
+            {% elif not subfolders %}
                 <div class="projectFileEmpty">
-                    <strong>No files saved here yet.</strong>
-                    <p class="muted">Use the upload area below to add files to this folder.</p>
+                    <strong>This folder is empty.</strong>
+                    <p class="muted">{% if is_main_admin() %}Create a subfolder above or upload files below.{% else %}No files saved here yet.{% endif %}</p>
                 </div>
             {% endif %}
 
             {% if is_main_admin() %}
                 <form method="post" enctype="multipart/form-data" class="projectFileUploadBox">
                     <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
-                    <p class="projectFileUploadTitle">Add Files to {{ selected_folder.label }}</p>
+                    {% if current_dir %}<input type="hidden" name="dir" value="{{ current_dir.id }}">{% endif %}
+                    <p class="projectFileUploadTitle">Add Files to {% if current_dir %}{{ current_dir.name }}{% else %}{{ selected_folder.label }}{% endif %}</p>
                     <div class="projectFileDropZone" id="projectFileDropZone" tabindex="0" role="button" aria-controls="projectFilesInput">
                         <strong>Drag files here</strong>
                         <span>or</span>
@@ -89,8 +139,11 @@
 </div>
 
 <style>
-.projectFileExplorer{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}.projectFileFolders{display:grid}.projectFileFolder{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 16px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);font-weight:700}.projectFileFolder:last-child{border-bottom:0}.projectFileFolder small{min-width:32px;text-align:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--card)}.projectFileFolder.active{background:var(--primary);color:white}.projectFileFolder.active small{background:white;color:var(--primary);border-color:white}.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
-@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileTree{border:0;background:transparent}.projectFileRoot{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;background:rgba(255,255,255,.03)}.projectFileFolders{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.projectFileFolder{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px}.projectFilePaneHeader{display:grid}.projectFilePaneHeader .btn-link{width:100%;margin:0}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
+.projectFileExplorer{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}.projectFileFolders{display:grid}.projectFileFolder{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 16px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);font-weight:700}.projectFileFolder:last-child{border-bottom:0}.projectFileFolder small{min-width:32px;text-align:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--card)}.projectFileFolder.active{background:var(--primary);color:white}.projectFileFolder.active small{background:white;color:var(--primary);border-color:white}.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:20px;border-top:1px solid var(--border);padding-top:14px}
+.projectFileNewFolder{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.projectFileNewFolder input[type=text]{flex:1;min-width:180px;max-width:340px;margin:0}.projectFileNewFolder button{margin:0;width:auto}
+.projectFolderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:8px}.projectFolderCard{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:8px}.projectFolderOpen{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}.projectFolderIcon{font-size:1.6rem;line-height:1}.projectFolderInfo{min-width:0}.projectFolderInfo strong{display:block;overflow-wrap:anywhere}.projectFolderInfo small{display:block;color:var(--muted);margin-top:2px}.projectFolderActions{display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px}.projectFolderActions form{margin:0}.projectFolderActions .btn-link,.projectFolderActions button{margin:0;width:auto}
+.projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
+@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileTree{border:0;background:transparent}.projectFileRoot{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;background:rgba(255,255,255,.03)}.projectFileFolders{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.projectFileFolder{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px}.projectFolderGrid{grid-template-columns:1fr}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
 </style>
 
 <script>
@@ -142,5 +195,24 @@ if(projectFileDropZone&&projectFilesInput){
         updateProjectFilesChosen();
     });
 }
+document.querySelectorAll(".projectFolderRename").forEach(button=>{
+    button.addEventListener("click",()=>{
+        const current=button.getAttribute("data-name")||"";
+        const next=window.prompt("Rename folder",current);
+        if(next===null)return;
+        const name=next.trim();
+        if(!name)return;
+        const form=document.createElement("form");
+        form.method="post";
+        form.action=button.getAttribute("data-action");
+        const input=document.createElement("input");
+        input.type="hidden";
+        input.name="name";
+        input.value=name;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+    });
+});
 </script>
 {% endblock %}

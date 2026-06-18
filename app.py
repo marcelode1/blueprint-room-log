@@ -1098,6 +1098,10 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_file_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, provider TEXT, folder_url TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT, UNIQUE(project_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_file_permissions (project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, can_view BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (project_id, user_id, folder_key))",
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_folders (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, parent_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE, name TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS folder_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE",
+        "CREATE INDEX IF NOT EXISTS project_folders_lookup_idx ON project_folders(project_id, folder_key, parent_id)",
+        "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
@@ -7992,6 +7996,36 @@ def project(project_id):
     )
 
 
+def valid_project_folder_keys():
+    return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+
+
+def load_project_folder(conn, project_id, folder_id):
+    if not folder_id:
+        return None
+    return conn.execute(
+        "SELECT * FROM project_folders WHERE id = %s AND project_id = %s",
+        (folder_id, project_id)
+    ).fetchone()
+
+
+def project_folder_breadcrumb(conn, project_id, folder):
+    chain = []
+    current = folder
+    guard = 0
+    while current and guard < 100:
+        chain.append(current)
+        if not current.get("parent_id"):
+            break
+        current = conn.execute(
+            "SELECT * FROM project_folders WHERE id = %s AND project_id = %s",
+            (current["parent_id"], project_id)
+        ).fetchone()
+        guard += 1
+    chain.reverse()
+    return chain
+
+
 @app.route("/project/<int:project_id>/files", methods=["GET", "POST"])
 @login_required
 def project_files(project_id):
@@ -8020,11 +8054,16 @@ def project_files(project_id):
         uploaded_count = 0
         skipped_files = []
         target_folder_key = request.form.get("folder_key", "").strip()
-        valid_folder_keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
-        if target_folder_key not in valid_folder_keys:
+        if target_folder_key not in valid_project_folder_keys():
             conn.close()
             flash("File folder not found.")
             return redirect(url_for("project_files", project_id=project_id))
+        target_dir_id = request.form.get("dir", type=int)
+        target_dir = load_project_folder(conn, project_id, target_dir_id)
+        if target_dir_id and (not target_dir or target_dir.get("folder_key") != target_folder_key):
+            conn.close()
+            flash("Subfolder not found.")
+            return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key))
 
         uploads = request.files.getlist("project_files")
         if not uploads:
@@ -8046,10 +8085,10 @@ def project_files(project_id):
             conn.execute(
                 """
                 INSERT INTO project_files
-                (project_id, folder_key, storage_path, original_filename, file_size, uploaded_by, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (project_id, target_folder_key, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
+                (project_id, target_folder_key, target_dir_id or None, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
             )
             uploaded_count += 1
         conn.commit()
@@ -8062,23 +8101,8 @@ def project_files(project_id):
         if skipped_files:
             message += " Unsupported file(s) skipped: " + ", ".join(skipped_files[:5])
         flash(message)
-        return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key))
+        return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key, dir=target_dir_id or None))
 
-    file_rows = conn.execute(
-        """
-        SELECT project_files.*, users.name AS uploaded_by_name
-        FROM project_files
-        LEFT JOIN users ON project_files.uploaded_by = users.id
-        WHERE project_files.project_id = %s
-        ORDER BY project_files.created_at DESC, project_files.id DESC
-        """,
-        (project_id,)
-    ).fetchall()
-    conn.close()
-    files_by_folder = {}
-    for row in file_rows:
-        if row["folder_key"] in allowed_folder_keys:
-            files_by_folder.setdefault(row["folder_key"], []).append(row)
     visible_folders = [
         folder for folder in PROJECT_FILE_FOLDERS
         if folder["key"] in allowed_folder_keys
@@ -8089,19 +8113,167 @@ def project_files(project_id):
     elif selected_folder_key not in {folder["key"] for folder in visible_folders}:
         selected_folder_key = visible_folders[0]["key"]
     selected_folder = next((folder for folder in visible_folders if folder["key"] == selected_folder_key), None)
-    folder_file_counts = {
-        folder["key"]: len(files_by_folder.get(folder["key"], []))
-        for folder in visible_folders
-    }
+
+    # Total file count per top-level folder (across all subfolders) for the sidebar badges.
+    count_rows = conn.execute(
+        "SELECT folder_key, COUNT(*) AS n FROM project_files WHERE project_id = %s GROUP BY folder_key",
+        (project_id,)
+    ).fetchall()
+    folder_file_counts = {row["folder_key"]: row["n"] for row in count_rows}
+
+    current_dir = None
+    breadcrumb = []
+    subfolders = []
+    current_files = []
+    if selected_folder:
+        current_dir_id = request.args.get("dir", type=int)
+        current_dir = load_project_folder(conn, project_id, current_dir_id)
+        if current_dir and current_dir.get("folder_key") != selected_folder_key:
+            current_dir = None
+        breadcrumb = project_folder_breadcrumb(conn, project_id, current_dir) if current_dir else []
+        parent_clause = "parent_id = %s" if current_dir else "parent_id IS NULL"
+        params = [project_id, selected_folder_key]
+        if current_dir:
+            params.append(current_dir["id"])
+        subfolders = conn.execute(
+            f"""
+            SELECT pf.*, (
+                SELECT COUNT(*) FROM project_files
+                WHERE project_files.folder_id = pf.id
+            ) AS file_count, (
+                SELECT COUNT(*) FROM project_folders sub
+                WHERE sub.parent_id = pf.id
+            ) AS subfolder_count
+            FROM project_folders pf
+            WHERE pf.project_id = %s AND pf.folder_key = %s AND {parent_clause}
+            ORDER BY LOWER(pf.name)
+            """,
+            tuple(params)
+        ).fetchall()
+        file_parent_clause = "project_files.folder_id = %s" if current_dir else "project_files.folder_id IS NULL"
+        file_params = [project_id, selected_folder_key]
+        if current_dir:
+            file_params.append(current_dir["id"])
+        current_files = conn.execute(
+            f"""
+            SELECT project_files.*, users.name AS uploaded_by_name
+            FROM project_files
+            LEFT JOIN users ON project_files.uploaded_by = users.id
+            WHERE project_files.project_id = %s AND project_files.folder_key = %s AND {file_parent_clause}
+            ORDER BY project_files.created_at DESC, project_files.id DESC
+            """,
+            tuple(file_params)
+        ).fetchall()
+    conn.close()
     return render_template(
         "project_files.html",
         project=project,
         project_file_folders=visible_folders,
-        files_by_folder=files_by_folder,
         selected_folder=selected_folder,
         selected_folder_key=selected_folder_key,
-        folder_file_counts=folder_file_counts
+        folder_file_counts=folder_file_counts,
+        current_dir=current_dir,
+        breadcrumb=breadcrumb,
+        subfolders=subfolders,
+        current_files=current_files
     )
+
+
+@app.route("/project/<int:project_id>/files/folder/create", methods=["POST"])
+@admin_required
+def create_project_folder(project_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    folder_key = request.form.get("folder_key", "").strip()
+    if folder_key not in valid_project_folder_keys():
+        conn.close()
+        flash("File folder not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+    parent_id = request.form.get("parent_id", type=int)
+    parent = load_project_folder(conn, project_id, parent_id)
+    if parent_id and (not parent or parent.get("folder_key") != folder_key):
+        conn.close()
+        flash("Subfolder not found.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+    name = (request.form.get("name", "") or "").strip()
+    if not name:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+    name = name[:120]
+    exists = conn.execute(
+        f"""
+        SELECT 1 FROM project_folders
+        WHERE project_id = %s AND folder_key = %s AND {'parent_id = %s' if parent_id else 'parent_id IS NULL'} AND LOWER(name) = LOWER(%s)
+        """,
+        tuple([project_id, folder_key] + ([parent_id, name] if parent_id else [name]))
+    ).fetchone()
+    if exists:
+        conn.close()
+        flash("A folder with that name already exists here.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+    conn.execute(
+        """
+        INSERT INTO project_folders (project_id, folder_key, parent_id, name, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (project_id, folder_key, parent_id or None, name, session.get("user_id"), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{name}" created.')
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+
+
+@app.route("/project/<int:project_id>/files/folder/<int:folder_id>/rename", methods=["POST"])
+@admin_required
+def rename_project_folder(project_id, folder_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    folder = load_project_folder(conn, project_id, folder_id)
+    if not folder:
+        conn.close()
+        flash("Folder not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+    name = (request.form.get("name", "") or "").strip()[:120]
+    if not name:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"], dir=folder.get("parent_id") or None))
+    conn.execute("UPDATE project_folders SET name = %s WHERE id = %s", (name, folder_id))
+    conn.commit()
+    conn.close()
+    flash("Folder renamed.")
+    return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"], dir=folder.get("parent_id") or None))
+
+
+@app.route("/project/<int:project_id>/files/folder/<int:folder_id>/delete", methods=["POST"])
+@admin_required
+def delete_project_folder(project_id, folder_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    folder = load_project_folder(conn, project_id, folder_id)
+    if not folder:
+        conn.close()
+        flash("Folder not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+    folder_key = folder["folder_key"]
+    parent_id = folder.get("parent_id")
+    # ON DELETE CASCADE removes nested subfolders and their files.
+    conn.execute("DELETE FROM project_folders WHERE id = %s", (folder_id,))
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{folder["name"]}" and its contents were deleted.')
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
 
 
 @app.route("/project/<int:project_id>/files/<int:file_id>/delete", methods=["POST"])
@@ -8121,11 +8293,12 @@ def delete_project_file(project_id, file_id):
         flash("Project file not found.")
         return redirect(url_for("project_files", project_id=project_id))
     folder_key = request.form.get("folder_key") or file_row.get("folder_key") or ""
+    dir_id = request.form.get("dir", type=int) or file_row.get("folder_id") or None
     conn.execute("DELETE FROM project_files WHERE id = %s", (file_id,))
     conn.commit()
     conn.close()
     flash("Project file removed from ProjectONus.")
-    return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=dir_id))
 
 
 
