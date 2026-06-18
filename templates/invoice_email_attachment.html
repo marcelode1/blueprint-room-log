@@ -4,8 +4,9 @@
     <meta charset="utf-8">
     <title>{{ invoice.invoice_number }}</title>
     <style>
-        body{font-family:Arial,sans-serif;background:#fff;color:#172033;margin:0;padding:20px}
-        .invoicePaper{max-width:920px;margin:0 auto;background:#fff;color:#172033}
+        @page{size:letter;margin:.35in}
+        body{font-family:Arial,sans-serif;background:#fff;color:#172033;margin:0;padding:0}
+        .invoicePaper{width:920px;max-width:920px;margin:0 auto;background:#fff;color:#172033;padding:20px}
         .invoiceHeader{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:34px;align-items:start;border-bottom:2px solid #172033;padding-bottom:22px}
         .invoiceCompanyBox{line-height:1.35}
         .invoiceLogo{max-width:360px;max-height:216px;object-fit:contain;margin-bottom:14px}
@@ -19,7 +20,7 @@
         .invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin:42px 0 24px;align-items:start}
         .invoiceBillTo h3,.invoiceNotes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
         .invoiceLinesTable{width:100%;border-collapse:collapse}
-        .invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}
+        .invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top;font-size:11px}
         .invoiceLinesTable th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}
         .invoiceSummary{display:grid;grid-template-columns:1fr 390px;gap:34px;margin-top:18px;align-items:start}
         .invoiceTotals{border-top:2px solid #172033;padding:10px 0 0;background:#fff;font-size:13px}
@@ -32,8 +33,8 @@
     <div class="invoicePaper">
         <div class="invoiceHeader">
             <div class="invoiceCompanyBox">
-                {% set logo = get_app_setting("company_logo") %}
-                {% if logo %}<img class="invoiceLogo" src="{{ url_for('storage_file', storage_path=logo, _external=True) }}" alt="Company Logo">{% endif %}
+                {% set logo = invoice_logo_src or '' %}
+                {% if logo %}<img class="invoiceLogo" src="{{ logo }}" alt="Company Logo">{% endif %}
                 {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
                 {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
                 {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}

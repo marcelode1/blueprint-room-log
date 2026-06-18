@@ -2317,7 +2317,65 @@ def invoice_email_body(invoice, company):
     return "\n".join(lines)
 
 
-def invoice_pdf_attachment(invoice, lines, company):
+def invoice_logo_data_uri():
+    logo_path = get_app_setting("company_logo", "")
+    if not logo_path:
+        return ""
+    logo_bytes = download_storage_file(logo_path)
+    if not logo_bytes:
+        return ""
+    mime_type = mimetypes.guess_type(logo_path)[0] or "image/png"
+    return f"data:{mime_type};base64,{base64.b64encode(logo_bytes).decode('ascii')}"
+
+
+def invoice_browser_pdf_attachment(invoice, lines, company):
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:
+        return None, f"Browser PDF support is not installed. {e}"
+
+    invoice_number = secure_filename(invoice.get("invoice_number") or "invoice-preview") or "invoice"
+    html = render_template(
+        "invoice_email_attachment.html",
+        invoice=invoice,
+        lines=lines,
+        company=company,
+        invoice_logo_src=invoice_logo_data_uri(),
+        totals_breakdown=invoice_totals_breakdown(invoice, lines),
+    )
+    invoice_url = external_url("invoice_view", invoice_id=invoice["id"]) if invoice.get("id") else ""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+            page = browser.new_page(viewport={"width": 920, "height": 1200})
+            page.emulate_media(media="print")
+            page.set_content(html, wait_until="networkidle")
+            pdf_bytes = page.pdf(
+                format="Letter",
+                print_background=True,
+                display_header_footer=True,
+                margin={"top": "0.35in", "right": "0.35in", "bottom": "0.35in", "left": "0.35in"},
+                header_template="""
+                    <div style="width:100%;font-size:8px;color:#111;padding:0 18px;font-family:Arial,sans-serif;">
+                        <span class="date"></span>
+                        <span style="position:absolute;left:0;right:0;text-align:center;">ProjectONus</span>
+                    </div>
+                """,
+                footer_template=f"""
+                    <div style="width:100%;font-size:8px;color:#111;padding:0 18px;font-family:Arial,sans-serif;">
+                        <span>{invoice_url}</span>
+                        <span style="float:right;"><span class="pageNumber"></span>/<span class="totalPages"></span></span>
+                    </div>
+                """,
+                prefer_css_page_size=True,
+            )
+            browser.close()
+    except Exception as e:
+        return None, f"Browser PDF could not be created. {e}"
+    return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
+
+
+def manual_invoice_pdf_attachment(invoice, lines, company):
     if fitz is None:
         return None, "PDF support is not available on this server."
     doc = fitz.open()
@@ -2531,6 +2589,16 @@ def invoice_pdf_attachment(invoice, lines, company):
     doc.close()
     invoice_number = secure_filename(invoice.get("invoice_number") or "invoice-preview") or "invoice"
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
+
+
+def invoice_pdf_attachment(invoice, lines, company):
+    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company)
+    if attachment:
+        return attachment, ""
+    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company)
+    if fallback_attachment:
+        return fallback_attachment, ""
+    return None, error or fallback_error or "Invoice PDF could not be created."
 
 
 def email_invoice_record(conn, invoice, lines, to_email=None):
