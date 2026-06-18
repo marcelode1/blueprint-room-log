@@ -3,21 +3,14 @@
 <div class="card">
     <h2>Files</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
-    <p class="muted">Files are stored inside ProjectONus. Folder access is managed in Settings > User Permissions.</p>
+    <p class="muted">Files are stored inside ProjectONus. Folder access is managed in Settings > User Permissions.{% if is_main_admin() %} Right-click (or tap the &#8942; button) on a folder for options.{% endif %}</p>
     <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
 </div>
 
 <div class="card projectFileExplorer">
     <aside class="projectFileTree" aria-label="Project file folders">
         <div class="projectFileRoot">Project Files</div>
-        <div class="projectFileFolders">
-            {% for folder in project_file_folders %}
-                <a class="projectFileFolder {% if folder.key == selected_folder_key and not current_dir %}active{% endif %}" href="{{ url_for('project_files', project_id=project.id, folder=folder.key) }}">
-                    <span>{{ folder.label }}</span>
-                    <small>{{ folder_file_counts.get(folder.key, 0) }}</small>
-                </a>
-            {% endfor %}
-        </div>
+        <ul id="folderTree" class="pfTree"></ul>
     </aside>
 
     <section class="projectFilePane">
@@ -38,41 +31,6 @@
                     <a class="btn-link btn-secondary" href="{{ url_for('settings', tab='permissions') }}">Manage Access</a>
                 {% endif %}
             </div>
-
-            {% if is_main_admin() %}
-                <form method="post" action="{{ url_for('create_project_folder', project_id=project.id) }}" class="projectFileNewFolder">
-                    <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
-                    {% if current_dir %}<input type="hidden" name="parent_id" value="{{ current_dir.id }}">{% endif %}
-                    <input type="text" name="name" placeholder="New folder name" maxlength="120" required>
-                    <button type="submit" class="btn-secondary">+ New Folder</button>
-                </form>
-            {% endif %}
-
-            {% if subfolders %}
-                <div class="projectFolderGrid">
-                    {% for folder in subfolders %}
-                        <div class="projectFolderCard">
-                            <a class="projectFolderOpen" href="{{ url_for('project_files', project_id=project.id, folder=selected_folder.key, dir=folder.id) }}">
-                                <span class="projectFolderIcon" aria-hidden="true">📁</span>
-                                <span class="projectFolderInfo">
-                                    <strong>{{ folder.name }}</strong>
-                                    <small>{{ folder.subfolder_count }} folder{% if folder.subfolder_count != 1 %}s{% endif %} · {{ folder.file_count }} file{% if folder.file_count != 1 %}s{% endif %}</small>
-                                </span>
-                            </a>
-                            {% if is_main_admin() %}
-                                <div class="projectFolderActions">
-                                    <button type="button" class="btn-link btn-secondary projectFolderRename"
-                                        data-action="{{ url_for('rename_project_folder', project_id=project.id, folder_id=folder.id) }}"
-                                        data-name="{{ folder.name }}">Rename</button>
-                                    <form method="post" action="{{ url_for('delete_project_folder', project_id=project.id, folder_id=folder.id) }}" onsubmit="return confirm('Delete this folder and everything inside it?');">
-                                        <button type="submit" class="btn-danger">Delete</button>
-                                    </form>
-                                </div>
-                            {% endif %}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
 
             <div class="projectFilePaneHeader projectFileFilesHeader">
                 <div>
@@ -107,10 +65,10 @@
                         </div>
                     {% endfor %}
                 </div>
-            {% elif not subfolders %}
+            {% else %}
                 <div class="projectFileEmpty">
-                    <strong>This folder is empty.</strong>
-                    <p class="muted">{% if is_main_admin() %}Create a subfolder above or upload files below.{% else %}No files saved here yet.{% endif %}</p>
+                    <strong>This folder has no files.</strong>
+                    <p class="muted">{% if is_main_admin() %}Upload files below, or use a folder's menu in the tree to add a subfolder.{% else %}No files saved here yet.{% endif %}</p>
                 </div>
             {% endif %}
 
@@ -138,15 +96,239 @@
     </section>
 </div>
 
+<div id="folderMenu" class="pfMenu" role="menu" hidden></div>
+<div id="folderMenuBackdrop" class="pfMenuBackdrop" hidden></div>
+
 <style>
-.projectFileExplorer{display:grid;grid-template-columns:minmax(190px,260px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}.projectFileFolders{display:grid}.projectFileFolder{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:13px 16px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border);font-weight:700}.projectFileFolder:last-child{border-bottom:0}.projectFileFolder small{min-width:32px;text-align:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--card)}.projectFileFolder.active{background:var(--primary);color:white}.projectFileFolder.active small{background:white;color:var(--primary);border-color:white}.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:20px;border-top:1px solid var(--border);padding-top:14px}
-.projectFileNewFolder{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}.projectFileNewFolder input[type=text]{flex:1;min-width:180px;max-width:340px;margin:0}.projectFileNewFolder button{margin:0;width:auto}
-.projectFolderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:8px}.projectFolderCard{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:8px}.projectFolderOpen{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}.projectFolderIcon{font-size:1.6rem;line-height:1}.projectFolderInfo{min-width:0}.projectFolderInfo strong{display:block;overflow-wrap:anywhere}.projectFolderInfo small{display:block;color:var(--muted);margin-top:2px}.projectFolderActions{display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:8px}.projectFolderActions form{margin:0}.projectFolderActions .btn-link,.projectFolderActions button{margin:0;width:auto}
+.projectFileExplorer{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}
+.pfTree,.pfTree ul{list-style:none;margin:0;padding:0}.pfTree ul{margin-left:0}.pfNodeRow{display:flex;align-items:center;gap:4px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}.pfNodeRow:hover{background:rgba(37,99,235,.08)}.pfNodeRow.active{background:var(--primary);color:#fff}.pfNodeRow.active .pfNodeCount{background:#fff;color:var(--primary)}.pfCaret{width:18px;flex:0 0 18px;text-align:center;color:var(--muted);font-size:.8rem;transition:transform .12s ease}.pfCaret.open{transform:rotate(90deg)}.pfCaret.empty{visibility:hidden}.pfNodeIcon{flex:0 0 auto}.pfNodeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.pfNodeCount{flex:0 0 auto;min-width:24px;text-align:center;border-radius:999px;padding:1px 7px;font-size:.8rem;color:var(--muted);background:var(--card);border:1px solid var(--border)}.pfKebab{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;font-size:1.1rem;line-height:1;padding:2px 6px;border-radius:6px}.pfKebab:hover{background:rgba(0,0,0,.12)}.pfChildren{margin-left:14px;border-left:1px solid var(--border)}
+.pfMenu{position:fixed;z-index:1000;min-width:190px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:6px;max-height:70vh;overflow:auto}.pfMenuBackdrop{position:fixed;inset:0;z-index:999}.pfMenu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);padding:9px 12px;border-radius:6px;cursor:pointer;font-size:.95rem;margin:0}.pfMenu button:hover{background:rgba(37,99,235,.12)}.pfMenu .pfMenuDanger{color:#dc2626}.pfMenuLabel{padding:6px 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}.pfMenuSep{height:1px;background:var(--border);margin:6px 4px}
+.projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:6px;border-top:1px solid var(--border);padding-top:14px}
 .projectFileList{display:grid;gap:10px}.projectFileRow{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card)}.projectFileIcon{width:46px;height:46px;border-radius:8px;background:rgba(37,99,235,.12);display:grid;place-items:center;font-weight:900;color:var(--primary)}.projectFileMeta{min-width:0}.projectFileMeta strong{display:block;overflow-wrap:anywhere}.projectFileMeta span{display:block;color:var(--muted);font-size:.95rem;margin-top:3px}.projectFileActions{display:flex;gap:8px;align-items:center}.projectFileActions form{margin:0}.projectFileActions .btn-link,.projectFileActions button{margin:0;width:auto}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
-@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileTree{border:0;background:transparent}.projectFileRoot{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;background:rgba(255,255,255,.03)}.projectFileFolders{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.projectFileFolder{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:12px}.projectFolderGrid{grid-template-columns:1fr}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
+@media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.projectFileRow{grid-template-columns:40px 1fr}.projectFileIcon{width:40px;height:40px}.projectFileActions{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.projectFileActions .btn-link,.projectFileActions button{width:100%}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
 </style>
 
 <script>
+window.PF = {
+    projectId: {{ project.id|tojson }},
+    isAdmin: {{ ('true' if is_main_admin() else 'false') }},
+    topFolders: {{ project_file_folders|tojson }},
+    folderCounts: {{ folder_file_counts|tojson }},
+    folders: {{ folders_json|tojson }},
+    selectedKey: {{ selected_folder_key|tojson }},
+    currentDirId: {{ current_dir_id|tojson }}
+};
+(function(){
+    const PF = window.PF;
+    const treeEl = document.getElementById("folderTree");
+    const menuEl = document.getElementById("folderMenu");
+    const backdropEl = document.getElementById("folderMenuBackdrop");
+    if(!treeEl) return;
+
+    const childrenOf = {};
+    PF.folders.forEach(f=>{
+        const pkey = f.parent_id === null || f.parent_id === undefined ? "root:"+f.key : "id:"+f.parent_id;
+        (childrenOf[pkey] = childrenOf[pkey] || []).push(f);
+    });
+
+    function folderById(id){ return PF.folders.find(f=>f.id===id); }
+    function descendantIds(id){
+        const out = new Set([id]);
+        const stack = [id];
+        while(stack.length){
+            const cur = stack.pop();
+            (childrenOf["id:"+cur]||[]).forEach(c=>{ if(!out.has(c.id)){ out.add(c.id); stack.push(c.id); } });
+        }
+        return out;
+    }
+    function folderPath(f){
+        const parts = [f.name];
+        let p = f.parent_id;
+        while(p){ const pf = folderById(p); if(!pf) break; parts.unshift(pf.name); p = pf.parent_id; }
+        const top = PF.topFolders.find(t=>t.key===f.key);
+        parts.unshift(top ? top.label : f.key);
+        return parts.join(" / ");
+    }
+    function openUrl(key, id){
+        let u = "/project/"+PF.projectId+"/files?folder="+encodeURIComponent(key);
+        if(id) u += "&dir="+id;
+        window.location = u;
+    }
+    function postForm(action, fields){
+        const form = document.createElement("form");
+        form.method = "post"; form.action = action;
+        Object.keys(fields).forEach(k=>{
+            const i = document.createElement("input");
+            i.type = "hidden"; i.name = k; i.value = fields[k];
+            form.appendChild(i);
+        });
+        document.body.appendChild(form);
+        form.submit();
+    }
+
+    // Which nodes should start expanded: the path down to the current folder.
+    const expanded = new Set();
+    expanded.add("root:"+PF.selectedKey);
+    if(PF.currentDirId){
+        let cur = folderById(PF.currentDirId);
+        while(cur){ expanded.add("id:"+cur.id); cur = cur.parent_id ? folderById(cur.parent_id) : null; }
+    }
+
+    function makeNode(folder, key, label, count, isRoot){
+        const li = document.createElement("li");
+        const nodeKey = isRoot ? "root:"+key : "id:"+folder.id;
+        const kids = childrenOf[nodeKey] || [];
+        const row = document.createElement("div");
+        row.className = "pfNodeRow";
+        const isActive = isRoot ? (PF.selectedKey===key && !PF.currentDirId) : (PF.currentDirId===folder.id);
+        if(isActive) row.classList.add("active");
+
+        const caret = document.createElement("span");
+        caret.className = "pfCaret" + (kids.length ? "" : " empty") + (expanded.has(nodeKey) ? " open" : "");
+        caret.textContent = "▶";
+        caret.addEventListener("click", e=>{ e.stopPropagation(); toggle(nodeKey, caret, childUl); });
+        row.appendChild(caret);
+
+        const icon = document.createElement("span");
+        icon.className = "pfNodeIcon"; icon.textContent = "📁";
+        row.appendChild(icon);
+
+        const name = document.createElement("span");
+        name.className = "pfNodeName"; name.textContent = label;
+        row.appendChild(name);
+
+        const badge = document.createElement("span");
+        badge.className = "pfNodeCount"; badge.textContent = count;
+        row.appendChild(badge);
+
+        if(PF.isAdmin){
+            const kebab = document.createElement("button");
+            kebab.type = "button"; kebab.className = "pfKebab"; kebab.title = "Folder options";
+            kebab.innerHTML = "&#8942;";
+            kebab.addEventListener("click", e=>{ e.stopPropagation(); const r=kebab.getBoundingClientRect(); openMenu(folder, key, label, isRoot, r.left, r.bottom); });
+            row.appendChild(kebab);
+        }
+
+        row.addEventListener("click", ()=> openUrl(key, isRoot ? null : folder.id));
+        if(PF.isAdmin){
+            row.addEventListener("contextmenu", e=>{ e.preventDefault(); openMenu(folder, key, label, isRoot, e.clientX, e.clientY); });
+        }
+
+        li.appendChild(row);
+
+        const childUl = document.createElement("ul");
+        childUl.className = "pfChildren";
+        if(!expanded.has(nodeKey)) childUl.style.display = "none";
+        kids.slice().sort((a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase())).forEach(c=>{
+            childUl.appendChild(makeNode(c, c.key, c.name, c.file_count, false));
+        });
+        li.appendChild(childUl);
+        return li;
+    }
+
+    function toggle(nodeKey, caret, ul){
+        // 'ul' captured per-node below; re-find sibling for robustness
+        const li = caret.closest("li");
+        const childUl = li.querySelector(":scope > ul");
+        if(!childUl) return;
+        const isOpen = childUl.style.display !== "none";
+        childUl.style.display = isOpen ? "none" : "";
+        caret.classList.toggle("open", !isOpen);
+    }
+
+    PF.topFolders.forEach(t=>{
+        treeEl.appendChild(makeNode(null, t.key, t.label, PF.folderCounts[t.key]||0, true));
+    });
+
+    // ---- Context menu ----
+    function closeMenu(){ menuEl.hidden = true; backdropEl.hidden = true; menuEl.innerHTML = ""; }
+    backdropEl.addEventListener("click", closeMenu);
+    document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeMenu(); });
+
+    function menuButton(text, handler, danger){
+        const b = document.createElement("button");
+        b.type = "button"; b.textContent = text;
+        if(danger) b.className = "pfMenuDanger";
+        b.addEventListener("click", handler);
+        return b;
+    }
+    function menuLabel(text){ const d=document.createElement("div"); d.className="pfMenuLabel"; d.textContent=text; return d; }
+    function menuSep(){ const d=document.createElement("div"); d.className="pfMenuSep"; return d; }
+
+    function openMenu(folder, key, label, isRoot, x, y){
+        menuEl.innerHTML = "";
+        menuEl.appendChild(menuLabel(label));
+        menuEl.appendChild(menuButton("New Folder", ()=>{
+            closeMenu();
+            const name = window.prompt("New folder name", "");
+            if(name===null) return;
+            if(!name.trim()) return;
+            postForm("/project/"+PF.projectId+"/files/folder/create",
+                {folder_key:key, parent_id: isRoot ? "" : folder.id, name:name.trim()});
+        }));
+
+        if(!isRoot){
+            menuEl.appendChild(menuButton("Rename Folder", ()=>{
+                closeMenu();
+                const name = window.prompt("Rename folder", folder.name);
+                if(name===null) return;
+                if(!name.trim()) return;
+                postForm("/project/"+PF.projectId+"/files/folder/"+folder.id+"/rename", {name:name.trim()});
+            }));
+            menuEl.appendChild(menuButton("Move Folder To…", ()=>{ showMoveMenu(folder, label, x, y); }));
+            menuEl.appendChild(menuSep());
+            menuEl.appendChild(menuButton("Delete Folder", ()=>{
+                closeMenu();
+                if(!window.confirm('Delete "'+folder.name+'" and everything inside it?')) return;
+                postForm("/project/"+PF.projectId+"/files/folder/"+folder.id+"/delete", {});
+            }, true));
+        }
+        positionMenu(x, y);
+    }
+
+    function showMoveMenu(folder, label, x, y){
+        menuEl.innerHTML = "";
+        menuEl.appendChild(menuLabel("Move “"+folder.name+"” to"));
+        const blocked = descendantIds(folder.id);
+        // Top-level destinations
+        PF.topFolders.forEach(t=>{
+            if(folder.parent_id===null && folder.key===t.key) return; // already at this root
+            menuEl.appendChild(menuButton(t.label, ()=>{
+                closeMenu();
+                postForm("/project/"+PF.projectId+"/files/folder/"+folder.id+"/move",
+                    {dest_kind:"root", dest_key:t.key});
+            }));
+        });
+        // Folder destinations
+        const candidates = PF.folders
+            .filter(f=>!blocked.has(f.id) && f.id!==folder.parent_id)
+            .sort((a,b)=>folderPath(a).toLowerCase().localeCompare(folderPath(b).toLowerCase()));
+        if(candidates.length){
+            menuEl.appendChild(menuSep());
+            menuEl.appendChild(menuLabel("Into a subfolder"));
+            candidates.forEach(f=>{
+                menuEl.appendChild(menuButton(folderPath(f), ()=>{
+                    closeMenu();
+                    postForm("/project/"+PF.projectId+"/files/folder/"+folder.id+"/move",
+                        {dest_kind:"folder", dest_folder_id:f.id});
+                }));
+            });
+        }
+        positionMenu(x, y);
+    }
+
+    function positionMenu(x, y){
+        menuEl.hidden = false; backdropEl.hidden = false;
+        const w = menuEl.offsetWidth, h = menuEl.offsetHeight;
+        let left = x, top = y;
+        if(left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+        if(top + h > window.innerHeight - 8) top = Math.max(8, window.innerHeight - h - 8);
+        menuEl.style.left = Math.max(8,left) + "px";
+        menuEl.style.top = Math.max(8,top) + "px";
+    }
+})();
+
+// ---- Upload drop zone ----
 const projectFilesInput=document.getElementById("projectFilesInput");
 const projectFilesChosen=document.getElementById("projectFilesChosen");
 const projectFileDropZone=document.getElementById("projectFileDropZone");
@@ -160,27 +342,10 @@ if(projectFilesInput&&projectFilesChosen){
     projectFilesInput.addEventListener("change",updateProjectFilesChosen);
 }
 if(projectFileDropZone&&projectFilesInput){
-    projectFileDropZone.addEventListener("click",event=>{
-        if(event.target.tagName!=="LABEL")projectFilesInput.click();
-    });
-    projectFileDropZone.addEventListener("keydown",event=>{
-        if(event.key==="Enter"||event.key===" "){
-            event.preventDefault();
-            projectFilesInput.click();
-        }
-    });
-    ["dragenter","dragover"].forEach(eventName=>{
-        projectFileDropZone.addEventListener(eventName,event=>{
-            event.preventDefault();
-            projectFileDropZone.classList.add("dragging");
-        });
-    });
-    ["dragleave","drop"].forEach(eventName=>{
-        projectFileDropZone.addEventListener(eventName,event=>{
-            event.preventDefault();
-            projectFileDropZone.classList.remove("dragging");
-        });
-    });
+    projectFileDropZone.addEventListener("click",event=>{ if(event.target.tagName!=="LABEL")projectFilesInput.click(); });
+    projectFileDropZone.addEventListener("keydown",event=>{ if(event.key==="Enter"||event.key===" "){ event.preventDefault(); projectFilesInput.click(); } });
+    ["dragenter","dragover"].forEach(eventName=>{ projectFileDropZone.addEventListener(eventName,event=>{ event.preventDefault(); projectFileDropZone.classList.add("dragging"); }); });
+    ["dragleave","drop"].forEach(eventName=>{ projectFileDropZone.addEventListener(eventName,event=>{ event.preventDefault(); projectFileDropZone.classList.remove("dragging"); }); });
     projectFileDropZone.addEventListener("drop",event=>{
         const files=event.dataTransfer&&event.dataTransfer.files;
         if(!files||!files.length)return;
@@ -189,30 +354,9 @@ if(projectFileDropZone&&projectFilesInput){
             Array.from(projectFilesInput.files||[]).forEach(file=>transfer.items.add(file));
             Array.from(files).forEach(file=>transfer.items.add(file));
             projectFilesInput.files=transfer.files;
-        }catch(error){
-            projectFilesInput.files=files;
-        }
+        }catch(error){ projectFilesInput.files=files; }
         updateProjectFilesChosen();
     });
 }
-document.querySelectorAll(".projectFolderRename").forEach(button=>{
-    button.addEventListener("click",()=>{
-        const current=button.getAttribute("data-name")||"";
-        const next=window.prompt("Rename folder",current);
-        if(next===null)return;
-        const name=next.trim();
-        if(!name)return;
-        const form=document.createElement("form");
-        form.method="post";
-        form.action=button.getAttribute("data-action");
-        const input=document.createElement("input");
-        input.type="hidden";
-        input.name="name";
-        input.value=name;
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
-    });
-});
 </script>
 {% endblock %}

@@ -8121,9 +8121,33 @@ def project_files(project_id):
     ).fetchall()
     folder_file_counts = {row["folder_key"]: row["n"] for row in count_rows}
 
+    # Load every folder the user can see, with file counts, for the tree + move targets.
+    all_folder_rows = []
+    if visible_folders:
+        all_folder_rows = conn.execute(
+            """
+            SELECT pf.id, pf.parent_id, pf.folder_key, pf.name, (
+                SELECT COUNT(*) FROM project_files WHERE project_files.folder_id = pf.id
+            ) AS file_count
+            FROM project_folders pf
+            WHERE pf.project_id = %s AND pf.folder_key = ANY(%s)
+            ORDER BY LOWER(pf.name)
+            """,
+            (project_id, [folder["key"] for folder in visible_folders])
+        ).fetchall()
+    folders_json = [
+        {
+            "id": row["id"],
+            "parent_id": row["parent_id"],
+            "key": row["folder_key"],
+            "name": row["name"],
+            "file_count": row["file_count"],
+        }
+        for row in all_folder_rows
+    ]
+
     current_dir = None
     breadcrumb = []
-    subfolders = []
     current_files = []
     if selected_folder:
         current_dir_id = request.args.get("dir", type=int)
@@ -8131,25 +8155,6 @@ def project_files(project_id):
         if current_dir and current_dir.get("folder_key") != selected_folder_key:
             current_dir = None
         breadcrumb = project_folder_breadcrumb(conn, project_id, current_dir) if current_dir else []
-        parent_clause = "parent_id = %s" if current_dir else "parent_id IS NULL"
-        params = [project_id, selected_folder_key]
-        if current_dir:
-            params.append(current_dir["id"])
-        subfolders = conn.execute(
-            f"""
-            SELECT pf.*, (
-                SELECT COUNT(*) FROM project_files
-                WHERE project_files.folder_id = pf.id
-            ) AS file_count, (
-                SELECT COUNT(*) FROM project_folders sub
-                WHERE sub.parent_id = pf.id
-            ) AS subfolder_count
-            FROM project_folders pf
-            WHERE pf.project_id = %s AND pf.folder_key = %s AND {parent_clause}
-            ORDER BY LOWER(pf.name)
-            """,
-            tuple(params)
-        ).fetchall()
         file_parent_clause = "project_files.folder_id = %s" if current_dir else "project_files.folder_id IS NULL"
         file_params = [project_id, selected_folder_key]
         if current_dir:
@@ -8173,9 +8178,10 @@ def project_files(project_id):
         selected_folder_key=selected_folder_key,
         folder_file_counts=folder_file_counts,
         current_dir=current_dir,
+        current_dir_id=(current_dir["id"] if current_dir else None),
         breadcrumb=breadcrumb,
-        subfolders=subfolders,
-        current_files=current_files
+        current_files=current_files,
+        folders_json=folders_json
     )
 
 
@@ -8274,6 +8280,79 @@ def delete_project_folder(project_id, folder_id):
     conn.close()
     flash(f'Folder "{folder["name"]}" and its contents were deleted.')
     return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+
+
+def project_folder_subtree_ids(conn, project_id, folder_id):
+    """Return the set of ids for folder_id and all of its descendant folders."""
+    rows = conn.execute(
+        "SELECT id, parent_id FROM project_folders WHERE project_id = %s",
+        (project_id,)
+    ).fetchall()
+    children = {}
+    for row in rows:
+        children.setdefault(row["parent_id"], []).append(row["id"])
+    subtree = set()
+    stack = [folder_id]
+    while stack:
+        current = stack.pop()
+        if current in subtree:
+            continue
+        subtree.add(current)
+        stack.extend(children.get(current, []))
+    return subtree
+
+
+@app.route("/project/<int:project_id>/files/folder/<int:folder_id>/move", methods=["POST"])
+@admin_required
+def move_project_folder(project_id, folder_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    folder = load_project_folder(conn, project_id, folder_id)
+    if not folder:
+        conn.close()
+        flash("Folder not found.")
+        return redirect(url_for("project_files", project_id=project_id))
+
+    dest_kind = request.form.get("dest_kind", "")
+    if dest_kind == "root":
+        new_key = request.form.get("dest_key", "").strip()
+        if new_key not in valid_project_folder_keys():
+            conn.close()
+            flash("Destination folder not found.")
+            return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"]))
+        new_parent_id = None
+    elif dest_kind == "folder":
+        dest_folder_id = request.form.get("dest_folder_id", type=int)
+        dest_folder = load_project_folder(conn, project_id, dest_folder_id)
+        if not dest_folder:
+            conn.close()
+            flash("Destination folder not found.")
+            return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"]))
+        subtree = project_folder_subtree_ids(conn, project_id, folder_id)
+        if dest_folder_id in subtree:
+            conn.close()
+            flash("You can't move a folder into itself or one of its subfolders.")
+            return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"], dir=folder.get("parent_id") or None))
+        new_parent_id = dest_folder_id
+        new_key = dest_folder["folder_key"]
+    else:
+        conn.close()
+        flash("Choose where to move the folder.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"]))
+
+    subtree = project_folder_subtree_ids(conn, project_id, folder_id)
+    subtree_ids = list(subtree)
+    # The whole moved subtree adopts the destination's top-level folder_key (keeps permissions consistent).
+    conn.execute("UPDATE project_folders SET folder_key = %s WHERE id = ANY(%s)", (new_key, subtree_ids))
+    conn.execute("UPDATE project_files SET folder_key = %s WHERE folder_id = ANY(%s)", (new_key, subtree_ids))
+    conn.execute("UPDATE project_folders SET parent_id = %s WHERE id = %s", (new_parent_id, folder_id))
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{folder["name"]}" moved.')
+    return redirect(url_for("project_files", project_id=project_id, folder=new_key, dir=new_parent_id or None))
 
 
 @app.route("/project/<int:project_id>/files/<int:file_id>/delete", methods=["POST"])
