@@ -2342,6 +2342,9 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
         company=company,
         invoice_logo_src=invoice_logo_data_uri(),
         totals_breakdown=invoice_totals_breakdown(invoice, lines),
+        format_date=format_date,
+        format_invoice_money=format_invoice_money,
+        invoice_terms_for_due_date=invoice_terms_for_due_date,
     )
     invoice_url = external_url("invoice_view", invoice_id=invoice["id"]) if invoice.get("id") else ""
     try:
