@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Delete Clock Record</h2>
+    <p><strong>{{ worker_name }}</strong> - {{ project_name }}</p>
+    {% for line in lines %}
+        <p class="muted">{{ line }}</p>
+    {% endfor %}
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this clock record.</p>
+    <form method="post" action="{{ url_for('confirm_delete_attendance_line') }}">
+        <input type="hidden" name="return_url" value="{{ return_url }}">
+        <input type="hidden" name="ci_id" value="{{ ci_id }}">
+        <input type="hidden" name="co_id" value="{{ co_id }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Clock Record</button>
+        <a class="btn-link btn-secondary" href="{{ return_url }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

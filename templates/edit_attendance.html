@@ -3,11 +3,15 @@
 <div class="card">
     <h2>{{ form_title }}</h2>
     {% if subtitle %}<p class="muted">{{ subtitle }}</p>{% endif %}
+    {% if complete_mode %}
+        <p class="muted">Existing {{ existing_label }}: <strong>{{ existing_time }}</strong>. Enter the missing {{ missing_label }} time below — it will be added to this same line.</p>
+    {% endif %}
 </div>
 
 <div class="card">
     <form method="post" action="{{ form_action }}">
         <input type="hidden" name="return_url" value="{{ return_url }}">
+        {% if not complete_mode %}
         <div class="grid">
             <div>
                 <label>User</label>
@@ -34,14 +38,19 @@
                     <option value="check_out" {% if sel_event_type == "check_out" %}selected{% endif %}>Clock Out</option>
                 </select>
             </div>
+        </div>
+        {% endif %}
+
+        <div class="grid">
             <div>
-                <label>Date</label>
+                <label>{% if complete_mode %}{{ missing_label }} Date{% else %}Date{% endif %}</label>
                 <input type="date" name="event_date" value="{{ event_date }}" required>
             </div>
             <div>
-                <label>Time</label>
+                <label>{% if complete_mode %}{{ missing_label }} Time{% else %}Time{% endif %}</label>
                 <input type="time" name="event_time" value="{{ event_time }}" required>
             </div>
+            {% if not complete_mode %}
             <div>
                 <label>Time Zone</label>
                 <input name="event_timezone" value="{{ selected_timezone }}" list="timezones" required>
@@ -51,6 +60,7 @@
                     {% endfor %}
                 </datalist>
             </div>
+            {% endif %}
         </div>
 
         <label>Location / Note</label>

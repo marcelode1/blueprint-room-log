@@ -1034,6 +1034,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS attendance_delete_codes (id SERIAL PRIMARY KEY, ci_id INTEGER, co_id INTEGER, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_report_action_codes (id SERIAL PRIMARY KEY, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, action TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, source_type TEXT, source_id INTEGER, next_url TEXT, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
@@ -12841,23 +12842,49 @@ def add_attendance_event():
     if not return_url.startswith("/attendance/report"):
         return_url = url_for("attendance_report", date=local_now().date().isoformat())
 
-    if request.method == "POST":
-        event_type = request.form.get("event_type", "")
-        if event_type not in ["check_in", "check_out"]:
+    # "Complete" mode: fill in the missing side of an existing clock line so it merges into one row.
+    complete_id = request.values.get("complete_id", type=int)
+    existing = None
+    missing_type = "check_in"
+    if complete_id:
+        existing = conn.execute(
+            """
+            SELECT attendance_events.*, users.name AS user_name, projects.name AS project_name
+            FROM attendance_events
+            LEFT JOIN users ON attendance_events.user_id = users.id
+            LEFT JOIN projects ON attendance_events.project_id = projects.id
+            WHERE attendance_events.id = %s
+            """,
+            (complete_id,)
+        ).fetchone()
+        if not existing:
             conn.close()
-            flash("Choose Clock In or Clock Out.")
-            return redirect(url_for("add_attendance_event", return_url=return_url))
+            flash("Clock record not found.")
+            return redirect(return_url)
+        missing_type = "check_out" if existing.get("event_type") == "check_in" else "check_in"
 
-        user_id = request.form.get("user_id", type=int)
-        project_id = request.form.get("project_id", type=int)
-        if not user_id or not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
-            conn.close()
-            flash("Choose a valid user.")
-            return redirect(url_for("add_attendance_event", return_url=return_url))
-        if not project_id or not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
-            conn.close()
-            flash("Choose a valid project.")
-            return redirect(url_for("add_attendance_event", return_url=return_url))
+    if request.method == "POST":
+        if existing:
+            event_type = missing_type
+            user_id = existing["user_id"]
+            project_id = existing["project_id"]
+            event_timezone = event_timezone_name(existing)
+        else:
+            event_type = request.form.get("event_type", "")
+            if event_type not in ["check_in", "check_out"]:
+                conn.close()
+                flash("Choose Clock In or Clock Out.")
+                return redirect(url_for("add_attendance_event", return_url=return_url))
+            user_id = request.form.get("user_id", type=int)
+            project_id = request.form.get("project_id", type=int)
+            if not user_id or not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
+                conn.close()
+                flash("Choose a valid user.")
+                return redirect(url_for("add_attendance_event", return_url=return_url))
+            if not project_id or not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
+                conn.close()
+                flash("Choose a valid project.")
+                return redirect(url_for("add_attendance_event", return_url=return_url))
 
         latitude = None
         longitude = None
@@ -12869,13 +12896,14 @@ def add_attendance_event():
         except Exception:
             conn.close()
             flash("GPS latitude and longitude must be numbers.")
-            return redirect(url_for("add_attendance_event", return_url=return_url))
+            return redirect(request.full_path)
 
-        event_timezone = request.form.get("event_timezone", "").strip()
-        if latitude is not None and longitude is not None:
-            event_timezone = timezone_from_location(latitude, longitude, event_timezone or APP_TIMEZONE)
+        if existing:
+            pass  # keep existing event's timezone
+        elif latitude is not None and longitude is not None:
+            event_timezone = timezone_from_location(latitude, longitude, request.form.get("event_timezone", "").strip() or APP_TIMEZONE)
         else:
-            event_timezone = clean_timezone_name(event_timezone or APP_TIMEZONE)
+            event_timezone = clean_timezone_name(request.form.get("event_timezone", "").strip() or APP_TIMEZONE)
 
         try:
             local_value = datetime.strptime(
@@ -12886,7 +12914,21 @@ def add_attendance_event():
         except Exception:
             conn.close()
             flash("Enter a valid date and time.")
-            return redirect(url_for("add_attendance_event", return_url=return_url))
+            return redirect(request.full_path)
+
+        # In complete mode, guarantee the new event lands on the correct side so the pair merges.
+        if existing:
+            existing_dt = parse_iso_datetime(existing.get("created_at"))
+            new_dt = parse_iso_datetime(created_at)
+            if existing_dt and new_dt:
+                if missing_type == "check_out" and new_dt < existing_dt:
+                    conn.close()
+                    flash("Clock out time must be the same or after the clock in time.")
+                    return redirect(request.full_path)
+                if missing_type == "check_in" and new_dt > existing_dt:
+                    conn.close()
+                    flash("Clock in time must be the same or before the clock out time.")
+                    return redirect(request.full_path)
 
         conn.execute(
             """
@@ -12906,8 +12948,36 @@ def add_attendance_event():
         )
         conn.commit()
         conn.close()
-        flash("Clock record added.")
+        flash("Clock record completed." if existing else "Clock record added.")
         return redirect(return_url)
+
+    now_local = local_now()
+    if existing:
+        tz = event_timezone_name(existing)
+        existing_dt = local_datetime(existing.get("created_at"), tz) or now_local
+        missing_label = "Clock Out" if missing_type == "check_out" else "Clock In"
+        existing_label = "Clock In" if existing.get("event_type") == "check_in" else "Clock Out"
+        conn.close()
+        return render_template(
+            "edit_attendance.html",
+            complete_mode=True,
+            form_action=url_for("add_attendance_event", complete_id=complete_id),
+            form_title=f"Add {missing_label}",
+            submit_label=f"Save {missing_label}",
+            subtitle=f'{existing.get("user_name") or "Unknown user"} - {existing.get("project_name") or "No project"}',
+            existing_label=existing_label,
+            existing_time=existing_dt.strftime("%b %d, %Y %I:%M %p"),
+            missing_label=missing_label,
+            complete_id=complete_id,
+            selected_timezone=tz,
+            event_date=existing_dt.date().isoformat(),
+            event_time=existing_dt.strftime("%H:%M"),
+            address="",
+            latitude="",
+            longitude="",
+            common_timezones=COMMON_TIMEZONES,
+            return_url=return_url
+        )
 
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
@@ -12915,9 +12985,9 @@ def add_attendance_event():
     sel_event_type = request.args.get("event_type", "check_in")
     if sel_event_type not in ["check_in", "check_out"]:
         sel_event_type = "check_in"
-    now_local = local_now()
     return render_template(
         "edit_attendance.html",
+        complete_mode=False,
         form_action=url_for("add_attendance_event"),
         form_title="Add Clock Record",
         submit_label="Add Clock Record",
@@ -12934,6 +13004,142 @@ def add_attendance_event():
         latitude="",
         longitude="",
         common_timezones=COMMON_TIMEZONES,
+        return_url=return_url
+    )
+
+
+def _attendance_return_url():
+    return_url = request.values.get("return_url", "")
+    if not return_url.startswith("/attendance/report"):
+        return_url = url_for("attendance_report", date=local_now().date().isoformat())
+    return return_url
+
+
+def _load_attendance_line(conn, ci_id, co_id):
+    event_ids = [i for i in [ci_id, co_id] if i]
+    if not event_ids:
+        return [], []
+    events = conn.execute(
+        """
+        SELECT attendance_events.*, users.name AS user_name, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN users ON attendance_events.user_id = users.id
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.id = ANY(%s)
+        ORDER BY attendance_events.created_at
+        """,
+        (event_ids,)
+    ).fetchall()
+    return events, event_ids
+
+
+@app.route("/attendance/delete", methods=["POST"])
+@admin_required
+def delete_attendance_line():
+    conn = db()
+    return_url = _attendance_return_url()
+    ci_id = request.values.get("ci_id", type=int)
+    co_id = request.values.get("co_id", type=int)
+    events, event_ids = _load_attendance_line(conn, ci_id, co_id)
+    if not events:
+        conn.close()
+        flash("Clock record not found.")
+        return redirect(return_url)
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(return_url)
+
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM attendance_delete_codes WHERE admin_id = %s AND ci_id IS NOT DISTINCT FROM %s AND co_id IS NOT DISTINCT FROM %s", (admin["id"], ci_id, co_id))
+    conn.execute(
+        """
+        INSERT INTO attendance_delete_codes (ci_id, co_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (ci_id, co_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    summary = events[0]
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete clock record PIN",
+        "\n".join([
+            f"Your 6-digit PIN to delete this clock record is:",
+            "",
+            pin,
+            "",
+            f"Worker: {summary.get('user_name') or 'Unknown user'}",
+            f"Project: {summary.get('project_name') or 'No project'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM attendance_delete_codes WHERE admin_id = %s AND ci_id IS NOT DISTINCT FROM %s AND co_id IS NOT DISTINCT FROM %s", (admin["id"], ci_id, co_id))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(return_url)
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_delete_attendance_line", ci_id=ci_id or "", co_id=co_id or "", return_url=return_url))
+
+
+@app.route("/attendance/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_attendance_line():
+    conn = db()
+    return_url = _attendance_return_url()
+    ci_id = request.values.get("ci_id", type=int)
+    co_id = request.values.get("co_id", type=int)
+    events, event_ids = _load_attendance_line(conn, ci_id, co_id)
+    if not events:
+        conn.close()
+        flash("Clock record not found.")
+        return redirect(return_url)
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM attendance_delete_codes
+            WHERE admin_id = %s AND ci_id IS NOT DISTINCT FROM %s AND co_id IS NOT DISTINCT FROM %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session.get("user_id"), ci_id, co_id)
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(return_url)
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_attendance_line", ci_id=ci_id or "", co_id=co_id or "", return_url=return_url))
+        conn.execute("DELETE FROM attendance_delete_codes WHERE admin_id = %s AND ci_id IS NOT DISTINCT FROM %s AND co_id IS NOT DISTINCT FROM %s", (session.get("user_id"), ci_id, co_id))
+        conn.execute("DELETE FROM attendance_events WHERE id = ANY(%s)", (event_ids,))
+        conn.commit()
+        conn.close()
+        flash("Clock record deleted.")
+        return redirect(return_url)
+
+    summary = events[0]
+    lines = []
+    for e in events:
+        label = "Clock In" if e.get("event_type") == "check_in" else "Clock Out"
+        lines.append(f'{label}: {format_event_datetime(e)}')
+    conn.close()
+    return render_template(
+        "delete_attendance_confirm.html",
+        worker_name=summary.get("user_name") or "Unknown user",
+        project_name=summary.get("project_name") or "No project",
+        lines=lines,
+        ci_id=ci_id or "",
+        co_id=co_id or "",
         return_url=return_url
     )
 
