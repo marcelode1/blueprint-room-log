@@ -4,4 +4,5 @@ gunicorn==22.0.0
 psycopg[binary]==3.3.4
 tzdata==2025.2
 PyMuPDF==1.24.14
-playwright==1.49.1
+greenlet==3.5.2
+playwright==1.60.0
