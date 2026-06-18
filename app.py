@@ -4998,6 +4998,11 @@ def format_event_datetime(event):
     return format_datetime(event.get("created_at") if event else None, event_timezone_name(event))
 
 
+def event_iso_date(event):
+    dt = local_datetime((event or {}).get("created_at"), event_timezone_name(event))
+    return dt.date().isoformat() if dt else local_now().date().isoformat()
+
+
 def task_schedule_text(task):
     start_raw = task.get("task_start_date") or task.get("task_date")
     text = format_date(start_raw)
@@ -5334,6 +5339,7 @@ def utility_processor():
         format_event_date=format_event_date,
         format_event_datetime=format_event_datetime,
         event_timezone_name=event_timezone_name,
+        event_iso_date=event_iso_date,
         admin_unread_count=admin_unread_count,
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
@@ -12807,16 +12813,129 @@ def edit_attendance_event(event_id):
     event_dt = local_datetime(event.get("created_at"), selected_timezone) or local_now()
     return render_template(
         "edit_attendance.html",
-        event=event,
+        form_action=url_for("edit_attendance_event", event_id=event_id),
+        form_title="Edit Clock Record",
+        submit_label="Save Clock Record",
+        subtitle=f'{event.get("user_name") or "Unknown user"} - {event.get("project_name") or "No project"}',
         users=users,
         projects=projects,
+        sel_user_id=event.get("user_id"),
+        sel_project_id=event.get("project_id"),
+        sel_event_type=event.get("event_type") or "check_in",
         selected_timezone=selected_timezone,
         event_date=event_dt.date().isoformat(),
         event_time=event_dt.strftime("%H:%M"),
+        address=event.get("address") or "",
+        latitude=event.get("latitude") if event.get("latitude") is not None else "",
+        longitude=event.get("longitude") if event.get("longitude") is not None else "",
         common_timezones=COMMON_TIMEZONES,
         return_url=return_url
     )
 
+
+@app.route("/attendance/add", methods=["GET", "POST"])
+@admin_required
+def add_attendance_event():
+    conn = db()
+    return_url = request.values.get("return_url", "")
+    if not return_url.startswith("/attendance/report"):
+        return_url = url_for("attendance_report", date=local_now().date().isoformat())
+
+    if request.method == "POST":
+        event_type = request.form.get("event_type", "")
+        if event_type not in ["check_in", "check_out"]:
+            conn.close()
+            flash("Choose Clock In or Clock Out.")
+            return redirect(url_for("add_attendance_event", return_url=return_url))
+
+        user_id = request.form.get("user_id", type=int)
+        project_id = request.form.get("project_id", type=int)
+        if not user_id or not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
+            conn.close()
+            flash("Choose a valid user.")
+            return redirect(url_for("add_attendance_event", return_url=return_url))
+        if not project_id or not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
+            conn.close()
+            flash("Choose a valid project.")
+            return redirect(url_for("add_attendance_event", return_url=return_url))
+
+        latitude = None
+        longitude = None
+        try:
+            lat_text = request.form.get("latitude", "").strip()
+            lon_text = request.form.get("longitude", "").strip()
+            latitude = float(lat_text) if lat_text else None
+            longitude = float(lon_text) if lon_text else None
+        except Exception:
+            conn.close()
+            flash("GPS latitude and longitude must be numbers.")
+            return redirect(url_for("add_attendance_event", return_url=return_url))
+
+        event_timezone = request.form.get("event_timezone", "").strip()
+        if latitude is not None and longitude is not None:
+            event_timezone = timezone_from_location(latitude, longitude, event_timezone or APP_TIMEZONE)
+        else:
+            event_timezone = clean_timezone_name(event_timezone or APP_TIMEZONE)
+
+        try:
+            local_value = datetime.strptime(
+                request.form.get("event_date", "") + " " + request.form.get("event_time", ""),
+                "%Y-%m-%d %H:%M"
+            )
+            created_at = storage_datetime(local_value, event_timezone).isoformat()
+        except Exception:
+            conn.close()
+            flash("Enter a valid date and time.")
+            return redirect(url_for("add_attendance_event", return_url=return_url))
+
+        conn.execute(
+            """
+            INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, event_timezone, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                project_id,
+                event_type,
+                latitude,
+                longitude,
+                request.form.get("address", "").strip(),
+                event_timezone,
+                created_at
+            )
+        )
+        conn.commit()
+        conn.close()
+        flash("Clock record added.")
+        return redirect(return_url)
+
+    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+    conn.close()
+    sel_event_type = request.args.get("event_type", "check_in")
+    if sel_event_type not in ["check_in", "check_out"]:
+        sel_event_type = "check_in"
+    now_local = local_now()
+    return render_template(
+        "edit_attendance.html",
+        form_action=url_for("add_attendance_event"),
+        form_title="Add Clock Record",
+        submit_label="Add Clock Record",
+        subtitle="Manually add a clock in or clock out time for a worker.",
+        users=users,
+        projects=projects,
+        sel_user_id=request.args.get("user_id", type=int),
+        sel_project_id=request.args.get("project_id", type=int),
+        sel_event_type=sel_event_type,
+        selected_timezone=clean_timezone_name(APP_TIMEZONE),
+        event_date=request.args.get("date") or now_local.date().isoformat(),
+        event_time=now_local.strftime("%H:%M"),
+        address="",
+        latitude="",
+        longitude="",
+        common_timezones=COMMON_TIMEZONES,
+        return_url=return_url
+    )
 
 
 @app.route("/settings", methods=["GET", "POST"])

@@ -1,35 +1,37 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Edit Clock Record</h2>
-    <p class="muted">{{ event.user_name or "Unknown user" }} - {{ event.project_name or "No project" }}</p>
+    <h2>{{ form_title }}</h2>
+    {% if subtitle %}<p class="muted">{{ subtitle }}</p>{% endif %}
 </div>
 
 <div class="card">
-    <form method="post">
+    <form method="post" action="{{ form_action }}">
         <input type="hidden" name="return_url" value="{{ return_url }}">
         <div class="grid">
             <div>
                 <label>User</label>
                 <select name="user_id" required>
+                    <option value="">Select user</option>
                     {% for u in users %}
-                        <option value="{{ u.id }}" {% if event.user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                        <option value="{{ u.id }}" {% if sel_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div>
                 <label>Project</label>
                 <select name="project_id" required>
+                    <option value="">Select project</option>
                     {% for p in projects %}
-                        <option value="{{ p.id }}" {% if event.project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                        <option value="{{ p.id }}" {% if sel_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
                     {% endfor %}
                 </select>
             </div>
             <div>
                 <label>Type</label>
                 <select name="event_type" required>
-                    <option value="check_in" {% if event.event_type == "check_in" %}selected{% endif %}>Clock In</option>
-                    <option value="check_out" {% if event.event_type == "check_out" %}selected{% endif %}>Clock Out</option>
+                    <option value="check_in" {% if sel_event_type == "check_in" %}selected{% endif %}>Clock In</option>
+                    <option value="check_out" {% if sel_event_type == "check_out" %}selected{% endif %}>Clock Out</option>
                 </select>
             </div>
             <div>
@@ -51,21 +53,21 @@
             </div>
         </div>
 
-        <label>Location Address</label>
-        <textarea name="address" rows="3">{{ event.address or "" }}</textarea>
+        <label>Location / Note</label>
+        <textarea name="address" rows="3" placeholder="Address, or a note (e.g. 'Forgot to clock in — added manually by admin')">{{ address }}</textarea>
 
         <div class="grid">
             <div>
-                <label>Latitude</label>
-                <input name="latitude" value="{{ event.latitude or '' }}" inputmode="decimal">
+                <label>Latitude (optional)</label>
+                <input name="latitude" value="{{ latitude }}" inputmode="decimal">
             </div>
             <div>
-                <label>Longitude</label>
-                <input name="longitude" value="{{ event.longitude or '' }}" inputmode="decimal">
+                <label>Longitude (optional)</label>
+                <input name="longitude" value="{{ longitude }}" inputmode="decimal">
             </div>
         </div>
 
-        <button type="submit">Save Clock Record</button>
+        <button type="submit">{{ submit_label }}</button>
         <a class="btn-link btn-secondary" href="{{ return_url }}">Back to Time Report</a>
     </form>
 </div>

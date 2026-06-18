@@ -40,6 +40,7 @@
         </div>
         <button type="submit">Show Report</button>
         {% if not my_report %}
+        <a class="btn-link" href="{{ url_for('add_attendance_event', user_id=selected_user_id or '', project_id=selected_project_id or '', date=selected_date, return_url=request.full_path) }}">+ Add Clock Record</a>
         <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Export to CSV</a>
         <a class="btn-link btn-secondary" href="{{ url_for('project_report', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Project Report</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
@@ -100,6 +101,8 @@
                             {% if not my_report %}
                             <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=request.full_path) }}">Edit</a>
                             {% endif %}
+                        {% elif not my_report %}
+                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', user_id=u.user_id or '', project_id=event.project_id or '', event_type='check_in', date=event_iso_date(event), return_url=request.full_path) }}">Add Clock In</a>
                         {% else %}-{% endif %}
                     </td>
                     <td>
@@ -114,6 +117,8 @@
                             {% if not my_report %}
                             <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=request.full_path) }}">Edit</a>
                             {% endif %}
+                        {% elif not my_report %}
+                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', user_id=u.user_id or '', project_id=event.project_id or '', event_type='check_out', date=event_iso_date(event), return_url=request.full_path) }}">Add Clock Out</a>
                         {% else %}-{% endif %}
                     </td>
                     <td>
