@@ -2335,16 +2335,41 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
         return None, f"Browser PDF support is not installed. {e}"
 
     invoice_number = secure_filename(invoice.get("invoice_number") or "invoice-preview") or "invoice"
+    totals = invoice_totals_breakdown(invoice, lines)
+    formatted_lines = []
+    for idx, line in enumerate(lines, 1):
+        formatted_lines.append({
+            "index": idx,
+            "quantity": line.get("quantity", ""),
+            "item_name": line.get("item_name", ""),
+            "description": line.get("description", ""),
+            "location": line.get("location", ""),
+            "unit_price": format_invoice_money(line.get("unit_price")),
+            "line_total": format_invoice_money(line.get("line_total")),
+        })
+    payments_credit_val = totals.get("payments_credit") or 0
     html = render_template(
         "invoice_email_attachment.html",
         invoice=invoice,
-        lines=lines,
+        lines=formatted_lines,
         company=company,
         invoice_logo_src=invoice_logo_data_uri(),
-        totals_breakdown=invoice_totals_breakdown(invoice, lines),
-        format_date=format_date,
-        format_invoice_money=format_invoice_money,
-        invoice_terms_for_due_date=invoice_terms_for_due_date,
+        inv_date=format_date(invoice.get("invoice_date")),
+        inv_number=invoice.get("invoice_number") or "",
+        inv_terms=invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms", "")),
+        inv_due=format_date(invoice.get("due_date")) if invoice.get("due_date") else "",
+        inv_customer_name=invoice.get("customer_name") or "-",
+        inv_billing_address=invoice.get("billing_address") or "",
+        inv_customer_email=invoice.get("customer_email") or "",
+        inv_customer_phone=invoice.get("customer_phone") or "",
+        inv_project_name=invoice.get("project_name") or invoice.get("customer_name") or "-",
+        inv_notes=invoice.get("notes") or "",
+        total_material=format_invoice_money(totals.get("material")),
+        total_labor=format_invoice_money(totals.get("labor")),
+        total_sales_tax=format_invoice_money(totals.get("sales_tax")),
+        total_amount=format_invoice_money(totals.get("total_amount")),
+        payments_credit=("-" + format_invoice_money(payments_credit_val)) if payments_credit_val else format_invoice_money(0),
+        balance_due=format_invoice_money(totals.get("balance_due")),
     )
     invoice_url = external_url("invoice_view", invoice_id=invoice["id"]) if invoice.get("id") else ""
     try:
