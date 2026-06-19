@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Project Notes</h2>
+    <p><strong>Project:</strong> {{ project.name }}</p>
+    <p class="muted">Write anything related to this project here. Only the admin and users granted "View and edit project notes" can see this.</p>
+    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
+</div>
+
+<div class="card">
+    <form method="post">
+        <label>Notepad</label>
+        <textarea name="notepad" rows="18" style="width:100%;font-size:16px;line-height:1.5" placeholder="Type your project notes here...">{{ project.notepad or "" }}</textarea>
+        <button type="submit">Save Notes</button>
+        {% if project.notepad_updated_at %}
+            <p class="muted">Last saved {{ format_datetime(project.notepad_updated_at) }}{% if updated_by_name %} by {{ updated_by_name }}{% endif %}.</p>
+        {% endif %}
+    </form>
+</div>
+{% endblock %}

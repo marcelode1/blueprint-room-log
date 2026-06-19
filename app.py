@@ -1013,6 +1013,10 @@ def init_db():
         "ALTER TABLE user_permissions ALTER COLUMN view_contact_info SET NOT NULL",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_project_files BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS require_task_picture BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_project_notes BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS notepad TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS notepad_updated_at TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS notepad_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT NOT NULL, contact_name TEXT, email TEXT, phone TEXT, street TEXT, address TEXT, city TEXT, state TEXT, zip TEXT, website TEXT, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, task_number TEXT, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, assigned_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, task_date TEXT NOT NULL, title TEXT NOT NULL, instructions TEXT, require_picture BOOLEAN NOT NULL DEFAULT FALSE, allow_picture_upload BOOLEAN NOT NULL DEFAULT TRUE, allow_comment BOOLEAN NOT NULL DEFAULT TRUE, allow_audio BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'open', completion_comment TEXT, completion_photo_file TEXT, completion_audio_file TEXT, completion_at TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS task_number TEXT",
@@ -1764,36 +1768,40 @@ def admin_required(fn):
 
 
 
+# Single source of truth for user permissions. To add a permission: add one entry here
+# plus an `ALTER TABLE user_permissions ADD COLUMN ...` migration. Everything else
+# (PERMISSION_KEYS, role defaults, the save SQL, and the Settings checkboxes) derives from this.
+#   grid=True  -> shown as a simple checkbox in Settings > User Permissions
+#   worker / customer -> default value for that role when the user has no saved row (admins always get all)
+PERMISSION_DEFS = [
+    {"key": "view_contact_info", "label": "View contact information", "grid": True, "worker": True, "customer": False},
+    {"key": "see_comments", "label": "See comments", "grid": True, "worker": True, "customer": True},
+    {"key": "write_comments", "label": "Write comments", "grid": True, "worker": True, "customer": False},
+    {"key": "edit_comments", "label": "Edit comments", "grid": True, "worker": False, "customer": False},
+    {"key": "delete_comments", "label": "Delete comments", "grid": True, "worker": False, "customer": False},
+    {"key": "see_pictures", "label": "See pictures", "grid": True, "worker": True, "customer": True},
+    {"key": "add_pictures", "label": "Add pictures", "grid": True, "worker": True, "customer": False},
+    {"key": "delete_pictures", "label": "Delete pictures", "grid": True, "worker": False, "customer": False},
+    {"key": "see_audio", "label": "See audio", "grid": True, "worker": True, "customer": True},
+    {"key": "add_audio", "label": "Add audio", "grid": True, "worker": True, "customer": False},
+    {"key": "delete_audio", "label": "Delete audio", "grid": True, "worker": False, "customer": False},
+    {"key": "create_rooms", "label": "Create rooms", "grid": True, "worker": False, "customer": False},
+    {"key": "view_inventory", "label": "View inventory", "grid": True, "worker": False, "customer": False},
+    {"key": "edit_inventory", "label": "Edit inventory", "grid": True, "worker": False, "customer": False},
+    {"key": "view_project_notes", "label": "View and edit project notes", "grid": True, "worker": False, "customer": False},
+    # Handled by their own UI, not a simple checkbox:
+    {"key": "view_project_files", "label": "Access project files", "grid": False, "worker": False, "customer": False},
+    {"key": "require_task_picture", "label": "Require task picture", "grid": False, "worker": False, "customer": False},
+]
+PERMISSION_KEYS = [d["key"] for d in PERMISSION_DEFS]
+PERMISSION_GRID_DEFS = [d for d in PERMISSION_DEFS if d["grid"]]
+
+
 def default_permissions_for_role(role):
     if role == "admin":
-        return {k: True for k in PERMISSION_KEYS}
-    if role == "worker":
-        return {
-            "require_task_picture": False,
-            "view_contact_info": True,
-            "see_comments": True, "write_comments": True, "edit_comments": False, "delete_comments": False,
-            "see_pictures": True, "add_pictures": True, "delete_pictures": False,
-            "see_audio": True, "add_audio": True, "delete_audio": False, "create_rooms": False,
-            "view_inventory": False, "edit_inventory": False, "view_project_files": False,
-        }
-    return {
-        "require_task_picture": False,
-        "view_contact_info": False,
-        "see_comments": True, "write_comments": False, "edit_comments": False, "delete_comments": False,
-        "see_pictures": True, "add_pictures": False, "delete_pictures": False,
-        "see_audio": True, "add_audio": False, "delete_audio": False, "create_rooms": False,
-        "view_inventory": False, "edit_inventory": False, "view_project_files": False,
-    }
-
-
-PERMISSION_KEYS = [
-    "require_task_picture",
-    "view_contact_info",
-    "see_comments", "write_comments", "edit_comments", "delete_comments",
-    "see_pictures", "add_pictures", "delete_pictures",
-    "see_audio", "add_audio", "delete_audio", "create_rooms",
-    "view_inventory", "edit_inventory", "view_project_files"
-]
+        return {d["key"]: True for d in PERMISSION_DEFS}
+    role_key = "worker" if role == "worker" else "customer"
+    return {d["key"]: bool(d[role_key]) for d in PERMISSION_DEFS}
 
 
 def get_user_permissions(user_id=None):
@@ -3451,6 +3459,10 @@ def can_view_inventory():
 
 def can_edit_inventory():
     return is_main_admin() or has_perm("edit_inventory")
+
+
+def can_view_project_notes(project_id=None):
+    return is_main_admin() or has_perm("view_project_notes")
 
 
 INVENTORY_STATUS_LABELS = {
@@ -5462,6 +5474,7 @@ def utility_processor():
         unread_notification_count=unread_notification_count,
         can_view_inventory=can_view_inventory,
         can_edit_inventory=can_edit_inventory,
+        can_view_project_notes=can_view_project_notes,
         can_view_project_files=can_view_project_files,
         project_file_provider_label=project_file_provider_label,
         format_file_size=format_file_size,
@@ -8148,6 +8161,43 @@ def project_folder_breadcrumb(conn, project_id, folder):
         guard += 1
     chain.reverse()
     return chain
+
+
+@app.route("/project/<int:project_id>/notepad", methods=["GET", "POST"])
+@login_required
+def project_notepad(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or has_perm("view_project_notes")):
+        conn.close()
+        flash("You do not have permission to view project notes.")
+        return redirect(url_for("project", project_id=project_id))
+
+    if request.method == "POST":
+        notepad = request.form.get("notepad", "")
+        conn.execute(
+            "UPDATE projects SET notepad = %s, notepad_updated_at = %s, notepad_updated_by = %s WHERE id = %s",
+            (notepad, utc_now_iso(), session.get("user_id"), project_id)
+        )
+        conn.commit()
+        conn.close()
+        flash("Project notes saved.")
+        return redirect(url_for("project_notepad", project_id=project_id))
+
+    updated_by_name = None
+    if project.get("notepad_updated_by"):
+        row = conn.execute("SELECT name FROM users WHERE id = %s", (project["notepad_updated_by"],)).fetchone()
+        updated_by_name = row["name"] if row else None
+    conn.close()
+    return render_template("project_notepad.html", project=project, updated_by_name=updated_by_name)
 
 
 @app.route("/project/<int:project_id>/files", methods=["GET", "POST"])
@@ -13335,28 +13385,15 @@ def settings():
             values = {k: (k in request.form) for k in PERMISSION_KEYS}
             if "view_project_files" in values:
                 values["view_project_files"] = bool(selected_file_access)
+            # Build the upsert dynamically from PERMISSION_KEYS so new permissions need no SQL changes.
+            columns = ", ".join(PERMISSION_KEYS)
+            placeholders = ", ".join(["%s"] * len(PERMISSION_KEYS))
+            updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in PERMISSION_KEYS)
             conn.execute(
-                """
-                INSERT INTO user_permissions
-                (user_id, require_task_picture, view_contact_info, see_comments, write_comments, edit_comments, delete_comments, see_pictures, add_pictures, delete_pictures, see_audio, add_audio, delete_audio, create_rooms, view_inventory, edit_inventory, view_project_files)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    require_task_picture = EXCLUDED.require_task_picture,
-                    view_contact_info = EXCLUDED.view_contact_info,
-                    see_comments = EXCLUDED.see_comments,
-                    write_comments = EXCLUDED.write_comments,
-                    edit_comments = EXCLUDED.edit_comments,
-                    delete_comments = EXCLUDED.delete_comments,
-                    see_pictures = EXCLUDED.see_pictures,
-                    add_pictures = EXCLUDED.add_pictures,
-                    delete_pictures = EXCLUDED.delete_pictures,
-                    see_audio = EXCLUDED.see_audio,
-                    add_audio = EXCLUDED.add_audio,
-                    delete_audio = EXCLUDED.delete_audio,
-                    create_rooms = EXCLUDED.create_rooms,
-                    view_inventory = EXCLUDED.view_inventory,
-                    edit_inventory = EXCLUDED.edit_inventory,
-                    view_project_files = EXCLUDED.view_project_files
+                f"""
+                INSERT INTO user_permissions (user_id, {columns})
+                VALUES (%s, {placeholders})
+                ON CONFLICT (user_id) DO UPDATE SET {updates}
                 """,
                 (user_id, *[values[k] for k in PERMISSION_KEYS])
             )
@@ -13437,6 +13474,14 @@ def settings():
     ).fetchall()
     conn.close()
     perm_map = {p["user_id"]: p for p in permissions}
+    effective_perms = {}
+    for u in users:
+        base = default_permissions_for_role(u["role"])
+        row = perm_map.get(u["id"])
+        if row:
+            for k in PERMISSION_KEYS:
+                base[k] = bool(row.get(k))
+        effective_perms[u["id"]] = base
     project_access_map = {}
     for row in project_permissions:
         project_access_map.setdefault(row["user_id"], set()).add(row["project_id"])
@@ -13455,6 +13500,8 @@ def settings():
         users=users,
         projects=projects,
         perm_map=perm_map,
+        effective_perms=effective_perms,
+        permission_grid_defs=PERMISSION_GRID_DEFS,
         project_access_map=project_access_map,
         project_file_access_map=project_file_access_map,
         file_project_map=file_project_map,

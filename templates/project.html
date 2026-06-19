@@ -26,6 +26,9 @@
     {% if can_view_project_files(project.id) %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
     {% endif %}
+    {% if can_view_project_notes(project.id) %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_notepad', project_id=project.id) }}">Notes</a>
+    {% endif %}
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Inventory</a>
     {% endif %}

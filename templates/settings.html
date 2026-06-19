@@ -156,28 +156,16 @@
     <h3>User Permissions</h3>
     <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
     {% for u in users %}
-        {% set p = perm_map.get(u.id) %}
+        {% set eff = effective_perms.get(u.id, {}) %}
         <div class="card">
             <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
             <form method="post">
                 <input type="hidden" name="action" value="permissions">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
-                {% set worker_defaults = u.role == "worker" %}
                 <div class="grid">
-                    <label><input type="checkbox" name="view_contact_info" {% if (p and p.view_contact_info) or (not p and worker_defaults) %}checked{% endif %}> View contact information</label>
-                    <label><input type="checkbox" name="see_comments" {% if not p or p.see_comments %}checked{% endif %}> See comments</label>
-                    <label><input type="checkbox" name="write_comments" {% if (p and p.write_comments) or (not p and worker_defaults) %}checked{% endif %}> Write comments</label>
-                    <label><input type="checkbox" name="edit_comments" {% if p and p.edit_comments %}checked{% endif %}> Edit comments</label>
-                    <label><input type="checkbox" name="delete_comments" {% if p and p.delete_comments %}checked{% endif %}> Delete comments</label>
-                    <label><input type="checkbox" name="see_pictures" {% if not p or p.see_pictures %}checked{% endif %}> See pictures</label>
-                    <label><input type="checkbox" name="add_pictures" {% if (p and p.add_pictures) or (not p and worker_defaults) %}checked{% endif %}> Add pictures</label>
-                    <label><input type="checkbox" name="delete_pictures" {% if p and p.delete_pictures %}checked{% endif %}> Delete pictures</label>
-                    <label><input type="checkbox" name="see_audio" {% if not p or p.see_audio %}checked{% endif %}> See audio</label>
-                    <label><input type="checkbox" name="add_audio" {% if (p and p.add_audio) or (not p and worker_defaults) %}checked{% endif %}> Add audio</label>
-                    <label><input type="checkbox" name="delete_audio" {% if p and p.delete_audio %}checked{% endif %}> Delete audio</label>
-                    <label><input type="checkbox" name="create_rooms" {% if p and p.create_rooms %}checked{% endif %}> Create rooms</label>
-                    <label><input type="checkbox" name="view_inventory" {% if p and p.view_inventory %}checked{% endif %}> View inventory</label>
-                    <label><input type="checkbox" name="edit_inventory" {% if p and p.edit_inventory %}checked{% endif %}> Edit inventory</label>
+                    {% for d in permission_grid_defs %}
+                        <label><input type="checkbox" name="{{ d.key }}" {% if eff.get(d.key) %}checked{% endif %}> {{ d.label }}</label>
+                    {% endfor %}
                 </div>
                 <div class="fileAccessSection">
                     <h5>Project Files Access</h5>

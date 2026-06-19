@@ -22,6 +22,9 @@
     {% if can_view_project_files(project.id) %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_files', project_id=project.id) }}">Files</a>
     {% endif %}
+    {% if can_view_project_notes(project.id) %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_notepad', project_id=project.id) }}">Notes</a>
+    {% endif %}
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('mobile_project_materials', project_id=project.id) }}">Inventory</a>
