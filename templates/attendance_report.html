@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+{% set report_url = url_for('attendance_report', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) %}
 <div class="card noPrint">
     <h2>{% if my_report %}My Time Report{% else %}Time Report{% endif %}</h2>
     <form method="get">
@@ -40,7 +41,7 @@
         </div>
         <button type="submit">Show Report</button>
         {% if not my_report %}
-        <a class="btn-link" href="{{ url_for('add_attendance_event', user_id=selected_user_id or '', project_id=selected_project_id or '', date=selected_date, return_url=request.full_path) }}">+ Add Clock Record</a>
+        <a class="btn-link" href="{{ url_for('add_attendance_event', user_id=selected_user_id or '', project_id=selected_project_id or '', date=selected_date, return_url=report_url) }}">+ Add Clock Record</a>
         <a class="btn-link btn-secondary" href="{{ url_for('attendance_report_export', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Export to CSV</a>
         <a class="btn-link btn-secondary" href="{{ url_for('project_report', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) }}">Project Report</a>
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
@@ -65,6 +66,7 @@
         .timeTable{width:100%;border-collapse:collapse}
         .timeTable th,.timeTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
         .timeTable th{background:#f3f4f6}
+        .timeTotalRow td{background:#eef2ff;font-weight:800;font-size:1.02rem}
         .editClock{font-size:12px;margin-top:6px;display:inline-block}
         @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1320px}}
         @media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.timeTable th,.timeTable td{font-size:11px;padding:5px}}
@@ -99,10 +101,10 @@
                         {% if ci %}
                             {{ format_event_time(ci) }}
                             {% if not my_report %}
-                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=request.full_path) }}">Edit</a>
+                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=report_url) }}">Edit</a>
                             {% endif %}
                         {% elif not my_report and co %}
-                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=co.id, return_url=request.full_path) }}">Add Clock In</a>
+                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=co.id, return_url=report_url) }}">Add Clock In</a>
                         {% else %}-{% endif %}
                     </td>
                     <td>
@@ -116,10 +118,10 @@
                             {{ format_event_time(co) }}
                             {% if co.comment %}<br><span class="muted" style="font-style:italic">{{ co.comment }}</span>{% endif %}
                             {% if not my_report %}
-                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=request.full_path) }}">Edit</a>
+                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=report_url) }}">Edit</a>
                             {% endif %}
                         {% elif not my_report and ci %}
-                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=ci.id, return_url=request.full_path) }}">Add Clock Out</a>
+                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=ci.id, return_url=report_url) }}">Add Clock Out</a>
                         {% else %}-{% endif %}
                     </td>
                     <td>
@@ -134,7 +136,7 @@
                         <form method="post" action="{{ url_for('delete_attendance_line') }}" class="noPrint" style="margin:6px 0 0" onsubmit="return confirm('Send a delete PIN to your admin email for this clock record?');">
                             <input type="hidden" name="ci_id" value="{{ ci.id if ci else '' }}">
                             <input type="hidden" name="co_id" value="{{ co.id if co else '' }}">
-                            <input type="hidden" name="return_url" value="{{ request.full_path }}">
+                            <input type="hidden" name="return_url" value="{{ report_url }}">
                             <button type="submit" class="editClock" style="background:none;border:0;color:#dc2626;padding:0;min-height:0;font-weight:700;cursor:pointer;text-decoration:underline">Delete</button>
                         </form>
                         {% endif %}
@@ -144,6 +146,12 @@
                 <tr><td colspan="9">No time clock records for this period.</td></tr>
             {% endfor %}
             </tbody>
+            <tfoot>
+                <tr class="timeTotalRow">
+                    <td colspan="8" style="text-align:right">Total Hours ({{ period|capitalize }})</td>
+                    <td>{{ minutes_text(total_minutes) }}</td>
+                </tr>
+            </tfoot>
         </table>
     </div>
 </div>

@@ -12707,6 +12707,7 @@ def attendance_report():
         selected_project_id=selected_project_id,
         start=report["start"],
         end=report["end"],
+        total_minutes=report["total_minutes"],
         duration_text=duration_text,
         minutes_text=minutes_text,
         format_time=format_time,
@@ -12741,6 +12742,7 @@ def my_time_report():
         selected_project_id=selected_project_id,
         start=report["start"],
         end=report["end"],
+        total_minutes=report["total_minutes"],
         duration_text=duration_text,
         minutes_text=minutes_text,
         format_time=format_time,
@@ -12791,7 +12793,8 @@ def attendance_report_data(period, selected_date, selected_user_id=None, selecte
                 "minutes": 0
             }
         summary[uid]["minutes"] += duration_minutes(ci.get("created_at"), co.get("created_at"))
-    return {"users": users, "projects": projects, "pairs": pairs, "summary": summary, "period": period, "start": start, "end": end}
+    total_minutes = sum(s["minutes"] for s in summary.values())
+    return {"users": users, "projects": projects, "pairs": pairs, "summary": summary, "period": period, "start": start, "end": end, "total_minutes": total_minutes}
 
 
 @app.route("/attendance/report/export")
@@ -12885,11 +12888,9 @@ def edit_attendance_event(event_id):
             flash("GPS latitude and longitude must be numbers.")
             return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
 
-        event_timezone = request.form.get("event_timezone", "").strip()
-        if latitude is not None and longitude is not None:
-            event_timezone = timezone_from_location(latitude, longitude, event_timezone or APP_TIMEZONE)
-        else:
-            event_timezone = clean_timezone_name(event_timezone or event_timezone_name(event))
+        # Use the time zone shown on the form as-is. (Editing the time should only change the
+        # time on that day - never silently shift it by re-deriving the zone from GPS.)
+        event_timezone = clean_timezone_name(request.form.get("event_timezone", "").strip() or event_timezone_name(event))
 
         try:
             local_value = datetime.strptime(
