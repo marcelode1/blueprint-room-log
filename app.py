@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib, math
+import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib, math, threading
 import psycopg
 from psycopg.rows import dict_row
 
@@ -42,6 +42,11 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 OPENAI_TASK_PARSE_MODEL = os.environ.get("OPENAI_TASK_PARSE_MODEL", "gpt-4.1-mini")
 TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder else None
+AUTO_CLOCKOUT_CRON_TOKEN = os.environ.get("AUTO_CLOCKOUT_CRON_TOKEN", "")
+AUTO_CLOCKOUT_NOTE = "Clock out automatic by the software."
+_AUTO_CLOCKOUT_LOCK = threading.Lock()
+_AUTO_CLOCKOUT_LAST_RUN = None
+_AUTO_CLOCKOUT_INTERVAL_SECONDS = 900
 
 COMMON_TIMEZONES = [
     "America/New_York",
@@ -1031,6 +1036,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
+        "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS comment TEXT",
         "CREATE TABLE IF NOT EXISTS project_delete_codes (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_delete_codes (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
@@ -3188,6 +3194,117 @@ def notify_admins_of_attendance(conn, project, event_type, latitude, longitude, 
     for admin in admin_email_rows(conn):
         if admin.get("email"):
             send_email(admin["email"], f"ProjectONus {label} - {actor_name or 'User'}", body)
+
+
+def notify_admins_auto_clockout(conn, closed):
+    if not closed:
+        return
+    lines = [
+        "The following worker(s) did not clock out and were automatically clocked out at midnight by ProjectONus:",
+        "",
+    ]
+    for c in closed:
+        lines.append(
+            f"- {c.get('user_name') or 'Unknown user'} ({c.get('user_email') or 'no email'}) - "
+            f"{c.get('project_name') or 'No project'} - auto clock out {format_datetime(c.get('created_at'), c.get('tz'))}"
+        )
+    lines += [
+        "",
+        "A note 'Clock out automatic by the software.' was added to each record.",
+        "Please review the Time Report and correct the clock-out time if needed.",
+    ]
+    body = "\n".join(lines)
+    for admin in admin_email_rows(conn):
+        if admin.get("email"):
+            send_email(admin["email"], "ProjectONus - Worker forgot to clock out", body)
+
+
+def run_auto_clock_outs():
+    """Auto clock-out workers whose latest event is still a clock-in from a previous local day."""
+    conn = db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ON (attendance_events.user_id)
+                attendance_events.*, users.name AS user_name, users.email AS user_email, projects.name AS project_name
+            FROM attendance_events
+            JOIN users ON attendance_events.user_id = users.id
+            LEFT JOIN projects ON attendance_events.project_id = projects.id
+            WHERE users.role <> 'admin'
+            ORDER BY attendance_events.user_id, attendance_events.created_at DESC
+            """
+        ).fetchall()
+        closed = []
+        for e in rows:
+            if e.get("event_type") != "check_in":
+                continue
+            tz = event_timezone_name(e)
+            ci_local = local_datetime(e.get("created_at"), tz)
+            if not ci_local:
+                continue
+            today_local = datetime.now(timezone_for_name(tz)).date()
+            if ci_local.date() >= today_local:
+                continue  # still the same local day - leave them clocked in
+            end_local = ci_local.replace(hour=23, minute=59, second=59, microsecond=0)
+            created_at = storage_datetime(end_local, tz).isoformat()
+            conn.execute(
+                """
+                INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, event_timezone, created_at, comment)
+                VALUES (%s, %s, 'check_out', %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    e["user_id"],
+                    e.get("project_id"),
+                    e.get("latitude"),
+                    e.get("longitude"),
+                    e.get("address"),
+                    tz,
+                    created_at,
+                    AUTO_CLOCKOUT_NOTE,
+                )
+            )
+            closed.append({
+                "user_name": e.get("user_name"),
+                "user_email": e.get("user_email"),
+                "project_name": e.get("project_name"),
+                "created_at": created_at,
+                "tz": tz,
+            })
+        if closed:
+            conn.commit()
+            notify_admins_auto_clockout(conn, closed)
+        return closed
+    finally:
+        conn.close()
+
+
+def maybe_run_auto_clock_outs():
+    global _AUTO_CLOCKOUT_LAST_RUN
+    now = datetime.now(timezone.utc)
+    with _AUTO_CLOCKOUT_LOCK:
+        if _AUTO_CLOCKOUT_LAST_RUN and (now - _AUTO_CLOCKOUT_LAST_RUN).total_seconds() < _AUTO_CLOCKOUT_INTERVAL_SECONDS:
+            return
+        _AUTO_CLOCKOUT_LAST_RUN = now
+    try:
+        run_auto_clock_outs()
+    except Exception:
+        pass
+
+
+@app.before_request
+def _auto_clockout_before_request():
+    if request.endpoint in ("static",):
+        return
+    maybe_run_auto_clock_outs()
+
+
+@app.route("/cron/auto-clock-out")
+def cron_auto_clock_out():
+    token = request.args.get("token", "")
+    if not AUTO_CLOCKOUT_CRON_TOKEN or token != AUTO_CLOCKOUT_CRON_TOKEN:
+        return ("Forbidden", 403)
+    closed = run_auto_clock_outs()
+    return jsonify({"closed": len(closed)})
 
 
 def task_email_body(task, assigned=None, project=None):
@@ -12687,7 +12804,7 @@ def attendance_report_export():
     report = attendance_report_data(period, selected_date, selected_user_id, selected_project_id)
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["User", "Email", "Project", "Date", "Time Zone", "Clock In", "Clock In Location", "Clock Out", "Clock Out Location", "Total Minutes", "Total"])
+    writer.writerow(["User", "Email", "Project", "Date", "Time Zone", "Clock In", "Clock In Location", "Clock Out", "Clock Out Location", "Clock Out Note", "Total Minutes", "Total"])
     for p in report["pairs"]:
         ci = p.get("check_in")
         co = p.get("check_out")
@@ -12703,6 +12820,7 @@ def attendance_report_export():
             ci.get("address") if ci else "",
             format_event_time(co) if co else "",
             co.get("address") if co else "",
+            (co.get("comment") or "") if co else "",
             duration_minutes(ci.get("created_at"), co.get("created_at")) if ci and co else "",
             duration_text(ci.get("created_at"), co.get("created_at")) if ci and co else ""
         ])

@@ -114,6 +114,7 @@
                     <td>
                         {% if co %}
                             {{ format_event_time(co) }}
+                            {% if co.comment %}<br><span class="muted" style="font-style:italic">{{ co.comment }}</span>{% endif %}
                             {% if not my_report %}
                             <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=request.full_path) }}">Edit</a>
                             {% endif %}
