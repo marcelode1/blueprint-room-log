@@ -938,5 +938,59 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/static/sw.js
 <div style="text-align:center;padding:20px;color:#64748b;font-size:13px">
     <a href="{{ url_for('privacy') }}" style="color:inherit;text-decoration:none">Privacy Policy</a>
 </div>
+
+<div id="imgLightbox" class="imgLightbox" hidden>
+    <button type="button" class="imgLightboxClose" aria-label="Close">&times;</button>
+    <img id="imgLightboxImg" class="imgLightboxImg" src="" alt="">
+</div>
+<style>
+.photo,img.photo,.imgZoomable{cursor:zoom-in}
+.imgLightbox{position:fixed;inset:0;z-index:5000;background:rgba(8,12,20,.92);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}
+.imgLightbox[hidden]{display:none!important}
+.imgLightboxImg{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.imgLightboxClose{position:fixed;top:14px;right:18px;width:48px;height:48px;min-height:0;margin:0;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;font-size:30px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.imgLightboxClose:hover{background:rgba(255,255,255,.28)}
+@media print{.imgLightbox{display:none!important}}
+</style>
+<script>
+(function(){
+    const box=document.getElementById("imgLightbox");
+    const boxImg=document.getElementById("imgLightboxImg");
+    if(!box||!boxImg) return;
+    function isZoomable(img){
+        if(!img || img.tagName!=="IMG") return false;
+        if(img.closest(".imgLightbox")) return false;
+        // Content photos opt in via the "photo" / "imgZoomable" class.
+        if(img.classList.contains("photo")||img.classList.contains("imgZoomable")) return true;
+        // Also allow any reasonably large stored image (skip logos, icons, avatars).
+        if(img.classList.contains("brandLogo")||img.classList.contains("noZoom")) return false;
+        const src=img.getAttribute("src")||"";
+        if(src.indexOf("/storage_file/")!==-1 && (img.naturalWidth>140 || img.width>140)) return true;
+        return false;
+    }
+    function open(src){
+        boxImg.src=src;
+        box.hidden=false;
+        document.body.style.overflow="hidden";
+    }
+    function close(){
+        box.hidden=true;
+        boxImg.src="";
+        document.body.style.overflow="";
+    }
+    document.addEventListener("click",function(e){
+        const img=e.target.closest("img");
+        if(img && isZoomable(img)){
+            // Don't hijack images that are links or buttons.
+            if(img.closest("a,button")) return;
+            e.preventDefault();
+            open(img.currentSrc||img.src);
+        }
+    });
+    box.addEventListener("click",close);
+    document.querySelector(".imgLightboxClose").addEventListener("click",function(e){e.stopPropagation();close();});
+    document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!box.hidden)close();});
+})();
+</script>
 </body>
 </html>

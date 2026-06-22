@@ -37,7 +37,7 @@
             <h3>{{ record.title }}</h3>
             {% if record.subtitle %}<p class="muted">{{ record.subtitle }}</p>{% endif %}
             {% if record.body %}<p>{{ record.body }}</p>{% endif %}
-            {% if record.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=record.photo_file) }}">{% endif %}
+            {% if record.photo_file %}<a href="{{ url_for('storage_file', storage_path=record.photo_file) }}" target="_blank" rel="noopener" title="Open picture full size"><img class="photo" src="{{ url_for('storage_file', storage_path=record.photo_file) }}"></a>{% endif %}
             {% if record.audio_file %}
                 <audio controls style="width:100%; margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=record.audio_file) }}"></audio>
             {% endif %}
