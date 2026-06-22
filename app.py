@@ -18,6 +18,11 @@ try:
 except Exception:
     TimezoneFinder = None
 
+try:
+    import segno
+except Exception:
+    segno = None
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "CHANGE_THIS_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
@@ -1958,6 +1963,10 @@ def account_info():
         "company_contact_name": get_app_setting("company_contact_name", "").strip(),
         "company_phone": get_app_setting("company_phone", "").strip(),
         "company_email": get_app_setting("company_email", "").strip(),
+        "company_mobile": get_app_setting("company_mobile", "").strip(),
+        "company_website": get_app_setting("company_website", "").strip(),
+        "card_title": get_app_setting("card_title", "").strip(),
+        "card_tagline": get_app_setting("card_tagline", "").strip(),
     }
 
 
@@ -13354,6 +13363,11 @@ def settings():
                 )
             )
             flash("Account information saved.")
+        elif action == "contact_card":
+            redirect_tab = "account_info"
+            for key in ["company_mobile", "company_website", "card_title", "card_tagline"]:
+                set_app_setting(key, request.form.get(key, "").strip())
+            flash("Contact card saved.")
         elif action == "dtools_cloud":
             set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
             set_app_setting("dtools_cloud_auth_header", request.form.get("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH)
@@ -13984,6 +13998,79 @@ def service_worker():
     response.headers["Service-Worker-Allowed"] = "/"
     response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+def company_card_qr_svg(url):
+    if not segno or not url:
+        return ""
+    try:
+        return segno.make(url, error="m").svg_inline(scale=7, border=0, dark="#0f172a")
+    except Exception:
+        return ""
+
+
+def _vcard_escape(value):
+    return str(value or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def company_vcard_text(info=None):
+    info = info or account_info()
+    name = info.get("company_contact_name") or info.get("company_name") or "Contact"
+    lines = ["BEGIN:VCARD", "VERSION:3.0", f"N:{_vcard_escape(name)};;;;", f"FN:{_vcard_escape(name)}"]
+    if info.get("company_name"):
+        lines.append(f"ORG:{_vcard_escape(info['company_name'])}")
+    if info.get("card_title"):
+        lines.append(f"TITLE:{_vcard_escape(info['card_title'])}")
+    if info.get("company_phone"):
+        lines.append(f"TEL;TYPE=WORK,VOICE:{_vcard_escape(info['company_phone'])}")
+    if info.get("company_mobile"):
+        lines.append(f"TEL;TYPE=CELL:{_vcard_escape(info['company_mobile'])}")
+    if info.get("company_email"):
+        lines.append(f"EMAIL;TYPE=WORK:{_vcard_escape(info['company_email'])}")
+    if info.get("company_website"):
+        lines.append(f"URL:{_vcard_escape(info['company_website'])}")
+    if info.get("company_address"):
+        lines.append(f"ADR;TYPE=WORK:;;{_vcard_escape(info['company_address'])};;;;")
+    lines.append("END:VCARD")
+    return "\r\n".join(lines)
+
+
+def normalized_website_url(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if not re.match(r"^https?://", value, re.I):
+        return "https://" + value
+    return value
+
+
+@app.route("/card")
+def company_card():
+    info = account_info()
+    try:
+        card_url = external_url("company_card")
+    except Exception:
+        card_url = ""
+    return render_template(
+        "card.html",
+        info=info,
+        logo_src=invoice_logo_data_uri(),
+        card_url=card_url,
+        website_url=normalized_website_url(info.get("company_website")),
+        qr_svg=company_card_qr_svg(card_url)
+    )
+
+
+@app.route("/card.vcf")
+def company_card_vcf():
+    info = account_info()
+    text = company_vcard_text(info)
+    fname = secure_filename(info.get("company_name") or "contact") or "contact"
+    return Response(
+        text,
+        mimetype="text/vcard",
+        headers={"Content-Disposition": f"attachment; filename={fname}.vcf"}
+    )
 
 
 @app.route("/health")

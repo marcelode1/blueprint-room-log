@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>{{ info.company_name or "Contact" }}</title>
+    <meta name="theme-color" content="#1e40af">
+    <link rel="icon" type="image/png" href="/static/icon-192.png">
+    <style>
+        *{box-sizing:border-box}
+        body{margin:0;background:#0b1120;color:#172033;font-family:Arial,Helvetica,sans-serif;
+             min-height:100vh;display:flex;justify-content:center;padding:18px}
+        .card{width:100%;max-width:430px;background:#fff;border-radius:22px;overflow:hidden;
+              box-shadow:0 20px 60px rgba(0,0,0,.45);align-self:flex-start}
+        .hero{background:linear-gradient(135deg,#3b82f6,#1e40af);height:120px;position:relative}
+        .logoWrap{position:absolute;left:50%;bottom:-46px;transform:translateX(-50%);
+                  width:96px;height:96px;border-radius:24px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.2);
+                  display:flex;align-items:center;justify-content:center;overflow:hidden}
+        .logoWrap img{max-width:84px;max-height:84px;object-fit:contain}
+        .logoFallback{font-size:42px;font-weight:900;color:#2563eb}
+        .body{padding:60px 22px 24px;text-align:center}
+        .company{font-size:24px;font-weight:900;margin:0 0 2px;color:#0f172a}
+        .name{font-size:17px;font-weight:700;color:#1e293b;margin:6px 0 0}
+        .title{font-size:14px;color:#2563eb;font-weight:700;margin:2px 0 0}
+        .tagline{font-size:14px;color:#64748b;margin:10px 4px 0;line-height:1.5}
+        .actions{display:grid;gap:10px;margin:22px 0 6px}
+        .action{display:flex;align-items:center;gap:14px;padding:13px 16px;border:1px solid #e2e8f0;
+                border-radius:14px;text-decoration:none;color:#0f172a;background:#f8fafc;font-weight:700;text-align:left}
+        .action:hover{background:#eef2ff;border-color:#c7d2fe}
+        .action .ico{width:38px;height:38px;flex:0 0 38px;border-radius:10px;background:#2563eb;color:#fff;
+                     display:flex;align-items:center;justify-content:center;font-size:18px}
+        .action .sub{display:block;font-weight:500;color:#64748b;font-size:12px;margin-top:1px}
+        .action .val{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .save{display:block;width:100%;margin-top:8px;padding:16px;border:0;border-radius:14px;
+              background:#16a34a;color:#fff;font-size:17px;font-weight:800;text-decoration:none;text-align:center;cursor:pointer}
+        .share{display:block;width:100%;margin-top:10px;padding:14px;border:0;border-radius:14px;
+               background:#0f172a;color:#fff;font-size:15px;font-weight:800;cursor:pointer}
+        .qr{margin:24px auto 6px;text-align:center}
+        .qr svg{width:190px;height:190px}
+        .qr p{color:#64748b;font-size:13px;margin:8px 0 0}
+        .foot{text-align:center;color:#94a3b8;font-size:12px;padding:14px}
+        .foot a{color:#94a3b8}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="hero">
+            <div class="logoWrap">
+                {% if logo_src %}<img src="{{ logo_src }}" alt="Logo">{% else %}<span class="logoFallback">{{ (info.company_name or 'P')[:1]|upper }}</span>{% endif %}
+            </div>
+        </div>
+        <div class="body">
+            <h1 class="company">{{ info.company_name or "Company" }}</h1>
+            {% if info.company_contact_name %}<p class="name">{{ info.company_contact_name }}</p>{% endif %}
+            {% if info.card_title %}<p class="title">{{ info.card_title }}</p>{% endif %}
+            {% if info.card_tagline %}<p class="tagline">{{ info.card_tagline }}</p>{% endif %}
+
+            <div class="actions">
+                {% if info.company_phone %}
+                <a class="action" href="tel:{{ info.company_phone }}">
+                    <span class="ico">&#128222;</span>
+                    <span><span class="sub">Call</span><span class="val">{{ info.company_phone }}</span></span>
+                </a>
+                {% endif %}
+                {% if info.company_mobile %}
+                <a class="action" href="tel:{{ info.company_mobile }}">
+                    <span class="ico">&#128241;</span>
+                    <span><span class="sub">Mobile</span><span class="val">{{ info.company_mobile }}</span></span>
+                </a>
+                {% endif %}
+                {% if info.company_email %}
+                <a class="action" href="mailto:{{ info.company_email }}">
+                    <span class="ico">&#9993;</span>
+                    <span><span class="sub">Email</span><span class="val">{{ info.company_email }}</span></span>
+                </a>
+                {% endif %}
+                {% if website_url %}
+                <a class="action" href="{{ website_url }}" target="_blank" rel="noopener">
+                    <span class="ico">&#127760;</span>
+                    <span><span class="sub">Website</span><span class="val">{{ info.company_website }}</span></span>
+                </a>
+                {% endif %}
+                {% if info.company_address %}
+                <a class="action" href="https://www.google.com/maps/search/?api=1&query={{ info.company_address|urlencode }}" target="_blank" rel="noopener">
+                    <span class="ico">&#128205;</span>
+                    <span><span class="sub">Address</span><span class="val">{{ info.company_address }}</span></span>
+                </a>
+                {% endif %}
+            </div>
+
+            <a class="save" href="{{ url_for('company_card_vcf') }}">&#128229; Save to Contacts</a>
+            <button class="share" type="button" id="shareBtn">Share this card</button>
+
+            {% if qr_svg %}
+            <div class="qr">
+                {{ qr_svg|safe }}
+                <p>Scan to open this card</p>
+            </div>
+            {% endif %}
+        </div>
+        <div class="foot">Powered by ProjectONus</div>
+    </div>
+
+    <script>
+    document.getElementById("shareBtn").addEventListener("click", async function(){
+        const url = {{ card_url|tojson }} || location.href;
+        const title = {{ (info.company_name or "Contact")|tojson }};
+        if(navigator.share){
+            try{ await navigator.share({title:title, url:url}); }catch(e){}
+        } else {
+            try{ await navigator.clipboard.writeText(url); this.textContent="Link copied!"; }
+            catch(e){ prompt("Copy this link:", url); }
+        }
+    });
+    </script>
+</body>
+</html>

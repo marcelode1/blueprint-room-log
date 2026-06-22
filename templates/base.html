@@ -86,6 +86,7 @@
                     <a class="desktop-only ui-theme-link" href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
                 {% endif %}
             {% endif %}
+            <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
             <a href="{{ url_for('privacy') }}">Privacy</a>
             <a href="{{ url_for('logout') }}">Logout</a>
             <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
@@ -103,6 +104,7 @@
         <a href="{{ url_for('my_time_report') }}">Time Report</a>
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
+        <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
         <a href="{{ url_for('logout') }}">Logout</a>
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
@@ -127,6 +129,7 @@
         {% else %}
             <a href="{{ url_for('pro_test_ui') }}">Pro Test UI</a>
         {% endif %}
+        <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
         <a href="{{ url_for('privacy') }}">Privacy</a>
         <a href="{{ url_for('logout') }}">Logout</a>
         <button type="button" class="dark-toggle" onclick="toggleDarkMode()">Dark</button>
