@@ -13976,6 +13976,16 @@ def privacy():
     return render_template("privacy.html")
 
 
+@app.route("/sw.js")
+def service_worker():
+    # Serve the service worker from the site root so its scope covers the whole app.
+    response = app.send_static_file("sw.js")
+    response.headers["Content-Type"] = "application/javascript"
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.route("/health")
 def health():
     return "ok"

@@ -1,5 +1,14 @@
-const CACHE_NAME = "projectonus-v6-cache";
-const CORE_ASSETS = ["/static/manifest.json", "/static/icon.svg"];
+const CACHE_NAME = "projectonus-v8-cache";
+const OFFLINE_URL = "/static/offline.html";
+const CORE_ASSETS = [
+    "/static/offline.html",
+    "/static/manifest.json",
+    "/static/icon.svg",
+    "/static/icon-192.png",
+    "/static/icon-512.png",
+    "/static/icon-maskable-512.png",
+    "/static/apple-touch-icon.png"
+];
 const UPLOAD_DB_NAME = "ProjectONusPendingUploads";
 const UPLOAD_STORE_NAME = "uploads";
 const UPLOAD_DB_VERSION = 1;
@@ -24,20 +33,29 @@ self.addEventListener("activate", event => {
 self.addEventListener("fetch", event => {
     const request = event.request;
     if (request.method !== "GET") return;
+    if (!request.url.startsWith(self.location.origin)) return; // let cross-origin pass through
     const url = new URL(request.url);
-    if (!request.url.startsWith(self.location.origin) || !url.pathname.startsWith("/static/")) {
-        event.respondWith(fetch(request));
+
+    // App page navigations: network first, show offline page if there's no connection.
+    if (request.mode === "navigate") {
+        event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_URL)));
         return;
     }
-    event.respondWith(
-        fetch(request).then(response => {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then(cache => {
-                if (response.status === 200) cache.put(request, copy);
-            });
-            return response;
-        }).catch(() => caches.match(request))
-    );
+
+    // Static assets: network first, update cache, fall back to cache when offline.
+    if (url.pathname.startsWith("/static/")) {
+        event.respondWith(
+            fetch(request).then(response => {
+                const copy = response.clone();
+                caches.open(CACHE_NAME).then(cache => {
+                    if (response.status === 200) cache.put(request, copy);
+                });
+                return response;
+            }).catch(() => caches.match(request))
+        );
+        return;
+    }
+    // Everything else (e.g. stored files, API calls): pass through to the network.
 });
 
 function openUploadDb() {
