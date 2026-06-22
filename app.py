@@ -1967,6 +1967,11 @@ def account_info():
         "company_website": get_app_setting("company_website", "").strip(),
         "card_title": get_app_setting("card_title", "").strip(),
         "card_tagline": get_app_setting("card_tagline", "").strip(),
+        "card_instagram": get_app_setting("card_instagram", "").strip(),
+        "card_facebook": get_app_setting("card_facebook", "").strip(),
+        "card_linkedin": get_app_setting("card_linkedin", "").strip(),
+        "card_banner": get_app_setting("card_banner", "").strip(),
+        "card_photo": get_app_setting("card_photo", "").strip(),
     }
 
 
@@ -13365,8 +13370,19 @@ def settings():
             flash("Account information saved.")
         elif action == "contact_card":
             redirect_tab = "account_info"
-            for key in ["company_mobile", "company_website", "card_title", "card_tagline"]:
+            for key in ["company_mobile", "company_website", "card_title", "card_tagline",
+                        "card_instagram", "card_facebook", "card_linkedin"]:
                 set_app_setting(key, request.form.get(key, "").strip())
+            banner = request.files.get("card_banner")
+            if banner and banner.filename and allowed_logo(banner.filename):
+                set_app_setting("card_banner", upload_file_to_storage(banner))
+            elif request.form.get("remove_card_banner"):
+                set_app_setting("card_banner", "")
+            photo = request.files.get("card_photo")
+            if photo and photo.filename and allowed_logo(photo.filename):
+                set_app_setting("card_photo", upload_file_to_storage(photo))
+            elif request.form.get("remove_card_photo"):
+                set_app_setting("card_photo", "")
             flash("Contact card saved.")
         elif action == "dtools_cloud":
             set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
@@ -14044,6 +14060,32 @@ def normalized_website_url(value):
     return value
 
 
+def storage_image_data_uri(path):
+    if not path:
+        return ""
+    raw = download_storage_file(path)
+    if not raw:
+        return ""
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def social_url(kind, value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if re.match(r"^https?://", value, re.I):
+        return value
+    handle = value.lstrip("@").strip("/")
+    if kind == "instagram":
+        return "https://instagram.com/" + handle
+    if kind == "facebook":
+        return "https://facebook.com/" + handle
+    if kind == "linkedin":
+        return "https://www.linkedin.com/in/" + handle
+    return "https://" + value
+
+
 @app.route("/card")
 def company_card():
     info = account_info()
@@ -14051,12 +14093,18 @@ def company_card():
         card_url = external_url("company_card")
     except Exception:
         card_url = ""
+    photo_src = storage_image_data_uri(info.get("card_photo")) or invoice_logo_data_uri()
     return render_template(
         "card.html",
         info=info,
         logo_src=invoice_logo_data_uri(),
+        photo_src=photo_src,
+        banner_src=storage_image_data_uri(info.get("card_banner")),
         card_url=card_url,
         website_url=normalized_website_url(info.get("company_website")),
+        instagram_url=social_url("instagram", info.get("card_instagram")),
+        facebook_url=social_url("facebook", info.get("card_facebook")),
+        linkedin_url=social_url("linkedin", info.get("card_linkedin")),
         qr_svg=company_card_qr_svg(card_url)
     )
 

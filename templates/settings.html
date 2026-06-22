@@ -86,12 +86,28 @@
 <div class="card">
     <h3>Contact Card</h3>
     <p class="muted">This is the shareable company business card (the "Contact Card" link in the menu, with QR code). It uses your Account Info above (company name, contact name, phone, email, address, logo) plus the fields below. <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Open / preview the card</a>.</p>
-    <form method="post">
+    <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="action" value="contact_card">
         <div class="grid">
             <div>
+                <label>Cover Banner Image (optional)</label>
+                {% set banner = get_app_setting('card_banner') %}
+                {% if banner %}<div><img src="{{ url_for('storage_file', storage_path=banner) }}" style="max-height:80px;border-radius:10px;border:1px solid var(--border)"></div>{% endif %}
+                <input type="file" name="card_banner" accept="image/*">
+                {% if banner %}<label style="font-weight:500"><input type="checkbox" name="remove_card_banner"> Remove banner</label>{% endif %}
+            </div>
+            <div>
+                <label>Profile Photo (optional)</label>
+                {% set photo = get_app_setting('card_photo') %}
+                {% if photo %}<div><img src="{{ url_for('storage_file', storage_path=photo) }}" style="height:72px;width:72px;object-fit:cover;border-radius:50%;border:1px solid var(--border)"></div>{% endif %}
+                <input type="file" name="card_photo" accept="image/*">
+                {% if photo %}<label style="font-weight:500"><input type="checkbox" name="remove_card_photo"> Remove photo</label>{% endif %}
+            </div>
+        </div>
+        <div class="grid">
+            <div>
                 <label>Title / Role (optional)</label>
-                <input name="card_title" value="{{ get_app_setting('card_title') }}" placeholder="e.g. Custom Electrical &amp; Smart Home">
+                <input name="card_title" value="{{ get_app_setting('card_title') }}" placeholder="e.g. Electrical Engineering">
             </div>
             <div>
                 <label>Mobile Number (optional)</label>
@@ -100,6 +116,20 @@
             <div>
                 <label>Website (optional)</label>
                 <input name="company_website" value="{{ get_app_setting('company_website') }}" placeholder="www.yourcompany.com">
+            </div>
+        </div>
+        <div class="grid">
+            <div>
+                <label>Instagram (optional)</label>
+                <input name="card_instagram" value="{{ get_app_setting('card_instagram') }}" placeholder="@yourhandle">
+            </div>
+            <div>
+                <label>Facebook (optional)</label>
+                <input name="card_facebook" value="{{ get_app_setting('card_facebook') }}" placeholder="yourpage or full URL">
+            </div>
+            <div>
+                <label>LinkedIn (optional)</label>
+                <input name="card_linkedin" value="{{ get_app_setting('card_linkedin') }}" placeholder="username or full URL">
             </div>
         </div>
         <label>Tagline / Short description (optional)</label>

@@ -3,101 +3,143 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>{{ info.company_name or "Contact" }}</title>
-    <meta name="theme-color" content="#1e40af">
+    <title>{{ info.company_contact_name or info.company_name or "Contact" }}</title>
+    <meta name="theme-color" content="#0f172a">
     <link rel="icon" type="image/png" href="/static/icon-192.png">
     <style>
         *{box-sizing:border-box}
-        body{margin:0;background:#0b1120;color:#172033;font-family:Arial,Helvetica,sans-serif;
-             min-height:100vh;display:flex;justify-content:center;padding:18px}
-        .card{width:100%;max-width:430px;background:#fff;border-radius:22px;overflow:hidden;
-              box-shadow:0 20px 60px rgba(0,0,0,.45);align-self:flex-start}
-        .hero{background:linear-gradient(135deg,#3b82f6,#1e40af);height:120px;position:relative}
-        .logoWrap{position:absolute;left:50%;bottom:-46px;transform:translateX(-50%);
-                  width:96px;height:96px;border-radius:24px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.2);
-                  display:flex;align-items:center;justify-content:center;overflow:hidden}
-        .logoWrap img{max-width:84px;max-height:84px;object-fit:contain}
-        .logoFallback{font-size:42px;font-weight:900;color:#2563eb}
-        .body{padding:60px 22px 24px;text-align:center}
-        .company{font-size:24px;font-weight:900;margin:0 0 2px;color:#0f172a}
-        .name{font-size:17px;font-weight:700;color:#1e293b;margin:6px 0 0}
-        .title{font-size:14px;color:#2563eb;font-weight:700;margin:2px 0 0}
-        .tagline{font-size:14px;color:#64748b;margin:10px 4px 0;line-height:1.5}
-        .actions{display:grid;gap:10px;margin:22px 0 6px}
-        .action{display:flex;align-items:center;gap:14px;padding:13px 16px;border:1px solid #e2e8f0;
-                border-radius:14px;text-decoration:none;color:#0f172a;background:#f8fafc;font-weight:700;text-align:left}
-        .action:hover{background:#eef2ff;border-color:#c7d2fe}
-        .action .ico{width:38px;height:38px;flex:0 0 38px;border-radius:10px;background:#2563eb;color:#fff;
-                     display:flex;align-items:center;justify-content:center;font-size:18px}
-        .action .sub{display:block;font-weight:500;color:#64748b;font-size:12px;margin-top:1px}
-        .action .val{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .save{display:block;width:100%;margin-top:8px;padding:16px;border:0;border-radius:14px;
-              background:#16a34a;color:#fff;font-size:17px;font-weight:800;text-decoration:none;text-align:center;cursor:pointer}
-        .share{display:block;width:100%;margin-top:10px;padding:14px;border:0;border-radius:14px;
-               background:#0f172a;color:#fff;font-size:15px;font-weight:800;cursor:pointer}
-        .qr{margin:24px auto 6px;text-align:center}
-        .qr svg{width:190px;height:190px}
-        .qr p{color:#64748b;font-size:13px;margin:8px 0 0}
-        .foot{text-align:center;color:#94a3b8;font-size:12px;padding:14px}
-        .foot a{color:#94a3b8}
+        body{margin:0;background:#e9eef5;color:#0f172a;font-family:Arial,Helvetica,sans-serif;
+             min-height:100vh;display:flex;justify-content:center;padding:14px}
+        .wrap{width:100%;max-width:440px;align-self:flex-start}
+        .topCard{background:#fff;border-radius:24px;box-shadow:0 14px 40px rgba(15,23,42,.12);overflow:hidden}
+        .banner{height:150px;background:linear-gradient(135deg,#3b82f6,#1e40af);position:relative}
+        .banner img{width:100%;height:100%;object-fit:cover;display:block}
+        .photo{position:absolute;left:22px;bottom:-44px;width:104px;height:104px;border-radius:50%;
+               border:4px solid #fff;background:#fff;object-fit:cover;box-shadow:0 6px 16px rgba(0,0,0,.18)}
+        .photoFallback{position:absolute;left:22px;bottom:-44px;width:104px;height:104px;border-radius:50%;
+               border:4px solid #fff;background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;
+               font-size:44px;font-weight:900;box-shadow:0 6px 16px rgba(0,0,0,.18)}
+        .head{padding:56px 22px 22px}
+        .name{font-size:26px;font-weight:900;margin:0 0 12px;color:#0f172a;line-height:1.15}
+        .infoBlock{border-left:3px solid #cbd5e1;padding-left:12px;margin:0 0 14px;color:#64748b;
+                   font-size:15px;line-height:1.55}
+        .infoBlock div{margin:2px 0}
+        .infoBlock .company{color:#334155;font-weight:700}
+        .pill{display:inline-block;background:#f1f5f9;color:#475569;font-weight:700;font-size:13px;
+              padding:7px 14px;border-radius:999px}
+        .actions{display:grid;gap:12px;margin:16px 0 4px}
+        .row{display:flex;align-items:center;gap:14px;background:#fff;border-radius:18px;padding:14px 16px;
+             box-shadow:0 4px 14px rgba(15,23,42,.07);text-decoration:none;color:#0f172a}
+        .row:active{transform:scale(.99)}
+        .ico{width:48px;height:48px;flex:0 0 48px;border-radius:50%;display:flex;align-items:center;
+             justify-content:center;font-size:22px;color:#fff}
+        .ico.email{background:linear-gradient(135deg,#2aa4f4,#1877f2)}
+        .ico.call{background:#22c55e}
+        .ico.web{background:#0ea5e9}
+        .ico.map{background:#ef4444}
+        .ico.ig{background:linear-gradient(45deg,#f9ce34,#ee2a7b,#6228d7)}
+        .ico.fb{background:#1877f2}
+        .ico.li{background:#0a66c2}
+        .row .t{font-size:17px;font-weight:800;line-height:1.2}
+        .row .v{display:block;color:#64748b;font-weight:600;font-size:14px;margin-top:2px;
+                overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px}
+        .save{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:8px;
+              padding:17px;border:0;border-radius:16px;background:#16a34a;color:#fff;font-size:17px;
+              font-weight:800;text-decoration:none;cursor:pointer}
+        .share{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:11px;
+               padding:15px;border:0;border-radius:16px;background:#0f172a;color:#fff;font-size:15px;
+               font-weight:800;cursor:pointer}
+        .qrCard{background:#fff;border-radius:24px;box-shadow:0 14px 40px rgba(15,23,42,.12);
+                margin-top:14px;padding:22px;text-align:center}
+        .qrCard svg{width:200px;height:200px}
+        .qrCard p{color:#64748b;font-size:14px;margin:10px 0 0}
+        .foot{text-align:center;color:#94a3b8;font-size:12px;padding:16px}
     </style>
 </head>
 <body>
-    <div class="card">
-        <div class="hero">
-            <div class="logoWrap">
-                {% if logo_src %}<img src="{{ logo_src }}" alt="Logo">{% else %}<span class="logoFallback">{{ (info.company_name or 'P')[:1]|upper }}</span>{% endif %}
+    <div class="wrap">
+        <div class="topCard">
+            <div class="banner">
+                {% if banner_src %}<img src="{{ banner_src }}" alt="">{% endif %}
+                {% if photo_src %}
+                    <img class="photo" src="{{ photo_src }}" alt="">
+                {% else %}
+                    <span class="photoFallback">{{ (info.company_contact_name or info.company_name or 'P')[:1]|upper }}</span>
+                {% endif %}
+            </div>
+            <div class="head">
+                <h1 class="name">{{ info.company_contact_name or info.company_name }}</h1>
+                <div class="infoBlock">
+                    {% if info.company_name %}<div class="company">{{ info.company_name }}</div>{% endif %}
+                    {% if info.card_title %}<div>{{ info.card_title }}</div>{% endif %}
+                    {% if info.company_address %}<div>{{ info.company_address }}</div>{% endif %}
+                    {% if info.card_tagline %}<div>{{ info.card_tagline }}</div>{% endif %}
+                </div>
+                <span class="pill">Business</span>
             </div>
         </div>
-        <div class="body">
-            <h1 class="company">{{ info.company_name or "Company" }}</h1>
-            {% if info.company_contact_name %}<p class="name">{{ info.company_contact_name }}</p>{% endif %}
-            {% if info.card_title %}<p class="title">{{ info.card_title }}</p>{% endif %}
-            {% if info.card_tagline %}<p class="tagline">{{ info.card_tagline }}</p>{% endif %}
 
-            <div class="actions">
-                {% if info.company_phone %}
-                <a class="action" href="tel:{{ info.company_phone }}">
-                    <span class="ico">&#128222;</span>
-                    <span><span class="sub">Call</span><span class="val">{{ info.company_phone }}</span></span>
-                </a>
-                {% endif %}
-                {% if info.company_mobile %}
-                <a class="action" href="tel:{{ info.company_mobile }}">
-                    <span class="ico">&#128241;</span>
-                    <span><span class="sub">Mobile</span><span class="val">{{ info.company_mobile }}</span></span>
-                </a>
-                {% endif %}
-                {% if info.company_email %}
-                <a class="action" href="mailto:{{ info.company_email }}">
-                    <span class="ico">&#9993;</span>
-                    <span><span class="sub">Email</span><span class="val">{{ info.company_email }}</span></span>
-                </a>
-                {% endif %}
-                {% if website_url %}
-                <a class="action" href="{{ website_url }}" target="_blank" rel="noopener">
-                    <span class="ico">&#127760;</span>
-                    <span><span class="sub">Website</span><span class="val">{{ info.company_website }}</span></span>
-                </a>
-                {% endif %}
-                {% if info.company_address %}
-                <a class="action" href="https://www.google.com/maps/search/?api=1&query={{ info.company_address|urlencode }}" target="_blank" rel="noopener">
-                    <span class="ico">&#128205;</span>
-                    <span><span class="sub">Address</span><span class="val">{{ info.company_address }}</span></span>
-                </a>
-                {% endif %}
-            </div>
-
-            <a class="save" href="{{ url_for('company_card_vcf') }}">&#128229; Save to Contacts</a>
-            <button class="share" type="button" id="shareBtn">Share this card</button>
-
-            {% if qr_svg %}
-            <div class="qr">
-                {{ qr_svg|safe }}
-                <p>Scan to open this card</p>
-            </div>
+        <div class="actions">
+            {% if info.company_email %}
+            <a class="row" href="mailto:{{ info.company_email }}">
+                <span class="ico email">&#9993;</span>
+                <span><span class="t">Email</span><span class="v">{{ info.company_email }}</span></span>
+            </a>
+            {% endif %}
+            {% if info.company_phone %}
+            <a class="row" href="tel:{{ info.company_phone }}">
+                <span class="ico call">&#128222;</span>
+                <span><span class="t">Call</span><span class="v">{{ info.company_phone }}</span></span>
+            </a>
+            {% endif %}
+            {% if info.company_mobile %}
+            <a class="row" href="tel:{{ info.company_mobile }}">
+                <span class="ico call">&#128241;</span>
+                <span><span class="t">Mobile</span><span class="v">{{ info.company_mobile }}</span></span>
+            </a>
+            {% endif %}
+            {% if website_url %}
+            <a class="row" href="{{ website_url }}" target="_blank" rel="noopener">
+                <span class="ico web">&#127760;</span>
+                <span><span class="t">Website</span><span class="v">{{ info.company_website }}</span></span>
+            </a>
+            {% endif %}
+            {% if instagram_url %}
+            <a class="row" href="{{ instagram_url }}" target="_blank" rel="noopener">
+                <span class="ico ig">&#128247;</span>
+                <span><span class="t">Instagram</span><span class="v">{{ info.card_instagram }}</span></span>
+            </a>
+            {% endif %}
+            {% if facebook_url %}
+            <a class="row" href="{{ facebook_url }}" target="_blank" rel="noopener">
+                <span class="ico fb">f</span>
+                <span><span class="t">Facebook</span><span class="v">{{ info.card_facebook }}</span></span>
+            </a>
+            {% endif %}
+            {% if linkedin_url %}
+            <a class="row" href="{{ linkedin_url }}" target="_blank" rel="noopener">
+                <span class="ico li">in</span>
+                <span><span class="t">LinkedIn</span><span class="v">{{ info.card_linkedin }}</span></span>
+            </a>
+            {% endif %}
+            {% if info.company_address %}
+            <a class="row" href="https://www.google.com/maps/search/?api=1&query={{ info.company_address|urlencode }}" target="_blank" rel="noopener">
+                <span class="ico map">&#128205;</span>
+                <span><span class="t">Address</span><span class="v">{{ info.company_address }}</span></span>
+            </a>
             {% endif %}
         </div>
+
+        <a class="save" href="{{ url_for('company_card_vcf') }}">&#128229; Save to Contacts</a>
+        <button class="share" type="button" id="shareBtn">&#128279; Share this card</button>
+
+        {% if qr_svg %}
+        <div class="qrCard">
+            {{ qr_svg|safe }}
+            <p>Scan to open this card</p>
+        </div>
+        {% endif %}
+
         <div class="foot">Powered by ProjectONus</div>
     </div>
 
