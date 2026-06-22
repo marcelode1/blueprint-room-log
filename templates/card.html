@@ -12,17 +12,17 @@
              min-height:100vh;display:flex;justify-content:center;padding:14px}
         .wrap{width:100%;max-width:440px;align-self:flex-start}
         .topCard{background:#fff;border-radius:24px;box-shadow:0 14px 40px rgba(15,23,42,.12);overflow:hidden}
-        .banner{height:150px;background:linear-gradient(135deg,#3b82f6,#1e40af);position:relative}
+        .banner{height:140px;background:linear-gradient(135deg,#3b82f6,#1e40af)}
         .banner img{width:100%;height:100%;object-fit:cover;display:block}
-        .photo{position:absolute;left:22px;bottom:-44px;width:104px;height:104px;border-radius:50%;
-               border:4px solid #fff;background:#fff;object-fit:cover;box-shadow:0 6px 16px rgba(0,0,0,.18)}
-        .photoFallback{position:absolute;left:22px;bottom:-44px;width:104px;height:104px;border-radius:50%;
-               border:4px solid #fff;background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;
-               font-size:44px;font-weight:900;box-shadow:0 6px 16px rgba(0,0,0,.18)}
-        .head{padding:56px 22px 22px}
-        .name{font-size:26px;font-weight:900;margin:0 0 12px;color:#0f172a;line-height:1.15}
-        .infoBlock{border-left:3px solid #cbd5e1;padding-left:12px;margin:0 0 14px;color:#64748b;
-                   font-size:15px;line-height:1.55}
+        .avatarWrap{display:flex;justify-content:center;margin-top:-64px}
+        .avatar{width:122px;height:122px;border-radius:50%;border:5px solid #fff;object-fit:cover;
+                background:#fff;box-shadow:0 8px 20px rgba(0,0,0,.18)}
+        .avatarFallback{width:122px;height:122px;border-radius:50%;border:5px solid #fff;background:#2563eb;
+                color:#fff;display:flex;align-items:center;justify-content:center;font-size:50px;font-weight:900;
+                box-shadow:0 8px 20px rgba(0,0,0,.18)}
+        .head{padding:12px 22px 24px;text-align:center}
+        .name{font-size:25px;font-weight:900;margin:0 0 10px;color:#0f172a;line-height:1.15}
+        .infoBlock{color:#64748b;font-size:15px;line-height:1.55;margin:0 0 14px}
         .infoBlock div{margin:2px 0}
         .infoBlock .company{color:#334155;font-weight:700}
         .pill{display:inline-block;background:#f1f5f9;color:#475569;font-weight:700;font-size:13px;
@@ -30,9 +30,8 @@
         .actions{display:grid;gap:12px;margin:16px 0 4px}
         .row{display:flex;align-items:center;gap:14px;background:#fff;border-radius:18px;padding:14px 16px;
              box-shadow:0 4px 14px rgba(15,23,42,.07);text-decoration:none;color:#0f172a}
-        .row:active{transform:scale(.99)}
         .ico{width:48px;height:48px;flex:0 0 48px;border-radius:50%;display:flex;align-items:center;
-             justify-content:center;font-size:22px;color:#fff}
+             justify-content:center;font-size:22px;color:#fff;font-weight:800}
         .ico.email{background:linear-gradient(135deg,#2aa4f4,#1877f2)}
         .ico.call{background:#22c55e}
         .ico.web{background:#0ea5e9}
@@ -43,12 +42,18 @@
         .row .t{font-size:17px;font-weight:800;line-height:1.2}
         .row .v{display:block;color:#64748b;font-weight:600;font-size:14px;margin-top:2px;
                 overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px}
-        .save{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:8px;
-              padding:17px;border:0;border-radius:16px;background:#16a34a;color:#fff;font-size:17px;
-              font-weight:800;text-decoration:none;cursor:pointer}
-        .share{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin-top:11px;
-               padding:15px;border:0;border-radius:16px;background:#0f172a;color:#fff;font-size:15px;
-               font-weight:800;cursor:pointer}
+        .save,.share{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+              border:0;border-radius:16px;font-weight:800;text-decoration:none;cursor:pointer}
+        .save{margin-top:8px;padding:17px;background:#16a34a;color:#fff;font-size:17px}
+        .share{margin-top:11px;padding:15px;background:#0f172a;color:#fff;font-size:15px}
+        .smsCard{background:#fff;border-radius:22px;box-shadow:0 10px 30px rgba(15,23,42,.1);margin-top:14px;padding:20px}
+        .smsCard h3{margin:0 0 4px;font-size:18px}
+        .smsHint{color:#64748b;font-size:13px;margin:0 0 12px}
+        .smsCard input{width:100%;padding:14px;border:1px solid #cbd5e1;border-radius:12px;font-size:16px;margin:0 0 10px}
+        .smsCard button{width:100%;padding:15px;border:0;border-radius:14px;background:#2563eb;color:#fff;
+              font-size:16px;font-weight:800;cursor:pointer}
+        .smsCard button:disabled{opacity:.6}
+        .smsStatus{font-size:14px;margin:10px 0 0;text-align:center;min-height:18px}
         .qrCard{background:#fff;border-radius:24px;box-shadow:0 14px 40px rgba(15,23,42,.12);
                 margin-top:14px;padding:22px;text-align:center}
         .qrCard svg{width:200px;height:200px}
@@ -59,12 +64,12 @@
 <body>
     <div class="wrap">
         <div class="topCard">
-            <div class="banner">
-                {% if banner_src %}<img src="{{ banner_src }}" alt="">{% endif %}
+            <div class="banner">{% if banner_src %}<img src="{{ banner_src }}" alt="">{% endif %}</div>
+            <div class="avatarWrap">
                 {% if photo_src %}
-                    <img class="photo" src="{{ photo_src }}" alt="">
+                    <img class="avatar" src="{{ photo_src }}" alt="">
                 {% else %}
-                    <span class="photoFallback">{{ (info.company_contact_name or info.company_name or 'P')[:1]|upper }}</span>
+                    <span class="avatarFallback">{{ (info.company_contact_name or info.company_name or 'P')[:1]|upper }}</span>
                 {% endif %}
             </div>
             <div class="head">
@@ -133,6 +138,16 @@
         <a class="save" href="{{ url_for('company_card_vcf') }}">&#128229; Save to Contacts</a>
         <button class="share" type="button" id="shareBtn">&#128279; Share this card</button>
 
+        {% if logged_in %}
+        <div class="smsCard">
+            <h3>Send Contact Card</h3>
+            <p class="smsHint">Enter the customer's number and tap Send &mdash; your phone's Messages app opens with the card link ready to send.</p>
+            <input type="tel" id="smsPhone" inputmode="tel" placeholder="Customer phone number">
+            <button type="button" id="smsBtn">Send by Text</button>
+            <p class="smsStatus" id="smsStatus"></p>
+        </div>
+        {% endif %}
+
         {% if qr_svg %}
         <div class="qrCard">
             {{ qr_svg|safe }}
@@ -154,6 +169,23 @@
             catch(e){ prompt("Copy this link:", url); }
         }
     });
+
+    const smsBtn = document.getElementById("smsBtn");
+    if(smsBtn){
+        smsBtn.addEventListener("click", function(){
+            const phoneEl = document.getElementById("smsPhone");
+            const status = document.getElementById("smsStatus");
+            const num = (phoneEl.value || "").replace(/[^0-9+]/g, "");
+            if(!num){ status.style.color="#dc2626"; status.textContent="Enter a phone number."; return; }
+            const url = {{ card_url|tojson }} || location.href;
+            const company = {{ (info.company_name or "our")|tojson }};
+            const body = "Here is the contact card for " + company + ": " + url;
+            // iOS uses "&body=", most others use "?body="
+            const sep = /iP(hone|od|ad)/.test(navigator.userAgent) ? "&" : "?";
+            status.style.color="#64748b"; status.textContent="Opening your Messages app...";
+            window.location.href = "sms:" + num + sep + "body=" + encodeURIComponent(body);
+        });
+    }
     </script>
 </body>
 </html>

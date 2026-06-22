@@ -14105,7 +14105,8 @@ def company_card():
         instagram_url=social_url("instagram", info.get("card_instagram")),
         facebook_url=social_url("facebook", info.get("card_facebook")),
         linkedin_url=social_url("linkedin", info.get("card_linkedin")),
-        qr_svg=company_card_qr_svg(card_url)
+        qr_svg=company_card_qr_svg(card_url),
+        logged_in=bool(session.get("user_id"))
     )
 
 
