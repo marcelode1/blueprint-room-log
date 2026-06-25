@@ -21,6 +21,7 @@
     </div>
     {% endif %}
     <form method="post" class="dtoolsQuickForm">
+        <input type="hidden" id="dtoolsQuickKind" name="dtools_kind" value="">
         <input id="dtoolsQuickId" name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="D-Tools Project GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6" required autofocus>
         <button type="submit" name="action" value="create_project">Import from D-Tools</button>
     </form>
@@ -227,6 +228,7 @@
     const status=document.getElementById("dtoolsSearchStatus");
     const results=document.getElementById("dtoolsSearchResults");
     const idInput=document.getElementById("dtoolsQuickId");
+    const kindInput=document.getElementById("dtoolsQuickKind");
     if(!btn||!input)return;
     function esc(s){return (s||"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
     async function runSearch(){
@@ -237,11 +239,12 @@
             const resp=await fetch(btn.dataset.url,{method:"POST",body:fd});
             const data=await resp.json();
             if(!resp.ok||!data.ok)throw new Error(data.error||"Search failed.");
-            if(!data.results.length){status.textContent="No matching D-Tools projects found.";return;}
-            status.className="dtoolsSearchStatus ok";status.textContent=`Found ${data.results.length} project(s). Click one to use its GUID.`;
+            if(!data.results.length){status.textContent="No matching D-Tools projects or opportunities found.";return;}
+            status.className="dtoolsSearchStatus ok";status.textContent=`Found ${data.results.length} result(s). Click one to use it.`;
             results.innerHTML=data.results.map(p=>{
-                const meta=[p.number,p.client,p.stage].filter(Boolean).map(esc).join(" · ");
-                return `<div class="dtoolsResultRow"><div><strong>${esc(p.name)}</strong><div class="meta">${meta?meta+" · ":""}${esc(p.id)}</div></div><button type="button" class="dtoolsUse" data-id="${esc(p.id)}">Use this</button></div>`;
+                const kindLabel=p.kind==="opportunity"?"Opportunity / Quote":"Project";
+                const meta=[kindLabel,p.number,p.client,p.stage].filter(Boolean).map(esc).join(" · ");
+                return `<div class="dtoolsResultRow"><div><strong>${esc(p.name)}</strong><div class="meta">${meta}</div></div><button type="button" class="dtoolsUse" data-id="${esc(p.id)}" data-kind="${esc(p.kind||'')}">Use this</button></div>`;
             }).join("");
         }catch(err){
             status.className="dtoolsSearchStatus err";status.textContent=err.message||"Search failed.";
@@ -253,7 +256,8 @@
         const use=e.target.closest(".dtoolsUse");
         if(!use)return;
         if(idInput)idInput.value=use.dataset.id;
-        status.className="dtoolsSearchStatus ok";status.textContent="GUID filled in. Now press Import from D-Tools.";
+        if(kindInput)kindInput.value=use.dataset.kind||"";
+        status.className="dtoolsSearchStatus ok";status.textContent="Selected. Now press Import from D-Tools.";
         results.innerHTML="";
         if(idInput)idInput.scrollIntoView({block:"center"});
     });

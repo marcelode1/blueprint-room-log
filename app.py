@@ -4024,9 +4024,9 @@ def dtools_auth_diagnostic():
         key_info = "NO API key is saved in Settings (the X-API-Key header is empty)"
     else:
         key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
-    auth = (config.get("auth_header") or "").strip()
-    auth_sent = auth.lower().startswith("bearer ")
-    return f" [Diagnostic: {key_info}; Authorization header {'sent' if auth_sent else 'not sent'}]"
+    auth = (config.get("auth_header") or "").strip() or DTOOLS_CLOUD_DEFAULT_AUTH
+    auth_kind = "custom" if (config.get("auth_header") or "").strip() else "gateway default"
+    return f" [Diagnostic: {key_info}; Authorization header sent ({auth_kind})]"
 
 
 def dtools_format_error_details(status_code, details, ref, path):
@@ -4415,18 +4415,16 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
 
 
 def dtools_cloud_headers(config):
-    """Per the D-Tools Cloud API docs, requests authenticate with the X-API-Key
-    header ONLY. We deliberately never send an Authorization header: a stray
-    Basic/Bearer value (from the old hard-coded default or a saved Settings value)
-    causes 401 Unauthorized responses. The only exception is an explicit Bearer
-    token, which the docs note is supported for some integrations."""
+    """D-Tools Cloud requires BOTH the per-tenant X-API-Key header AND a gateway
+    Authorization header. Verified live: X-API-Key alone returns 401; X-API-Key +
+    the gateway Basic credential returns 200. So we always send the gateway Basic
+    default unless the admin set an explicit override (e.g. a Bearer token)."""
     headers = {
         "Accept": "application/json",
         "X-API-Key": config.get("api_key", ""),
     }
-    auth_header = (config.get("auth_header") or "").strip()
-    if auth_header.lower().startswith("bearer "):
-        headers["Authorization"] = auth_header
+    auth_header = (config.get("auth_header") or "").strip() or DTOOLS_CLOUD_DEFAULT_AUTH
+    headers["Authorization"] = auth_header
     return headers
 
 
@@ -4437,13 +4435,13 @@ def dtools_collect_project_candidates(payload):
     if isinstance(payload, list):
         return [p for p in payload if isinstance(p, dict)]
     if isinstance(payload, dict):
-        for key in ["data", "items", "projects", "Projects", "results", "value", "records"]:
+        for key in ["data", "items", "projects", "Projects", "opportunities", "quotes", "results", "value", "records"]:
             value = payload.get(key)
             if isinstance(value, list):
                 return [p for p in value if isinstance(p, dict)]
         data = payload.get("data")
         if isinstance(data, dict):
-            for key in ["items", "projects", "results", "records"]:
+            for key in ["items", "projects", "opportunities", "quotes", "results", "records"]:
                 value = data.get(key)
                 if isinstance(value, list):
                     return [p for p in value if isinstance(p, dict)]
@@ -4468,30 +4466,88 @@ def dtools_normalize_projects(payload):
     return projects
 
 
-def dtools_search_projects(search, page_size=25):
-    """Look up D-Tools projects by name so the user can pick one and we resolve
-    its GUID automatically (the GetProject endpoint needs the GUID, not a name)."""
+def dtools_cloud_api_get(path, params=None):
+    """GET a D-Tools Cloud API path with the required headers and return parsed JSON."""
     config = dtools_cloud_config()
     if not config.get("api_key"):
         raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings.")
-    search = (search or "").strip()
-    if not search:
-        raise RuntimeError("Enter a project name to search.")
-    params = {"search": search, "page": 1, "pageSize": page_size, "includeArchived": "true"}
-    url = config["base_url"].rstrip("/") + "/Projects/GetProjects?" + urllib.parse.urlencode(params)
+    url = config["base_url"].rstrip("/") + "/" + path.lstrip("/")
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers=dtools_cloud_headers(config))
     try:
-        with urllib.request.urlopen(req, timeout=45) as response:
+        with urllib.request.urlopen(req, timeout=60) as response:
             raw = response.read().decode("utf-8", errors="replace")
-            payload = json.loads(raw or "{}")
+            return json.loads(raw or "{}")
     except urllib.error.HTTPError as e:
         details = e.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(dtools_format_error_details(e.code, details or e.reason, search, "Projects/GetProjects"))
+        raise RuntimeError(dtools_format_error_details(e.code, details or e.reason, "", path))
     except urllib.error.URLError as e:
         raise RuntimeError(f"Could not reach D-Tools Cloud: {e.reason}")
     except json.JSONDecodeError:
         raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
-    return dtools_normalize_projects(payload)
+
+
+def dtools_search_projects(search, page_size=25):
+    """Search D-Tools Projects AND Opportunities by name and return a unified list
+    so the user can pick one; we resolve its GUID (and kind) automatically. In
+    D-Tools, quote-based jobs live under Opportunities, not Projects."""
+    search = (search or "").strip()
+    if not search:
+        raise RuntimeError("Enter a project name to search.")
+    results = []
+    errors = []
+    try:
+        pj = dtools_cloud_api_get("Projects/GetProjects", {"search": search, "page": 1, "pageSize": page_size, "includeArchived": "true"})
+        for row in dtools_normalize_projects(pj):
+            row["kind"] = "project"
+            results.append(row)
+    except Exception as e:
+        errors.append(str(e))
+    try:
+        op = dtools_cloud_api_get("Opportunities/GetOpportunities", {"search": search, "page": 1, "pageSize": page_size})
+        for row in dtools_normalize_projects(op):
+            row["kind"] = "opportunity"
+            results.append(row)
+    except Exception as e:
+        errors.append(str(e))
+    if not results and errors:
+        raise RuntimeError(errors[0])
+    return results
+
+
+def dtools_select_quote_id_for_opportunity(opportunity_guid):
+    """Pick the best quote for an opportunity: the one included in the total
+    (the accepted/active proposal), else an Accepted one, else the newest."""
+    quotes = dtools_cloud_api_get("Quotes/GetQuotes", {"opportunityId": opportunity_guid})
+    rows = quotes if isinstance(quotes, list) else dtools_collect_project_candidates(quotes)
+    rows = [r for r in rows if isinstance(r, dict) and dtools_pick(r, ["id", "quoteId", "guid"])]
+    if not rows:
+        return None
+    def score(r):
+        included = 1 if r.get("isIncludedInTotal") else 0
+        accepted = 1 if str(r.get("state") or r.get("systemState") or "").lower() == "accepted" else 0
+        modified = str(r.get("modifiedDate") or r.get("createdDate") or "")
+        return (included, accepted, modified)
+    best = sorted(rows, key=score, reverse=True)[0]
+    return dtools_pick(best, ["id", "quoteId", "guid"])
+
+
+def dtools_fetch_import_payload(kind, guid):
+    """Resolve the material payload for a picked search result. Projects fetch
+    GetProject; Opportunities resolve to their best Quote then fetch GetQuote."""
+    kind = (kind or "").strip().lower()
+    guid = (guid or "").strip()
+    if not guid:
+        raise RuntimeError("No D-Tools id was provided.")
+    if kind == "opportunity":
+        quote_id = dtools_select_quote_id_for_opportunity(guid)
+        if not quote_id:
+            raise RuntimeError("No quote was found for this D-Tools opportunity.")
+        return dtools_cloud_api_get("Quotes/GetQuote", {"id": quote_id})
+    if kind == "quote":
+        return dtools_cloud_api_get("Quotes/GetQuote", {"id": guid})
+    return dtools_cloud_api_get("Projects/GetProject", {"id": guid})
 
 
 def dtools_public_fetch_payload(public_url, quote_id=""):
@@ -4818,7 +4874,32 @@ def dtools_money(value):
         return None
 
 
-def dtools_normalize_material(item, index, external_ref):
+def dtools_build_location_map(payload):
+    """Map a D-Tools location/room id -> its name. The Quote/Project API returns a
+    separate `locations` array and items only carry a `locationId`, so we resolve
+    the id to a room name here (otherwise every item lands in Project general)."""
+    location_map = {}
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if normalize_lookup_key(key) in ("locations", "rooms", "areas") and isinstance(value, list):
+                    for loc in value:
+                        if isinstance(loc, dict):
+                            lid = loc.get("id")
+                            name = loc.get("fullName") or loc.get("name")
+                            if lid is not None and name:
+                                location_map[str(lid)] = str(name).strip()
+                walk(value)
+        elif isinstance(obj, list):
+            for child in obj:
+                walk(child)
+
+    walk(payload)
+    return location_map
+
+
+def dtools_normalize_material(item, index, external_ref, resolved_location=""):
     item_type = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"])
     type_text = item_type.lower()
     name = dtools_pick(item, ["itemName", "productName", "product", "name", "description", "shortDescription", "model", "partNumber"])
@@ -4831,7 +4912,7 @@ def dtools_normalize_material(item, index, external_ref):
     quantity = dtools_quantity(dtools_pick(item, ["totalQuantity", "quantity", "qty", "count"]))
     brand = dtools_pick(item, ["manufacturer", "manufacturerName", "brand", "brandName", "vendor", "vendorName"])
     model = dtools_pick(item, ["model", "modelNumber", "partNumber", "manufacturerPartNumber", "sku"])
-    location = dtools_pick(item, ["location", "locationName", "room", "roomName", "sublocation", "subLocation", "area", "areaName"])
+    location = dtools_pick(item, ["location", "locationName", "room", "roomName", "sublocation", "subLocation", "area", "areaName"]) or (resolved_location or "")
     system = dtools_pick(item, ["system", "systemName"])
     phase = dtools_pick(item, ["phase", "phaseName"])
     category = dtools_pick(item, ["category", "categoryName"])
@@ -4861,9 +4942,14 @@ def dtools_normalize_material(item, index, external_ref):
 
 
 def dtools_extract_materials(payload, external_ref):
+    location_map = dtools_build_location_map(payload)
     materials = []
     for index, item in enumerate(dtools_collect_item_candidates(payload), start=1):
-        material = dtools_normalize_material(item, index, external_ref)
+        resolved_location = ""
+        location_id = item.get("locationId") if isinstance(item, dict) else None
+        if location_id is not None:
+            resolved_location = location_map.get(str(location_id), "")
+        material = dtools_normalize_material(item, index, external_ref, resolved_location)
         if material:
             materials.append(material)
     return materials
@@ -7851,6 +7937,9 @@ def dtools_payload_from_request(external_ref, endpoint_path):
             raise RuntimeError(f"The pasted D-Tools Response JSON is not valid JSON: {json_error}")
     if public_url:
         return dtools_public_fetch_payload(public_url, external_ref)
+    kind = request.form.get("dtools_kind", "").strip()
+    if kind:
+        return dtools_fetch_import_payload(kind, external_ref)
     if not external_ref:
         raise RuntimeError("Enter the D-Tools Project/Quote ID, paste the Response JSON, or paste the public Request URL.")
     return dtools_cloud_fetch_payload(external_ref, endpoint_path)
@@ -7935,7 +8024,12 @@ def preview_dtools_inventory(project_id):
         room_name_by_id = {room["id"]: room["name"] for room in rooms}
         for item in items:
             room_id = match_dtools_room(room_lookup, item.get("location"))
-            item["matched_room_name"] = room_name_by_id.get(room_id, "")
+            if room_id:
+                item["matched_room_name"] = room_name_by_id.get(room_id, "")
+            elif (item.get("location") or "").strip():
+                item["matched_room_name"] = f"{item['location'].strip()} (new room)"
+            else:
+                item["matched_room_name"] = ""
         conn.close()
         return render_template(
             "dtools_preview.html",
@@ -7945,6 +8039,7 @@ def preview_dtools_inventory(project_id):
             endpoint_path=dtools_endpoint_for_ref(endpoint_path, external_ref),
             public_response_json=request.form.get("public_response_json", "").strip(),
             public_proposal_url=request.form.get("public_proposal_url", "").strip(),
+            dtools_kind=request.form.get("dtools_kind", "").strip(),
         )
     except Exception as e:
         conn.close()
@@ -8038,7 +8133,10 @@ def dtools_import():
 
                 project_payload = None
                 proposal_payload = None
-                if form_values["dtools_project_id"]:
+                import_kind = request.form.get("dtools_kind", "").strip()
+                if import_kind in ("opportunity", "quote") and form_values["dtools_project_id"]:
+                    proposal_payload = dtools_fetch_import_payload(import_kind, form_values["dtools_project_id"])
+                elif form_values["dtools_project_id"]:
                     project_payload = dtools_cloud_fetch_payload(form_values["dtools_project_id"], form_values["project_endpoint_path"])
                 if form_values["public_response_json"]:
                     try:
