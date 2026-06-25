@@ -7,9 +7,21 @@
 
 <div class="card dtoolsQuickCard">
     <h3>Quick Import from D-Tools</h3>
-    <p class="muted">Enter the D-Tools Project ID (or a Quote # like Q-253) and press one button. ProjectONus creates/updates the project, its rooms, the Needs-Purchase inventory, and the parts catalog automatically.</p>
+    <p class="muted">Search a D-Tools project by name (or paste its GUID) and press one button. ProjectONus creates/updates the project, its rooms, the Needs-Purchase inventory, and the parts catalog automatically.</p>
+    {% if dtools_cloud_configured() %}
+    <div class="dtoolsFinder">
+        <label>Find a project in D-Tools by name</label>
+        <div class="dtoolsFinderRow">
+            <input id="dtoolsSearchInput" placeholder="e.g. Knights Residence">
+            <button type="button" id="dtoolsSearchBtn" data-url="{{ url_for('dtools_search_projects_json') }}">Search D-Tools</button>
+        </div>
+        <p class="muted">Fills in the GUID for you so you don't have to look it up.</p>
+        <div id="dtoolsSearchStatus" class="dtoolsSearchStatus"></div>
+        <div id="dtoolsSearchResults" class="dtoolsSearchResults"></div>
+    </div>
+    {% endif %}
     <form method="post" class="dtoolsQuickForm">
-        <input name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="D-Tools Project GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6" required autofocus>
+        <input id="dtoolsQuickId" name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="D-Tools Project GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6" required autofocus>
         <button type="submit" name="action" value="create_project">Import from D-Tools</button>
     </form>
     {% if not dtools_cloud_configured() %}
@@ -198,6 +210,54 @@
 .dtoolsQuickCard{border-left:4px solid var(--primary)}
 .dtoolsQuickForm{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}.dtoolsQuickForm input{flex:1;min-width:260px}.dtoolsQuickForm button{margin:0!important;width:auto!important}
 .dtoolsManualWrap>summary{cursor:pointer;font-weight:800;font-size:18px;margin-bottom:6px}
+.dtoolsFinder{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;background:rgba(248,250,252,.6)}
+.dtoolsFinderRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.dtoolsFinderRow input{flex:1;min-width:220px}.dtoolsFinderRow button{margin:0!important;width:auto!important}
+.dtoolsSearchStatus{margin-top:8px;font-weight:700}.dtoolsSearchStatus.err{color:#dc2626}.dtoolsSearchStatus.ok{color:#16a34a}
+.dtoolsSearchResults{display:grid;gap:6px;margin-top:8px}
+.dtoolsResultRow{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--card,#fff)}
+.dtoolsResultRow .meta{color:var(--muted,#64748b);font-size:12px}
+.dtoolsResultRow button{margin:0!important;width:auto!important}
 .dtoolsResultActions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
 </style>
+{% if dtools_cloud_configured() %}
+<script>
+(function(){
+    const btn=document.getElementById("dtoolsSearchBtn");
+    const input=document.getElementById("dtoolsSearchInput");
+    const status=document.getElementById("dtoolsSearchStatus");
+    const results=document.getElementById("dtoolsSearchResults");
+    const idInput=document.getElementById("dtoolsQuickId");
+    if(!btn||!input)return;
+    function esc(s){return (s||"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+    async function runSearch(){
+        status.className="dtoolsSearchStatus";status.textContent="Searching D-Tools…";results.innerHTML="";
+        const fd=new FormData();fd.set("q",input.value.trim());
+        btn.disabled=true;
+        try{
+            const resp=await fetch(btn.dataset.url,{method:"POST",body:fd});
+            const data=await resp.json();
+            if(!resp.ok||!data.ok)throw new Error(data.error||"Search failed.");
+            if(!data.results.length){status.textContent="No matching D-Tools projects found.";return;}
+            status.className="dtoolsSearchStatus ok";status.textContent=`Found ${data.results.length} project(s). Click one to use its GUID.`;
+            results.innerHTML=data.results.map(p=>{
+                const meta=[p.number,p.client,p.stage].filter(Boolean).map(esc).join(" · ");
+                return `<div class="dtoolsResultRow"><div><strong>${esc(p.name)}</strong><div class="meta">${meta?meta+" · ":""}${esc(p.id)}</div></div><button type="button" class="dtoolsUse" data-id="${esc(p.id)}">Use this</button></div>`;
+            }).join("");
+        }catch(err){
+            status.className="dtoolsSearchStatus err";status.textContent=err.message||"Search failed.";
+        }finally{btn.disabled=false;}
+    }
+    btn.addEventListener("click",runSearch);
+    input.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();runSearch();}});
+    results.addEventListener("click",e=>{
+        const use=e.target.closest(".dtoolsUse");
+        if(!use)return;
+        if(idInput)idInput.value=use.dataset.id;
+        status.className="dtoolsSearchStatus ok";status.textContent="GUID filled in. Now press Import from D-Tools.";
+        results.innerHTML="";
+        if(idInput)idInput.scrollIntoView({block:"center"});
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}

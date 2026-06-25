@@ -60,11 +60,21 @@
     <p class="muted">Merges D-Tools data into <strong>{{ project.name }}</strong> without deleting anything. Rooms that already exist are matched and kept; rooms that don't exist are created; items already imported are skipped.</p>
     {% if dtools_cloud_configured() %}
         {% set dtools = dtools_cloud_config() %}
+        <div class="dtoolsFinder">
+            <label>Find the project in D-Tools by name</label>
+            <div class="dtoolsFinderRow">
+                <input id="dtoolsSearchInput" value="{{ project.name }}" placeholder="e.g. Knights Residence">
+                <button type="button" id="dtoolsSearchBtn" data-url="{{ url_for('dtools_search_projects_json') }}">Search D-Tools</button>
+            </div>
+            <p class="muted">Searches your D-Tools projects and fills in the GUID for you, so you don't have to look it up.</p>
+            <div id="dtoolsSearchStatus" class="dtoolsSearchStatus"></div>
+            <div id="dtoolsSearchResults" class="dtoolsSearchResults"></div>
+        </div>
         <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
             <div class="grid">
                 <div>
                     <label>D-Tools Project or Quote GUID</label>
-                    <input name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6">
+                    <input id="dtoolsRefInput" name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6">
                 </div>
                 <div>
                     <label>Endpoint Path</label>
@@ -83,7 +93,57 @@
             <button type="submit" formaction="{{ url_for('preview_dtools_inventory', project_id=project.id) }}" class="btn-secondary">Preview D-Tools Items</button>
         </form>
         <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only. Either fill the ID, or paste the Response JSON / Request URL.</p>
-        <style>.dtoolsJsonFallback{margin:8px 0 12px;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsJsonFallback summary{cursor:pointer;font-weight:800}</style>
+        <style>
+        .dtoolsJsonFallback{margin:8px 0 12px;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsJsonFallback summary{cursor:pointer;font-weight:800}
+        .dtoolsFinder{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;background:rgba(248,250,252,.6)}
+        .dtoolsFinderRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.dtoolsFinderRow input{flex:1;min-width:220px}.dtoolsFinderRow button{margin:0!important;width:auto!important}
+        .dtoolsSearchStatus{margin-top:8px;font-weight:700}.dtoolsSearchStatus.err{color:#dc2626}.dtoolsSearchStatus.ok{color:#16a34a}
+        .dtoolsSearchResults{display:grid;gap:6px;margin-top:8px}
+        .dtoolsResultRow{display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--card,#fff)}
+        .dtoolsResultRow .meta{color:var(--muted,#64748b);font-size:12px}
+        .dtoolsResultRow button{margin:0!important;width:auto!important}
+        </style>
+        <script>
+        (function(){
+            const btn=document.getElementById("dtoolsSearchBtn");
+            const input=document.getElementById("dtoolsSearchInput");
+            const status=document.getElementById("dtoolsSearchStatus");
+            const results=document.getElementById("dtoolsSearchResults");
+            const refInput=document.getElementById("dtoolsRefInput");
+            const endpointInput=document.querySelector('input[name="dtools_endpoint_path"]');
+            if(!btn||!input)return;
+            function esc(s){return (s||"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+            async function runSearch(){
+                status.className="dtoolsSearchStatus";status.textContent="Searching D-Tools…";results.innerHTML="";
+                const fd=new FormData();fd.set("q",input.value.trim());
+                btn.disabled=true;
+                try{
+                    const resp=await fetch(btn.dataset.url,{method:"POST",body:fd});
+                    const data=await resp.json();
+                    if(!resp.ok||!data.ok)throw new Error(data.error||"Search failed.");
+                    if(!data.results.length){status.textContent="No matching D-Tools projects found.";return;}
+                    status.className="dtoolsSearchStatus ok";status.textContent=`Found ${data.results.length} project(s). Click one to use its GUID.`;
+                    results.innerHTML=data.results.map(p=>{
+                        const meta=[p.number,p.client,p.stage].filter(Boolean).map(esc).join(" · ");
+                        return `<div class="dtoolsResultRow"><div><strong>${esc(p.name)}</strong><div class="meta">${meta?meta+" · ":""}${esc(p.id)}</div></div><button type="button" class="dtoolsUse" data-id="${esc(p.id)}">Use this</button></div>`;
+                    }).join("");
+                }catch(err){
+                    status.className="dtoolsSearchStatus err";status.textContent=err.message||"Search failed.";
+                }finally{btn.disabled=false;}
+            }
+            btn.addEventListener("click",runSearch);
+            input.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();runSearch();}});
+            results.addEventListener("click",e=>{
+                const use=e.target.closest(".dtoolsUse");
+                if(!use)return;
+                if(refInput)refInput.value=use.dataset.id;
+                if(endpointInput)endpointInput.value="Projects/GetProject";
+                status.className="dtoolsSearchStatus ok";status.textContent="GUID filled in. Now press Import or Preview below.";
+                results.innerHTML="";
+                if(refInput)refInput.scrollIntoView({block:"center"});
+            });
+        })();
+        </script>
     {% else %}
         <p class="muted">Add your D-Tools Cloud API key in Settings before importing materials.</p>
         <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">Open Settings</a>

@@ -4386,18 +4386,7 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
             separator = "&" if "?" in url else "?"
             url += separator + urllib.parse.urlencode({config["id_param"]: ref})
 
-    # Per the D-Tools Cloud API docs, requests authenticate with the X-API-Key
-    # header only. We only add an Authorization header if the admin set a real
-    # one in Settings; the legacy hard-coded generic Basic value is ignored
-    # because it causes 401 Unauthorized responses.
-    headers = {
-        "Accept": "application/json",
-        "X-API-Key": api_key,
-    }
-    auth_header = (config.get("auth_header") or "").strip()
-    if auth_header and auth_header != DTOOLS_CLOUD_DEFAULT_AUTH:
-        headers["Authorization"] = auth_header
-    req = urllib.request.Request(url, headers=headers)
+    req = urllib.request.Request(url, headers=dtools_cloud_headers(config))
     try:
         with urllib.request.urlopen(req, timeout=45) as response:
             raw = response.read().decode("utf-8", errors="replace")
@@ -4409,6 +4398,85 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
         raise RuntimeError(f"Could not reach D-Tools Cloud: {e.reason}")
     except json.JSONDecodeError:
         raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
+
+
+def dtools_cloud_headers(config):
+    """Per the D-Tools Cloud API docs, requests authenticate with the X-API-Key
+    header only. An Authorization header is added only if the admin set a real
+    one in Settings; the legacy hard-coded generic Basic value is ignored because
+    it causes 401 Unauthorized responses."""
+    headers = {
+        "Accept": "application/json",
+        "X-API-Key": config.get("api_key", ""),
+    }
+    auth_header = (config.get("auth_header") or "").strip()
+    if auth_header and auth_header != DTOOLS_CLOUD_DEFAULT_AUTH:
+        headers["Authorization"] = auth_header
+    return headers
+
+
+def dtools_collect_project_candidates(payload):
+    """Find the list of project objects in a GetProjects response across the
+    various shapes D-Tools may return (top-level list, or nested under data /
+    items / projects / results)."""
+    if isinstance(payload, list):
+        return [p for p in payload if isinstance(p, dict)]
+    if isinstance(payload, dict):
+        for key in ["data", "items", "projects", "Projects", "results", "value", "records"]:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [p for p in value if isinstance(p, dict)]
+        data = payload.get("data")
+        if isinstance(data, dict):
+            for key in ["items", "projects", "results", "records"]:
+                value = data.get(key)
+                if isinstance(value, list):
+                    return [p for p in value if isinstance(p, dict)]
+        if any(k in payload for k in ["id", "projectId", "projectName", "name"]):
+            return [payload]
+    return []
+
+
+def dtools_normalize_projects(payload):
+    projects = []
+    for row in dtools_collect_project_candidates(payload):
+        guid = dtools_scalar(dtools_pick(row, ["id", "projectId", "projectGuid", "projectID", "guid", "Id"]))
+        if not guid:
+            continue
+        projects.append({
+            "id": guid,
+            "name": dtools_scalar(dtools_pick(row, ["name", "projectName", "title", "jobName"])) or "(no name)",
+            "number": dtools_scalar(dtools_pick(row, ["number", "projectNumber", "projectNo", "quoteNumber"])),
+            "client": dtools_scalar(dtools_pick(row, ["clientName", "client", "customerName", "accountName", "companyName"])),
+            "stage": dtools_scalar(dtools_pick(row, ["stage", "stageName", "status"])),
+        })
+    return projects
+
+
+def dtools_search_projects(search, page_size=25):
+    """Look up D-Tools projects by name so the user can pick one and we resolve
+    its GUID automatically (the GetProject endpoint needs the GUID, not a name)."""
+    config = dtools_cloud_config()
+    if not config.get("api_key"):
+        raise RuntimeError("D-Tools Cloud API key is missing. Add it in Settings.")
+    search = (search or "").strip()
+    if not search:
+        raise RuntimeError("Enter a project name to search.")
+    params = {"search": search, "page": 1, "pageSize": page_size, "includeArchived": "true"}
+    url = config["base_url"].rstrip("/") + "/Projects/GetProjects?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers=dtools_cloud_headers(config))
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            payload = json.loads(raw or "{}")
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:500]
+        raise RuntimeError(dtools_format_error_details(e.code, details or e.reason, search, "Projects/GetProjects"))
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach D-Tools Cloud: {e.reason}")
+    except json.JSONDecodeError:
+        raise RuntimeError("D-Tools Cloud returned a response that was not JSON.")
+    return dtools_normalize_projects(payload)
 
 
 def dtools_public_fetch_payload(public_url, quote_id=""):
@@ -7740,6 +7808,19 @@ def project_materials(project_id):
         location_options=INVENTORY_LOCATION_LABELS,
         condition_options=INVENTORY_CONDITION_LABELS
     )
+
+
+@app.route("/dtools/search-projects-json", methods=["POST"])
+@admin_required
+def dtools_search_projects_json():
+    term = request.form.get("q", "").strip()
+    if not term:
+        return jsonify({"ok": False, "error": "Enter a project name to search."}), 400
+    try:
+        results = dtools_search_projects(term)
+        return jsonify({"ok": True, "results": results})
+    except Exception as e:
+        return jsonify({"ok": False, "error": dtools_unauthorized_hint(str(e))}), 502
 
 
 def dtools_payload_from_request(external_ref, endpoint_path):
