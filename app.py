@@ -4453,15 +4453,15 @@ def dtools_collect_project_candidates(payload):
 def dtools_normalize_projects(payload):
     projects = []
     for row in dtools_collect_project_candidates(payload):
-        guid = dtools_scalar(dtools_pick(row, ["id", "projectId", "projectGuid", "projectID", "guid", "Id"]))
+        guid = dtools_pick(row, ["id", "projectId", "projectGuid", "projectID", "guid", "Id"])
         if not guid:
             continue
         projects.append({
             "id": guid,
-            "name": dtools_scalar(dtools_pick(row, ["name", "projectName", "title", "jobName"])) or "(no name)",
-            "number": dtools_scalar(dtools_pick(row, ["number", "projectNumber", "projectNo", "quoteNumber"])),
-            "client": dtools_scalar(dtools_pick(row, ["clientName", "client", "customerName", "accountName", "companyName"])),
-            "stage": dtools_scalar(dtools_pick(row, ["stage", "stageName", "status"])),
+            "name": dtools_pick(row, ["name", "projectName", "title", "jobName"]) or "(no name)",
+            "number": dtools_pick(row, ["number", "projectNumber", "projectNo", "quoteNumber"]),
+            "client": dtools_pick(row, ["clientName", "client", "customerName", "accountName", "companyName"]),
+            "stage": dtools_pick(row, ["stage", "stageName", "status"]),
         })
     return projects
 
