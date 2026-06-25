@@ -31,6 +31,74 @@
     </form>
 </div>
 
+{% if can_edit_inventory() %}
+<div class="card">
+    <h3>Add Inventory Item</h3>
+    <form method="post" action="{{ url_for('mobile_inventory') }}" enctype="multipart/form-data">
+        <label>Date</label>
+        <input type="date" name="item_date" value="{{ today }}" required>
+        <label>Quantity</label>
+        <input type="number" name="quantity" step="0.01" min="0" required>
+        <div class="invAcField">
+            <label>Item</label>
+            <input name="item_name" id="invItemName" autocomplete="off" placeholder="Start typing to search the catalog" required>
+            <div class="invAcMenu" id="invItemMenu" hidden></div>
+        </div>
+        <div class="invAcField">
+            <label>Model #</label>
+            <input name="item_model" id="invItemModel" autocomplete="off" placeholder="Model or part number">
+            <div class="invAcMenu" id="invModelMenu" hidden></div>
+        </div>
+        <label>Brand</label>
+        <input name="brand" id="invBrand" autocomplete="off" placeholder="Sony, Lutron, Sonos">
+        <div class="invSaveCatalog" id="invSaveCatalog" hidden>
+            <span class="invSaveCatalogText" id="invSaveCatalogText">This item isn't in the catalog yet.</span>
+            <button type="button" class="btn-secondary" id="invSaveCatalogBtn">Save item to catalog</button>
+            <span class="invSaveCatalogStatus" id="invSaveCatalogStatus"></span>
+        </div>
+        <label>New or Used</label>
+        <select name="item_condition">
+            {% for value, label in condition_options.items() %}
+                <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label>Where Located</label>
+        <select name="location_type">
+            {% for value, label in location_options.items() %}
+                <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label>Location Detail</label>
+        <input name="location_detail" placeholder="Shelf, bin, truck, room note">
+        <label>Job Allocation</label>
+        <select name="project_id">
+            <option value="">No project yet</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+        <label>Room Allocation</label>
+        <select name="room_id">
+            <option value="">Project general</option>
+            {% for r in rooms %}
+                <option value="{{ r.id }}" data-project-id="{{ r.project_id }}">{{ r.project_name }} - {{ r.name }}</option>
+            {% endfor %}
+        </select>
+        <label>Status</label>
+        <select name="status">
+            {% for value, label in status_options.items() %}
+                <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label>Picture</label>
+        <input type="file" name="picture" accept="image/*,.heic,.heif" capture="environment">
+        <label>Used / Purchase Note</label>
+        <textarea name="used_note" rows="2" placeholder="Where it was used, or why office needs to purchase it"></textarea>
+        <button type="submit">Add Inventory Item</button>
+    </form>
+</div>
+{% endif %}
+
 <div class="card">
     <h3>Items</h3>
     {% for item in items %}
@@ -54,4 +122,6 @@
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;background:#16a34a;color:white;font-weight:800}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}
 .inventoryPic{max-width:100%;border-radius:10px;border:1px solid var(--border);margin-top:8px}
 </style>
+{% include "_part_catalog_autocomplete.html" %}
+{% include "_inventory_add_catalog.html" %}
 {% endblock %}

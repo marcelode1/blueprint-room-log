@@ -5560,13 +5560,27 @@ def mobile_project_search():
     return render_template("mobile_project_search.html", projects=projects, q=q)
 
 
-@app.route("/mobile/inventory")
+@app.route("/mobile/inventory", methods=["GET", "POST"])
 @login_required
 def mobile_inventory():
     if not can_view_inventory():
         flash("You do not have permission to view inventory.")
         return redirect(url_for("mobile_home"))
     conn = db()
+    if request.method == "POST":
+        if not can_edit_inventory():
+            conn.close()
+            flash("You do not have permission to add inventory.")
+            return redirect(url_for("mobile_inventory"))
+        error = insert_inventory_item(conn)
+        if error:
+            conn.close()
+            flash(error)
+            return redirect(url_for("mobile_inventory"))
+        conn.commit()
+        conn.close()
+        flash("Inventory item added.")
+        return redirect(url_for("mobile_inventory"))
     selected_project_id = request.args.get("project_id", type=int)
     if selected_project_id and not user_can_access_project(conn, selected_project_id):
         selected_project_id = None
@@ -5584,6 +5598,7 @@ def mobile_inventory():
     })
     projects = fetch_inventory_projects(conn)
     rooms = fetch_inventory_rooms(conn)
+    catalog = part_catalog_options(conn)
     conn.close()
     return render_template(
         "mobile_inventory.html",
@@ -5594,7 +5609,11 @@ def mobile_inventory():
         selected_status=selected_status,
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
+        part_catalog=catalog,
+        today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
+        location_options=INVENTORY_LOCATION_LABELS,
+        condition_options=INVENTORY_CONDITION_LABELS,
     )
 
 
@@ -7168,8 +7187,10 @@ def parts_catalog():
 
 
 @app.route("/parts-catalog/create-json", methods=["POST"])
-@admin_required
+@login_required
 def create_part_catalog_json():
+    if not (is_main_admin() or can_edit_inventory()):
+        return jsonify({"ok": False, "error": "You do not have permission to add catalog items."}), 403
     conn = db()
     ensure_part_catalog_tables(conn)
     item_name = request.form.get("item_name", "").strip()
