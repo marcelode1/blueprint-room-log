@@ -9387,6 +9387,7 @@ def project_timeline(project_id):
         LEFT JOIN rooms ON inventory_items.room_id = rooms.id
         LEFT JOIN suppliers ON inventory_items.supplier_id = suppliers.id
         WHERE inventory_items.project_id = %s
+          AND inventory_items.dtools_cloud_item_id IS NULL
         """,
         (project_id,)
     ).fetchall()
