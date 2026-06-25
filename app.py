@@ -4017,6 +4017,18 @@ def dtools_endpoint_for_ref(endpoint_path, external_ref):
     return dtools_cloud_config().get("material_path") or "Projects/GetProject"
 
 
+def dtools_auth_diagnostic():
+    config = dtools_cloud_config()
+    key = (config.get("api_key") or "").strip()
+    if not key:
+        key_info = "NO API key is saved in Settings (the X-API-Key header is empty)"
+    else:
+        key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
+    auth = (config.get("auth_header") or "").strip()
+    auth_sent = bool(auth and auth != DTOOLS_CLOUD_DEFAULT_AUTH)
+    return f" [Diagnostic: {key_info}; Authorization header {'sent' if auth_sent else 'not sent'}]"
+
+
 def dtools_format_error_details(status_code, details, ref, path):
     hint = ""
     if status_code == 400 and ref and not str(ref).strip().isdigit():
@@ -4024,6 +4036,8 @@ def dtools_format_error_details(status_code, details, ref, path):
             " D-Tools rejected this value as an API ID. Use the internal numeric D-Tools Project/Quote ID, "
             "or set the endpoint path to the D-Tools endpoint that searches by quote/project number."
         )
+    if status_code in (401, 403):
+        hint += dtools_auth_diagnostic()
     return f"D-Tools Cloud returned {status_code} from {path}: {details}{hint}".strip()
 
 
