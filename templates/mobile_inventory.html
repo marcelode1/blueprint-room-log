@@ -51,11 +51,6 @@
         </div>
         <label>Brand</label>
         <input name="brand" id="invBrand" autocomplete="off" placeholder="Sony, Lutron, Sonos">
-        <div class="invSaveCatalog" id="invSaveCatalog" hidden>
-            <span class="invSaveCatalogText" id="invSaveCatalogText">This item isn't in the catalog yet.</span>
-            <button type="button" class="btn-secondary" id="invSaveCatalogBtn">Save item to catalog</button>
-            <span class="invSaveCatalogStatus" id="invSaveCatalogStatus"></span>
-        </div>
         <label>New or Used</label>
         <select name="item_condition">
             {% for value, label in condition_options.items() %}

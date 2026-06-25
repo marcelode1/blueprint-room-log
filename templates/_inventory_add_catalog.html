@@ -6,12 +6,6 @@
 .invAcOption:hover,.invAcOption.invAcActive{background:rgba(37,99,235,.10)}
 .invAcOption .invAcName{font-weight:800;display:block}
 .invAcOption .invAcMeta{color:var(--muted,#64748b);font-size:12px;display:block}
-.invSaveCatalog{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 14px;padding:10px 12px;border:1px dashed #f59e0b;background:#fffbeb;border-radius:8px}
-.invSaveCatalogText{font-weight:700;color:#92400e}
-.invSaveCatalog button{margin:0!important;width:auto!important}
-.invSaveCatalogStatus{font-weight:700}
-.invSaveCatalogStatus.ok{color:#16a34a}
-.invSaveCatalogStatus.err{color:#dc2626}
 </style>
 {% if can_edit_inventory() %}
 <script>
@@ -21,28 +15,18 @@
     const brandInput=document.getElementById("invBrand");
     const itemMenu=document.getElementById("invItemMenu");
     const modelMenu=document.getElementById("invModelMenu");
-    const saveBox=document.getElementById("invSaveCatalog");
-    const saveText=document.getElementById("invSaveCatalogText");
-    const saveBtn=document.getElementById("invSaveCatalogBtn");
-    const saveStatus=document.getElementById("invSaveCatalogStatus");
     if(!itemInput||!modelInput||!brandInput)return;
     const norm=v=>(v||"").toString().trim().toLowerCase();
     function rows(){return window.partCatalogData||(window.partCatalogData=[]);}
     function escapeHtml(s){return (s||"").toString().replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
     function metaText(p){return [p.item_model,p.brand].filter(Boolean).join(" · ")||"No model / brand";}
-    function exactMatch(){
-        const n=norm(itemInput.value),m=norm(modelInput.value),b=norm(brandInput.value);
-        if(!n)return null;
-        return rows().find(p=>norm(p.item_name)===n&&norm(p.item_model)===m&&norm(p.brand)===b)||null;
-    }
     function fillFrom(part){
         itemInput.value=part.item_name||"";
         modelInput.value=part.item_model||"";
         brandInput.value=part.brand||"";
         hideMenus();
-        refreshSaveBox();
     }
-    function search(field,query){
+    function search(query){
         const q=norm(query);
         if(!q)return [];
         return rows().filter(p=>norm(p.item_name).includes(q)||norm(p.item_model).includes(q)||norm(p.brand).includes(q)).slice(0,8);
@@ -55,23 +39,11 @@
         menu._matches=matches;
         menu.hidden=false;
     }
-    function hideMenus(){itemMenu.hidden=true;modelMenu.hidden=true;refreshSaveBox();}
-    function refreshSaveBox(){
-        saveStatus.textContent="";saveStatus.className="invSaveCatalogStatus";
-        if(!itemMenu.hidden||!modelMenu.hidden){saveBox.hidden=true;return;}
-        if(norm(itemInput.value)&&!exactMatch()){
-            const label=[itemInput.value.trim(),modelInput.value.trim(),brandInput.value.trim()].filter(Boolean).join(" · ");
-            saveText.textContent=`"${label}" isn't in the catalog yet.`;
-            saveBox.hidden=false;
-        }else{
-            saveBox.hidden=true;
-        }
-    }
-    itemInput.addEventListener("input",()=>{renderMenu(itemMenu,search("item",itemInput.value));modelMenu.hidden=true;refreshSaveBox();});
-    modelInput.addEventListener("input",()=>{renderMenu(modelMenu,search("model",modelInput.value));itemMenu.hidden=true;refreshSaveBox();});
-    brandInput.addEventListener("input",refreshSaveBox);
-    itemInput.addEventListener("focus",()=>{if(itemInput.value)renderMenu(itemMenu,search("item",itemInput.value));});
-    modelInput.addEventListener("focus",()=>{if(modelInput.value)renderMenu(modelMenu,search("model",modelInput.value));});
+    function hideMenus(){itemMenu.hidden=true;modelMenu.hidden=true;}
+    itemInput.addEventListener("input",()=>{renderMenu(itemMenu,search(itemInput.value));modelMenu.hidden=true;});
+    modelInput.addEventListener("input",()=>{renderMenu(modelMenu,search(modelInput.value));itemMenu.hidden=true;});
+    itemInput.addEventListener("focus",()=>{if(itemInput.value)renderMenu(itemMenu,search(itemInput.value));});
+    modelInput.addEventListener("focus",()=>{if(modelInput.value)renderMenu(modelMenu,search(modelInput.value));});
     function bindMenuClick(menu){
         menu.addEventListener("mousedown",e=>{
             const opt=e.target.closest(".invAcOption");
@@ -100,35 +72,6 @@
         });
     }
     bindKeyNav(itemInput,itemMenu);bindKeyNav(modelInput,modelMenu);
-    saveBtn.addEventListener("click",async()=>{
-        saveStatus.textContent="";saveStatus.className="invSaveCatalogStatus";
-        const name=itemInput.value.trim();
-        if(!name){saveStatus.textContent="Enter an item name first.";saveStatus.classList.add("err");return;}
-        const fd=new FormData();
-        fd.set("item_name",name);
-        fd.set("item_model",modelInput.value.trim());
-        fd.set("brand",brandInput.value.trim());
-        fd.set("item_type","part");
-        saveBtn.disabled=true;
-        try{
-            const resp=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:fd});
-            const data=await resp.json();
-            if(resp.status===409&&data.duplicate&&data.item){
-                if(!rows().some(p=>p.id===data.item.id))rows().push(data.item);
-                saveStatus.textContent="Already in catalog.";saveStatus.classList.add("ok");
-                saveBox.hidden=true;
-                return;
-            }
-            if(!resp.ok||!data.ok)throw new Error(data.error||"Could not save item.");
-            rows().push(data.item);
-            saveStatus.textContent="Saved to catalog ✓";saveStatus.classList.add("ok");
-            saveBox.hidden=true;
-        }catch(err){
-            saveStatus.textContent=err.message||"Could not save item.";saveStatus.classList.add("err");
-        }finally{
-            saveBtn.disabled=false;
-        }
-    });
 })();
 </script>
 {% endif %}
