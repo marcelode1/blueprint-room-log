@@ -4386,14 +4386,18 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
             separator = "&" if "?" in url else "?"
             url += separator + urllib.parse.urlencode({config["id_param"]: ref})
 
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "X-API-Key": api_key,
-            "Authorization": config["auth_header"],
-        }
-    )
+    # Per the D-Tools Cloud API docs, requests authenticate with the X-API-Key
+    # header only. We only add an Authorization header if the admin set a real
+    # one in Settings; the legacy hard-coded generic Basic value is ignored
+    # because it causes 401 Unauthorized responses.
+    headers = {
+        "Accept": "application/json",
+        "X-API-Key": api_key,
+    }
+    auth_header = (config.get("auth_header") or "").strip()
+    if auth_header and auth_header != DTOOLS_CLOUD_DEFAULT_AUTH:
+        headers["Authorization"] = auth_header
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=45) as response:
             raw = response.read().decode("utf-8", errors="replace")
@@ -4804,7 +4808,25 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     services_saved = 0
     skipped = 0
     unmatched_rooms = 0
+    rooms_created = 0
     now = utc_now_iso()
+
+    # Create any D-Tools location that does not already exist as a room in this
+    # project so its items land in the right place. Existing rooms are matched
+    # (merged) and never touched; no rooms are ever deleted.
+    for material in materials:
+        if material.get("item_type") == "service":
+            continue
+        location = (material.get("location") or "").strip()
+        if not location or match_dtools_room(room_lookup, location) is not None:
+            continue
+        new_room = conn.execute(
+            "INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at) VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s) RETURNING id",
+            (project_id, location, "general", "blue", now)
+        ).fetchone()
+        if new_room:
+            room_lookup[normalize_lookup_key(location)] = new_room["id"]
+            rooms_created += 1
 
     for material in materials:
         is_service = material.get("item_type") == "service"
@@ -4889,7 +4911,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
         "UPDATE projects SET dtools_cloud_project_ref = %s WHERE id = %s",
         (external_ref, project_id)
     )
-    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms}
+    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created}
 
 
 def create_project_from_dtools_preview(conn, project_info, locations, payload, external_ref):
@@ -7720,6 +7742,44 @@ def project_materials(project_id):
     )
 
 
+def dtools_payload_from_request(external_ref, endpoint_path):
+    """Resolve a D-Tools payload from pasted Response JSON, a public Request URL,
+    or the private Cloud API (in that order). The JSON / URL options let the
+    per-project import keep working when the Cloud API returns 401 Unauthorized."""
+    pasted_json = request.form.get("public_response_json", "").strip()
+    public_url = request.form.get("public_proposal_url", "").strip()
+    if pasted_json:
+        try:
+            return json.loads(pasted_json)
+        except Exception as json_error:
+            raise RuntimeError(f"The pasted D-Tools Response JSON is not valid JSON: {json_error}")
+    if public_url:
+        return dtools_public_fetch_payload(public_url, external_ref)
+    if not external_ref:
+        raise RuntimeError("Enter the D-Tools Project/Quote ID, paste the Response JSON, or paste the public Request URL.")
+    return dtools_cloud_fetch_payload(external_ref, endpoint_path)
+
+
+def dtools_unauthorized_hint(message):
+    """Append guidance when D-Tools rejects the server-side API call so the user
+    knows to fall back to pasting the Response JSON / public Request URL."""
+    text = str(message or "")
+    if "401" in text or "Unauthorized" in text or "403" in text or "Access denied" in text:
+        text += (" — The D-Tools Cloud API rejected this request (often the Quote endpoint "
+                 "is not licensed for API access). Open the proposal in Chrome, copy the "
+                 "Response JSON from the GetProposalData network request, and paste it into the "
+                 "\"Paste D-Tools Response JSON\" box below to import without the API.")
+    return text
+
+
+def dtools_source_ref_for_project(external_ref, payload, project_id):
+    """A stable reference used to de-duplicate items across re-imports."""
+    if external_ref:
+        return external_ref
+    preview_ref = (dtools_project_preview(payload) or {}).get("proposal_number") or ""
+    return preview_ref.strip() or f"dtools-{project_id}"
+
+
 @app.route("/project/<int:project_id>/materials/import-dtools", methods=["POST"])
 @admin_required
 def import_dtools_inventory(project_id):
@@ -7732,20 +7792,19 @@ def import_dtools_inventory(project_id):
 
     external_ref = request.form.get("dtools_ref", "").strip()
     endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
-    if not external_ref:
-        conn.close()
-        flash("Enter the D-Tools Cloud Project or Quote ID.")
-        return redirect(url_for("project_materials", project_id=project_id))
     try:
-        payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
-        result = import_dtools_materials(conn, project_id, external_ref, payload)
+        payload = dtools_payload_from_request(external_ref, endpoint_path)
+        source_ref = dtools_source_ref_for_project(external_ref, payload, project_id)
+        result = import_dtools_materials(conn, project_id, source_ref, payload)
         conn.commit()
         message = f"D-Tools import complete: {result['imported']} inventory item(s) added as Needs Purchase."
         message += f" {result.get('catalog_saved', 0)} catalog item(s) saved."
+        if result.get("rooms_created"):
+            message += f" {result['rooms_created']} new room(s) created; existing rooms were merged."
         if result.get("services_saved"):
             message += f" {result['services_saved']} service/labor item(s) saved to Parts / Services."
         if result["skipped"]:
-            message += f" {result['skipped']} duplicate item(s) skipped."
+            message += f" {result['skipped']} duplicate item(s) skipped (already imported)."
         if result["unmatched_rooms"]:
             message += f" {result['unmatched_rooms']} item(s) did not match a room name and were placed in Project general."
         if result["found"] == 0:
@@ -7753,7 +7812,7 @@ def import_dtools_inventory(project_id):
         flash(message)
     except Exception as e:
         conn.rollback()
-        flash(str(e))
+        flash(dtools_unauthorized_hint(str(e)))
     conn.close()
     return redirect(url_for("project_materials", project_id=project_id))
 
@@ -7770,13 +7829,10 @@ def preview_dtools_inventory(project_id):
 
     external_ref = request.form.get("dtools_ref", "").strip()
     endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
-    if not external_ref:
-        conn.close()
-        flash("Enter the D-Tools Cloud Project or Quote ID.")
-        return redirect(url_for("project_materials", project_id=project_id))
     try:
-        payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
-        items = dtools_extract_materials(payload, external_ref)
+        payload = dtools_payload_from_request(external_ref, endpoint_path)
+        source_ref = dtools_source_ref_for_project(external_ref, payload, project_id)
+        items = dtools_extract_materials(payload, source_ref)
         rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name", (project_id,)).fetchall()
         room_lookup = {normalize_lookup_key(room["name"]): room["id"] for room in rooms}
         room_name_by_id = {room["id"]: room["name"] for room in rooms}
@@ -7790,10 +7846,12 @@ def preview_dtools_inventory(project_id):
             items=items,
             external_ref=external_ref,
             endpoint_path=dtools_endpoint_for_ref(endpoint_path, external_ref),
+            public_response_json=request.form.get("public_response_json", "").strip(),
+            public_proposal_url=request.form.get("public_proposal_url", "").strip(),
         )
     except Exception as e:
         conn.close()
-        flash(str(e))
+        flash(dtools_unauthorized_hint(str(e)))
         return redirect(url_for("project_materials", project_id=project_id))
 
 

@@ -12,6 +12,8 @@
     <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
         <input type="hidden" name="dtools_ref" value="{{ external_ref }}">
         <input type="hidden" name="dtools_endpoint_path" value="{{ endpoint_path }}">
+        <textarea name="public_response_json" hidden>{{ public_response_json or '' }}</textarea>
+        <input type="hidden" name="public_proposal_url" value="{{ public_proposal_url or '' }}">
         <button type="submit">Import Now</button>
     </form>
 </div>

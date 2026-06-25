@@ -2,12 +2,25 @@
 {% block content %}
 <div class="card">
     <h2>D-Tools Import</h2>
-    <p class="muted">Phase 1 lets you preview D-Tools proposal data, then create the ProjectONus project, rooms, catalog items, and Needs Purchase inventory from that preview.</p>
+    <p class="muted">Enter a D-Tools Project ID and press one button to create the ProjectONus project, rooms, catalog items, and Needs Purchase inventory.</p>
+</div>
+
+<div class="card dtoolsQuickCard">
+    <h3>Quick Import from D-Tools</h3>
+    <p class="muted">Enter the D-Tools Project ID (or a Quote # like Q-253) and press one button. ProjectONus creates/updates the project, its rooms, the Needs-Purchase inventory, and the parts catalog automatically.</p>
+    <form method="post" class="dtoolsQuickForm">
+        <input name="dtools_project_id" value="{{ form_values.dtools_project_id }}" placeholder="D-Tools Project GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6" required autofocus>
+        <button type="submit" name="action" value="create_project">Import from D-Tools</button>
+    </form>
+    {% if not dtools_cloud_configured() %}
+        <p class="flash">D-Tools Cloud API key is missing. Add it in Settings first.</p>
+    {% endif %}
 </div>
 
 <div class="card">
-    <h3>Manual Import</h3>
-    <p class="muted">Use the proposal number/customer/project name for tracking, and paste the public Request URL from Chrome Network if the private D-Tools Cloud API returns Unauthorized.</p>
+    <details class="dtoolsManualWrap">
+    <summary>Advanced / Manual Import &amp; overrides</summary>
+    <p class="muted">Use the proposal number/customer/project name to override what D-Tools returns, or paste the public Request URL / Response JSON from Chrome Network if the private D-Tools Cloud API returns Unauthorized.</p>
     <form method="post" id="dtoolsImportForm">
         <div class="grid">
             <div>
@@ -67,6 +80,7 @@
         <button type="submit" name="action" value="create_project" class="btn-secondary">Create ProjectONus Project</button>
         <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">D-Tools Settings</a>
     </form>
+    </details>
 </div>
 
 {% if result %}
@@ -181,6 +195,9 @@
 .dtoolsStatus-success{background:#dcfce7;color:#166534}.dtoolsStatus-error{background:#fee2e2;color:#991b1b}
 .dtoolsImportTableWrap{overflow:auto;border:1px solid var(--border);border-radius:8px}.dtoolsImportTable{width:100%;min-width:980px;border-collapse:collapse}.dtoolsImportTable th,.dtoolsImportTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;font-size:13px}.dtoolsImportTable th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:11px}.dtoolsSmall{display:block;font-size:12px;margin-top:2px;max-width:420px}
 .dtoolsAdvanced{margin:10px 0;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsAdvanced summary{cursor:pointer;font-weight:800}
+.dtoolsQuickCard{border-left:4px solid var(--primary)}
+.dtoolsQuickForm{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:6px}.dtoolsQuickForm input{flex:1;min-width:260px}.dtoolsQuickForm button{margin:0!important;width:auto!important}
+.dtoolsManualWrap>summary{cursor:pointer;font-weight:800;font-size:18px;margin-bottom:6px}
 .dtoolsResultActions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
 </style>
 {% endblock %}

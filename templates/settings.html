@@ -191,12 +191,12 @@
                 <input name="dtools_cloud_id_param" value="{{ dtools.id_param or 'Id' }}">
             </div>
         </div>
-        <label>Authorization Header</label>
-        <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or 'Basic RFRDbG91ZEFQSVVzZXI6MyNRdVkrMkR1QCV3Kk15JTU8Yi1aZzlV' }}">
+        <label>Authorization Header <span class="muted">(leave blank — advanced only)</span></label>
+        <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or '' }}" placeholder="Leave blank unless D-Tools support gives you one">
         <label><input type="checkbox" name="dtools_cloud_clear_key"> Clear saved API key</label>
         <button type="submit">Save D-Tools Cloud Settings</button>
     </form>
-    <p class="muted">Default authentication follows D-Tools Cloud API documentation: API key plus the required Basic Authorization header.</p>
+    <p class="muted">Per the D-Tools Cloud API docs, requests authenticate with the <strong>API key only</strong> (sent as the <code>X-API-Key</code> header). Leave Authorization Header blank. IDs used below must be the D-Tools <strong>GUID</strong> (e.g. <code>75E98168-77FF-40C9-A8E5-4F0116C943E6</code>), not the quote/project number.</p>
     <form method="post" action="{{ url_for('test_dtools_connection') }}">
         <h4>Test D-Tools Import</h4>
         <div class="grid">

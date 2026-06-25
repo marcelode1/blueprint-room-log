@@ -56,24 +56,34 @@
 
 {% if is_main_admin() %}
 <div class="card">
-    <h3>Import from D-Tools Cloud</h3>
+    <h3>Import from D-Tools Cloud into this project</h3>
+    <p class="muted">Merges D-Tools data into <strong>{{ project.name }}</strong> without deleting anything. Rooms that already exist are matched and kept; rooms that don't exist are created; items already imported are skipped.</p>
     {% if dtools_cloud_configured() %}
         {% set dtools = dtools_cloud_config() %}
         <form method="post" action="{{ url_for('import_dtools_inventory', project_id=project.id) }}">
             <div class="grid">
                 <div>
-                    <label>D-Tools Project or Quote ID</label>
-                    <input name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="Paste the D-Tools Cloud ID" required>
+                    <label>D-Tools Project or Quote GUID</label>
+                    <input name="dtools_ref" value="{{ project.dtools_cloud_project_ref or '' }}" placeholder="GUID e.g. 75E98168-77FF-40C9-A8E5-4F0116C943E6">
                 </div>
                 <div>
                     <label>Endpoint Path</label>
                     <input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}">
                 </div>
             </div>
+            <details class="dtoolsJsonFallback">
+                <summary>API returns 401 / Unauthorized? Paste the Response JSON instead</summary>
+                <p class="muted">In Chrome, open the D-Tools proposal, then in Network find <strong>GetProposalData</strong>, open its <strong>Response</strong>, copy all the JSON, and paste it here. This imports without the API.</p>
+                <label>Paste D-Tools Response JSON</label>
+                <textarea name="public_response_json" rows="6" placeholder="Paste the GetProposalData Response JSON here"></textarea>
+                <label>Or paste the public Proposal Request URL</label>
+                <input name="public_proposal_url" placeholder="Full GetProposalData?quoteId=... request URL from Chrome Network">
+            </details>
             <button type="submit">Import D-Tools Material List</button>
             <button type="submit" formaction="{{ url_for('preview_dtools_inventory', project_id=project.id) }}" class="btn-secondary">Preview D-Tools Items</button>
         </form>
-        <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only.</p>
+        <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only. Either fill the ID, or paste the Response JSON / Request URL.</p>
+        <style>.dtoolsJsonFallback{margin:8px 0 12px;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsJsonFallback summary{cursor:pointer;font-weight:800}</style>
     {% else %}
         <p class="muted">Add your D-Tools Cloud API key in Settings before importing materials.</p>
         <a class="btn-link btn-secondary" href="{{ url_for('settings') }}">Open Settings</a>
