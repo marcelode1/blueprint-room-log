@@ -3992,7 +3992,7 @@ def dtools_cloud_config():
     return {
         "api_key": get_app_setting("dtools_cloud_api_key", os.environ.get("DTOOLS_CLOUD_API_KEY", "")).strip(),
         "base_url": get_app_setting("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL,
-        "auth_header": get_app_setting("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH,
+        "auth_header": (get_app_setting("dtools_cloud_auth_header", "") or "").strip(),
         "material_path": get_app_setting("dtools_cloud_material_path", "Projects/GetProject").strip() or "Projects/GetProject",
         "id_param": get_app_setting("dtools_cloud_id_param", "Id").strip() or "Id",
     }
@@ -4025,7 +4025,7 @@ def dtools_auth_diagnostic():
     else:
         key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
     auth = (config.get("auth_header") or "").strip()
-    auth_sent = bool(auth and auth != DTOOLS_CLOUD_DEFAULT_AUTH)
+    auth_sent = auth.lower().startswith("bearer ")
     return f" [Diagnostic: {key_info}; Authorization header {'sent' if auth_sent else 'not sent'}]"
 
 
@@ -4416,15 +4416,16 @@ def dtools_cloud_fetch_payload(external_ref, endpoint_path=None):
 
 def dtools_cloud_headers(config):
     """Per the D-Tools Cloud API docs, requests authenticate with the X-API-Key
-    header only. An Authorization header is added only if the admin set a real
-    one in Settings; the legacy hard-coded generic Basic value is ignored because
-    it causes 401 Unauthorized responses."""
+    header ONLY. We deliberately never send an Authorization header: a stray
+    Basic/Bearer value (from the old hard-coded default or a saved Settings value)
+    causes 401 Unauthorized responses. The only exception is an explicit Bearer
+    token, which the docs note is supported for some integrations."""
     headers = {
         "Accept": "application/json",
         "X-API-Key": config.get("api_key", ""),
     }
     auth_header = (config.get("auth_header") or "").strip()
-    if auth_header and auth_header != DTOOLS_CLOUD_DEFAULT_AUTH:
+    if auth_header.lower().startswith("bearer "):
         headers["Authorization"] = auth_header
     return headers
 
@@ -13560,7 +13561,7 @@ def settings():
             flash("Contact card saved.")
         elif action == "dtools_cloud":
             set_app_setting("dtools_cloud_base_url", request.form.get("dtools_cloud_base_url", DTOOLS_CLOUD_DEFAULT_BASE_URL).strip() or DTOOLS_CLOUD_DEFAULT_BASE_URL)
-            set_app_setting("dtools_cloud_auth_header", request.form.get("dtools_cloud_auth_header", DTOOLS_CLOUD_DEFAULT_AUTH).strip() or DTOOLS_CLOUD_DEFAULT_AUTH)
+            set_app_setting("dtools_cloud_auth_header", request.form.get("dtools_cloud_auth_header", "").strip())
             set_app_setting("dtools_cloud_material_path", request.form.get("dtools_cloud_material_path", "Projects/GetProject").strip() or "Projects/GetProject")
             set_app_setting("dtools_cloud_id_param", request.form.get("dtools_cloud_id_param", "Id").strip() or "Id")
             api_key = request.form.get("dtools_cloud_api_key", "").strip()
