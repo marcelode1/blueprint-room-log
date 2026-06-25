@@ -7861,10 +7861,11 @@ def dtools_unauthorized_hint(message):
     knows to fall back to pasting the Response JSON / public Request URL."""
     text = str(message or "")
     if "401" in text or "Unauthorized" in text or "403" in text or "Access denied" in text:
-        text += (" — The D-Tools Cloud API rejected this request (often the Quote endpoint "
-                 "is not licensed for API access). Open the proposal in Chrome, copy the "
-                 "Response JSON from the GetProposalData network request, and paste it into the "
-                 "\"Paste D-Tools Response JSON\" box below to import without the API.")
+        text += (" — D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
+                 "(Settings > Integration > Developer) into ProjectONus Settings, and confirm your D-Tools "
+                 "plan has Cloud API access enabled. Meanwhile you can import without the API: open the "
+                 "proposal in Chrome, copy the GetProposalData Response JSON, and paste it into the "
+                 "\"Paste D-Tools Response JSON\" box below.")
     return text
 
 
