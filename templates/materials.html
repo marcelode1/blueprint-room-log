@@ -82,18 +82,10 @@
                     <input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}">
                 </div>
             </div>
-            <details class="dtoolsJsonFallback">
-                <summary>API returns 401 / Unauthorized? Paste the Response JSON instead</summary>
-                <p class="muted">In Chrome, open the D-Tools proposal, then in Network find <strong>GetProposalData</strong>, open its <strong>Response</strong>, copy all the JSON, and paste it here. This imports without the API.</p>
-                <label>Paste D-Tools Response JSON</label>
-                <textarea name="public_response_json" rows="6" placeholder="Paste the GetProposalData Response JSON here"></textarea>
-                <label>Or paste the public Proposal Request URL</label>
-                <input name="public_proposal_url" placeholder="Full GetProposalData?quoteId=... request URL from Chrome Network">
-            </details>
             <button type="submit">Import D-Tools Material List</button>
             <button type="submit" formaction="{{ url_for('preview_dtools_inventory', project_id=project.id) }}" class="btn-secondary">Preview D-Tools Items</button>
         </form>
-        <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only. Either fill the ID, or paste the Response JSON / Request URL.</p>
+        <p class="muted">Preview first to confirm the D-Tools fields. Imported physical products are added to this project inventory as Needs Purchase. Services/labor are saved to Parts / Services only.</p>
         <style>
         .dtoolsJsonFallback{margin:8px 0 12px;border:1px solid var(--border);border-radius:8px;padding:10px}.dtoolsJsonFallback summary{cursor:pointer;font-weight:800}
         .dtoolsFinder{border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;background:rgba(248,250,252,.6)}
