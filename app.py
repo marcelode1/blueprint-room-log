@@ -28,6 +28,17 @@ app.secret_key = os.environ.get("SECRET_KEY", "CHANGE_THIS_SECRET_KEY")
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_IN_DAYS", "365")))
 
+# Security: admin/desktop sessions are non-permanent (cleared when the browser is
+# closed) and are force-logged-out after this many seconds of inactivity. They are
+# also bound to the browser that logged in, so a copied session cookie cannot be
+# reused on a different machine. Mobile "stay logged in" sessions are exempt.
+SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "true").lower() != "false",
+)
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -3311,6 +3322,34 @@ def maybe_run_auto_clock_outs():
         run_auto_clock_outs()
     except Exception:
         pass
+
+
+def _session_ua_fingerprint():
+    return hashlib.sha256((request.headers.get("User-Agent", "") or "").encode("utf-8")).hexdigest()[:32]
+
+
+@app.before_request
+def _enforce_session_security():
+    """Log the user out after inactivity and reject a session cookie that was
+    copied to a different browser/device. Mobile 'stay logged in' (permanent)
+    sessions are exempt so field crews are not disrupted."""
+    if request.endpoint in ("static",):
+        return
+    if "user_id" not in session:
+        return
+    if session.permanent:
+        return
+    fingerprint = _session_ua_fingerprint()
+    if session.get("ua") and session.get("ua") != fingerprint:
+        session.clear()
+        return
+    now = datetime.now(timezone.utc).timestamp()
+    last_active = session.get("last_active")
+    if last_active and (now - float(last_active)) > SESSION_IDLE_TIMEOUT_SECONDS:
+        session.clear()
+        return
+    session["ua"] = fingerprint
+    session["last_active"] = now
 
 
 @app.before_request
