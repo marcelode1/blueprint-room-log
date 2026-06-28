@@ -47,6 +47,31 @@
     {% endif %}
 </div>
 
+{% if is_main_admin() and onedrive_connected %}
+<div class="card">
+    <h3>OneDrive Backup</h3>
+    {% if onedrive_folder %}
+        <p class="muted">Backup folder: <strong>{{ project.name }}</strong> inside your OneDrive ProjectONus folder.</p>
+        <p class="muted" style="margin-top:4px">Last backed up:
+            <strong>{% if onedrive_folder.last_backup_at %}{{ format_datetime(onedrive_folder.last_backup_at) }}{% else %}Never{% endif %}</strong>
+        </p>
+    {% else %}
+        <p class="muted">Create a backup folder for this project in OneDrive, then back up its photos and comments.</p>
+    {% endif %}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <form method="post" action="{{ url_for('onedrive_create_project_folder', project_id=project.id) }}" style="margin:0">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="btn-secondary projectSmallButton">Create Backup Folder</button>
+        </form>
+        <form method="post" action="{{ url_for('onedrive_backup_project', project_id=project.id) }}" style="margin:0">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="projectSmallButton">Backup Data</button>
+        </form>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">Backup Data uploads new photos &amp; comments to OneDrive. Items already backed up are skipped, so nothing is sent twice.</p>
+</div>
+{% endif %}
+
 <div class="card mobileBlueprintNotice">
     <h3>Mobile View</h3>
     <p>The blueprint editor is available on the computer version only. On phone, choose a room from the room list.</p>

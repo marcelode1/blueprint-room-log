@@ -205,6 +205,67 @@
         </div>
         <button type="submit" class="btn-secondary">Test Connection and Count Items</button>
     </form>
+
+    <hr style="margin:22px 0;border:none;border-top:1px solid var(--border)">
+    <h3>OneDrive Cloud Backup</h3>
+    <p class="muted">Back up each project's photos and comments to a <strong>{{ onedrive_root_folder }}</strong> folder in OneDrive. Files go straight to the cloud (nothing is stored on a PC). Each project then has <strong>Create Backup Folder</strong> and <strong>Backup Data</strong> buttons, and shows when it was last backed up.</p>
+
+    <details class="dtoolsAdvanced" {% if not onedrive_configured %}open{% endif %}>
+        <summary>📖 First-time setup — how to connect OneDrive (read this)</summary>
+        <ol style="line-height:1.6;padding-left:20px">
+            <li><strong>Register the app with Microsoft (one time).</strong> Go to <a href="https://portal.azure.com" target="_blank" rel="noopener">portal.azure.com</a> → <em>Microsoft Entra ID → App registrations → New registration</em>.
+                <ul style="margin:6px 0">
+                    <li>Name: <code>ProjectONus</code></li>
+                    <li>Supported account types: <strong>“Accounts in any organizational directory and personal Microsoft accounts”</strong></li>
+                    <li>Redirect URI → platform <strong>Web</strong> → paste exactly:<br><code>{{ onedrive_redirect_uri }}</code></li>
+                </ul>
+            </li>
+            <li>Open the new app → <strong>Overview</strong> → copy the <strong>Application (client) ID</strong>.</li>
+            <li><strong>Certificates &amp; secrets → New client secret</strong> → copy the secret’s <strong>Value</strong> (not the ID).</li>
+            <li>Paste both into the boxes below and click <strong>Save OneDrive Settings</strong>. (Leave Tenant as <code>common</code> — it works for both personal and business OneDrive.)</li>
+            <li>Click <strong>Connect OneDrive</strong> and sign in with the Microsoft account that owns the OneDrive. Approve access. The <strong>{{ onedrive_root_folder }}</strong> folder is created automatically.</li>
+            <li>Go to any project → <strong>Create Backup Folder</strong>, then <strong>Backup Data</strong>. Re-pressing only sends new items — nothing is uploaded twice.</li>
+        </ol>
+        <p class="muted">No files are kept on any PC — uploads go directly to OneDrive’s cloud. Business/work accounts may need a Microsoft 365 admin to “grant consent” once.</p>
+    </details>
+
+    <form method="post">
+        <input type="hidden" name="action" value="onedrive_settings">
+        <div class="grid">
+            <div>
+                <label>Application (Client) ID</label>
+                <input name="onedrive_client_id" value="{{ onedrive_client_id }}" placeholder="From Azure app Overview">
+            </div>
+            <div>
+                <label>Client Secret {% if onedrive_secret_saved %}<span class="muted">(saved — leave blank to keep)</span>{% endif %}</label>
+                <input name="onedrive_client_secret" type="password" placeholder="{% if onedrive_secret_saved %}Secret is saved{% else %}Paste the secret Value{% endif %}">
+            </div>
+            <div>
+                <label>Tenant</label>
+                <input name="onedrive_tenant" value="{{ onedrive_tenant }}" placeholder="common">
+            </div>
+            <div>
+                <label>OneDrive Folder Name</label>
+                <input name="onedrive_root_folder" value="{{ onedrive_root_folder }}" placeholder="ProjectONus">
+            </div>
+        </div>
+        <label>Redirect URI (register this exact value in Azure)</label>
+        <input value="{{ onedrive_redirect_uri }}" readonly onclick="this.select()">
+        <button type="submit">Save OneDrive Settings</button>
+    </form>
+
+    {% if onedrive_connected %}
+        <p class="pill" style="background:#dcfce7;color:#166534;margin-top:12px">Connected{% if onedrive_account %} as {{ onedrive_account }}{% endif %}</p>
+        <p class="muted">The <strong>{{ onedrive_root_folder }}</strong> folder is ready. Use the buttons on each project page.</p>
+        <form method="post" action="{{ url_for('onedrive_disconnect') }}" onsubmit="return confirm('Disconnect OneDrive? Existing backups stay in OneDrive; new backups will stop until you reconnect.');">
+            <button type="submit" class="btn-danger">Disconnect OneDrive</button>
+        </form>
+    {% elif onedrive_configured %}
+        <p class="muted" style="margin-top:12px">Settings saved. Now sign in once with the Microsoft account that owns the OneDrive.</p>
+        <a class="btn-link" href="{{ url_for('onedrive_connect') }}">Connect OneDrive</a>
+    {% else %}
+        <p class="muted" style="margin-top:12px">Enter the Client ID and Secret above and save, then the Connect button appears.</p>
+    {% endif %}
 </div>
 
 <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">

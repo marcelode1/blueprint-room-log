@@ -55,6 +55,14 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "")
 APP_TIMEZONE = os.environ.get("APP_TIMEZONE", "America/New_York")
+# --- OneDrive (Microsoft Graph) cloud backup ---
+ONEDRIVE_CLIENT_ID = os.environ.get("ONEDRIVE_CLIENT_ID", "")
+ONEDRIVE_CLIENT_SECRET = os.environ.get("ONEDRIVE_CLIENT_SECRET", "")
+# "common" supports BOTH personal Microsoft accounts and work/school accounts.
+ONEDRIVE_TENANT = os.environ.get("ONEDRIVE_TENANT", "common")
+ONEDRIVE_SCOPES = "offline_access Files.ReadWrite User.Read"
+ONEDRIVE_ROOT_FOLDER = os.environ.get("ONEDRIVE_ROOT_FOLDER", "ProjectONus")
+_ONEDRIVE_TOKEN_CACHE = {"access_token": "", "expires_at": 0}
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-realtime")
 OPENAI_TASK_PARSE_MODEL = os.environ.get("OPENAI_TASK_PARSE_MODEL", "gpt-4.1-mini")
@@ -8455,6 +8463,15 @@ def project(project_id):
             (duplicate_room_id, project_id)
         ).fetchone()
 
+    onedrive_folder = None
+    if is_main_admin() and onedrive_connected():
+        try:
+            ensure_onedrive_tables(conn)
+            onedrive_folder = conn.execute(
+                "SELECT folder_name, last_backup_at FROM onedrive_project_folders WHERE project_id = %s", (project_id,)
+            ).fetchone()
+        except Exception:
+            conn.rollback()
     conn.close()
     return render_template(
         "project.html",
@@ -8462,7 +8479,10 @@ def project(project_id):
         rooms=rooms,
         blueprints=blueprints,
         active_blueprint=active_blueprint,
-        duplicate_room=duplicate_room
+        duplicate_room=duplicate_room,
+        onedrive_configured=onedrive_configured(),
+        onedrive_connected=onedrive_connected(),
+        onedrive_folder=onedrive_folder
     )
 
 
@@ -13717,6 +13737,14 @@ def settings():
                 if api_key:
                     set_app_setting("dtools_cloud_api_key", api_key)
                 flash("D-Tools Cloud API settings saved.")
+        elif action == "onedrive_settings":
+            set_app_setting("onedrive_client_id", request.form.get("onedrive_client_id", "").strip())
+            set_app_setting("onedrive_tenant", request.form.get("onedrive_tenant", "").strip() or "common")
+            set_app_setting("onedrive_root_folder", request.form.get("onedrive_root_folder", "").strip() or "ProjectONus")
+            new_secret = request.form.get("onedrive_client_secret", "").strip()
+            if new_secret:
+                set_app_setting("onedrive_client_secret", new_secret)
+            flash("OneDrive settings saved. Now click Connect OneDrive below.")
         elif action == "permissions":
             user_id = int(request.form.get("user_id"))
             user = conn.execute("SELECT id, role FROM users WHERE id = %s", (user_id,)).fetchone()
@@ -13857,7 +13885,15 @@ def settings():
         file_project_map=file_project_map,
         project_file_folders=PROJECT_FILE_FOLDERS,
         active_tab=active_tab,
-        permission_keys=PERMISSION_KEYS
+        permission_keys=PERMISSION_KEYS,
+        onedrive_configured=onedrive_configured(),
+        onedrive_connected=onedrive_connected(),
+        onedrive_account=onedrive_account_label(),
+        onedrive_root_folder=onedrive_root_folder(),
+        onedrive_client_id=onedrive_client_id(),
+        onedrive_tenant=onedrive_tenant(),
+        onedrive_secret_saved=bool(onedrive_client_secret()),
+        onedrive_redirect_uri=onedrive_redirect_uri()
     )
 
 
@@ -14170,6 +14206,413 @@ def backup():
 
     return Response(open(backup_path, "rb").read(), mimetype="application/zip", headers={"Content-Disposition": f"attachment; filename={backup_name}"})
 
+
+
+# ============================ OneDrive cloud backup ============================
+ONEDRIVE_GRAPH = "https://graph.microsoft.com/v1.0"
+
+
+class OneDriveNotFound(Exception):
+    pass
+
+
+def ensure_onedrive_tables(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS onedrive_project_folders (
+            project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            folder_id TEXT,
+            folder_name TEXT,
+            created_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS onedrive_backup_log (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER,
+            source_key TEXT,
+            onedrive_item_id TEXT,
+            uploaded_at TEXT,
+            UNIQUE (project_id, source_key)
+        )
+        """
+    )
+    try:
+        conn.execute("ALTER TABLE onedrive_project_folders ADD COLUMN IF NOT EXISTS last_backup_at TEXT")
+    except Exception:
+        conn.rollback()
+    conn.commit()
+
+
+def onedrive_client_id():
+    return (get_app_setting("onedrive_client_id", "") or ONEDRIVE_CLIENT_ID or "").strip()
+
+
+def onedrive_client_secret():
+    return (get_app_setting("onedrive_client_secret", "") or ONEDRIVE_CLIENT_SECRET or "").strip()
+
+
+def onedrive_tenant():
+    return (get_app_setting("onedrive_tenant", "") or ONEDRIVE_TENANT or "common").strip() or "common"
+
+
+def onedrive_root_folder():
+    return (get_app_setting("onedrive_root_folder", "") or ONEDRIVE_ROOT_FOLDER or "ProjectONus").strip() or "ProjectONus"
+
+
+def onedrive_configured():
+    return bool(onedrive_client_id() and onedrive_client_secret())
+
+
+def onedrive_connected():
+    return bool(get_app_setting("onedrive_refresh_token", ""))
+
+
+def onedrive_account_label():
+    return get_app_setting("onedrive_account", "")
+
+
+def onedrive_redirect_uri():
+    return os.environ.get("ONEDRIVE_REDIRECT_URI", "") or external_url("onedrive_callback")
+
+
+def onedrive_authorize_url(state):
+    params = {
+        "client_id": onedrive_client_id(),
+        "response_type": "code",
+        "redirect_uri": onedrive_redirect_uri(),
+        "response_mode": "query",
+        "scope": ONEDRIVE_SCOPES,
+        "state": state,
+        "prompt": "select_account",
+    }
+    return f"https://login.microsoftonline.com/{onedrive_tenant()}/oauth2/v2.0/authorize?" + urllib.parse.urlencode(params)
+
+
+def onedrive_token_request(extra):
+    data = {
+        "client_id": onedrive_client_id(),
+        "client_secret": onedrive_client_secret(),
+        "redirect_uri": onedrive_redirect_uri(),
+        "scope": ONEDRIVE_SCOPES,
+    }
+    data.update(extra)
+    body = urllib.parse.urlencode(data).encode("utf-8")
+    url = f"https://login.microsoftonline.com/{onedrive_tenant()}/oauth2/v2.0/token"
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")[:400]
+        raise RuntimeError(f"Microsoft sign-in failed ({e.code}): {details}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach Microsoft sign-in: {e.reason}")
+
+
+def onedrive_save_tokens(tok):
+    if tok.get("refresh_token"):
+        set_app_setting("onedrive_refresh_token", tok["refresh_token"])
+    if tok.get("access_token"):
+        _ONEDRIVE_TOKEN_CACHE["access_token"] = tok["access_token"]
+        _ONEDRIVE_TOKEN_CACHE["expires_at"] = datetime.now(timezone.utc).timestamp() + int(tok.get("expires_in", 3600)) - 120
+
+
+def onedrive_get_access_token():
+    now = datetime.now(timezone.utc).timestamp()
+    if _ONEDRIVE_TOKEN_CACHE["access_token"] and _ONEDRIVE_TOKEN_CACHE["expires_at"] > now:
+        return _ONEDRIVE_TOKEN_CACHE["access_token"]
+    refresh = get_app_setting("onedrive_refresh_token", "")
+    if not refresh:
+        raise RuntimeError("OneDrive is not connected. Connect it in Settings first.")
+    tok = onedrive_token_request({"grant_type": "refresh_token", "refresh_token": refresh})
+    onedrive_save_tokens(tok)
+    return _ONEDRIVE_TOKEN_CACHE["access_token"]
+
+
+def onedrive_graph(method, path, json_body=None, raw=None, content_type=None):
+    token = onedrive_get_access_token()
+    url = path if path.startswith("http") else ONEDRIVE_GRAPH + path
+    headers = {"Authorization": f"Bearer {token}"}
+    data = None
+    if json_body is not None:
+        data = json.dumps(json_body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    elif raw is not None:
+        data = raw
+        headers["Content-Type"] = content_type or "application/octet-stream"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise OneDriveNotFound()
+        details = e.read().decode("utf-8", errors="replace")[:400]
+        raise RuntimeError(f"OneDrive API error ({e.code}): {details}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Could not reach OneDrive: {e.reason}")
+
+
+def onedrive_sanitize_name(name):
+    name = re.sub(r'[\\/:*?"<>|]', " ", str(name or "")).strip().strip(".")
+    name = re.sub(r"\s+", " ", name)
+    return name[:240] or "Untitled"
+
+
+def onedrive_get_by_path(rel_path):
+    quoted = "/".join(urllib.parse.quote(part) for part in rel_path.split("/"))
+    try:
+        return onedrive_graph("GET", f"/me/drive/root:/{quoted}")
+    except OneDriveNotFound:
+        return None
+
+
+def onedrive_ensure_root():
+    saved = get_app_setting("onedrive_root_id", "")
+    if saved:
+        return saved
+    root_name = onedrive_root_folder()
+    item = onedrive_get_by_path(root_name)
+    if not item:
+        item = onedrive_graph("POST", "/me/drive/root/children",
+                              json_body={"name": root_name, "folder": {},
+                                         "@microsoft.graph.conflictBehavior": "fail"})
+    set_app_setting("onedrive_root_id", item["id"])
+    return item["id"]
+
+
+def onedrive_ensure_child_folder(parent_id, name):
+    name = onedrive_sanitize_name(name)
+    try:
+        return onedrive_graph("POST", f"/me/drive/items/{parent_id}/children",
+                              json_body={"name": name, "folder": {},
+                                         "@microsoft.graph.conflictBehavior": "fail"})["id"], name
+    except RuntimeError as e:
+        if "(409)" in str(e):  # already exists
+            existing = onedrive_graph("GET", f"/me/drive/items/{parent_id}/children?$filter=name eq '{name}'")
+            for child in existing.get("value", []):
+                if child.get("name") == name and child.get("folder"):
+                    return child["id"], name
+        raise
+
+
+def onedrive_upload(parent_id, filename, data, content_type="application/octet-stream"):
+    filename = onedrive_sanitize_name(filename)
+    quoted = urllib.parse.quote(filename)
+    return onedrive_graph("PUT", f"/me/drive/items/{parent_id}:/{quoted}:/content",
+                          raw=data, content_type=content_type)
+
+
+@app.route("/settings/onedrive/connect")
+@admin_required
+def onedrive_connect():
+    if not onedrive_configured():
+        flash("Add the OneDrive Client ID and Secret in Render environment variables first.")
+        return redirect(url_for("settings"))
+    state = secrets.token_urlsafe(24)
+    session["onedrive_state"] = state
+    return redirect(onedrive_authorize_url(state))
+
+
+@app.route("/onedrive/callback")
+@admin_required
+def onedrive_callback():
+    error = request.args.get("error_description") or request.args.get("error")
+    if error:
+        flash(f"OneDrive connection cancelled: {error}")
+        return redirect(url_for("settings"))
+    if request.args.get("state") != session.pop("onedrive_state", None):
+        flash("OneDrive connection failed a security check. Please try again.")
+        return redirect(url_for("settings"))
+    code = request.args.get("code", "")
+    if not code:
+        flash("OneDrive did not return an authorization code.")
+        return redirect(url_for("settings"))
+    try:
+        tok = onedrive_token_request({"grant_type": "authorization_code", "code": code})
+        onedrive_save_tokens(tok)
+        try:
+            me = onedrive_graph("GET", "/me")
+            set_app_setting("onedrive_account", me.get("userPrincipalName") or me.get("mail") or me.get("displayName") or "OneDrive")
+        except Exception:
+            set_app_setting("onedrive_account", "OneDrive")
+        set_app_setting("onedrive_root_id", "")
+        onedrive_ensure_root()
+        flash(f"OneDrive connected. The '{onedrive_root_folder()}' folder is ready.")
+    except Exception as e:
+        flash(f"Could not connect OneDrive: {e}")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/onedrive/disconnect", methods=["POST"])
+@admin_required
+def onedrive_disconnect():
+    set_app_setting("onedrive_refresh_token", "")
+    set_app_setting("onedrive_account", "")
+    set_app_setting("onedrive_root_id", "")
+    _ONEDRIVE_TOKEN_CACHE["access_token"] = ""
+    _ONEDRIVE_TOKEN_CACHE["expires_at"] = 0
+    flash("OneDrive disconnected.")
+    return redirect(url_for("settings"))
+
+
+def onedrive_collect_project_assets(conn, project_id):
+    """Return (files, comments) for a project. files = list of (subfolder, storage_path, source_key)."""
+    files = []
+    notes = conn.execute(
+        """
+        SELECT notes.*, rooms.name AS room_name, users.name AS user_name
+        FROM notes JOIN rooms ON notes.room_id = rooms.id
+        LEFT JOIN users ON notes.user_id = users.id
+        WHERE rooms.project_id = %s ORDER BY notes.created_at
+        """, (project_id,)
+    ).fetchall()
+    for n in notes:
+        if n.get("photo_file"):
+            files.append(("photos", n["photo_file"], n["photo_file"]))
+        if n.get("audio_file"):
+            files.append(("audio", n["audio_file"], n["audio_file"]))
+    for t in conn.execute(
+        "SELECT task_photo_file, task_audio_file, completion_photo_file, completion_audio_file FROM tasks WHERE project_id = %s",
+        (project_id,)
+    ).fetchall():
+        for key in ("task_photo_file", "task_audio_file", "completion_photo_file", "completion_audio_file"):
+            if t.get(key):
+                files.append(("task_files", t[key], t[key]))
+    for a in conn.execute(
+        "SELECT task_attachments.storage_path FROM task_attachments JOIN tasks ON task_attachments.task_id = tasks.id WHERE tasks.project_id = %s",
+        (project_id,)
+    ).fetchall():
+        if a.get("storage_path"):
+            files.append(("task_attachments", a["storage_path"], a["storage_path"]))
+    for inv in conn.execute(
+        "SELECT picture_file FROM inventory_items WHERE project_id = %s AND picture_file IS NOT NULL", (project_id,)
+    ).fetchall():
+        if inv.get("picture_file"):
+            files.append(("inventory_pictures", inv["picture_file"], inv["picture_file"]))
+    comments = [{
+        "room": n.get("room_name"), "by": n.get("user_name"),
+        "date": n.get("note_date") or n.get("created_at"), "comment": n.get("comment") or "",
+    } for n in notes if (n.get("comment") or "").strip()]
+    return files, comments
+
+
+@app.route("/project/<int:project_id>/onedrive/create-folder", methods=["POST"])
+@admin_required
+def onedrive_create_project_folder(project_id):
+    conn = db()
+    ensure_onedrive_tables(conn)
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    try:
+        root_id = onedrive_ensure_root()
+        folder_id, folder_name = onedrive_ensure_child_folder(root_id, project["name"])
+        conn.execute(
+            """
+            INSERT INTO onedrive_project_folders (project_id, folder_id, folder_name, created_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (project_id) DO UPDATE SET folder_id = EXCLUDED.folder_id, folder_name = EXCLUDED.folder_name
+            """,
+            (project_id, folder_id, folder_name, utc_now_iso())
+        )
+        conn.commit()
+        flash(f"Backup folder '{onedrive_root_folder()}/{folder_name}' is ready in OneDrive.")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Could not create the OneDrive folder: {e}")
+    conn.close()
+    return redirect(safe_next_url("project", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/onedrive/backup", methods=["POST"])
+@admin_required
+def onedrive_backup_project(project_id):
+    conn = db()
+    ensure_onedrive_tables(conn)
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    try:
+        row = conn.execute("SELECT folder_id FROM onedrive_project_folders WHERE project_id = %s", (project_id,)).fetchone()
+        if row and row.get("folder_id"):
+            folder_id = row["folder_id"]
+        else:
+            root_id = onedrive_ensure_root()
+            folder_id, folder_name = onedrive_ensure_child_folder(root_id, project["name"])
+            conn.execute(
+                "INSERT INTO onedrive_project_folders (project_id, folder_id, folder_name, created_at) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (project_id) DO UPDATE SET folder_id = EXCLUDED.folder_id, folder_name = EXCLUDED.folder_name",
+                (project_id, folder_id, folder_name, utc_now_iso())
+            )
+            conn.commit()
+
+        files, comments = onedrive_collect_project_assets(conn, project_id)
+        done = {r["source_key"] for r in conn.execute(
+            "SELECT source_key FROM onedrive_backup_log WHERE project_id = %s", (project_id,)
+        ).fetchall()}
+
+        subfolder_ids = {}
+
+        def subfolder(name):
+            if name not in subfolder_ids:
+                subfolder_ids[name] = onedrive_ensure_child_folder(folder_id, name)[0]
+            return subfolder_ids[name]
+
+        uploaded = skipped = failed = 0
+        for sub, storage_path, source_key in files:
+            if source_key in done:
+                skipped += 1
+                continue
+            try:
+                data = download_storage_file(storage_path)
+                if not data:
+                    failed += 1
+                    continue
+                ctype = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+                item = onedrive_upload(subfolder(sub), os.path.basename(storage_path), data, ctype)
+                conn.execute(
+                    "INSERT INTO onedrive_backup_log (project_id, source_key, onedrive_item_id, uploaded_at) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (project_id, source_key) DO NOTHING",
+                    (project_id, source_key, item.get("id", ""), utc_now_iso())
+                )
+                conn.commit()
+                uploaded += 1
+            except Exception:
+                conn.rollback()
+                failed += 1
+
+        # Comments: a single up-to-date file each run (replaced, never duplicated).
+        try:
+            export = {"project": project["name"], "generated_at": utc_now_iso(), "comments": comments}
+            onedrive_upload(folder_id, "comments.json", json.dumps(export, indent=2, default=str).encode("utf-8"), "application/json")
+            readable = "\n\n".join(
+                f"[{c['date']}] {c['room'] or 'Project'} — {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
+            ) or "No comments yet."
+            onedrive_upload(folder_id, "comments.txt", readable.encode("utf-8"), "text/plain")
+        except Exception:
+            pass
+
+        conn.execute("UPDATE onedrive_project_folders SET last_backup_at = %s WHERE project_id = %s",
+                     (utc_now_iso(), project_id))
+        conn.commit()
+        msg = f"OneDrive backup complete: {uploaded} new file(s) uploaded, {skipped} already backed up, {len(comments)} comment(s) saved."
+        if failed:
+            msg += f" {failed} file(s) could not be uploaded."
+        flash(msg)
+    except Exception as e:
+        conn.rollback()
+        flash(f"OneDrive backup failed: {e}")
+    conn.close()
+    return redirect(safe_next_url("project", project_id=project_id))
 
 
 @app.route("/storage_file/<path:storage_path>")
