@@ -96,7 +96,34 @@
     </details>
 </div>
 
-{% if result %}
+{% if result and result.get('merge_prompt') %}
+{% set mp = result.merge_prompt %}
+<div class="card" style="border-left:4px solid #f59e0b;background:#fffbeb">
+    <h3>We found a project with similar information</h3>
+    <p>An existing ProjectONus project looks like the same job (matched on <strong>{{ mp.match_type }}</strong>):</p>
+    <p style="font-size:17px"><strong>{{ mp.project_name }}</strong>{% if mp.customer_name %} &mdash; {{ mp.customer_name }}{% endif %}</p>
+    <p class="muted">Do you want to <strong>merge</strong> this D-Tools import into it? Nothing already in that project will be deleted or changed, and items already imported won't be duplicated. Or create it as a brand-new project instead.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+        <form method="post" style="margin:0">
+            <input type="hidden" name="action" value="create_project">
+            <input type="hidden" name="dtools_project_id" value="{{ mp.dtools_project_id }}">
+            <input type="hidden" name="dtools_kind" value="{{ mp.dtools_kind }}">
+            <input type="hidden" name="merge_decision" value="merge">
+            <input type="hidden" name="merge_target_id" value="{{ mp.project_id }}">
+            <button type="submit">Merge into "{{ mp.project_name }}"</button>
+        </form>
+        <form method="post" style="margin:0">
+            <input type="hidden" name="action" value="create_project">
+            <input type="hidden" name="dtools_project_id" value="{{ mp.dtools_project_id }}">
+            <input type="hidden" name="dtools_kind" value="{{ mp.dtools_kind }}">
+            <input type="hidden" name="merge_decision" value="new">
+            <button type="submit" class="btn-secondary">Create as a new project</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+{% if result and not result.get('merge_prompt') %}
 {% set result_status = result.get('status', 'error') %}
 {% set result_message = result.get('message', '') %}
 {% set result_project_info = result.get('project_info') or {} %}

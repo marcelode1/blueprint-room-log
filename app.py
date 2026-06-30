@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-06-26 session-security V2"
+APP_BUILD = "2026-06-28 onedrive + dtools-customer V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -4598,6 +4598,107 @@ def dtools_fetch_import_payload(kind, guid):
     return dtools_cloud_api_get("Projects/GetProject", {"id": guid})
 
 
+def dtools_compose_address(obj):
+    """Build a one-line address from a D-Tools record or a nested address object."""
+    if not isinstance(obj, dict):
+        return ""
+    direct = dtools_pick(obj, ["address", "fullAddress", "siteAddress", "billingAddress", "streetAddress"])
+    # If a direct field is a full multi-part string, use it.
+    if direct and any(sep in direct for sep in [",", " "]) and len(direct) > 8:
+        return direct
+    street = dtools_pick(obj, ["street", "address1", "addressLine1", "line1", "street1"])
+    city = dtools_pick(obj, ["city", "town"])
+    state = dtools_pick(obj, ["state", "province", "region"])
+    zipc = dtools_pick(obj, ["zip", "zipCode", "postalCode", "postcode"])
+    parts = [p for p in [street, city, state, zipc] if p]
+    composed = ", ".join(parts[:2]) + ((" " + " ".join(parts[2:])) if parts[2:] else "")
+    return (composed or direct).strip(", ").strip()
+
+
+def dtools_customer_info(kind, guid):
+    """Best-effort fetch of the customer name/email/phone/address for a D-Tools
+    Opportunity / Quote / Project. The contact details live on the Client record,
+    so we resolve the clientId and look it up. Never raises; returns a dict."""
+    info = {"customer_name": "", "customer_email": "", "customer_phone": "", "address": ""}
+    kind = (kind or "").strip().lower()
+    try:
+        record = None
+        client_id = ""
+        if kind in ("opportunity", "quote"):
+            opp_id = guid
+            if kind == "quote":
+                quote = dtools_cloud_api_get("Quotes/GetQuote", {"id": guid})
+                opp_id = dtools_pick(quote, ["opportunityId", "opportunityID"])
+            if opp_id:
+                try:
+                    record = dtools_cloud_api_get("Opportunities/GetOpportunity", {"id": opp_id})
+                except Exception:
+                    record = None
+                if not record:
+                    # fall back to the list endpoint and match by id
+                    listing = dtools_cloud_api_get("Opportunities/GetOpportunities", {"pageSize": 200})
+                    for r in dtools_collect_project_candidates(listing):
+                        if dtools_pick(r, ["id"]) == opp_id:
+                            record = r
+                            break
+        else:  # project
+            record = dtools_cloud_api_get("Projects/GetProject", {"id": guid})
+
+        if record:
+            info["customer_name"] = dtools_pick(record, ["clientName", "customerName", "accountName", "companyName"])
+            info["customer_email"] = dtools_pick(record, ["clientEmail", "customerEmail", "email"])
+            info["customer_phone"] = dtools_pick(record, ["clientPhone", "customerPhone", "phone", "mobilePhone"])
+            info["address"] = dtools_compose_address(record)
+            client_id = dtools_pick(record, ["clientId", "accountId", "customerId", "clientID"])
+
+        # If we still miss details, pull the Client/Account record directly.
+        if client_id and (not info["customer_email"] or not info["customer_phone"] or not info["address"]):
+            client = None
+            for path in ("Clients/GetClient", "Accounts/GetAccount", "Contacts/GetContact"):
+                try:
+                    client = dtools_cloud_api_get(path, {"id": client_id})
+                    if client:
+                        break
+                except Exception:
+                    client = None
+            if client:
+                info["customer_name"] = info["customer_name"] or dtools_pick(client, ["name", "companyName", "displayName", "clientName"])
+                info["customer_email"] = info["customer_email"] or dtools_pick(client, ["email", "emailAddress", "primaryEmail"])
+                info["customer_phone"] = info["customer_phone"] or dtools_pick(client, ["phone", "phoneNumber", "mobilePhone", "workPhone", "mobile"])
+                info["address"] = info["address"] or dtools_compose_address(client)
+                # Some clients nest a billing/site address object.
+                if not info["address"]:
+                    for akey in ("billingAddress", "siteAddress", "address", "primaryAddress"):
+                        if isinstance(client.get(akey), dict):
+                            info["address"] = dtools_compose_address(client[akey])
+                            if info["address"]:
+                                break
+    except Exception:
+        pass
+    return {k: (v or "").strip() for k, v in info.items()}
+
+
+def dtools_apply_customer_info_to_project(conn, project_id, info):
+    """Fill blank project customer fields from D-Tools (never overwrites existing data)."""
+    if not info or not any(info.values()):
+        return False
+    conn.execute(
+        """
+        UPDATE projects SET
+            customer_name = COALESCE(NULLIF(customer_name, ''), NULLIF(%s, '')),
+            customer_email = COALESCE(NULLIF(customer_email, ''), NULLIF(%s, '')),
+            customer_phone = COALESCE(NULLIF(customer_phone, ''), NULLIF(%s, '')),
+            customer_address = COALESCE(NULLIF(customer_address, ''), NULLIF(%s, '')),
+            billing_address = COALESCE(NULLIF(billing_address, ''), NULLIF(%s, ''))
+        WHERE id = %s
+        """,
+        (info.get("customer_name", ""), info.get("customer_email", ""),
+         format_us_phone(info.get("customer_phone", "")), info.get("address", ""),
+         info.get("address", ""), project_id)
+    )
+    return True
+
+
 def dtools_public_fetch_payload(public_url, quote_id=""):
     public_url = (public_url or "").strip()
     if not public_url:
@@ -5131,7 +5232,31 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created}
 
 
-def create_project_from_dtools_preview(conn, project_info, locations, payload, external_ref):
+def find_matching_project(conn, project_info, external_ref):
+    """Find an existing ProjectONus project that matches an incoming D-Tools import.
+    Returns (project_row, match_type): 'linked' = same D-Tools project re-imported
+    (auto-merge), 'name'/'customer'/'address' = similar info (ask before merging)."""
+    if external_ref:
+        row = conn.execute(
+            "SELECT * FROM projects WHERE dtools_cloud_project_ref = %s ORDER BY id DESC LIMIT 1",
+            (external_ref,)
+        ).fetchone()
+        if row:
+            return row, "linked"
+    name = normalize_lookup_key(project_info.get("project_name"))
+    cust = normalize_lookup_key(project_info.get("customer_name"))
+    addr = normalize_lookup_key(project_info.get("address"))
+    for r in conn.execute("SELECT * FROM projects").fetchall():
+        if name and normalize_lookup_key(r.get("name")) == name:
+            return r, "name"
+        if cust and normalize_lookup_key(r.get("customer_name")) == cust:
+            return r, "customer"
+        if addr and normalize_lookup_key(r.get("customer_address")) == addr:
+            return r, "address"
+    return None, ""
+
+
+def create_project_from_dtools_preview(conn, project_info, locations, payload, external_ref, target_project_id=None):
     project_info = project_info or {}
     project_name = (project_info.get("project_name") or "").strip()
     customer_name = (project_info.get("customer_name") or "").strip()
@@ -5147,7 +5272,11 @@ def create_project_from_dtools_preview(conn, project_info, locations, payload, e
 
     now = utc_now_iso()
     existing_project = None
-    if external_ref:
+    if target_project_id:
+        existing_project = conn.execute(
+            "SELECT * FROM projects WHERE id = %s", (target_project_id,)
+        ).fetchone()
+    if not existing_project and external_ref:
         existing_project = conn.execute(
             "SELECT * FROM projects WHERE dtools_cloud_project_ref = %s ORDER BY id DESC LIMIT 1",
             (external_ref,)
@@ -5155,22 +5284,21 @@ def create_project_from_dtools_preview(conn, project_info, locations, payload, e
 
     if existing_project:
         project_id = existing_project["id"]
+        # Merge = fill blanks only. Existing data is never overwritten or deleted.
         conn.execute(
             """
             UPDATE projects
-            SET name = COALESCE(NULLIF(%s, ''), name),
-                customer_name = COALESCE(NULLIF(%s, ''), customer_name),
-                customer_street = COALESCE(NULLIF(%s, ''), customer_street),
-                customer_address = COALESCE(NULLIF(%s, ''), customer_address),
-                billing_street = COALESCE(NULLIF(%s, ''), billing_street),
-                billing_address = COALESCE(NULLIF(%s, ''), billing_address),
-                customer_phone = COALESCE(NULLIF(%s, ''), customer_phone),
-                customer_email = COALESCE(NULLIF(%s, ''), customer_email),
-                dtools_cloud_project_ref = COALESCE(NULLIF(%s, ''), dtools_cloud_project_ref)
+            SET customer_name = COALESCE(NULLIF(customer_name, ''), NULLIF(%s, '')),
+                customer_street = COALESCE(NULLIF(customer_street, ''), NULLIF(%s, '')),
+                customer_address = COALESCE(NULLIF(customer_address, ''), NULLIF(%s, '')),
+                billing_street = COALESCE(NULLIF(billing_street, ''), NULLIF(%s, '')),
+                billing_address = COALESCE(NULLIF(billing_address, ''), NULLIF(%s, '')),
+                customer_phone = COALESCE(NULLIF(customer_phone, ''), NULLIF(%s, '')),
+                customer_email = COALESCE(NULLIF(customer_email, ''), NULLIF(%s, '')),
+                dtools_cloud_project_ref = COALESCE(NULLIF(dtools_cloud_project_ref, ''), NULLIF(%s, ''))
             WHERE id = %s
             """,
             (
-                project_name,
                 customer_name,
                 customer_address,
                 customer_address,
@@ -8036,8 +8164,22 @@ def import_dtools_inventory(project_id):
         source_ref = dtools_source_ref_for_project(external_ref, payload, project_id)
         result = import_dtools_materials(conn, project_id, source_ref, payload)
         conn.commit()
+        # Pull the customer name / address / phone / email (they live on the
+        # Opportunity's Client record, not on the quote) and fill any blanks.
+        customer_filled = False
+        kind = request.form.get("dtools_kind", "").strip()
+        if external_ref and (kind or not request.form.get("public_response_json", "").strip()):
+            try:
+                info = dtools_customer_info(kind or "opportunity", external_ref)
+                if dtools_apply_customer_info_to_project(conn, project_id, info):
+                    conn.commit()
+                    customer_filled = any(info.values())
+            except Exception:
+                conn.rollback()
         message = f"D-Tools import complete: {result['imported']} inventory item(s) added as Needs Purchase."
         message += f" {result.get('catalog_saved', 0)} catalog item(s) saved."
+        if customer_filled:
+            message += " Customer details were filled in from D-Tools."
         if result.get("rooms_created"):
             message += f" {result['rooms_created']} new room(s) created; existing rooms were merged."
         if result.get("services_saved"):
@@ -8054,6 +8196,45 @@ def import_dtools_inventory(project_id):
         flash(dtools_unauthorized_hint(str(e)))
     conn.close()
     return redirect(url_for("project_materials", project_id=project_id))
+
+
+@app.route("/dtools/customer-debug")
+@admin_required
+def dtools_customer_debug():
+    """Temporary diagnostic: dumps the raw D-Tools opportunity + client records so
+    we can map customer-detail field names exactly. Open with ?name=<opportunity name>."""
+    name = request.args.get("name", "").strip()
+    out = {"name": name or "(none - showing recent opportunities)"}
+    try:
+        params = {"pageSize": 8}
+        if name:
+            params["search"] = name
+        raw = dtools_cloud_api_get("Opportunities/GetOpportunities", params)
+        rows = dtools_collect_project_candidates(raw)
+        out["opportunity_count"] = len(rows)
+        out["first_opportunity_raw"] = rows[0] if rows else None
+        out["all_opportunity_names"] = [dtools_pick(r, ["name"]) for r in rows]
+        client_id = dtools_pick(rows[0], ["clientId", "accountId", "customerId", "clientID"]) if rows else ""
+        out["client_id"] = client_id
+        # Try a GetOpportunity singular detail (may hold contact info inline)
+        if rows:
+            try:
+                out["opportunity_detail_raw"] = dtools_cloud_api_get("Opportunities/GetOpportunity", {"id": rows[0]["id"]})
+            except Exception as e:
+                out["opportunity_detail_error"] = str(e)
+        # Try every plausible client/account endpoint and show what comes back
+        if client_id:
+            for path in ("Clients/GetClient", "Accounts/GetAccount", "Contacts/GetContact",
+                         "Clients/GetClients", "Accounts/GetAccounts", "Clients/Get", "Account/GetAccount"):
+                key = path.replace("/", "_")
+                try:
+                    out[key] = dtools_cloud_api_get(path, {"id": client_id})
+                except Exception as e:
+                    out[key + "_error"] = str(e)[:160]
+        out["extracted_by_app"] = dtools_customer_info("opportunity", rows[0]["id"]) if rows else {}
+    except Exception as e:
+        out["error"] = str(e)
+    return jsonify(out)
 
 
 @app.route("/project/<int:project_id>/materials/preview-dtools", methods=["POST"])
@@ -8208,10 +8389,16 @@ def dtools_import():
                 labor_count = sum(1 for item in items if item.get("item_type") == "service")
                 locations = dtools_preview_locations(items)
                 room_count = len(locations)
-                project_info = apply_dtools_manual_preview_overrides(
-                    dtools_project_preview(project_payload or proposal_payload or {}),
-                    form_values
-                )
+                project_info = dtools_project_preview(project_payload or proposal_payload or {})
+                # Customer details live on the Opportunity's Client record, not the
+                # quote, so fetch and fill any blanks before manual overrides apply.
+                if import_kind in ("opportunity", "quote") and form_values["dtools_project_id"]:
+                    cust = dtools_customer_info(import_kind, form_values["dtools_project_id"])
+                    for src, dst in [("customer_name", "customer_name"), ("customer_email", "customer_email"),
+                                     ("customer_phone", "customer_phone"), ("address", "address")]:
+                        if cust.get(src) and not (project_info.get(dst) or "").strip():
+                            project_info[dst] = cust[src]
+                project_info = apply_dtools_manual_preview_overrides(project_info, form_values)
                 message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
                 if not items:
                     message += " No usable BOM/material lines were detected in this response."
@@ -8239,15 +8426,54 @@ def dtools_import():
                     "sample_items": items[:20],
                 })
                 if import_action == "create_project":
+                    merge_decision = request.form.get("merge_decision", "").strip()
+                    merge_target_id = optional_int(request.form.get("merge_target_id"))
+                    target_project_id = None
+                    if merge_decision == "merge" and merge_target_id:
+                        target_project_id = merge_target_id
+                    elif merge_decision != "new":
+                        candidate, match_type = find_matching_project(conn, project_info, source_ref)
+                        if match_type == "linked":
+                            target_project_id = candidate["id"]  # same D-Tools project: merge automatically
+                        elif candidate:
+                            # Similar project found - ask the admin before merging.
+                            result = {
+                                "status": "success",
+                                "message": message,
+                                "project_info": project_info,
+                                "items": items[:20],
+                                "locations": locations[:30],
+                                "material_count": material_count,
+                                "labor_count": labor_count,
+                                "room_count": room_count,
+                                "merge_prompt": {
+                                    "match_type": match_type,
+                                    "project_id": candidate["id"],
+                                    "project_name": candidate.get("name"),
+                                    "customer_name": candidate.get("customer_name"),
+                                    "dtools_project_id": form_values["dtools_project_id"],
+                                    "dtools_kind": import_kind,
+                                },
+                            }
+                            save_dtools_import_log(
+                                conn, form_values["dtools_project_id"],
+                                form_values["dtools_proposal_id"] or form_values["dtools_proposal_number"],
+                                form_values["project_endpoint_path"],
+                                form_values["public_proposal_url"] or form_values["proposal_endpoint_path"],
+                                "success", f"Similar project found: {candidate.get('name')}",
+                                payload_preview, "", material_count, labor_count, room_count,
+                            )
+                            return render_template("dtools_import.html", config=config, result=result, logs=[], form_values=form_values)
                     create_result = create_project_from_dtools_preview(
                         conn,
                         project_info,
                         locations,
                         source_payload,
                         source_ref,
+                        target_project_id=target_project_id,
                     )
                     conn.commit()
-                    action_text = "created" if create_result.get("created_project") else "updated"
+                    action_text = "created" if create_result.get("created_project") else "merged into existing project"
                     message = (
                         f"ProjectONus project {action_text}. "
                         f"{create_result.get('rooms_created', 0)} room(s) created. "
