@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-01 create-task + blueprint-toggle V1"
+APP_BUILD = "2026-07-01 blueprint-separate-page V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8670,6 +8670,54 @@ def project(project_id):
         onedrive_configured=onedrive_configured(),
         onedrive_connected=onedrive_connected(),
         onedrive_folder=onedrive_folder
+    )
+
+
+@app.route("/project/<int:project_id>/blueprint")
+@login_required
+def project_blueprint(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    ensure_project_blueprints(conn, project)
+    blueprints = conn.execute(
+        "SELECT * FROM project_blueprints WHERE project_id = %s ORDER BY id",
+        (project_id,)
+    ).fetchall()
+    selected_id = request.args.get("blueprint_id", type=int)
+    active_blueprint = None
+    if selected_id:
+        active_blueprint = conn.execute(
+            "SELECT * FROM project_blueprints WHERE project_id = %s AND id = %s",
+            (project_id, selected_id)
+        ).fetchone()
+    if not active_blueprint and blueprints:
+        active_blueprint = blueprints[0]
+    if active_blueprint:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+            (project_id, active_blueprint["id"])
+        ).fetchall()
+    else:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s ORDER BY id",
+            (project_id,)
+        ).fetchall()
+    conn.close()
+    return render_template(
+        "project_blueprint.html",
+        project=project,
+        rooms=rooms,
+        blueprints=blueprints,
+        active_blueprint=active_blueprint,
     )
 
 
