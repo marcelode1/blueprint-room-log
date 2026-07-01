@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-06-28 onedrive + dtools-customer V3"
+APP_BUILD = "2026-06-30 dtools-customer + merge V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8196,45 +8196,6 @@ def import_dtools_inventory(project_id):
         flash(dtools_unauthorized_hint(str(e)))
     conn.close()
     return redirect(url_for("project_materials", project_id=project_id))
-
-
-@app.route("/dtools/customer-debug")
-@admin_required
-def dtools_customer_debug():
-    """Temporary diagnostic: dumps the raw D-Tools opportunity + client records so
-    we can map customer-detail field names exactly. Open with ?name=<opportunity name>."""
-    name = request.args.get("name", "").strip()
-    out = {"name": name or "(none - showing recent opportunities)"}
-    try:
-        params = {"pageSize": 8}
-        if name:
-            params["search"] = name
-        raw = dtools_cloud_api_get("Opportunities/GetOpportunities", params)
-        rows = dtools_collect_project_candidates(raw)
-        out["opportunity_count"] = len(rows)
-        out["first_opportunity_raw"] = rows[0] if rows else None
-        out["all_opportunity_names"] = [dtools_pick(r, ["name"]) for r in rows]
-        client_id = dtools_pick(rows[0], ["clientId", "accountId", "customerId", "clientID"]) if rows else ""
-        out["client_id"] = client_id
-        # Try a GetOpportunity singular detail (may hold contact info inline)
-        if rows:
-            try:
-                out["opportunity_detail_raw"] = dtools_cloud_api_get("Opportunities/GetOpportunity", {"id": rows[0]["id"]})
-            except Exception as e:
-                out["opportunity_detail_error"] = str(e)
-        # Try every plausible client/account endpoint and show what comes back
-        if client_id:
-            for path in ("Clients/GetClient", "Accounts/GetAccount", "Contacts/GetContact",
-                         "Clients/GetClients", "Accounts/GetAccounts", "Clients/Get", "Account/GetAccount"):
-                key = path.replace("/", "_")
-                try:
-                    out[key] = dtools_cloud_api_get(path, {"id": client_id})
-                except Exception as e:
-                    out[key + "_error"] = str(e)[:160]
-        out["extracted_by_app"] = dtools_customer_info("opportunity", rows[0]["id"]) if rows else {}
-    except Exception as e:
-        out["error"] = str(e)
-    return jsonify(out)
 
 
 @app.route("/project/<int:project_id>/materials/preview-dtools", methods=["POST"])
