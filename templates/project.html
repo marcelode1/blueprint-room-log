@@ -32,6 +32,10 @@
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Inventory</a>
     {% endif %}
+    {% if is_main_admin() %}
+        <a class="btn-link btn-secondary" target="_blank" rel="noopener" href="{{ url_for('create_global_task', project_id=project.id) }}">Create Task</a>
+    {% endif %}
+    <button type="button" class="btn-link btn-secondary blueprintDesktopOnly" id="toggleBlueprintBtn">Blueprint</button>
 
     {% if active_blueprint %}
         <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}">Open Current Blueprint File</a>
@@ -77,6 +81,7 @@
     <p>The blueprint editor is available on the computer version only. On phone, choose a room from the room list.</p>
 </div>
 
+<div id="blueprintPanel" style="display:none">
 {% if is_main_admin() %}
 <div class="card blueprintDesktopOnly">
     <h3>Add Blueprint / Floor Sheet</h3>
@@ -115,8 +120,9 @@
             {% endfor %}
         </div>
     {% else %}
-        <p>No blueprint sheets yet. Add one above.</p>
+        <p>No blueprint sheets yet. Use the form above to add one.</p>
     {% endif %}
+</div>
 </div>
 
 <div class="card">
@@ -494,6 +500,16 @@ if(showBlueprintTraceBtn){
         showBlueprintTraceBtn.style.display="none";
     });
 }
+const toggleBlueprintBtn=document.getElementById("toggleBlueprintBtn");
+const blueprintPanel=document.getElementById("blueprintPanel");
+if(toggleBlueprintBtn&&blueprintPanel){
+    toggleBlueprintBtn.addEventListener("click",()=>{
+        const show=blueprintPanel.style.display==="none";
+        blueprintPanel.style.display=show?"block":"none";
+        if(show)blueprintPanel.scrollIntoView({behavior:"smooth",block:"start"});
+    });
+}
+{% if request.args.get('blueprint_id') %}if(blueprintPanel)blueprintPanel.style.display="block";{% endif %}
 window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
 </script>
 {% endblock %}
