@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-01 blueprint-separate-page V2"
+APP_BUILD = "2026-07-06 gallery V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8671,6 +8671,92 @@ def project(project_id):
         onedrive_connected=onedrive_connected(),
         onedrive_folder=onedrive_folder
     )
+
+
+@app.route("/project/<int:project_id>/gallery")
+@login_required
+def project_gallery(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY lower(name)", (project_id,)).fetchall()
+    notes = conn.execute(
+        """
+        SELECT notes.photo_file, notes.comment, notes.note_date, notes.created_at,
+               rooms.name AS room_name, users.name AS user_name
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        LEFT JOIN users ON notes.user_id = users.id
+        WHERE rooms.project_id = %s AND COALESCE(notes.photo_file, '') <> ''
+        ORDER BY notes.created_at DESC
+        """,
+        (project_id,)
+    ).fetchall()
+    attachments = []
+    try:
+        attachments = conn.execute(
+            """
+            SELECT task_attachments.storage_path AS photo_file, task_attachments.comment,
+                   task_attachments.created_at, tasks.title AS task_title,
+                   rooms.name AS room_name, users.name AS user_name
+            FROM task_attachments
+            JOIN tasks ON task_attachments.task_id = tasks.id
+            LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+            LEFT JOIN users ON task_attachments.created_by = users.id
+            WHERE tasks.project_id = %s AND task_attachments.file_type = 'photo'
+              AND COALESCE(task_attachments.storage_path, '') <> ''
+            ORDER BY task_attachments.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
+    except Exception:
+        conn.rollback()
+    conn.close()
+
+    groups = {}
+
+    def add(room_name, item):
+        key = room_name or "Project general"
+        groups.setdefault(key, []).append(item)
+
+    for n in notes:
+        add(n.get("room_name"), {
+            "photo": n["photo_file"],
+            "comment": n.get("comment") or "",
+            "by": n.get("user_name") or "Unknown",
+            "date": n.get("note_date") or n.get("created_at") or "",
+            "context": "Room update",
+        })
+    for a in attachments:
+        ctx = ("Task: " + a["task_title"]) if a.get("task_title") else "Task photo"
+        add(a.get("room_name"), {
+            "photo": a["photo_file"],
+            "comment": a.get("comment") or "",
+            "by": a.get("user_name") or "Unknown",
+            "date": a.get("created_at") or "",
+            "context": ctx,
+        })
+
+    ordered = []
+    seen = set()
+    for r in rooms:
+        if r["name"] in groups:
+            ordered.append((r["name"], groups[r["name"]]))
+            seen.add(r["name"])
+    for name, items in groups.items():
+        if name not in seen:
+            ordered.append((name, items))
+
+    total = sum(len(items) for _, items in ordered)
+    return render_template("gallery.html", project=project, groups=ordered, total=total)
 
 
 @app.route("/project/<int:project_id>/blueprint")
