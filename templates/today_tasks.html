@@ -1,41 +1,87 @@
 {% extends "base.html" %}
 {% block content %}
-{% if tasks %}
-    {% for project_group in tasks|groupby('project_id') %}
-        {% set project_task = project_group.list[0] %}
-        {% set project_address = task_project_address(project_task) %}
-        <section class="workerProjectTaskGroup" id="project-{{ project_group.grouper }}">
-            <div class="card workerProjectTaskHeader">
-                <h2>{{ project_task.project_name or 'Project' }}</h2>
-                {% if project_task.customer_name %}<p><strong>Customer:</strong> {{ project_task.customer_name }}</p>{% endif %}
-                {% if project_address %}<p><strong>Address:</strong> {{ project_address }}</p>{% endif %}
-                <div class="workerProjectActions">
-                    {% if project_address %}
-                        <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project_address) }}">Open Route in Google Maps</a>
-                    {% endif %}
-                    <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=project_task.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
-                </div>
-            </div>
-            {% for t in project_group.list %}
-                {% set work_room_id = t.room_id %}
-                {% set work_room_name = t.room_name or 'Project general' %}
-                {% set show_worker_task_actions = false %}
-                {% include "_worker_task_work_card.html" %}
-            {% endfor %}
-        </section>
-    {% endfor %}
-{% else %}
-    <div class="card">
+<div class="todayList">
+    <div class="todayListHead">
         <h2>Today's Tasks</h2>
+        <p class="muted">{{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} scheduled &middot; tap a line to open that task</p>
+    </div>
+
+    {% if tasks %}
+    <div class="taskTable" role="table" aria-label="Today's tasks">
+        <div class="taskRow taskRowHead" role="row">
+            <span class="colNum" role="columnheader">#</span>
+            <span class="colWho" role="columnheader">Customer / Supplier</span>
+            <span class="colTime" role="columnheader">Be There @</span>
+            <span class="colStatus" role="columnheader">Task Status</span>
+        </div>
+        {% for t in tasks %}
+            {% set be_there = format_task_time(t.task_start_time) %}
+            {% if not be_there and t._supplier_inventory_item %}
+                {% set be_there = format_task_time(t._supplier_inventory_item.supplier_pickup_time) %}
+            {% endif %}
+            {% set who = (t._supplier.name if t._supplier else (t.customer_name or t.project_name)) or 'Task' %}
+            {% set is_supplier = t._supplier is not none %}
+            <a class="taskRow{% if task_is_completed(t) %} taskRowDone{% endif %}" role="row"
+               href="{{ url_for('open_task_workspace', task_id=t.id) }}">
+                <span class="colNum" role="cell">{{ loop.index }}</span>
+                <span class="colWho" role="cell">
+                    <span class="whoName">{{ who }}</span>
+                    <span class="whoSub">
+                        {% if is_supplier %}<span class="whoTag whoTagSupplier">Supplier</span>{% endif %}
+                        {{ t.project_name or '' }}
+                    </span>
+                </span>
+                <span class="colTime" role="cell">{{ (be_there or '—')|lower }}</span>
+                <span class="colStatus" role="cell">
+                    <span class="statusPill status-{{ normalize_task_status(t.status) }}">{{ task_status_label(t) }}</span>
+                </span>
+            </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
         <p>No tasks scheduled for today.</p>
         <a class="btn-link btn-secondary" href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
     </div>
-{% endif %}
-{% include "_worker_task_work_assets.html" %}
+    {% endif %}
+
+    <a class="btn-link btn-secondary todaySearchBtn" href="{{ url_for('my_tasks', mode='search') }}">Search a Task</a>
+</div>
+
 <style>
-.workerProjectTaskGroup{margin-bottom:18px}
-.workerProjectTaskHeader{margin-bottom:12px}
-.workerProjectTaskHeader h2{margin-top:0}
-.workerProjectActions{display:grid;gap:10px}
+.todayList{max-width:760px;margin:0 auto}
+.todayListHead{margin-bottom:10px}
+.todayListHead h2{margin:0 0 2px}
+.taskTable{background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;overflow:hidden}
+.taskRow{display:grid;grid-template-columns:2.2rem 1fr auto auto;gap:10px;align-items:center;
+    padding:12px 14px;border-bottom:1px solid var(--border,#e2e8f0);text-decoration:none;color:inherit}
+.taskRow:last-child{border-bottom:0}
+a.taskRow:active{background:rgba(37,99,235,.10)}
+a.taskRow:hover{background:rgba(37,99,235,.05)}
+.taskRowHead{background:rgba(15,23,42,.04);font-size:12px;font-weight:800;text-transform:uppercase;
+    letter-spacing:.03em;color:var(--muted,#64748b)}
+.taskRowHead .colTime,.taskRowHead .colStatus{text-align:right}
+.colNum{font-weight:800;color:var(--muted,#64748b);text-align:center}
+.colWho{min-width:0;display:flex;flex-direction:column;gap:2px}
+.whoName{font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.whoSub{font-size:11.5px;color:var(--muted,#64748b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.whoTag{display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+    padding:1px 6px;border-radius:999px;margin-right:4px}
+.whoTagSupplier{background:rgba(245,158,11,.18);color:#b45309}
+.colTime{font-weight:800;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+.colStatus{text-align:right}
+.statusPill{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:999px;
+    background:rgba(37,99,235,.12);color:#1d4ed8;white-space:nowrap}
+.status-completed{background:rgba(22,163,74,.14);color:#15803d}
+.status-in_progress{background:rgba(234,88,12,.14);color:#c2410c}
+.status-waiting_rfi,.status-waiting_material{background:rgba(217,119,6,.14);color:#b45309}
+.taskRowDone .whoName{opacity:.75}
+.todaySearchBtn{display:inline-block;margin-top:14px}
+@media(max-width:520px){
+    .taskRow{grid-template-columns:1.7rem 1fr auto;gap:8px;padding:11px 12px}
+    .taskRowHead .colStatus,.taskRow .colStatus{grid-column:2 / 4;text-align:left;margin-top:-2px}
+    .taskRowHead .colStatus{display:none}
+    .colTime{align-self:start}
+}
 </style>
 {% endblock %}
