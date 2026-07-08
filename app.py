@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-08 V1"
+APP_BUILD = "2026-07-08 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1136,6 +1136,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_folders (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, parent_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE, name TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS folder_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE",
+        "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS description TEXT",
         "CREATE INDEX IF NOT EXISTS project_folders_lookup_idx ON project_folders(project_id, folder_key, parent_id)",
         "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
@@ -8894,10 +8895,9 @@ def project_files(project_id):
         return redirect(url_for("project", project_id=project_id))
 
     if request.method == "POST":
-        if not is_main_admin():
-            conn.close()
-            flash("Only the main admin can upload project files.")
-            return redirect(url_for("project_files", project_id=project_id))
+        # Mobile capture lets a non-admin worker add a picture / audio / attachment
+        # straight into a folder they can access. Desktop uploads stay admin-only.
+        is_mobile_capture = request.form.get("mobile_capture") == "1"
         now = utc_now_iso()
         uploaded_count = 0
         skipped_files = []
@@ -8906,6 +8906,11 @@ def project_files(project_id):
             conn.close()
             flash("File folder not found.")
             return redirect(url_for("project_files", project_id=project_id))
+        if not is_main_admin():
+            if not (is_mobile_capture and target_folder_key in allowed_folder_keys):
+                conn.close()
+                flash("Only the main admin can upload project files.")
+                return redirect(url_for("project_files", project_id=project_id))
         target_dir_id = request.form.get("dir", type=int)
         target_dir = load_project_folder(conn, project_id, target_dir_id)
         if target_dir_id and (not target_dir or target_dir.get("folder_key") != target_folder_key):
@@ -8913,13 +8918,18 @@ def project_files(project_id):
             flash("Subfolder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key))
 
+        description = request.form.get("capture_note", "").strip() or None
         uploads = request.files.getlist("project_files")
         if not uploads:
             uploads = request.files.getlist(f"{target_folder_key}_files")
+        if not uploads:
+            uploads = request.files.getlist("capture_files")
+        # Captures include photos and audio recordings, which aren't plain documents.
+        allowed_here = ALLOWED_PROJECT_FILES | ALLOWED_PHOTOS | ALLOWED_AUDIO
         for uploaded in uploads:
             if not uploaded or not uploaded.filename:
                 continue
-            if not allowed_project_file(uploaded.filename):
+            if file_ext(uploaded.filename) not in allowed_here:
                 skipped_files.append(uploaded.filename)
                 continue
             raw = uploaded.read()
@@ -8933,19 +8943,22 @@ def project_files(project_id):
             conn.execute(
                 """
                 INSERT INTO project_files
-                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, description, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (project_id, target_folder_key, target_dir_id or None, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
+                (project_id, target_folder_key, target_dir_id or None, storage_path, uploaded.filename, len(raw), session.get("user_id"), description, now)
             )
             uploaded_count += 1
         conn.commit()
         conn.close()
-        message = "Project files updated."
-        if uploaded_count:
-            message += f" {uploaded_count} file(s) uploaded."
-        elif not skipped_files:
-            message += " Choose at least one file to upload."
+        if is_mobile_capture:
+            message = "Added to folder." if uploaded_count else "Nothing was captured — take a picture, record audio, or attach a file first."
+        else:
+            message = "Project files updated."
+            if uploaded_count:
+                message += f" {uploaded_count} file(s) uploaded."
+            elif not skipped_files:
+                message += " Choose at least one file to upload."
         if skipped_files:
             message += " Unsupported file(s) skipped: " + ", ".join(skipped_files[:5])
         flash(message)

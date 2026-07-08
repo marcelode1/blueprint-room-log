@@ -39,6 +39,47 @@
                 </div>
             </div>
 
+            {% if is_mobile_request() %}
+            <form method="post" enctype="multipart/form-data" class="pfCapture">
+                <input type="hidden" name="mobile_capture" value="1">
+                <input type="hidden" name="folder_key" value="{{ selected_folder.key }}">
+                {% if current_dir %}<input type="hidden" name="dir" value="{{ current_dir.id }}">{% endif %}
+                <p class="pfCaptureTitle">Add to {% if current_dir %}{{ current_dir.name }}{% else %}{{ selected_folder.label }}{% endif %}</p>
+                <p class="muted pfCaptureHint">Take a picture, record an audio note, or attach a file straight into this folder.</p>
+                <div class="mobileMediaPicker" data-media-picker>
+                    <div class="mobileMediaNativeInputs">
+                        <input id="pfCapture_attach" name="capture_files" type="file" data-media-input="attach">
+                        <input id="pfCapture_audio" name="capture_files" type="file" accept="audio/*" capture data-media-input="audio" data-generated-prefix="AUD">
+                        <input id="pfCapture_camera" name="capture_files" type="file" accept="image/*,.heic,.heif" capture="environment" data-media-input="camera" data-generated-prefix="IMG">
+                    </div>
+                    <label class="mobileMediaCommentLabel" for="pfCapture_note">Note (optional)</label>
+                    <textarea id="pfCapture_note" name="capture_note" rows="2" placeholder="Describe what this is" data-media-comment></textarea>
+                    <div class="mobileMediaPreview" data-media-preview hidden>
+                        <div class="mobileMediaPreviewBody">
+                            <div class="mobileMediaThumb" data-media-thumb></div>
+                            <div>
+                                <strong data-media-kind>Attachment ready</strong>
+                                <p class="muted" data-media-filename></p>
+                            </div>
+                        </div>
+                        <button type="button" class="mobileMediaPreviewSave" data-media-save data-media-save-label="Ready">Ready</button>
+                    </div>
+                    <div class="mobileMediaBar" aria-label="Add picture, attachment, or audio">
+                        <button type="button" class="mobileMediaIconButton" data-media-action="attach" aria-label="Attach a file" title="Attach a file">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.7-9.7a4.2 4.2 0 0 1 5.9 5.9l-9.4 9.4a2.4 2.4 0 0 1-3.4-3.4l8.8-8.8"/></svg>
+                        </button>
+                        <button type="button" class="mobileMediaIconButton" data-media-action="audio" aria-label="Record or attach audio" title="Record or attach audio">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg>
+                        </button>
+                        <button type="button" class="mobileMediaIconButton mobileMediaCameraButton" data-media-action="camera" aria-label="Take picture" title="Take picture">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l2-3h6l2 3h3v13H4Z"/><circle cx="12" cy="13" r="4"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="pfCaptureSubmit">Save to Folder</button>
+            </form>
+            {% endif %}
+
             {% if current_files %}
                 <div class="pfFileTable">
                     <div class="pfFileHead">
@@ -55,7 +96,10 @@
                             {% if current_dir %}data-dir="{{ current_dir.id }}"{% endif %}>
                             <div class="pfFileName">
                                 <span class="pfFileIcon" aria-hidden="true">📄</span>
-                                <span class="pfFileNameText">{{ file.original_filename or 'Project file' }}</span>
+                                <span class="pfFileNameCol">
+                                    <span class="pfFileNameText">{{ file.original_filename or 'Project file' }}</span>
+                                    {% if file.description %}<span class="pfFileNote">{{ file.description }}</span>{% endif %}
+                                </span>
                             </div>
                             <div class="pfFileDate">{% if file.created_at %}{{ format_datetime(file.created_at) }}{% else %}-{% endif %}</div>
                             {% if is_main_admin() %}
@@ -106,6 +150,8 @@
 .pfMenu{position:fixed;z-index:1000;min-width:190px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:6px;max-height:70vh;overflow:auto}.pfMenuBackdrop{position:fixed;inset:0;z-index:999}.pfMenu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);padding:9px 12px;border-radius:6px;cursor:pointer;font-size:.95rem;margin:0}.pfMenu button:hover{background:rgba(37,99,235,.12)}.pfMenu .pfMenuDanger{color:#dc2626}.pfMenuLabel{padding:6px 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}.pfMenuSep{height:1px;background:var(--border);margin:6px 4px}
 .projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:6px;border-top:1px solid var(--border);padding-top:14px}
 .pfFileTable{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px}.pfFileHead,.pfFileRow{display:grid;grid-template-columns:1fr 200px 42px;gap:10px;align-items:center;padding:10px 12px}.pfFileHead{background:rgba(255,255,255,.04);font-weight:800;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);border-bottom:1px solid var(--border)}.pfFileRow{border-bottom:1px solid var(--border);cursor:pointer}.pfFileRow:last-child{border-bottom:0}.pfFileRow:hover{background:rgba(37,99,235,.08)}.pfFileName{display:flex;align-items:center;gap:8px;min-width:0}.pfFileIcon{flex:0 0 auto}.pfFileNameText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.pfFileDate{color:var(--muted);font-size:.92rem;white-space:nowrap}.pfFileKebab{justify-self:end}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
+.pfCapture{border:1px solid var(--border);border-radius:12px;background:rgba(37,99,235,.05);padding:14px;margin-bottom:16px}.pfCaptureTitle{font-weight:800;margin:0}.pfCaptureHint{margin:4px 0 6px}.pfCapture .mobileMediaPicker{margin:6px 0 0}.pfCaptureSubmit{width:100%;max-width:none;margin-top:12px}
+.pfFileNameCol{display:flex;flex-direction:column;min-width:0}.pfFileNote{font-size:.82rem;color:var(--muted);overflow-wrap:anywhere;white-space:normal;margin-top:2px}
 @media(max-width:760px){.projectFileExplorer{grid-template-columns:1fr}.pfNodeName{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;font-size:1rem}.pfNodeRow{padding:12px 8px;gap:6px}.pfNodeCount{min-height:0}.pfCaret{font-size:1rem}.pfFileHead{display:none}.pfFileRow{grid-template-columns:1fr 42px}.pfFileName{grid-column:1;grid-row:1}.pfFileDate{grid-column:1;grid-row:2;margin-top:2px}.pfFileKebab{grid-column:2;grid-row:1/3;align-self:center}.projectFileDropZone{min-height:130px;padding:16px}.projectFileUploadBox button{max-width:none}}
 </style>
 
