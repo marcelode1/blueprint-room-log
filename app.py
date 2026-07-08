@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-08 V2"
+APP_BUILD = "2026-07-08 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1139,6 +1139,7 @@ def init_db():
         "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS description TEXT",
         "CREATE INDEX IF NOT EXISTS project_folders_lookup_idx ON project_folders(project_id, folder_key, parent_id)",
         "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
+        "CREATE TABLE IF NOT EXISTS custom_file_folders (id SERIAL PRIMARY KEY, folder_key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
@@ -1868,8 +1869,9 @@ def has_perm(permission):
 
 
 def project_file_access_keys(conn, project_id, user_id=None):
+    valid = valid_project_folder_keys(conn)
     if is_main_admin():
-        return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+        return valid
     uid = user_id or session.get("user_id")
     if not uid or not project_id:
         return set()
@@ -1883,7 +1885,6 @@ def project_file_access_keys(conn, project_id, user_id=None):
         """,
         (project_id, uid)
     ).fetchall()
-    valid = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
     return {row["folder_key"] for row in rows if row.get("folder_key") in valid}
 
 
@@ -8808,8 +8809,31 @@ def project_blueprint(project_id):
     )
 
 
-def valid_project_folder_keys():
-    return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+def custom_file_folder_rows(conn):
+    try:
+        return conn.execute(
+            "SELECT folder_key, label FROM custom_file_folders ORDER BY LOWER(label)"
+        ).fetchall()
+    except Exception:
+        return []
+
+
+def all_project_file_folders(conn):
+    """Built-in top-level folders plus any custom ones the admin has added."""
+    folders = [{"key": f["key"], "label": f["label"]} for f in PROJECT_FILE_FOLDERS]
+    for row in custom_file_folder_rows(conn):
+        folders.append({"key": row["folder_key"], "label": row["label"]})
+    return folders
+
+
+def custom_folder_keys(conn):
+    return {row["folder_key"] for row in custom_file_folder_rows(conn)}
+
+
+def valid_project_folder_keys(conn):
+    keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+    keys |= custom_folder_keys(conn)
+    return keys
 
 
 def load_project_folder(conn, project_id, folder_id):
@@ -8902,7 +8926,7 @@ def project_files(project_id):
         uploaded_count = 0
         skipped_files = []
         target_folder_key = request.form.get("folder_key", "").strip()
-        if target_folder_key not in valid_project_folder_keys():
+        if target_folder_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("File folder not found.")
             return redirect(url_for("project_files", project_id=project_id))
@@ -8965,7 +8989,7 @@ def project_files(project_id):
         return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key, dir=target_dir_id or None))
 
     visible_folders = [
-        folder for folder in PROJECT_FILE_FOLDERS
+        folder for folder in all_project_file_folders(conn)
         if folder["key"] in allowed_folder_keys
     ]
     selected_folder_key = request.args.get("folder", "").strip()
@@ -9030,6 +9054,7 @@ def project_files(project_id):
             """,
             tuple(file_params)
         ).fetchall()
+    custom_keys = sorted(custom_folder_keys(conn))
     conn.close()
     return render_template(
         "project_files.html",
@@ -9042,7 +9067,8 @@ def project_files(project_id):
         current_dir_id=(current_dir["id"] if current_dir else None),
         breadcrumb=breadcrumb,
         current_files=current_files,
-        folders_json=folders_json
+        folders_json=folders_json,
+        custom_folder_keys=custom_keys
     )
 
 
@@ -9055,7 +9081,7 @@ def create_project_folder(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
     folder_key = request.form.get("folder_key", "").strip()
-    if folder_key not in valid_project_folder_keys():
+    if folder_key not in valid_project_folder_keys(conn):
         conn.close()
         flash("File folder not found.")
         return redirect(url_for("project_files", project_id=project_id))
@@ -9093,6 +9119,89 @@ def create_project_folder(project_id):
     conn.close()
     flash(f'Folder "{name}" created.')
     return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/create", methods=["POST"])
+@admin_required
+def create_top_file_folder(project_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    label = (request.form.get("label", "") or "").strip()[:60]
+    if not label:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id))
+    existing = valid_project_folder_keys(conn)
+    base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "folder"
+    key = base
+    suffix = 2
+    while key in existing:
+        key = f"{base}_{suffix}"
+        suffix += 1
+    now = utc_now_iso()
+    conn.execute(
+        "INSERT INTO custom_file_folders (folder_key, label, created_by, created_at) VALUES (%s, %s, %s, %s)",
+        (key, label, session.get("user_id"), now)
+    )
+    # Make the new folder visible to everyone who can already access each project,
+    # the same way the built-in folders are shared.
+    conn.execute(
+        """
+        INSERT INTO project_file_permissions (project_id, user_id, folder_key, can_view, created_at, updated_at)
+        SELECT project_id, user_id, %s, TRUE, %s, %s FROM project_permissions
+        ON CONFLICT (project_id, user_id, folder_key) DO NOTHING
+        """,
+        (key, now, now)
+    )
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{label}" added. It is now available in every project.')
+    return redirect(url_for("project_files", project_id=project_id, folder=key))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/<folder_key>/rename", methods=["POST"])
+@admin_required
+def rename_top_file_folder(project_id, folder_key):
+    conn = db()
+    row = conn.execute("SELECT * FROM custom_file_folders WHERE folder_key = %s", (folder_key,)).fetchone()
+    if not row:
+        conn.close()
+        flash("That folder can't be renamed.")
+        return redirect(url_for("project_files", project_id=project_id))
+    label = (request.form.get("name", "") or "").strip()[:60]
+    if not label:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+    conn.execute("UPDATE custom_file_folders SET label = %s WHERE folder_key = %s", (label, folder_key))
+    conn.commit()
+    conn.close()
+    flash("Folder renamed.")
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/<folder_key>/delete", methods=["POST"])
+@admin_required
+def delete_top_file_folder(project_id, folder_key):
+    conn = db()
+    row = conn.execute("SELECT * FROM custom_file_folders WHERE folder_key = %s", (folder_key,)).fetchone()
+    if not row:
+        conn.close()
+        flash("That folder can't be deleted.")
+        return redirect(url_for("project_files", project_id=project_id))
+    # Custom top-level folders are shared across every project, so deleting one
+    # removes its subfolders, files, and access rows everywhere.
+    conn.execute("DELETE FROM project_files WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM project_folders WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM project_file_permissions WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM custom_file_folders WHERE folder_key = %s", (folder_key,))
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{row["label"]}" was deleted from all projects.')
+    return redirect(url_for("project_files", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/files/folder/<int:folder_id>/rename", methods=["POST"])
@@ -9180,7 +9289,7 @@ def move_project_folder(project_id, folder_id):
     dest_kind = request.form.get("dest_kind", "")
     if dest_kind == "root":
         new_key = request.form.get("dest_key", "").strip()
-        if new_key not in valid_project_folder_keys():
+        if new_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("Destination folder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"]))
@@ -9260,7 +9369,7 @@ def move_project_file(project_id, file_id):
     dest_kind = request.form.get("dest_kind", "")
     if dest_kind == "root":
         new_key = request.form.get("dest_key", "").strip()
-        if new_key not in valid_project_folder_keys():
+        if new_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("Destination folder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=file_row.get("folder_key")))
@@ -14087,7 +14196,7 @@ def settings():
                 (user_id,)
             ).fetchall()
             accessible_project_ids = {row["project_id"] for row in accessible_project_rows}
-            valid_folder_keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+            valid_folder_keys = valid_project_folder_keys(conn)
             selected_file_access = []
             if user and user.get("role") != "admin":
                 for project_id in accessible_project_ids:
@@ -14184,6 +14293,7 @@ def settings():
         WHERE COALESCE(can_view, TRUE) = TRUE
         """
     ).fetchall()
+    settings_file_folders = all_project_file_folders(conn)
     conn.close()
     perm_map = {p["user_id"]: p for p in permissions}
     effective_perms = {}
@@ -14217,7 +14327,7 @@ def settings():
         project_access_map=project_access_map,
         project_file_access_map=project_file_access_map,
         file_project_map=file_project_map,
-        project_file_folders=PROJECT_FILE_FOLDERS,
+        project_file_folders=settings_file_folders,
         active_tab=active_tab,
         permission_keys=PERMISSION_KEYS,
         onedrive_configured=onedrive_configured(),
