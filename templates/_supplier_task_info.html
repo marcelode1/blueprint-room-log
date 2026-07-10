@@ -101,16 +101,17 @@
                             <label>Material / Item</label>
                             <input name="item_name" class="js-part-item" list="partCatalogNameList" value="{{ item.item_name or '' }}" required>
                             <label>Quantity</label>
-                            <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity or '' }}" required>
+                            <div class="qtyUnitBox">
+                                <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity or '' }}" required>
+                                <select name="unit_measure" class="js-part-unit qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                                    <option value="UN" selected>UN</option>
+                                    <option value="PR">PR</option>
+                                </select>
+                            </div>
                             <label>Brand</label>
                             <input name="brand" class="js-part-brand" list="partCatalogBrandList" value="{{ item.brand or '' }}">
                             <label>Model Number</label>
                             <input name="item_model" class="js-part-model" list="partCatalogModelList" value="{{ item.item_model or '' }}">
-                            <label>Unit or Pair</label>
-                            <select name="unit_measure" class="js-part-unit">
-                                <option value="UN" selected>UN &mdash; Unit</option>
-                                <option value="PR">PR &mdash; Pair</option>
-                            </select>
                             <label>Pickup Date</label>
                             <input name="item_date" type="date" value="{{ item.item_date or '' }}">
                             <label>Pickup Time</label>
@@ -143,16 +144,17 @@
                     <label>Material / Item</label>
                     <input name="item_name" class="js-part-item" list="partCatalogNameList" required>
                     <label>Quantity</label>
-                    <input name="quantity" type="number" step="0.01" min="0.01" required>
+                    <div class="qtyUnitBox">
+                        <input name="quantity" type="number" step="0.01" min="0.01" required>
+                        <select name="unit_measure" class="js-part-unit qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                            <option value="UN" selected>UN</option>
+                            <option value="PR">PR</option>
+                        </select>
+                    </div>
                     <label>Brand</label>
                     <input name="brand" class="js-part-brand" list="partCatalogBrandList">
                     <label>Model Number</label>
                     <input name="item_model" class="js-part-model" list="partCatalogModelList">
-                    <label>Unit or Pair</label>
-                    <select name="unit_measure" class="js-part-unit">
-                        <option value="UN" selected>UN &mdash; Unit</option>
-                        <option value="PR">PR &mdash; Pair</option>
-                    </select>
                     <label>Pickup Date</label>
                     <input name="item_date" type="date">
                     <label>Pickup Time</label>

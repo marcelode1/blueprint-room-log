@@ -16,7 +16,13 @@
             </div>
             <div>
                 <label>Quantity</label>
-                <input type="number" name="quantity" step="0.01" min="0" required>
+                <div class="qtyUnitBox">
+                    <input type="number" name="quantity" step="0.01" min="0" required>
+                    <select name="unit_measure" id="invUnitMeasure" class="qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                        <option value="UN" selected>UN</option>
+                        <option value="PR">PR</option>
+                    </select>
+                </div>
             </div>
             <div class="invAcField">
                 <label>Item</label>
@@ -31,13 +37,6 @@
             <div>
                 <label>Brand</label>
                 <input name="brand" id="invBrand" autocomplete="off" placeholder="Sony, Lutron, Sonos">
-            </div>
-            <div>
-                <label>Unit or Pair</label>
-                <select name="unit_measure" id="invUnitMeasure">
-                    <option value="UN" selected>UN &mdash; Unit</option>
-                    <option value="PR">PR &mdash; Pair</option>
-                </select>
             </div>
             <div>
                 <label>New or Used</label>

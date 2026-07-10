@@ -44,17 +44,19 @@
                 </div>
                 <div><label>Pickup Date</label><input type="date" name="supplier_item_date" value="{{ pickup_prefill.pickup_date if pickup_prefill else today }}"></div>
                 <div><label>Pickup Time</label><input type="time" name="supplier_pickup_time" value="{{ pickup_prefill.pickup_time if pickup_prefill else '' }}"></div>
-                <div><label>Quantity</label><input type="number" name="supplier_quantity" step="0.01" min="0" value="{{ pickup_prefill.quantity if pickup_prefill else '' }}"></div>
+                <div>
+                    <label>Quantity</label>
+                    <div class="qtyUnitBox">
+                        <input type="number" name="supplier_quantity" step="0.01" min="0" value="{{ pickup_prefill.quantity if pickup_prefill else '' }}">
+                        <select name="supplier_unit_measure" class="js-part-unit qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                            <option value="UN" selected>UN</option>
+                            <option value="PR">PR</option>
+                        </select>
+                    </div>
+                </div>
                 <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers" value="{{ pickup_prefill.item_name if pickup_prefill else '' }}"></div>
                 <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList" value="{{ pickup_prefill.brand if pickup_prefill else '' }}"></div>
                 <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList" value="{{ pickup_prefill.model if pickup_prefill else '' }}"></div>
-                <div>
-                    <label>Unit or Pair</label>
-                    <select name="supplier_unit_measure" class="js-part-unit">
-                        <option value="UN" selected>UN &mdash; Unit</option>
-                        <option value="PR">PR &mdash; Pair</option>
-                    </select>
-                </div>
             </div>
             <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
             <input type="hidden" name="new_supplier_name" id="newSupplierName">

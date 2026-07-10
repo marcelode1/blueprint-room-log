@@ -38,7 +38,13 @@
         <label>Date</label>
         <input type="date" name="item_date" value="{{ today }}" required>
         <label>Quantity</label>
-        <input type="number" name="quantity" step="0.01" min="0" required>
+        <div class="qtyUnitBox">
+            <input type="number" name="quantity" step="0.01" min="0" required>
+            <select name="unit_measure" id="invUnitMeasure" class="qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                <option value="UN" selected>UN</option>
+                <option value="PR">PR</option>
+            </select>
+        </div>
         <div class="invAcField">
             <label>Item</label>
             <input name="item_name" id="invItemName" autocomplete="off" placeholder="Start typing to search the catalog" required>
@@ -51,11 +57,6 @@
         </div>
         <label>Brand</label>
         <input name="brand" id="invBrand" autocomplete="off" placeholder="Sony, Lutron, Sonos">
-        <label>Unit or Pair</label>
-        <select name="unit_measure" id="invUnitMeasure">
-            <option value="UN" selected>UN &mdash; Unit</option>
-            <option value="PR">PR &mdash; Pair</option>
-        </select>
         <label>New or Used</label>
         <select name="item_condition">
             {% for value, label in condition_options.items() %}
