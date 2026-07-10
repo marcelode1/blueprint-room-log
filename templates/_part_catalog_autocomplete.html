@@ -43,11 +43,13 @@ if(!window.partCatalogAutocompleteReady){
         const description=scopedField(input,".js-part-description");
         const price=scopedField(input,".js-part-price");
         const taxable=scopedField(input,".js-part-taxable");
+        const unit=scopedField(input,".js-part-unit");
         if(model&&!model.value)model.value=part.item_model||"";
         if(brand&&!brand.value)brand.value=part.brand||"";
         if(description&&!description.value)description.value=part.description||"";
         if(price&&(!price.value||price.value==="0"))price.value=catalogMoney(part.unit_price||0);
         if(taxable&&part.taxable!==null&&part.taxable!==undefined)taxable.checked=!!part.taxable;
+        if(unit&&part.unit_measure)unit.value=part.unit_measure;
     }
     document.addEventListener("input",event=>{
         if(event.target.matches(".js-part-item"))fillPartFields(event.target);

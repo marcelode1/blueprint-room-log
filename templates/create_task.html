@@ -48,6 +48,13 @@
                 <div><label>Material / Item</label><input name="supplier_item_name" class="js-part-item" list="partCatalogNameList" placeholder="Cable, keypad, speakers" value="{{ pickup_prefill.item_name if pickup_prefill else '' }}"></div>
                 <div><label>Brand</label><input name="supplier_brand" class="js-part-brand" list="partCatalogBrandList" value="{{ pickup_prefill.brand if pickup_prefill else '' }}"></div>
                 <div><label>Model Number</label><input name="supplier_model" class="js-part-model" list="partCatalogModelList" value="{{ pickup_prefill.model if pickup_prefill else '' }}"></div>
+                <div>
+                    <label>Unit or Pair</label>
+                    <select name="supplier_unit_measure" class="js-part-unit">
+                        <option value="UN" selected>UN &mdash; Unit</option>
+                        <option value="PR">PR &mdash; Pair</option>
+                    </select>
+                </div>
             </div>
             <input type="hidden" name="supplier_items_json" id="supplierItemsJson">
             <input type="hidden" name="new_supplier_name" id="newSupplierName">
@@ -222,6 +229,7 @@
         itemName:document.querySelector('[name="supplier_item_name"]'),
         brand:document.querySelector('[name="supplier_brand"]'),
         model:document.querySelector('[name="supplier_model"]'),
+        unitMeasure:document.querySelector('[name="supplier_unit_measure"]'),
         note:document.querySelector('[name="supplier_purchase_note"]')
     };
     let supplierItems={{ ([pickup_prefill] if pickup_prefill else [])|tojson }};
@@ -286,9 +294,11 @@
             row.className="supplierItemRow";
             const text=document.createElement("div");
             text.innerHTML="<strong>"+(index+1)+". "+item.item_name+"</strong><br>Qty: "+item.quantity+
+                " "+(item.unit_measure==="PR"?"PR (Pair)":"UN (Unit)")+
                 (item.brand?" | Brand: "+item.brand:"")+
                 (item.model?" | Model #: "+item.model:"")+
-                "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"");
+                "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"")+
+                (item.save_to_catalog===false?"<br><em>Not saved to catalog (this task only)</em>":"");
             const remove=document.createElement("button");
             remove.type="button";
             remove.className="btn-danger";
@@ -360,6 +370,11 @@
         if(taskField("title"))taskField("title").focus();
         return true;
     }
+    function materialInCatalog(name,model,brand){
+        const rows=window.partCatalogData||[];
+        const n=v=>(v||"").toString().trim().toLowerCase();
+        return rows.some(p=>n(p.item_name)===n(name)&&n(p.item_model)===n(model)&&n(p.brand)===n(brand));
+    }
     function addSupplierItem(showAlert=true){
         const projectId=projectSelect?projectSelect.value:"";
         const roomId=roomSelect?roomSelect.value:"";
@@ -370,6 +385,7 @@
             item_name:supplierItemFields.itemName?supplierItemFields.itemName.value.trim():"",
             brand:supplierItemFields.brand?supplierItemFields.brand.value.trim():"",
             model:supplierItemFields.model?supplierItemFields.model.value.trim():"",
+            unit_measure:supplierItemFields.unitMeasure?supplierItemFields.unitMeasure.value:"UN",
             project_id:projectId,
             project_name:optionText(projectSelect),
             room_id:roomId,
@@ -379,12 +395,22 @@
             if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
             return false;
         }
+        // New material? Ask whether it should also be saved to the parts/equipment catalog.
+        if(materialInCatalog(item.item_name,item.model,item.brand)){
+            item.save_to_catalog=true;
+        }else{
+            item.save_to_catalog=window.confirm(
+                '"'+item.item_name+'" is not in your material catalog yet.\n\n'+
+                'Press OK to also save it to the catalog for future use,\n'+
+                'or Cancel to use it for this task only.');
+        }
         supplierItems.push(item);
         renderSupplierItems();
         if(supplierItemFields.quantity)supplierItemFields.quantity.value="";
         if(supplierItemFields.itemName)supplierItemFields.itemName.value="";
         if(supplierItemFields.brand)supplierItemFields.brand.value="";
         if(supplierItemFields.model)supplierItemFields.model.value="";
+        if(supplierItemFields.unitMeasure)supplierItemFields.unitMeasure.value="UN";
         if(supplierItemFields.itemName)supplierItemFields.itemName.focus();
         return true;
     }

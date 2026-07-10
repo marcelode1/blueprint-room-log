@@ -24,6 +24,10 @@
         {% endif %}
     </div>
 
+    {% if is_main_admin() %}
+        <a class="btn-link" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
+    {% endif %}
+
     {% if show_worker_task_actions %}
         {% if address %}
             <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>

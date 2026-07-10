@@ -106,6 +106,11 @@
                             <input name="brand" class="js-part-brand" list="partCatalogBrandList" value="{{ item.brand or '' }}">
                             <label>Model Number</label>
                             <input name="item_model" class="js-part-model" list="partCatalogModelList" value="{{ item.item_model or '' }}">
+                            <label>Unit or Pair</label>
+                            <select name="unit_measure" class="js-part-unit">
+                                <option value="UN" selected>UN &mdash; Unit</option>
+                                <option value="PR">PR &mdash; Pair</option>
+                            </select>
                             <label>Pickup Date</label>
                             <input name="item_date" type="date" value="{{ item.item_date or '' }}">
                             <label>Pickup Time</label>
@@ -143,6 +148,11 @@
                     <input name="brand" class="js-part-brand" list="partCatalogBrandList">
                     <label>Model Number</label>
                     <input name="item_model" class="js-part-model" list="partCatalogModelList">
+                    <label>Unit or Pair</label>
+                    <select name="unit_measure" class="js-part-unit">
+                        <option value="UN" selected>UN &mdash; Unit</option>
+                        <option value="PR">PR &mdash; Pair</option>
+                    </select>
                     <label>Pickup Date</label>
                     <input name="item_date" type="date">
                     <label>Pickup Time</label>

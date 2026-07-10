@@ -33,6 +33,13 @@
                 <input name="brand" id="invBrand" autocomplete="off" placeholder="Sony, Lutron, Sonos">
             </div>
             <div>
+                <label>Unit or Pair</label>
+                <select name="unit_measure" id="invUnitMeasure">
+                    <option value="UN" selected>UN &mdash; Unit</option>
+                    <option value="PR">PR &mdash; Pair</option>
+                </select>
+            </div>
+            <div>
                 <label>New or Used</label>
                 <select name="item_condition">
                     {% for value, label in condition_options.items() %}

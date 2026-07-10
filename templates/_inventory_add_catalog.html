@@ -24,6 +24,8 @@
         itemInput.value=part.item_name||"";
         modelInput.value=part.item_model||"";
         brandInput.value=part.brand||"";
+        const unitSelect=document.getElementById("invUnitMeasure");
+        if(unitSelect&&part.unit_measure)unitSelect.value=part.unit_measure;
         hideMenus();
     }
     function search(query){

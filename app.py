@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-10 V1"
+APP_BUILD = "2026-07-10 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1146,6 +1146,8 @@ def init_db():
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -3571,6 +3573,21 @@ def clean_supplier_task_status(value):
     return value if value in SUPPLIER_TASK_STATUS_LABELS else ""
 
 
+UNIT_MEASURE_LABELS = {
+    "UN": "Unit",
+    "PR": "Pair",
+}
+
+
+def clean_unit_measure(value):
+    value = str(value or "").strip().upper()
+    return value if value in UNIT_MEASURE_LABELS else ""
+
+
+def unit_measure_label(value):
+    return UNIT_MEASURE_LABELS.get(clean_unit_measure(value) or "UN", "Unit")
+
+
 def clean_inventory_location(value):
     value = (value or "warehouse").strip()
     return value if value in INVENTORY_LOCATION_LABELS else "warehouse"
@@ -3632,6 +3649,8 @@ def ensure_part_catalog_tables(conn):
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -3645,7 +3664,7 @@ def ensure_part_catalog_tables(conn):
             print("Part catalog migration skipped:", e)
 
 
-def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None):
+def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None, unit_measure=""):
     item_name = (item_name or "").strip()
     if not item_name:
         return None
@@ -3655,6 +3674,7 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
     category = (category or "").strip()
     description = clean_catalog_description(description)
     item_type = (item_type or "part").strip() or "part"
+    unit_measure = clean_unit_measure(unit_measure)
     existing = conn.execute(
         """
         SELECT id FROM part_catalog
@@ -3677,21 +3697,22 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
                 unit_cost = COALESCE(%s, unit_cost),
                 taxable = COALESCE(%s, taxable),
                 item_type = COALESCE(NULLIF(%s, ''), item_type),
+                unit_measure = COALESCE(NULLIF(%s, ''), unit_measure, 'UN'),
                 is_active = TRUE,
                 updated_at = %s
             WHERE id = %s
             """,
-            (category, description, part_number, unit_price, unit_cost, taxable, item_type, now, existing["id"])
+            (category, description, part_number, unit_price, unit_cost, taxable, item_type, unit_measure, now, existing["id"])
         )
         return existing["id"]
     row = conn.execute(
         """
         INSERT INTO part_catalog
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
         RETURNING id
         """,
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, now)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure or "UN", now, now)
     ).fetchone()
     return row["id"] if row else None
 
@@ -3704,6 +3725,7 @@ def backfill_part_catalog_from_inventory(conn):
         FROM inventory_items
         WHERE COALESCE(item_name, '') <> ''
           AND part_catalog_id IS NULL
+          AND COALESCE(catalog_opt_out, FALSE) = FALSE
         ORDER BY id
         """
     ).fetchall()
@@ -3759,7 +3781,7 @@ def part_catalog_options(conn):
     sync_part_catalog_sources(conn)
     rows = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
         ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
@@ -3834,7 +3856,8 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
         note_parts.append(purchase_note)
     item_model = request.form.get("supplier_model", "").strip()
     brand = request.form.get("supplier_brand", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
+    unit_measure = clean_unit_measure(request.form.get("supplier_unit_measure"))
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part", unit_measure=unit_measure)
     return conn.execute(
         """
         INSERT INTO inventory_items
@@ -3949,12 +3972,17 @@ def supplier_items_from_task_form(conn, supplier):
             note_parts.append(purchase_note)
         item_model = (row.get("model") or "").strip()
         brand = (row.get("brand") or "").strip()
-        part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
+        unit_measure = clean_unit_measure(row.get("unit_measure"))
+        if row.get("save_to_catalog") is False:
+            # Admin chose not to add this one-off material to the catalog.
+            part_catalog_id = None
+        else:
+            part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part", unit_measure=unit_measure)
         created.append(conn.execute(
             """
             INSERT INTO inventory_items
-            (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+            (item_date, quantity, item_name, item_model, brand, part_catalog_id, catalog_opt_out, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -3964,6 +3992,7 @@ def supplier_items_from_task_form(conn, supplier):
                 item_model,
                 brand,
                 part_catalog_id,
+                row.get("save_to_catalog") is False,
                 "",
                 project_id,
                 room_id,
@@ -4396,7 +4425,7 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
     item_model = (request.form.get("item_model") or request.form.get("part_number") or "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     conn.execute(
         """
         INSERT INTO inventory_items
@@ -7451,6 +7480,7 @@ def parts_catalog():
         item_type = request.form.get("item_type", "part")
         if item_type not in ["part", "service"]:
             item_type = "part"
+        unit_measure = clean_unit_measure(request.form.get("unit_measure")) or "UN"
         taxable = request.form.get("taxable") == "1"
         now = utc_now_iso()
         duplicate_item = conn.execute(
@@ -7483,11 +7513,12 @@ def parts_catalog():
                     unit_cost = %s,
                     taxable = %s,
                     item_type = %s,
+                    unit_measure = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, part_id)
+                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, now, part_id)
             )
             flash("Catalog item updated.")
         else:
@@ -7502,7 +7533,8 @@ def parts_catalog():
                 item_type,
                 category,
                 part_number,
-                unit_cost
+                unit_cost,
+                unit_measure
             )
             flash("Catalog item saved.")
         conn.commit()
@@ -7576,7 +7608,7 @@ def create_part_catalog_json():
         return jsonify({"ok": False, "error": "Item name is required."}), 400
     duplicate_item = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
           AND lower(item_name) = lower(%s)
@@ -7611,7 +7643,7 @@ def create_part_catalog_json():
     )
     row = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE id = %s
         """,
@@ -7658,7 +7690,7 @@ def quick_update_part_catalog_json(part_id):
     )
     updated = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE id = %s
         """,
@@ -11166,7 +11198,7 @@ def add_task_supplier_item(task_id):
     item_model = request.form.get("item_model", "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     item = conn.execute(
         """
         INSERT INTO inventory_items
@@ -11236,7 +11268,7 @@ def update_task_supplier_item(task_id, item_id):
     item_model = request.form.get("item_model", "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     conn.execute(
         """
         UPDATE inventory_items
