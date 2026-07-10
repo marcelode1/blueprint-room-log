@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-08 V3"
+APP_BUILD = "2026-07-10 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -11087,6 +11087,56 @@ def notify_supplier_task_saved(conn, task, message):
     )
 
 
+def sync_supplier_task_status(conn, task):
+    """Reflect supplier material progress onto the task's own status.
+
+    All materials picked up (or used) -> completed; anything unavailable,
+    backordered, or waiting arrival -> waiting on material; some picked up
+    -> in progress. A task already marked completed is never downgraded.
+    """
+    task_id = task.get("id")
+    rows = conn.execute(
+        """
+        SELECT inventory_items.status
+        FROM inventory_items
+        WHERE EXISTS (
+                SELECT 1 FROM task_supplier_items
+                WHERE task_supplier_items.task_id = %s
+                  AND task_supplier_items.inventory_item_id = inventory_items.id
+              )
+           OR inventory_items.id = (
+                SELECT supplier_inventory_item_id FROM tasks
+                WHERE tasks.id = %s AND supplier_inventory_item_id IS NOT NULL
+              )
+        """,
+        (task_id, task_id)
+    ).fetchall()
+    statuses = [str(row.get("status") or "") for row in rows]
+    if not statuses:
+        return
+    if all(s in ("picked_up", "used") for s in statuses):
+        new_status = "completed"
+    elif any(s in ("unavailable", "backordered", "purchased_waiting_arrival") for s in statuses):
+        new_status = "waiting_material"
+    elif any(s in ("picked_up", "used") for s in statuses):
+        new_status = "in_progress"
+    else:
+        return
+    current = normalize_task_status(task.get("status"))
+    if current == new_status or current == "completed":
+        return
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = %s,
+            completed_at = CASE WHEN %s THEN COALESCE(completed_at, %s) ELSE completed_at END
+        WHERE id = %s
+        """,
+        (new_status, new_status == "completed", utc_now_iso(), task_id)
+    )
+    task["status"] = new_status
+
+
 @app.route("/tasks/<int:task_id>/supplier-items/add", methods=["POST"])
 @login_required
 def add_task_supplier_item(task_id):
@@ -11149,6 +11199,7 @@ def add_task_supplier_item(task_id):
     link_supplier_items_to_task(conn, task_id, [item])
     if not task.get("supplier_inventory_item_id"):
         conn.execute("UPDATE tasks SET supplier_inventory_item_id = %s WHERE id = %s", (item["id"], task_id))
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(conn, task, f"Supplier material added: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
@@ -11224,6 +11275,7 @@ def update_task_supplier_item(task_id, item_id):
         )
     )
     item_name = item_name or "Material"
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(conn, task, f"Supplier material updated: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
@@ -11314,12 +11366,13 @@ def pickup_task_supplier_item(task_id, item_id):
     )
     if supplier_uploads:
         insert_task_attachments(conn, task_id, supplier_uploads)
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(
         conn,
         task,
         f"Supplier task status saved: {inventory_status_label(supplier_status)} - {item.get('item_name') or 'Material'} - {task_display_name(task)}"
     )
-    flash("Task status saved, project inventory updated, and admin notified.")
+    flash(f"Task status saved ({task_status_label(task)}), project inventory updated, and admin notified.")
     conn.commit()
     conn.close()
     return redirect(next_url)
