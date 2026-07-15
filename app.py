@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-10 V3"
+APP_BUILD = "2026-07-15 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2117,6 +2117,7 @@ def ensure_invoice_tables(conn):
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate REAL NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total REAL NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TEXT",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
@@ -6971,6 +6972,128 @@ def edit_project(project_id):
 
     conn.close()
     return render_template("edit_project.html", project=project)
+
+
+INVOICE_BOARD_COLUMNS = [
+    {"key": "draft", "label": "Draft", "color": "#64748b", "hint": "Being written — not sent yet"},
+    {"key": "sent", "label": "Sent", "color": "#2563eb", "hint": "Delivered to the customer"},
+    {"key": "due", "label": "Due Soon", "color": "#f59e0b", "hint": "Due within the next 7 days"},
+    {"key": "overdue", "label": "Overdue", "color": "#dc2626", "hint": "Past the due date"},
+    {"key": "paid", "label": "Paid", "color": "#16a34a", "hint": "Money received"},
+]
+INVOICE_STATUS_VALUES = ["draft", "sent", "paid", "overdue", "canceled"]
+
+
+def invoice_board_bucket(invoice, today):
+    """Sort an invoice into a smart board column. Sent invoices move to Due Soon /
+    Overdue automatically based on their due date - no manual step needed."""
+    status = (invoice.get("status") or "draft").strip()
+    if status in ("draft", "paid", "canceled", "overdue"):
+        return status
+    due = None
+    raw_due = str(invoice.get("due_date") or "").strip()
+    if raw_due:
+        try:
+            due = datetime.strptime(raw_due[:10], "%Y-%m-%d").date()
+        except Exception:
+            due = None
+    if due:
+        if due < today:
+            return "overdue"
+        if (due - today).days <= 7:
+            return "due"
+    return "sent"
+
+
+@app.route("/invoices/board")
+@admin_required
+def invoice_board():
+    conn = db()
+    ensure_invoice_tables(conn)
+    project_id = request.args.get("project_id", type=int)
+    where_sql = "WHERE invoices.project_id = %s" if project_id else ""
+    params = (project_id,) if project_id else ()
+    rows = conn.execute(
+        f"""
+        SELECT invoices.*, projects.name AS project_name,
+               (SELECT COUNT(*) FROM invoice_email_logs
+                WHERE invoice_email_logs.invoice_id = invoices.id AND invoice_email_logs.success) AS email_count
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        {where_sql}
+        ORDER BY COALESCE(invoices.due_date, invoices.invoice_date), invoices.id DESC
+        """,
+        params
+    ).fetchall()
+    projects = conn.execute(
+        "SELECT DISTINCT projects.id, projects.name FROM projects JOIN invoices ON invoices.project_id = projects.id ORDER BY projects.name"
+    ).fetchall()
+    conn.close()
+
+    today = local_now().date()
+    columns = {col["key"]: [] for col in INVOICE_BOARD_COLUMNS}
+    canceled = []
+    totals = {col["key"]: 0.0 for col in INVOICE_BOARD_COLUMNS}
+    for inv in rows:
+        raw_due = str(inv.get("due_date") or "").strip()
+        due = None
+        if raw_due:
+            try:
+                due = datetime.strptime(raw_due[:10], "%Y-%m-%d").date()
+            except Exception:
+                due = None
+        inv["due_days"] = (due - today).days if due else None
+        bucket = invoice_board_bucket(inv, today)
+        if bucket == "canceled":
+            canceled.append(inv)
+            continue
+        columns[bucket].append(inv)
+        totals[bucket] += float(inv.get("total") or 0)
+    outstanding = totals["sent"] + totals["due"] + totals["overdue"]
+    return render_template(
+        "invoice_board.html",
+        board_columns=INVOICE_BOARD_COLUMNS,
+        columns=columns,
+        totals=totals,
+        canceled=canceled,
+        outstanding=outstanding,
+        projects=projects,
+        selected_project_id=project_id,
+        today=today.isoformat(),
+    )
+
+
+@app.route("/invoices/<int:invoice_id>/status", methods=["POST"])
+@admin_required
+def set_invoice_status(invoice_id):
+    new_status = (request.form.get("status") or "").strip()
+    next_url = request.form.get("next") or url_for("invoice_board")
+    if new_status not in INVOICE_STATUS_VALUES:
+        flash("Choose a valid invoice status.")
+        return redirect(next_url)
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT * FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(next_url)
+    now = utc_now_iso()
+    conn.execute(
+        """
+        UPDATE invoices
+        SET status = %s,
+            sent_at = CASE WHEN %s = 'sent' THEN COALESCE(sent_at, %s) ELSE sent_at END,
+            paid_at = CASE WHEN %s = 'paid' THEN COALESCE(paid_at, %s) ELSE NULL END,
+            updated_at = %s
+        WHERE id = %s
+        """,
+        (new_status, new_status, now, new_status, now, now, invoice_id)
+    )
+    conn.commit()
+    conn.close()
+    flash(f'Invoice {invoice["invoice_number"]} moved to {new_status.title()}.')
+    return redirect(next_url)
 
 
 @app.route("/invoices")

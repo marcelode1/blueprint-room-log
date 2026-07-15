@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div class="invBoardHead">
+        <div>
+            <h2>Invoices</h2>
+            <p class="muted" style="margin:0">
+                Outstanding: <strong>{{ format_invoice_money(outstanding) }}</strong>
+                &middot; Overdue: <strong style="color:#dc2626">{{ format_invoice_money(totals['overdue']) }}</strong>
+                &middot; Paid: <strong style="color:#16a34a">{{ format_invoice_money(totals['paid']) }}</strong>
+            </p>
+        </div>
+        <div class="invBoardHeadActions">
+            <a class="btn-link" href="{{ url_for('new_invoice') }}">+ New Invoice</a>
+            <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">List View</a>
+        </div>
+    </div>
+    <div class="invBoardFilters">
+        <input type="search" id="invBoardSearch" placeholder="Type to filter by invoice #, customer, or project" style="margin:0">
+        <form method="get" style="margin:0">
+            <select name="project_id" onchange="this.form.submit()" style="margin:0">
+                <option value="">All projects</option>
+                {% for p in projects %}
+                    <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+    <p class="muted invBoardTip">Drag an invoice card into another column to change its status, or use the card's Move menu. Sent invoices slide into <strong>Due Soon</strong> and <strong>Overdue</strong> automatically from their due date.</p>
+</div>
+
+<div class="invBoard">
+    {% for col in board_columns %}
+    <section class="invCol" data-col="{{ col.key }}">
+        <header class="invColHead" style="background:{{ col.color }}" title="{{ col.hint }}">
+            <span class="invColName">{{ col.label }}</span>
+            <span class="invColMeta">{{ columns[col.key]|length }} &middot; {{ format_invoice_money(totals[col.key]) }}</span>
+        </header>
+        <div class="invColBody" data-drop="{{ col.key }}">
+            {% if col.key == 'draft' %}
+                <a class="invNewCard" href="{{ url_for('new_invoice') }}">+ New Invoice</a>
+            {% endif %}
+            {% for inv in columns[col.key] %}
+            <article class="invCard" draggable="true" data-invoice="{{ inv.id }}"
+                     data-search="{{ (inv.invoice_number ~ ' ' ~ (inv.customer_name or '') ~ ' ' ~ (inv.project_name or ''))|lower }}">
+                <div class="invCardTop">
+                    <a class="invCardNumber" href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.invoice_number }}</a>
+                    <span class="invCardTotal">{{ format_invoice_money(inv.total) }}</span>
+                </div>
+                <div class="invCardWho">{{ inv.customer_name or '-' }}</div>
+                {% if inv.project_name %}<div class="invCardProject">{{ inv.project_name }}</div>{% endif %}
+                <div class="invCardChips">
+                    {% if col.key == 'paid' %}
+                        <span class="invChip invChipPaid">Paid {{ format_date(inv.paid_at) if inv.paid_at else '' }}</span>
+                    {% elif inv.due_days is not none %}
+                        {% if inv.due_days < 0 %}
+                            <span class="invChip invChipLate">{{ -inv.due_days }} day{{ '' if inv.due_days == -1 else 's' }} late</span>
+                        {% elif inv.due_days == 0 %}
+                            <span class="invChip invChipSoon">Due today</span>
+                        {% else %}
+                            <span class="invChip {% if inv.due_days <= 7 %}invChipSoon{% endif %}">Due in {{ inv.due_days }}d &middot; {{ format_date(inv.due_date) }}</span>
+                        {% endif %}
+                    {% elif inv.due_date %}
+                        <span class="invChip">Due {{ format_date(inv.due_date) }}</span>
+                    {% else %}
+                        <span class="invChip">No due date</span>
+                    {% endif %}
+                    {% if inv.email_count %}<span class="invChip" title="Emailed to the customer">&#9993; {{ inv.email_count }}&times;</span>{% endif %}
+                </div>
+                <div class="invSteps" aria-hidden="true">
+                    {% set sent_done = inv.status in ['sent','overdue','paid'] %}
+                    <span class="invStep done" title="Created {{ format_date(inv.created_at) }}"></span>
+                    <span class="invStepBar {% if sent_done %}done{% endif %}"></span>
+                    <span class="invStep {% if sent_done %}done{% endif %}" title="Sent {{ format_date(inv.sent_at) if inv.sent_at else '- not yet' }}"></span>
+                    <span class="invStepBar {% if inv.status == 'paid' %}done{% endif %}"></span>
+                    <span class="invStep {% if inv.status == 'paid' %}done{% endif %}" title="Paid {{ format_date(inv.paid_at) if inv.paid_at else '- not yet' }}"></span>
+                </div>
+                <div class="invCardActions">
+                    <a href="{{ url_for('invoice_view', invoice_id=inv.id) }}">Open</a>
+                    <a href="{{ url_for('edit_invoice', invoice_id=inv.id) }}">Edit</a>
+                    <select class="invMoveSelect" data-invoice="{{ inv.id }}" title="Move to another status">
+                        <option value="">Move&hellip;</option>
+                        <option value="draft">Draft</option>
+                        <option value="sent">Sent</option>
+                        <option value="overdue">Overdue</option>
+                        <option value="paid">Paid</option>
+                        <option value="canceled">Canceled</option>
+                    </select>
+                </div>
+            </article>
+            {% endfor %}
+            {% if not columns[col.key] and col.key != 'draft' %}
+                <p class="invColEmpty">Drop an invoice here to mark it {{ col.label|lower }}.</p>
+            {% endif %}
+        </div>
+    </section>
+    {% endfor %}
+</div>
+
+{% if canceled %}
+<div class="card">
+    <details>
+        <summary style="cursor:pointer;font-weight:800">Canceled invoices ({{ canceled|length }})</summary>
+        {% for inv in canceled %}
+        <div class="invCanceledRow">
+            <a href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.invoice_number }}</a>
+            <span>{{ inv.customer_name or '-' }}</span>
+            <span>{{ format_invoice_money(inv.total) }}</span>
+            <form method="post" action="{{ url_for('set_invoice_status', invoice_id=inv.id) }}" style="margin:0">
+                <input type="hidden" name="status" value="draft">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <button type="submit" class="btn-secondary" style="margin:0;min-height:32px;padding:5px 10px;font-size:12px">Restore to Draft</button>
+            </form>
+        </div>
+        {% endfor %}
+    </details>
+</div>
+{% endif %}
+
+<form id="invStatusForm" method="post" hidden>
+    <input type="hidden" name="status" id="invStatusValue">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+</form>
+
+<style>
+.invBoardHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.invBoardHead h2{margin-bottom:4px}
+.invBoardHeadActions{display:flex;gap:8px;flex-wrap:wrap}
+.invBoardHeadActions .btn-link{margin:0}
+.invBoardFilters{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.invBoardFilters input[type="search"]{flex:1;min-width:220px;max-width:420px}
+.invBoardTip{font-size:12.5px;margin:10px 0 0}
+.invBoard{display:grid;grid-template-columns:repeat(5,minmax(230px,1fr));gap:12px;align-items:start;overflow-x:auto;padding-bottom:6px}
+.invCol{min-width:0}
+.invColHead{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#fff;border-radius:10px 10px 0 0;padding:10px 12px}
+.invColName{font-weight:900;font-size:15px}
+.invColMeta{font-weight:800;font-size:12.5px;opacity:.95;white-space:nowrap}
+.invColBody{background:rgba(148,163,184,.12);border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;padding:10px;display:flex;flex-direction:column;gap:10px;min-height:130px}
+.invColBody.dragOver{outline:3px dashed var(--primary);outline-offset:-4px;background:rgba(37,99,235,.10)}
+.invNewCard{display:flex;align-items:center;justify-content:center;border:2px dashed var(--primary);border-radius:10px;padding:12px;font-weight:800;color:var(--primary);text-decoration:none;background:rgba(37,99,235,.05)}
+.invNewCard:hover{background:rgba(37,99,235,.12)}
+.invCard{background:var(--card,#fff);border:1px solid var(--border);border-radius:10px;padding:10px 12px;box-shadow:0 1px 2px rgba(15,23,42,.08);cursor:grab}
+.invCard.dragging{opacity:.45}
+.invCardTop{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.invCardNumber{font-weight:900;text-decoration:none;color:var(--primary)}
+.invCardNumber:hover{text-decoration:underline}
+.invCardTotal{font-weight:900;white-space:nowrap}
+.invCardWho{font-weight:700;font-size:13.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invCardProject{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invCardChips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.invChip{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;color:var(--muted);background:rgba(148,163,184,.10)}
+.invChipLate{background:rgba(220,38,38,.12);color:#b91c1c;border-color:rgba(220,38,38,.3)}
+.invChipSoon{background:rgba(245,158,11,.14);color:#b45309;border-color:rgba(245,158,11,.35)}
+.invChipPaid{background:rgba(22,163,74,.14);color:#15803d;border-color:rgba(22,163,74,.3)}
+.invSteps{display:flex;align-items:center;gap:0;margin-top:9px}
+.invStep{width:10px;height:10px;border-radius:999px;background:#e2e8f0;border:2px solid #cbd5e1;flex:0 0 auto}
+.invStep.done{background:var(--primary);border-color:var(--primary)}
+.invStepBar{flex:1;height:2px;background:#e2e8f0}
+.invStepBar.done{background:var(--primary)}
+.invCardActions{display:flex;gap:10px;align-items:center;margin-top:9px;font-size:13px}
+.invCardActions a{font-weight:800;text-decoration:none;color:var(--primary)}
+.invCardActions a:hover{text-decoration:underline}
+.invMoveSelect{margin:0 0 0 auto!important;width:auto!important;max-width:110px!important;min-height:30px!important;padding:3px 6px!important;font-size:12px!important;border-radius:6px!important}
+.invColEmpty{color:var(--muted);font-size:12px;text-align:center;border:2px dashed var(--border);border-radius:10px;padding:16px 10px;margin:0}
+.invCanceledRow{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border);padding:8px 0}
+.invCanceledRow a{font-weight:800}
+@media(max-width:1100px){.invBoard{grid-template-columns:repeat(2,minmax(230px,1fr))}}
+@media(max-width:760px){.invBoard{grid-template-columns:1fr}.invCard{cursor:default}}
+</style>
+
+<script>
+(function(){
+    var statusForm=document.getElementById("invStatusForm");
+    var statusValue=document.getElementById("invStatusValue");
+    // Which status a drop on each column applies. "Due Soon" is date-driven,
+    // so dropping there simply marks the invoice as sent.
+    var dropStatus={draft:"draft",sent:"sent",due:"sent",overdue:"overdue",paid:"paid"};
+
+    function submitStatus(invoiceId,status){
+        statusForm.action="/invoices/"+invoiceId+"/status";
+        statusValue.value=status;
+        statusForm.submit();
+    }
+
+    // Drag & drop (desktop)
+    var draggedId=null;
+    document.querySelectorAll(".invCard").forEach(function(card){
+        card.addEventListener("dragstart",function(e){
+            draggedId=card.dataset.invoice;
+            card.classList.add("dragging");
+            try{e.dataTransfer.setData("text/plain",draggedId);e.dataTransfer.effectAllowed="move";}catch(err){}
+        });
+        card.addEventListener("dragend",function(){card.classList.remove("dragging");draggedId=null;});
+    });
+    document.querySelectorAll(".invColBody").forEach(function(body){
+        body.addEventListener("dragover",function(e){e.preventDefault();body.classList.add("dragOver");});
+        body.addEventListener("dragleave",function(){body.classList.remove("dragOver");});
+        body.addEventListener("drop",function(e){
+            e.preventDefault();
+            body.classList.remove("dragOver");
+            var id=draggedId||(e.dataTransfer?e.dataTransfer.getData("text/plain"):"");
+            var status=dropStatus[body.dataset.drop];
+            if(id&&status)submitStatus(id,status);
+        });
+    });
+
+    // Move menu (works everywhere, including mobile)
+    document.querySelectorAll(".invMoveSelect").forEach(function(sel){
+        sel.addEventListener("change",function(){
+            if(sel.value)submitStatus(sel.dataset.invoice,sel.value);
+        });
+    });
+
+    // Instant text filter
+    var search=document.getElementById("invBoardSearch");
+    if(search){
+        search.addEventListener("input",function(){
+            var q=search.value.trim().toLowerCase();
+            document.querySelectorAll(".invCard").forEach(function(card){
+                card.style.display=!q||card.dataset.search.indexOf(q)!==-1?"":"none";
+            });
+        });
+    }
+})();
+</script>
+{% endblock %}

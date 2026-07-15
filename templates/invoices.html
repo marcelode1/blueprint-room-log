@@ -8,6 +8,7 @@
         <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
     {% else %}
         <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoice_board') }}">Board View</a>
     {% endif %}
 </div>
 
