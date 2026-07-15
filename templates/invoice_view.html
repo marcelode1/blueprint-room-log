@@ -130,6 +130,68 @@
     {% endif %}
 </div>
 
+{% if not is_preview %}
+<div class="card noPrint">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <h3 style="margin:0">Payments Received</h3>
+        <span class="payBalancePill {% if totals_breakdown.balance_due <= 0.005 %}payFull{% endif %}">
+            {% if totals_breakdown.balance_due <= 0.005 %}Paid in full{% else %}Balance due: {{ format_invoice_money(totals_breakdown.balance_due) }}{% endif %}
+        </span>
+    </div>
+    {% set payment_rows = payments|default([]) %}
+    {% if payment_rows %}
+    <div class="payTableWrap">
+        <table class="payTable">
+            <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference #</th><th>Note</th><th>Entered By</th><th></th></tr></thead>
+            <tbody>
+            {% for p in payment_rows %}
+                <tr>
+                    <td>{{ format_date(p.payment_date) }}</td>
+                    <td><strong>{{ format_invoice_money(p.amount) }}</strong></td>
+                    <td>{{ p.method or '-' }}</td>
+                    <td>{{ p.reference or '-' }}</td>
+                    <td>{{ p.notes or '' }}</td>
+                    <td>{{ p.created_by_name or '-' }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('delete_invoice_payment', payment_id=p.id) }}" style="margin:0"
+                              onsubmit="return confirm('Remove this payment? The invoice balance will go back up.');">
+                            <input type="hidden" name="next" value="{{ request.path }}">
+                            <button type="submit" class="btn-danger" style="margin:0;min-height:30px;padding:4px 10px;font-size:12px">Remove</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p class="muted">No payments recorded yet.</p>
+    {% endif %}
+
+    {% if totals_breakdown.balance_due > 0.005 %}
+    <form method="post" action="{{ url_for('add_invoice_payment', invoice_id=invoice.id) }}" class="payForm">
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <div class="grid">
+            <div><label>Amount</label><input name="amount" type="text" inputmode="decimal" value="{{ format_invoice_money(totals_breakdown.balance_due) }}" required></div>
+            <div><label>Payment Date</label><input name="payment_date" type="date" value="{{ today|default('') }}"></div>
+            <div>
+                <label>Method</label>
+                <select name="method">
+                    {% for m in payment_methods|default(['Cash','Check','Credit Card','Zelle','ACH / Bank Transfer','Other']) %}
+                        <option value="{{ m }}">{{ m }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div><label>Reference / Check #</label><input name="reference" placeholder="Optional"></div>
+        </div>
+        <label>Note</label>
+        <input name="notes" placeholder="Optional note about this payment">
+        <button type="submit">Enter Payment</button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
 {% if email_logs %}
 <div class="card noPrint">
     <h3>Email History</h3>
@@ -140,6 +202,13 @@
 {% endif %}
 
 <style>
+.payBalancePill{display:inline-flex;align-items:center;border-radius:999px;padding:6px 12px;font-weight:800;font-size:13px;background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)}
+.payBalancePill.payFull{background:rgba(22,163,74,.14);color:#15803d;border-color:rgba(22,163,74,.3)}
+.payTableWrap{overflow-x:auto;margin:12px 0}
+.payTable{width:100%;border-collapse:collapse;min-width:640px;font-size:13.5px}
+.payTable th,.payTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;white-space:nowrap}
+.payTable th{background:rgba(148,163,184,.12);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.payForm{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}
 .inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.invoiceSendForm label{width:100%}.invoiceSendForm input{max-width:320px}.invoicePreviewActions{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}.invoiceHeader{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:34px;align-items:start;border-bottom:2px solid #172033;padding-bottom:22px}.invoiceCompanyBox{line-height:1.35}.invoiceLogo{max-width:360px;max-height:216px;object-fit:contain;margin-bottom:14px}.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:3px 0}.invoiceNotes p{white-space:pre-line}.invoiceMeta{text-align:right}.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin:0 0 12px}.invoiceMetaGrid{display:grid;grid-template-columns:82px minmax(0,1fr);gap:5px 12px;font-size:13px;align-items:start}.invoiceMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}.invoiceMetaGrid strong{overflow-wrap:anywhere;word-break:normal}.invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin:42px 0 24px;align-items:start}.invoiceBillTo h3,.invoiceNotes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}.invoiceLinesTable{width:100%;border-collapse:collapse}.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}.invoiceLinesTable th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}.invoiceSummary{display:grid;grid-template-columns:1fr 390px;gap:34px;margin-top:18px;align-items:start}.invoiceTotals{border-top:2px solid #172033;padding:10px 0 0;background:#fff;font-size:13px}.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}.invoiceGrandTotal{border-top:1px solid #d7dee9;padding-top:10px;font-size:13px}.invoiceNotes{border-top:2px solid #172033;padding-top:10px;min-height:1px}@media(max-width:760px){.invoiceHeader,.invoiceBillTo,.invoiceSummary{grid-template-columns:1fr}.invoiceMeta{text-align:left}.invoiceLogo{max-width:100%;max-height:190px}}@media print{@page{size:letter;margin:.35in}header,.bottom-nav,.backButton,.noPrint,.flash{display:none!important}body{background:white!important;color:#111!important}main{max-width:none!important;padding:0!important;margin:0!important}.card{box-shadow:none!important;border:0!important}.invoicePaper{width:920px!important;max-width:920px!important;margin:0 auto!important;padding:20px!important}.invoiceHeader{display:grid!important;grid-template-columns:minmax(0,1fr) 300px!important;gap:34px!important}.invoiceBillTo{display:grid!important;grid-template-columns:1fr 1fr!important}.invoiceSummary{display:grid!important;grid-template-columns:1fr 390px!important}.invoiceLogo{max-width:360px!important;max-height:216px!important}.invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}}
 </style>
 {% endblock %}

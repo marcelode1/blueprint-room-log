@@ -37,6 +37,37 @@
     </section>
 </div>
 
+<div class="payModalOverlay" id="payModalOverlay" hidden>
+    <div class="payModal">
+        <h3 style="margin:0 0 2px">Receive Payment</h3>
+        <p class="muted" id="payModalCustomer" style="margin:0 0 10px"></p>
+        <form method="post" id="payModalForm">
+            <input type="hidden" name="next" id="payModalNext">
+            <label>Apply to Invoice</label>
+            <select id="payModalInvoice" style="max-width:none"></select>
+            <div class="grid">
+                <div><label>Amount</label><input name="amount" id="payModalAmount" type="text" inputmode="decimal" required></div>
+                <div><label>Payment Date</label><input name="payment_date" id="payModalDate" type="date"></div>
+                <div>
+                    <label>Method</label>
+                    <select name="method">
+                        {% for m in ['Cash','Check','Credit Card','Zelle','ACH / Bank Transfer','Other'] %}
+                            <option value="{{ m }}">{{ m }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div><label>Reference / Check #</label><input name="reference" placeholder="Optional"></div>
+            </div>
+            <label>Note</label>
+            <input name="notes" placeholder="Optional note about this payment">
+            <div style="display:flex;gap:10px;margin-top:6px">
+                <button type="submit" style="flex:1;margin:0">Apply Payment</button>
+                <button type="button" class="btn-secondary" id="payModalClose" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 window.INV_CUSTOMERS = {{ customers|tojson }};
 (function(){
@@ -65,8 +96,12 @@ window.INV_CUSTOMERS = {{ customers|tojson }};
         var html = '';
         html += '<div class="invInfoHead">';
         html += '<h3 style="margin:0">Customer Information</h3>';
-        html += '<a class="btn-link" style="margin:0" href="{{ url_for('new_invoice') }}">+ New Invoice</a>';
-        html += '</div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+        if(c.open_invoices && c.open_invoices.length){
+            html += '<button type="button" class="btn-link invRecvPayBtn" style="margin:0">$ Receive Payment</button>';
+        }
+        html += '<a class="btn-link btn-secondary" style="margin:0" href="{{ url_for('new_invoice') }}">+ New Invoice</a>';
+        html += '</div></div>';
         html += '<div class="invInfoGrid">';
         html += '<div><span class="invInfoLabel">Customer</span><strong>' + esc(c.name) + '</strong></div>';
         if(c.email) html += '<div><span class="invInfoLabel">Email</span><a href="mailto:' + esc(c.email) + '">' + esc(c.email) + '</a></div>';
@@ -88,12 +123,13 @@ window.INV_CUSTOMERS = {{ customers|tojson }};
         html += '</select></label></div>';
 
         html += '<div class="invTransWrap"><table class="invTransTable"><thead><tr>';
-        html += '<th>Num</th><th>Date</th><th>Due Date</th><th>Aging</th><th>Status</th><th class="num">Amount</th><th class="num">Open Balance</th><th></th>';
+        html += '<th>Num</th><th>Date</th><th>Due Date</th><th>Aging</th><th>Status</th><th class="num">Amount</th><th class="num">Paid</th><th class="num">Open Balance</th><th></th>';
         html += '</tr></thead><tbody>';
         if(!invs.length){
-            html += '<tr><td colspan="8" class="muted">No invoices match this filter.</td></tr>';
+            html += '<tr><td colspan="9" class="muted">No invoices match this filter.</td></tr>';
         }
         invs.forEach(function(inv){
+            var payable = c.open_invoices.some(function(o){ return o.number === inv.number; });
             html += '<tr class="' + (inv.aging ? 'lateRow' : '') + '">';
             html += '<td><a href="' + inv.view_url + '">' + esc(inv.number) + '</a></td>';
             html += '<td>' + esc(inv.date) + '</td>';
@@ -101,15 +137,69 @@ window.INV_CUSTOMERS = {{ customers|tojson }};
             html += '<td class="agingCell">' + (inv.aging ? esc(inv.aging) : '') + '</td>';
             html += '<td><span class="invStatusPill st-' + esc(inv.status) + '">' + esc(statusLabels[inv.status] || inv.status) + '</span></td>';
             html += '<td class="num">' + esc(inv.amount) + '</td>';
+            html += '<td class="num">' + esc(inv.paid) + '</td>';
             html += '<td class="num">' + esc(inv.open) + '</td>';
-            html += '<td class="rowActions"><a href="' + inv.view_url + '">Open</a> <a href="' + inv.edit_url + '">Edit</a></td>';
+            html += '<td class="rowActions"><a href="' + inv.view_url + '">Open</a> <a href="' + inv.edit_url + '">Edit</a>' +
+                (payable ? ' <a href="#" class="payLink" data-number="' + esc(inv.number) + '">Pay</a>' : '') + '</td>';
             html += '</tr>';
         });
         html += '</tbody></table></div>';
         detailEl.innerHTML = html;
         var filterSel = document.getElementById("invStatusFilter");
         if(filterSel) filterSel.addEventListener("change", function(){ render(c, filterSel.value); });
+        var recvBtn = detailEl.querySelector(".invRecvPayBtn");
+        if(recvBtn) recvBtn.addEventListener("click", function(){ openPayModal(c, null); });
+        detailEl.querySelectorAll(".payLink").forEach(function(link){
+            link.addEventListener("click", function(e){ e.preventDefault(); openPayModal(c, link.dataset.number); });
+        });
     }
+
+    // ---------- Receive Payment modal ----------
+    var payOverlay = document.getElementById("payModalOverlay");
+    var payForm = document.getElementById("payModalForm");
+    var payInvoiceSel = document.getElementById("payModalInvoice");
+    var payAmount = document.getElementById("payModalAmount");
+    var payDate = document.getElementById("payModalDate");
+    var payNext = document.getElementById("payModalNext");
+    var payCustomerLabel = document.getElementById("payModalCustomer");
+    var payOptions = [];
+
+    function localToday(){
+        var d = new Date();
+        return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+    }
+    function applyPayChoice(){
+        var opt = payOptions[payInvoiceSel.selectedIndex];
+        if(!opt) return;
+        payForm.action = opt.pay_url;
+        payAmount.value = opt.open_raw.toFixed(2);
+    }
+    function openPayModal(c, preselectNumber){
+        if(!c || !c.open_invoices.length) return;
+        payOptions = c.open_invoices;
+        payCustomerLabel.textContent = c.name;
+        payInvoiceSel.innerHTML = "";
+        payOptions.forEach(function(o, i){
+            var option = document.createElement("option");
+            option.value = String(i);
+            option.textContent = o.label;
+            if(preselectNumber && o.number === preselectNumber) option.selected = true;
+            payInvoiceSel.appendChild(option);
+        });
+        payDate.value = localToday();
+        payNext.value = window.location.href;
+        applyPayChoice();
+        payOverlay.hidden = false;
+        document.body.style.overflow = "hidden";
+    }
+    function closePayModal(){
+        payOverlay.hidden = true;
+        document.body.style.overflow = "";
+    }
+    payInvoiceSel.addEventListener("change", applyPayChoice);
+    document.getElementById("payModalClose").addEventListener("click", closePayModal);
+    payOverlay.addEventListener("click", function(e){ if(e.target === payOverlay) closePayModal(); });
+    document.addEventListener("keydown", function(e){ if(e.key === "Escape" && !payOverlay.hidden) closePayModal(); });
 
     function select(key, updateUrl){
         document.querySelectorAll(".invCustRow").forEach(function(row){
@@ -165,14 +255,16 @@ window.INV_CUSTOMERS = {{ customers|tojson }};
 .invHub{display:grid;grid-template-columns:minmax(250px,330px) 1fr;gap:0;padding:0;overflow:hidden}
 .invCustPane{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:420px}
 .invCustSearchWrap{padding:12px;border-bottom:1px solid var(--border)}
-.invCustHead{display:flex;justify-content:space-between;padding:8px 14px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:rgba(148,163,184,.10);border-bottom:1px solid var(--border)}
+.invCustHead{display:grid;grid-template-columns:1fr 112px;align-items:stretch;padding:0;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:rgba(148,163,184,.10);border-bottom:1px solid var(--border)}
+.invCustHead span{padding:8px 14px}
+.invCustHead span:last-child{border-left:1px solid var(--border);text-align:right;padding:8px 12px}
 .invCustList{flex:1;overflow-y:auto;max-height:65vh}
-.invCustRow{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--border);border-radius:0;padding:11px 14px;margin:0;cursor:pointer;min-height:0;font-size:14px;color:var(--text)}
+.invCustRow{display:grid;grid-template-columns:1fr 112px;align-items:stretch;gap:0;width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--border);border-radius:0;padding:0;margin:0;cursor:pointer;min-height:0;font-size:14px;color:var(--text)}
 .invCustRow:hover{background:rgba(37,99,235,.07)}
 .invCustRow.active{background:var(--primary);color:#fff}
-.invCustRow.active .invCustBalance{color:#fff}
-.invCustName{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.invCustBalance{font-weight:800;white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums}
+.invCustRow.active .invCustBalance{color:#fff;border-left-color:rgba(255,255,255,.35)}
+.invCustName{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:11px 14px;display:flex;align-items:center}
+.invCustBalance{font-weight:800;white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums;border-left:1px solid var(--border);padding:11px 12px;display:flex;align-items:center;justify-content:flex-end}
 .invCustBalance.owes{color:#b45309}
 .invCustDetail{min-width:0;padding:16px 18px}
 .invInfoHead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
@@ -197,6 +289,10 @@ window.INV_CUSTOMERS = {{ customers|tojson }};
 .st-canceled{background:rgba(148,163,184,.16);color:var(--muted);text-decoration:line-through}
 .rowActions a{font-weight:800;text-decoration:none;margin-right:8px}
 .rowActions a:hover{text-decoration:underline}
+.rowActions .payLink{color:#15803d}
+.payModalOverlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.55);display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
+.payModalOverlay[hidden]{display:none!important}
+.payModal{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:18px 20px;width:100%;max-width:520px;box-shadow:0 18px 60px rgba(15,23,42,.35)}
 @media(max-width:900px){
     .invHub{grid-template-columns:1fr}
     .invCustPane{border-right:0;border-bottom:1px solid var(--border);min-height:0}

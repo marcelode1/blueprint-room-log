@@ -66,6 +66,9 @@
                         <span class="invChip">No due date</span>
                     {% endif %}
                     {% if inv.email_count %}<span class="invChip" title="Emailed to the customer">&#9993; {{ inv.email_count }}&times;</span>{% endif %}
+                    {% if col.key != 'paid' and inv.paid_total and inv.paid_total > 0.005 and inv.paid_total < inv.total %}
+                        <span class="invChip invChipPaid" title="Partial payment received">Paid {{ format_invoice_money(inv.paid_total) }} of {{ format_invoice_money(inv.total) }}</span>
+                    {% endif %}
                 </div>
                 <div class="invSteps" aria-hidden="true">
                     {% set sent_done = inv.status in ['sent','overdue','paid'] %}

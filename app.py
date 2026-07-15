@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-15 V2"
+APP_BUILD = "2026-07-15 V4"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2118,6 +2118,20 @@ def ensure_invoice_tables(conn):
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total REAL NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TEXT",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TEXT",
+        """
+        CREATE TABLE IF NOT EXISTS invoice_payments (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            amount REAL NOT NULL,
+            payment_date TEXT NOT NULL,
+            method TEXT,
+            reference TEXT,
+            notes TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS invoice_payments_invoice_idx ON invoice_payments(invoice_id)",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
@@ -6982,6 +6996,104 @@ INVOICE_BOARD_COLUMNS = [
     {"key": "paid", "label": "Paid", "color": "#16a34a", "hint": "Money received"},
 ]
 INVOICE_STATUS_VALUES = ["draft", "sent", "paid", "overdue", "canceled"]
+INVOICE_PAYMENT_METHODS = ["Cash", "Check", "Credit Card", "Zelle", "ACH / Bank Transfer", "Other"]
+
+
+def invoice_paid_total(conn, invoice_id):
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS paid FROM invoice_payments WHERE invoice_id = %s",
+        (invoice_id,)
+    ).fetchone()
+    return float(row["paid"] or 0)
+
+
+def refresh_invoice_payment_status(conn, invoice_id):
+    """After a payment is added or removed, keep the invoice status honest:
+    fully covered -> paid; no longer covered -> back to sent/draft."""
+    invoice = conn.execute("SELECT * FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        return 0.0, 0.0
+    paid = invoice_paid_total(conn, invoice_id)
+    total = float(invoice.get("total") or 0)
+    now = utc_now_iso()
+    if total > 0 and paid >= total - 0.005:
+        if invoice.get("status") != "paid":
+            conn.execute(
+                "UPDATE invoices SET status = 'paid', paid_at = COALESCE(paid_at, %s), updated_at = %s WHERE id = %s",
+                (now, now, invoice_id)
+            )
+    elif invoice.get("status") == "paid":
+        fallback = "sent" if invoice.get("sent_at") else "draft"
+        conn.execute(
+            "UPDATE invoices SET status = %s, paid_at = NULL, updated_at = %s WHERE id = %s",
+            (fallback, now, invoice_id)
+        )
+    return paid, total
+
+
+@app.route("/invoices/<int:invoice_id>/payments/add", methods=["POST"])
+@admin_required
+def add_invoice_payment(invoice_id):
+    next_url = request.form.get("next") or url_for("invoice_view", invoice_id=invoice_id)
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT * FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoice_customers"))
+    amount = parse_invoice_money(request.form.get("amount"))
+    if not amount or amount <= 0:
+        conn.close()
+        flash("Enter a payment amount greater than zero.")
+        return redirect(next_url)
+    method = (request.form.get("method") or "").strip()
+    if method not in INVOICE_PAYMENT_METHODS:
+        method = "Other"
+    conn.execute(
+        """
+        INSERT INTO invoice_payments (invoice_id, amount, payment_date, method, reference, notes, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            invoice_id,
+            round(float(amount), 2),
+            request.form.get("payment_date") or local_now().date().isoformat(),
+            method,
+            request.form.get("reference", "").strip(),
+            request.form.get("notes", "").strip(),
+            session.get("user_id"),
+            utc_now_iso(),
+        )
+    )
+    paid, total = refresh_invoice_payment_status(conn, invoice_id)
+    conn.commit()
+    conn.close()
+    remaining = max(total - paid, 0)
+    if remaining <= 0.005:
+        flash(f'Payment of {format_invoice_money(amount)} applied. Invoice {invoice["invoice_number"]} is now PAID IN FULL.')
+    else:
+        flash(f'Payment of {format_invoice_money(amount)} applied to invoice {invoice["invoice_number"]}. Remaining balance: {format_invoice_money(remaining)}.')
+    return redirect(next_url)
+
+
+@app.route("/invoices/payments/<int:payment_id>/delete", methods=["POST"])
+@admin_required
+def delete_invoice_payment(payment_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute("SELECT * FROM invoice_payments WHERE id = %s", (payment_id,)).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    next_url = request.form.get("next") or url_for("invoice_view", invoice_id=payment["invoice_id"])
+    conn.execute("DELETE FROM invoice_payments WHERE id = %s", (payment_id,))
+    refresh_invoice_payment_status(conn, payment["invoice_id"])
+    conn.commit()
+    conn.close()
+    flash(f'Payment of {format_invoice_money(payment["amount"])} removed. The invoice balance was updated.')
+    return redirect(next_url)
 
 
 def invoice_board_bucket(invoice, today):
@@ -7014,7 +7126,9 @@ def invoice_customers():
     ensure_invoice_tables(conn)
     rows = conn.execute(
         """
-        SELECT invoices.*, projects.name AS project_name
+        SELECT invoices.*, projects.name AS project_name,
+               (SELECT COALESCE(SUM(amount), 0) FROM invoice_payments
+                WHERE invoice_payments.invoice_id = invoices.id) AS paid_total
         FROM invoices
         LEFT JOIN projects ON invoices.project_id = projects.id
         ORDER BY invoices.invoice_date DESC, invoices.id DESC
@@ -7037,6 +7151,7 @@ def invoice_customers():
             "balance": 0.0,
             "total_billed": 0.0,
             "invoices": [],
+            "open_invoices": [],
         })
         # Newest invoice wins for contact info (rows are newest-first, keep first seen).
         if not entry["email"] and (inv.get("customer_email") or "").strip():
@@ -7050,7 +7165,9 @@ def invoice_customers():
 
         status = (inv.get("status") or "draft").strip()
         total = float(inv.get("total") or 0)
+        paid = float(inv.get("paid_total") or 0)
         is_open = status not in ("paid", "canceled")
+        open_amount = max(total - paid, 0) if is_open else 0.0
         aging = ""
         raw_due = str(inv.get("due_date") or "").strip()
         if is_open and raw_due:
@@ -7061,8 +7178,7 @@ def invoice_customers():
             except Exception:
                 pass
         entry["total_billed"] += total
-        if is_open:
-            entry["balance"] += total
+        entry["balance"] += open_amount
         entry["invoices"].append({
             "number": inv.get("invoice_number"),
             "date": format_date(inv.get("invoice_date")),
@@ -7070,12 +7186,21 @@ def invoice_customers():
             "aging": aging,
             "status": status,
             "amount": format_invoice_money(total),
-            "open": format_invoice_money(total if is_open else 0),
+            "paid": format_invoice_money(paid),
+            "open": format_invoice_money(open_amount),
             "is_open": is_open,
             "project": inv.get("project_name") or "",
             "view_url": url_for("invoice_view", invoice_id=inv["id"]),
             "edit_url": url_for("edit_invoice", invoice_id=inv["id"]),
         })
+        if is_open and open_amount > 0.005:
+            entry["open_invoices"].append({
+                "id": inv["id"],
+                "number": inv.get("invoice_number"),
+                "label": f'{inv.get("invoice_number")} · {format_date(inv.get("invoice_date"))} · open {format_invoice_money(open_amount)}',
+                "open_raw": round(open_amount, 2),
+                "pay_url": url_for("add_invoice_payment", invoice_id=inv["id"]),
+            })
 
     customer_list = sorted(customers.values(), key=lambda c: c["name"].lower())
     for c in customer_list:
@@ -7100,7 +7225,9 @@ def invoice_board():
         f"""
         SELECT invoices.*, projects.name AS project_name,
                (SELECT COUNT(*) FROM invoice_email_logs
-                WHERE invoice_email_logs.invoice_id = invoices.id AND invoice_email_logs.success) AS email_count
+                WHERE invoice_email_logs.invoice_id = invoices.id AND invoice_email_logs.success) AS email_count,
+               (SELECT COALESCE(SUM(amount), 0) FROM invoice_payments
+                WHERE invoice_payments.invoice_id = invoices.id) AS paid_total
         FROM invoices
         LEFT JOIN projects ON invoices.project_id = projects.id
         {where_sql}
@@ -7470,11 +7597,25 @@ def invoice_view(invoice_id):
         "SELECT invoice_email_logs.*, users.name AS sent_by_name FROM invoice_email_logs LEFT JOIN users ON invoice_email_logs.sent_by = users.id WHERE invoice_id = %s ORDER BY sent_at DESC",
         (invoice_id,)
     ).fetchall() if invoice else []
+    payments = conn.execute(
+        "SELECT invoice_payments.*, users.name AS created_by_name FROM invoice_payments LEFT JOIN users ON invoice_payments.created_by = users.id WHERE invoice_id = %s ORDER BY payment_date, id",
+        (invoice_id,)
+    ).fetchall() if invoice else []
     conn.close()
     if not invoice:
         flash("Invoice not found.")
         return redirect(url_for("invoices"))
-    return render_template("invoice_view.html", invoice=invoice, lines=lines, company=account_info(), email_logs=email_logs, totals_breakdown=invoice_totals_breakdown(invoice, lines))
+    totals_breakdown = invoice_totals_breakdown(invoice, lines)
+    paid_total = round(sum(float(p.get("amount") or 0) for p in payments), 2)
+    totals_breakdown["payments_credit"] = round(totals_breakdown["payments_credit"] + paid_total, 2)
+    totals_breakdown["balance_due"] = round(max(float(invoice.get("total") or 0) - paid_total, 0), 2)
+    return render_template(
+        "invoice_view.html", invoice=invoice, lines=lines, company=account_info(),
+        email_logs=email_logs, totals_breakdown=totals_breakdown,
+        payments=payments, paid_total=paid_total,
+        payment_methods=INVOICE_PAYMENT_METHODS,
+        today=local_now().date().isoformat()
+    )
 
 
 @app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
