@@ -66,16 +66,7 @@
             {% else %}
                 <a href="{{ url_for('today_tasks') }}">Tasks</a>
             {% endif %}
-            {% if is_main_admin() %}
-                <div class="navDropdown">
-                    <div class="navDropdownButton" tabindex="0">Invoices</div>
-                    <div class="navDropdownMenu">
-                        <a href="{{ url_for('invoice_board') }}">Invoice Board</a>
-                        <a href="{{ url_for('new_invoice') }}">New Invoice</a>
-                        <a href="{{ url_for('invoices') }}">Invoice List</a>
-                    </div>
-                </div>
-            {% endif %}
+            {% if is_main_admin() %}<a href="{{ url_for('invoice_customers') }}">Invoices</a>{% endif %}
             {% if is_main_admin() or can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
             {% if is_main_admin() %}<a href="{{ url_for('parts_catalog') }}">Items & Catalog</a>{% endif %}
             {% if not is_main_admin() %}
@@ -120,12 +111,7 @@
             <a href="{{ url_for('create_global_task') }}">Create a Task</a>
             <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         </details>
-        <details class="mobileMenuGroup">
-            <summary>Invoices</summary>
-            <a href="{{ url_for('invoice_board') }}">Invoice Board</a>
-            <a href="{{ url_for('new_invoice') }}">New Invoice</a>
-            <a href="{{ url_for('invoices') }}">Invoice List</a>
-        </details>
+        <a href="{{ url_for('invoice_customers') }}">Invoices</a>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('parts_catalog') }}">Items & Catalog</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>

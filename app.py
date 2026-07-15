@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-15 V1"
+APP_BUILD = "2026-07-15 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -7003,6 +7003,89 @@ def invoice_board_bucket(invoice, today):
         if (due - today).days <= 7:
             return "due"
     return "sent"
+
+
+@app.route("/invoices/customers")
+@admin_required
+def invoice_customers():
+    """QuickBooks-style hub: customer list on the left, that customer's
+    information and invoice history on the right."""
+    conn = db()
+    ensure_invoice_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        ORDER BY invoices.invoice_date DESC, invoices.id DESC
+        """
+    ).fetchall()
+    conn.close()
+
+    today = local_now().date()
+    customers = {}
+    for inv in rows:
+        display_name = (inv.get("customer_name") or "").strip() or "No customer name"
+        key = display_name.lower()
+        entry = customers.setdefault(key, {
+            "key": key,
+            "name": display_name,
+            "email": "",
+            "phone": "",
+            "address": "",
+            "projects": [],
+            "balance": 0.0,
+            "total_billed": 0.0,
+            "invoices": [],
+        })
+        # Newest invoice wins for contact info (rows are newest-first, keep first seen).
+        if not entry["email"] and (inv.get("customer_email") or "").strip():
+            entry["email"] = inv["customer_email"].strip()
+        if not entry["phone"] and (inv.get("customer_phone") or "").strip():
+            entry["phone"] = inv["customer_phone"].strip()
+        if not entry["address"] and (inv.get("billing_address") or "").strip():
+            entry["address"] = inv["billing_address"].strip()
+        if inv.get("project_name") and inv["project_name"] not in entry["projects"]:
+            entry["projects"].append(inv["project_name"])
+
+        status = (inv.get("status") or "draft").strip()
+        total = float(inv.get("total") or 0)
+        is_open = status not in ("paid", "canceled")
+        aging = ""
+        raw_due = str(inv.get("due_date") or "").strip()
+        if is_open and raw_due:
+            try:
+                due = datetime.strptime(raw_due[:10], "%Y-%m-%d").date()
+                if due < today:
+                    aging = str((today - due).days)
+            except Exception:
+                pass
+        entry["total_billed"] += total
+        if is_open:
+            entry["balance"] += total
+        entry["invoices"].append({
+            "number": inv.get("invoice_number"),
+            "date": format_date(inv.get("invoice_date")),
+            "due": format_date(inv.get("due_date")) if inv.get("due_date") else "-",
+            "aging": aging,
+            "status": status,
+            "amount": format_invoice_money(total),
+            "open": format_invoice_money(total if is_open else 0),
+            "is_open": is_open,
+            "project": inv.get("project_name") or "",
+            "view_url": url_for("invoice_view", invoice_id=inv["id"]),
+            "edit_url": url_for("edit_invoice", invoice_id=inv["id"]),
+        })
+
+    customer_list = sorted(customers.values(), key=lambda c: c["name"].lower())
+    for c in customer_list:
+        c["balance_label"] = format_invoice_money(c["balance"])
+        c["total_billed_label"] = format_invoice_money(c["total_billed"])
+    return render_template(
+        "invoice_customers.html",
+        customers=customer_list,
+        selected_key=(request.args.get("c") or "").strip().lower(),
+    )
 
 
 @app.route("/invoices/board")
