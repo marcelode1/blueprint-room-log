@@ -152,7 +152,8 @@
                     <td>{{ p.reference or '-' }}</td>
                     <td>{{ p.notes or '' }}</td>
                     <td>{{ p.created_by_name or '-' }}</td>
-                    <td>
+                    <td style="display:flex;gap:8px;align-items:center">
+                        <a class="btn-link btn-secondary" style="margin:0;min-height:30px;padding:4px 10px;font-size:12px" href="{{ url_for('payment_receipt', payment_id=p.id) }}">Receipt</a>
                         <form method="post" action="{{ url_for('delete_invoice_payment', payment_id=p.id) }}" style="margin:0"
                               onsubmit="return confirm('Remove this payment? The invoice balance will go back up.');">
                             <input type="hidden" name="next" value="{{ request.path }}">

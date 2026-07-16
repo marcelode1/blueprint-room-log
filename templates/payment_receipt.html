@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Payment Receipt</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('invoice_customers', c=(invoice.customer_name or '')|lower) if invoice else url_for('invoice_customers') }}">Back to Customer</a>
+    {% if invoice %}<a class="btn-link btn-secondary" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">Open Invoice {{ invoice.invoice_number }}</a>{% endif %}
+    <button type="button" onclick="window.print()">Print / Save PDF</button>
+</div>
+
+<div class="card receiptPaper">
+    <div class="receiptHeader">
+        <div class="receiptCompanyBox">
+            {% set logo = get_app_setting("company_logo") %}
+            {% if logo %}<img class="receiptLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
+            {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
+            {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+        </div>
+        <div class="receiptMeta">
+            <h1>Receipt</h1>
+            <div class="receiptMetaGrid">
+                <span>Receipt #</span><strong>P-{{ '%05d'|format(payment.id) }}</strong>
+                <span>Date</span><strong>{{ format_date(payment.payment_date) }}</strong>
+                {% if invoice %}<span>Invoice #</span><strong>{{ invoice.invoice_number }}</strong>{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="receiptBody">
+        <div class="receiptFrom">
+            <h3>Received From</h3>
+            <p><strong>{{ invoice.customer_name if invoice else '-' }}</strong></p>
+            {% if invoice and invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
+            {% if invoice and invoice.project_name %}<p>Project: {{ invoice.project_name }}</p>{% endif %}
+        </div>
+        <div class="receiptAmountBox">
+            <span>Amount Received</span>
+            <strong>{{ format_invoice_money(payment.amount) }}</strong>
+        </div>
+    </div>
+
+    <table class="receiptTable">
+        <tbody>
+            <tr><th>Form of Payment</th><td>{{ payment.method or '-' }}</td></tr>
+            {% if payment.reference %}<tr><th>Reference / Check #</th><td>{{ payment.reference }}</td></tr>{% endif %}
+            {% if invoice %}
+                <tr><th>Applied to Invoice</th><td>{{ invoice.invoice_number }} &mdash; total {{ format_invoice_money(invoice.total) }}</td></tr>
+                <tr><th>Total Paid on Invoice</th><td>{{ format_invoice_money(paid_total) }}</td></tr>
+                <tr><th>Remaining Balance</th><td><strong>{{ format_invoice_money(balance_after) }}{% if balance_after <= 0.005 %} &mdash; PAID IN FULL{% endif %}</strong></td></tr>
+            {% endif %}
+            {% if payment.notes %}<tr><th>Note</th><td>{{ payment.notes }}</td></tr>{% endif %}
+            {% if payment.created_by_name %}<tr><th>Received By</th><td>{{ payment.created_by_name }}</td></tr>{% endif %}
+        </tbody>
+    </table>
+
+    <p class="receiptThanks">Thank you for your payment.</p>
+</div>
+
+<style>
+.receiptPaper{max-width:760px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}
+.receiptHeader{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:30px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}
+.receiptCompanyBox p{margin:3px 0}
+.receiptLogo{max-width:300px;max-height:170px;object-fit:contain;margin-bottom:12px}
+.receiptMeta{text-align:right}
+.receiptMeta h1{font-size:32px;text-transform:uppercase;margin:0 0 12px}
+.receiptMetaGrid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:5px 12px;font-size:13px}
+.receiptMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}
+.receiptBody{display:grid;grid-template-columns:1fr 280px;gap:30px;margin:26px 0;align-items:start}
+.receiptFrom h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
+.receiptFrom p{margin:3px 0}
+.receiptAmountBox{border:2px solid #172033;border-radius:12px;padding:16px;text-align:center}
+.receiptAmountBox span{display:block;font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:.04em;margin-bottom:4px}
+.receiptAmountBox strong{font-size:30px}
+.receiptTable{width:100%;border-collapse:collapse}
+.receiptTable th,.receiptTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top;font-size:14px}
+.receiptTable th{width:220px;color:#475569;text-transform:uppercase;font-size:11px;letter-spacing:.03em}
+.receiptThanks{margin-top:22px;font-weight:700;color:#475569}
+@media(max-width:700px){.receiptHeader,.receiptBody{grid-template-columns:1fr}.receiptMeta{text-align:left}}
+@media print{
+    @page{size:letter;margin:.5in}
+    header,.bottom-nav,.backButton,.noPrint,.flash{display:none!important}
+    body{background:white!important;color:#111!important}
+    main{max-width:none!important;padding:0!important;margin:0!important}
+    .card{box-shadow:none!important;border:0!important}
+    .receiptPaper{max-width:none!important;margin:0!important;padding:10px!important}
+}
+</style>
+{% endblock %}

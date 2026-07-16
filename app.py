@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-15 V4"
+APP_BUILD = "2026-07-16 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -7077,6 +7077,48 @@ def add_invoice_payment(invoice_id):
     return redirect(next_url)
 
 
+@app.route("/invoices/payments/<int:payment_id>")
+@admin_required
+def payment_receipt(payment_id):
+    """Printable receipt document for one payment - the paper trail that lives
+    in the customer's records."""
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute(
+        """
+        SELECT invoice_payments.*, users.name AS created_by_name
+        FROM invoice_payments
+        LEFT JOIN users ON invoice_payments.created_by = users.id
+        WHERE invoice_payments.id = %s
+        """,
+        (payment_id,)
+    ).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    invoice = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        WHERE invoices.id = %s
+        """,
+        (payment["invoice_id"],)
+    ).fetchone()
+    paid_total = invoice_paid_total(conn, payment["invoice_id"]) if invoice else 0.0
+    conn.close()
+    total = float(invoice.get("total") or 0) if invoice else 0.0
+    return render_template(
+        "payment_receipt.html",
+        payment=payment,
+        invoice=invoice,
+        company=account_info(),
+        paid_total=paid_total,
+        balance_after=max(total - paid_total, 0),
+    )
+
+
 @app.route("/invoices/payments/<int:payment_id>/delete", methods=["POST"])
 @admin_required
 def delete_invoice_payment(payment_id):
@@ -7134,6 +7176,16 @@ def invoice_customers():
         ORDER BY invoices.invoice_date DESC, invoices.id DESC
         """
     ).fetchall()
+    payment_rows = conn.execute(
+        """
+        SELECT invoice_payments.*, invoices.customer_name, invoices.invoice_number,
+               invoices.id AS invoice_id, users.name AS created_by_name
+        FROM invoice_payments
+        JOIN invoices ON invoice_payments.invoice_id = invoices.id
+        LEFT JOIN users ON invoice_payments.created_by = users.id
+        ORDER BY invoice_payments.payment_date DESC, invoice_payments.id DESC
+        """
+    ).fetchall()
     conn.close()
 
     today = local_now().date()
@@ -7150,8 +7202,10 @@ def invoice_customers():
             "projects": [],
             "balance": 0.0,
             "total_billed": 0.0,
+            "total_payments": 0.0,
             "invoices": [],
             "open_invoices": [],
+            "payments": [],
         })
         # Newest invoice wins for contact info (rows are newest-first, keep first seen).
         if not entry["email"] and (inv.get("customer_email") or "").strip():
@@ -7202,10 +7256,31 @@ def invoice_customers():
                 "pay_url": url_for("add_invoice_payment", invoice_id=inv["id"]),
             })
 
+    # Attach every payment to its customer so the hub shows the full money trail.
+    for pay in payment_rows:
+        key = ((pay.get("customer_name") or "").strip() or "No customer name").lower()
+        entry = customers.get(key)
+        if not entry:
+            continue
+        amount = float(pay.get("amount") or 0)
+        entry["total_payments"] += amount
+        entry["payments"].append({
+            "date": format_date(pay.get("payment_date")),
+            "amount": format_invoice_money(amount),
+            "method": pay.get("method") or "-",
+            "reference": pay.get("reference") or "",
+            "notes": pay.get("notes") or "",
+            "by": pay.get("created_by_name") or "",
+            "invoice_number": pay.get("invoice_number"),
+            "invoice_url": url_for("invoice_view", invoice_id=pay["invoice_id"]),
+            "receipt_url": url_for("payment_receipt", payment_id=pay["id"]),
+        })
+
     customer_list = sorted(customers.values(), key=lambda c: c["name"].lower())
     for c in customer_list:
         c["balance_label"] = format_invoice_money(c["balance"])
         c["total_billed_label"] = format_invoice_money(c["total_billed"])
+        c["total_payments_label"] = format_invoice_money(c["total_payments"])
     return render_template(
         "invoice_customers.html",
         customers=customer_list,
