@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-16 V1"
+APP_BUILD = "2026-07-16 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2400,6 +2400,14 @@ def invoice_logo_data_uri():
     return f"data:{mime_type};base64,{base64.b64encode(logo_bytes).decode('ascii')}"
 
 
+def invoice_paid_stamp_date(invoice):
+    """Date text for the PAID stamp - empty string when the invoice isn't paid in full."""
+    if (invoice or {}).get("status") != "paid":
+        return ""
+    raw = invoice.get("paid_at") or invoice.get("updated_at") or invoice.get("invoice_date")
+    return format_date(raw)
+
+
 def invoice_browser_pdf_attachment(invoice, lines, company):
     try:
         from playwright.sync_api import sync_playwright
@@ -2442,6 +2450,7 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
         total_amount=format_invoice_money(totals.get("total_amount")),
         payments_credit=("-" + format_invoice_money(payments_credit_val)) if payments_credit_val else format_invoice_money(0),
         balance_due=format_invoice_money(totals.get("balance_due")),
+        paid_stamp_date=invoice_paid_stamp_date(invoice),
     )
     invoice_url = external_url("invoice_view", invoice_id=invoice["id"]) if invoice.get("id") else ""
     try:
@@ -2694,6 +2703,24 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
     if page_count:
         last_page = doc.load_page(page_count - 1)
         last_page.insert_textbox(fitz.Rect(244, page_height - 70, 368, page_height - 54), "Privacy Policy", fontsize=8, fontname="helv", color=(0.20, 0.24, 0.32), align=fitz.TEXT_ALIGN_CENTER)
+
+    # Rubber-stamp style PAID mark with the paid date, angled across the top of page 1.
+    if invoice_paid_stamp_date(invoice):
+        try:
+            stamp_page = doc.load_page(0)
+            stamp_color = (0.13, 0.16, 0.22)
+            pivot = fitz.Point(330, 125)
+            rot = fitz.Matrix(1, 1).prerotate(-12)
+            word_rect = fitz.Rect(170, 72, 490, 132)
+            date_rect = fitz.Rect(170, 124, 490, 154)
+            try:
+                stamp_page.insert_textbox(word_rect, "PAID", fontsize=46, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot), fill_opacity=0.82)
+                stamp_page.insert_textbox(date_rect, invoice_paid_stamp_date(invoice), fontsize=16, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot), fill_opacity=0.82)
+            except TypeError:
+                stamp_page.insert_textbox(word_rect, "PAID", fontsize=46, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot))
+                stamp_page.insert_textbox(date_rect, invoice_paid_stamp_date(invoice), fontsize=16, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot))
+        except Exception as e:
+            print("PAID stamp skipped:", e)
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -5885,6 +5912,7 @@ def utility_processor():
         format_datetime=format_datetime,
         format_invoice_money=format_invoice_money,
         invoice_terms_for_due_date=invoice_terms_for_due_date,
+        invoice_paid_stamp_date=invoice_paid_stamp_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
@@ -7116,7 +7144,50 @@ def payment_receipt(payment_id):
         company=account_info(),
         paid_total=paid_total,
         balance_after=max(total - paid_total, 0),
+        payment_methods=INVOICE_PAYMENT_METHODS,
     )
+
+
+@app.route("/invoices/payments/<int:payment_id>/edit", methods=["POST"])
+@admin_required
+def edit_invoice_payment(payment_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute("SELECT * FROM invoice_payments WHERE id = %s", (payment_id,)).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    next_url = request.form.get("next") or url_for("payment_receipt", payment_id=payment_id)
+    amount = parse_invoice_money(request.form.get("amount"))
+    if not amount or amount <= 0:
+        conn.close()
+        flash("Enter a payment amount greater than zero.")
+        return redirect(next_url)
+    method = (request.form.get("method") or "").strip()
+    if method not in INVOICE_PAYMENT_METHODS:
+        method = payment.get("method") or "Other"
+    conn.execute(
+        """
+        UPDATE invoice_payments
+        SET amount = %s, payment_date = %s, method = %s, reference = %s, notes = %s
+        WHERE id = %s
+        """,
+        (
+            round(float(amount), 2),
+            request.form.get("payment_date") or payment.get("payment_date") or local_now().date().isoformat(),
+            method,
+            request.form.get("reference", "").strip(),
+            request.form.get("notes", "").strip(),
+            payment_id,
+        )
+    )
+    paid, total = refresh_invoice_payment_status(conn, payment["invoice_id"])
+    conn.commit()
+    conn.close()
+    remaining = max(total - paid, 0)
+    flash("Payment updated." + (" The invoice is PAID IN FULL." if remaining <= 0.005 else f" Remaining balance: {format_invoice_money(remaining)}."))
+    return redirect(next_url)
 
 
 @app.route("/invoices/payments/<int:payment_id>/delete", methods=["POST"])

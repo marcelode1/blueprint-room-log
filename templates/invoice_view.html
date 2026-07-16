@@ -32,6 +32,13 @@
 </div>
 
 <div class="card invoicePaper">
+    {% set paid_stamp = invoice_paid_stamp_date(invoice) %}
+    {% if paid_stamp %}
+    <div class="paidStamp" aria-hidden="true">
+        <span class="paidStampWord">PAID</span>
+        <span class="paidStampDate">{{ paid_stamp }}</span>
+    </div>
+    {% endif %}
     <div class="invoiceHeader">
         <div class="invoiceCompanyBox">
             {% set logo = get_app_setting("company_logo") %}
@@ -203,6 +210,11 @@
 {% endif %}
 
 <style>
+.invoicePaper{position:relative}
+.paidStamp{position:absolute;top:84px;left:50%;transform:translateX(-50%) rotate(-12deg);display:flex;flex-direction:column;align-items:center;color:#1f2937;opacity:.82;pointer-events:none;z-index:5;font-family:"Arial Black","Segoe UI",Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.paidStampWord{font-size:62px;font-weight:900;letter-spacing:8px;line-height:.9;text-transform:uppercase}
+.paidStampDate{font-size:21px;font-weight:900;letter-spacing:3px;margin-top:2px}
+@media(max-width:760px){.paidStamp{top:60px}.paidStampWord{font-size:44px;letter-spacing:5px}.paidStampDate{font-size:15px}}
 .payBalancePill{display:inline-flex;align-items:center;border-radius:999px;padding:6px 12px;font-weight:800;font-size:13px;background:rgba(245,158,11,.14);color:#b45309;border:1px solid rgba(245,158,11,.35)}
 .payBalancePill.payFull{background:rgba(22,163,74,.14);color:#15803d;border-color:rgba(22,163,74,.3)}
 .payTableWrap{overflow-x:auto;margin:12px 0}
