@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-17 V2"
+APP_BUILD = "2026-07-17 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1140,6 +1140,12 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS project_folders_lookup_idx ON project_folders(project_id, folder_key, parent_id)",
         "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
         "CREATE TABLE IF NOT EXISTS custom_file_folders (id SERIAL PRIMARY KEY, folder_key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS task_materials_task_idx ON task_materials(task_id)",
+        "CREATE INDEX IF NOT EXISTS task_materials_item_idx ON task_materials(inventory_item_id)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
@@ -1674,6 +1680,32 @@ def load_task_details(conn, tasks, room_id=None):
                     "updated_at": status.get("updated_at") if status else None,
                 })
         task["_room_statuses"] = room_statuses
+        try:
+            task["_task_materials"] = conn.execute(
+                """
+                SELECT task_materials.*,
+                       inventory_items.location_type AS inv_location,
+                       inventory_items.location_detail AS inv_location_detail,
+                       inventory_items.status AS inv_status,
+                       purchase_orders.po_number AS po_number,
+                       purchase_orders.status AS po_status,
+                       purchase_orders.expected_date AS po_expected,
+                       pt.task_number AS pickup_task_number,
+                       pt.status AS pickup_status,
+                       pu.name AS pickup_user_name
+                FROM task_materials
+                LEFT JOIN inventory_items ON task_materials.inventory_item_id = inventory_items.id
+                LEFT JOIN purchase_orders ON task_materials.po_id = purchase_orders.id
+                LEFT JOIN tasks pt ON task_materials.pickup_task_id = pt.id
+                LEFT JOIN users pu ON pt.assigned_user_id = pu.id
+                WHERE task_materials.task_id = %s
+                ORDER BY task_materials.id
+                """,
+                (task["id"],)
+            ).fetchall()
+        except Exception:
+            conn.rollback()
+            task["_task_materials"] = []
         detailed.append(task)
     return detailed
 
@@ -5937,6 +5969,7 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
+        po_status_label=po_status_label,
         supplier_task_status_options=SUPPLIER_TASK_STATUS_LABELS,
         inventory_condition_label=inventory_condition_label,
         task_status_label=task_status_label,
@@ -7200,6 +7233,523 @@ def delete_invoice_payment(payment_id):
     conn.close()
     flash(f'Payment of {format_invoice_money(payment["amount"])} removed. The invoice balance was updated.')
     return redirect(next_url)
+
+
+# ---------------------------------------------------------------- orders (purchase orders) + task materials
+PO_STATUS_LABELS = {
+    "draft": "Draft",
+    "ordered": "Ordered",
+    "purchased": "Purchased",
+    "received": "Received",
+    "canceled": "Canceled",
+}
+
+
+def po_status_label(value):
+    return PO_STATUS_LABELS.get(str(value or "").strip(), "Draft")
+
+
+def ensure_orders_tables(conn):
+    statements = [
+        "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Orders migration skipped:", e)
+
+
+def next_po_number(conn):
+    year = local_now().strftime("%Y")
+    row = conn.execute("SELECT COUNT(*) AS n FROM purchase_orders WHERE po_number LIKE %s", (f"PO-{year}-%",)).fetchone()
+    n = int(row["n"] or 0) + 1
+    while True:
+        candidate = f"PO-{year}-{n:04d}"
+        exists = conn.execute("SELECT 1 FROM purchase_orders WHERE po_number = %s", (candidate,)).fetchone()
+        if not exists:
+            return candidate
+        n += 1
+
+
+def inventory_reserved_quantity(conn, item_id):
+    row = conn.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS reserved FROM task_materials "
+        "WHERE inventory_item_id = %s AND source = 'stock' AND status IN ('allocated', 'waiting', 'ready')",
+        (item_id,)
+    ).fetchone()
+    return float(row["reserved"] or 0)
+
+
+def mark_task_materials_ready(conn, po_id=None, pickup_task_id=None, place_text=""):
+    """Flip waiting task materials to ready and tell the install task's worker."""
+    if not po_id and not pickup_task_id:
+        return
+    where = "task_materials.po_id = %s" if po_id else "task_materials.pickup_task_id = %s"
+    rows = conn.execute(
+        f"""
+        SELECT task_materials.*, tasks.assigned_user_id, tasks.project_id AS parent_project_id,
+               tasks.task_number AS parent_task_number, tasks.id AS parent_task_id,
+               users.name AS assigned_name, users.email AS assigned_email, users.role AS assigned_role
+        FROM task_materials
+        JOIN tasks ON task_materials.task_id = tasks.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE {where} AND task_materials.status = 'waiting'
+        """,
+        (po_id or pickup_task_id,)
+    ).fetchall()
+    for row in rows:
+        conn.execute("UPDATE task_materials SET status = 'ready' WHERE id = %s", (row["id"],))
+        if row.get("assigned_user_id"):
+            try:
+                add_notification(
+                    conn,
+                    row["assigned_user_id"],
+                    row.get("assigned_name") or "",
+                    row.get("assigned_email") or "",
+                    row.get("assigned_role") or "",
+                    "task_updated",
+                    row.get("parent_project_id"),
+                    row.get("parent_task_id"),
+                    f'Material ready: {row.get("item_name")} {place_text}'.strip() + f' - task {row.get("parent_task_number") or row.get("parent_task_id")}'
+                )
+            except Exception as e:
+                print("Material ready notification failed:", e)
+
+
+@app.route("/tasks/material-check")
+@admin_required
+def task_material_check():
+    conn = db()
+    ensure_orders_tables(conn)
+    project_id = request.args.get("project_id", type=int)
+    name = (request.args.get("name") or "").strip()
+    model = (request.args.get("model") or "").strip()
+    brand = (request.args.get("brand") or "").strip()
+    stock = []
+    if name:
+        rows = conn.execute(
+            """
+            SELECT inventory_items.*, projects.name AS project_name
+            FROM inventory_items
+            LEFT JOIN projects ON inventory_items.project_id = projects.id
+            WHERE lower(item_name) = lower(%s)
+              AND (%s = '' OR lower(COALESCE(item_model, '')) = lower(%s))
+              AND (%s = '' OR lower(COALESCE(brand, '')) = lower(%s))
+              AND (inventory_items.project_id = %s OR inventory_items.project_id IS NULL)
+              AND inventory_items.status IN ('available', 'picked_up')
+              AND COALESCE(inventory_items.quantity, 0) > 0
+            ORDER BY (inventory_items.project_id IS NULL), inventory_items.id
+            """,
+            (name, model, model, brand, brand, project_id)
+        ).fetchall()
+        for item in rows:
+            available = float(item.get("quantity") or 0) - inventory_reserved_quantity(conn, item["id"])
+            if available <= 0.001:
+                continue
+            place = inventory_location_label(item.get("location_type"))
+            if item.get("location_detail"):
+                place += f' ({item["location_detail"]})'
+            scope = "Project inventory" if item.get("project_id") else "General inventory"
+            stock.append({
+                "id": item["id"],
+                "available": round(available, 2),
+                "place": place,
+                "scope": scope,
+                "label": f'{scope}: {available:g} available - {place}',
+            })
+    suppliers = [{"id": s["id"], "name": s["name"]} for s in fetch_suppliers(conn)]
+    conn.close()
+    return jsonify({"stock": stock, "suppliers": suppliers})
+
+
+def create_task_materials_from_form(conn, primary_task, project_id):
+    """Turn the Create Task materials list into allocations, POs, and pickup tasks."""
+    raw = request.form.get("task_materials_json", "").strip()
+    if not raw:
+        return ""
+    try:
+        rows = json.loads(raw)
+    except Exception:
+        return "The materials list could not be read. Add the materials again."
+    if not isinstance(rows, list):
+        return ""
+    ensure_orders_tables(conn)
+    now = utc_now_iso()
+    today = local_now().date().isoformat()
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("item_name") or "").strip()
+        if not name:
+            continue
+        try:
+            qty = max(float(m.get("quantity") or 1), 0.01)
+        except Exception:
+            qty = 1.0
+        model = str(m.get("item_model") or "").strip()
+        brand = str(m.get("brand") or "").strip()
+        unit = clean_unit_measure(m.get("unit_measure")) or "UN"
+        comment = str(m.get("comment") or "").strip()
+        action = str(m.get("action") or "note").strip()
+        part_catalog_id = upsert_part_catalog(conn, name, model, brand, "", item_type="part", unit_measure=unit)
+        inventory_item_id = None
+        po_id = None
+        pickup_task_id = None
+        status = "ready"
+
+        if action == "stock":
+            item_id = optional_int(m.get("inventory_item_id"))
+            item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone() if item_id else None
+            if not item:
+                return f"The inventory item for {name} was not found."
+            available = float(item.get("quantity") or 0) - inventory_reserved_quantity(conn, item_id)
+            if qty > available + 0.001:
+                return f"Only {available:g} of {name} is available in inventory."
+            inventory_item_id = item_id
+            status = "allocated"
+        elif action == "po":
+            po_number = next_po_number(conn)
+            supplier_id = optional_int(m.get("po_supplier_id"))
+            po_row = conn.execute(
+                """
+                INSERT INTO purchase_orders (po_number, supplier_id, project_id, status, order_method, expected_date, notes, created_by, created_at, updated_at)
+                VALUES (%s, %s, %s, 'draft', '', %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (po_number, supplier_id, project_id, str(m.get("expected_date") or "").strip(),
+                 f"Created from task {primary_task.get('task_number') or primary_task.get('id')}",
+                 session.get("user_id"), now, now)
+            ).fetchone()
+            po_id = po_row["id"]
+            conn.execute(
+                "INSERT INTO purchase_order_lines (po_id, part_catalog_id, item_name, item_model, brand, unit_measure, quantity, unit_cost, comment, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)",
+                (po_id, part_catalog_id, name, model, brand, unit, qty, comment, now)
+            )
+            inv = conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, po_id, used_note, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, NULL, '', 'needs_purchase', %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (today, qty, name, model, brand, part_catalog_id, f"PO {po_number}", project_id,
+                 session.get("user_id"), supplier_id, po_id, comment, now, now)
+            ).fetchone()
+            inventory_item_id = inv["id"]
+            status = "waiting"
+        elif action == "pickup":
+            supplier_id = optional_int(m.get("pickup_supplier_id"))
+            supplier = conn.execute("SELECT * FROM suppliers WHERE id = %s", (supplier_id,)).fetchone() if supplier_id else None
+            if not supplier:
+                return f"Choose a supplier for the pickup of {name}."
+            pickup_user_id = optional_int(m.get("pickup_user_id"))
+            assigned = conn.execute(
+                "SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE id = %s AND role <> 'admin'",
+                (pickup_user_id,)
+            ).fetchone() if pickup_user_id else None
+            if not assigned:
+                return f"Choose a worker for the pickup of {name}."
+            pickup_date = str(m.get("pickup_date") or "").strip() or today
+            pickup_time = str(m.get("pickup_time") or "").strip() or "08:00"
+            inv = conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', '', %s, NULL, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (pickup_date, qty, name, model, brand, part_catalog_id, project_id, pickup_time,
+                 session.get("user_id"), supplier_id, comment, now, now)
+            ).fetchone()
+            grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
+            created_at = utc_now_iso()
+            p_number = next_task_number(conn, created_at)
+            ptask = conn.execute(
+                """
+                INSERT INTO tasks
+                (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+                VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, TRUE, TRUE, TRUE, 'sent_to_worker', %s, %s)
+                RETURNING *
+                """,
+                (p_number, project_id, assigned["id"], session.get("user_id"), pickup_date, pickup_date,
+                 pickup_time, pickup_date, f"Supplier pickup - {supplier.get('name') or 'Supplier'}",
+                 comment, supplier_id, inv["id"], uuid.uuid4().hex, created_at)
+            ).fetchone()
+            link_supplier_items_to_task(conn, ptask["id"], [inv])
+            try:
+                add_notification(
+                    conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"],
+                    "task_assigned", project_id, ptask["id"],
+                    f"New task assigned: {task_display_name(ptask)}. Be there {task_schedule_text(ptask)}. Project access granted."
+                )
+            except Exception as e:
+                print("Pickup task notification failed:", e)
+            pickup_task_id = ptask["id"]
+            inventory_item_id = inv["id"]
+            status = "waiting"
+
+        conn.execute(
+            """
+            INSERT INTO task_materials
+            (task_id, part_catalog_id, inventory_item_id, po_id, pickup_task_id, item_name, item_model, brand, unit_measure, quantity, comment, source, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (primary_task["id"], part_catalog_id, inventory_item_id, po_id, pickup_task_id,
+             name, model, brand, unit, qty, comment, action, status, now)
+        )
+    return ""
+
+
+@app.route("/orders")
+@admin_required
+def orders():
+    conn = db()
+    ensure_orders_tables(conn)
+    status = (request.args.get("status") or "").strip()
+    where = "WHERE purchase_orders.status = %s" if status in PO_STATUS_LABELS else ""
+    params = (status,) if where else ()
+    rows = conn.execute(
+        f"""
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, projects.name AS project_name,
+               (SELECT COUNT(*) FROM purchase_order_lines WHERE purchase_order_lines.po_id = purchase_orders.id) AS line_count
+        FROM purchase_orders
+        LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
+        LEFT JOIN projects ON purchase_orders.project_id = projects.id
+        {where}
+        ORDER BY purchase_orders.created_at DESC, purchase_orders.id DESC
+        """,
+        params
+    ).fetchall()
+    suppliers = fetch_suppliers(conn)
+    projects = conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()
+    conn.close()
+    return render_template("orders.html", orders=rows, status=status, po_status_labels=PO_STATUS_LABELS,
+                           suppliers=suppliers, projects=projects)
+
+
+@app.route("/orders/new", methods=["POST"])
+@admin_required
+def new_order():
+    conn = db()
+    ensure_orders_tables(conn)
+    now = utc_now_iso()
+    po_number = next_po_number(conn)
+    row = conn.execute(
+        """
+        INSERT INTO purchase_orders (po_number, supplier_id, project_id, status, order_method, expected_date, notes, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, 'draft', '', %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (po_number, optional_int(request.form.get("supplier_id")), optional_int(request.form.get("project_id")),
+         request.form.get("expected_date", "").strip(), request.form.get("notes", "").strip(),
+         session.get("user_id"), now, now)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    flash(f"Purchase order {po_number} created. Add the items below.")
+    return redirect(url_for("order_view", po_id=row["id"]))
+
+
+@app.route("/orders/<int:po_id>")
+@admin_required
+def order_view(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        """
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
+               projects.name AS project_name, users.name AS created_by_name
+        FROM purchase_orders
+        LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
+        LEFT JOIN projects ON purchase_orders.project_id = projects.id
+        LEFT JOIN users ON purchase_orders.created_by = users.id
+        WHERE purchase_orders.id = %s
+        """,
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
+    linked_tasks = conn.execute(
+        """
+        SELECT DISTINCT tasks.id, tasks.task_number, tasks.title
+        FROM task_materials JOIN tasks ON task_materials.task_id = tasks.id
+        WHERE task_materials.po_id = %s
+        """,
+        (po_id,)
+    ).fetchall()
+    suppliers = fetch_suppliers(conn)
+    catalog = part_catalog_options(conn)
+    conn.close()
+    return render_template("order_view.html", po=po, lines=lines, suppliers=suppliers,
+                           linked_tasks=linked_tasks, part_catalog=catalog,
+                           po_status_labels=PO_STATUS_LABELS)
+
+
+@app.route("/orders/<int:po_id>/line/add", methods=["POST"])
+@admin_required
+def add_order_line(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute("SELECT * FROM purchase_orders WHERE id = %s", (po_id,)).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    name = request.form.get("item_name", "").strip()
+    if not name:
+        conn.close()
+        flash("Enter the material name.")
+        return redirect(url_for("order_view", po_id=po_id))
+    try:
+        qty = max(float(request.form.get("quantity") or 1), 0.01)
+    except Exception:
+        qty = 1.0
+    model = request.form.get("item_model", "").strip()
+    brand = request.form.get("brand", "").strip()
+    unit = clean_unit_measure(request.form.get("unit_measure")) or "UN"
+    unit_cost = parse_invoice_money(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
+    part_catalog_id = upsert_part_catalog(conn, name, model, brand, "", item_type="part", unit_measure=unit)
+    conn.execute(
+        "INSERT INTO purchase_order_lines (po_id, part_catalog_id, item_name, item_model, brand, unit_measure, quantity, unit_cost, comment, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (po_id, part_catalog_id, name, model, brand, unit, qty, unit_cost,
+         request.form.get("comment", "").strip(), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash("Item added to the purchase order.")
+    return redirect(url_for("order_view", po_id=po_id))
+
+
+@app.route("/orders/lines/<int:line_id>/delete", methods=["POST"])
+@admin_required
+def delete_order_line(line_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    line = conn.execute("SELECT * FROM purchase_order_lines WHERE id = %s", (line_id,)).fetchone()
+    if not line:
+        conn.close()
+        flash("Purchase order line not found.")
+        return redirect(url_for("orders"))
+    conn.execute("DELETE FROM purchase_order_lines WHERE id = %s", (line_id,))
+    conn.commit()
+    conn.close()
+    flash("Item removed from the purchase order.")
+    return redirect(url_for("order_view", po_id=line["po_id"]))
+
+
+@app.route("/orders/<int:po_id>/update", methods=["POST"])
+@admin_required
+def update_order(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        "SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email "
+        "FROM purchase_orders LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id "
+        "WHERE purchase_orders.id = %s",
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    action = request.form.get("action", "save")
+    now = utc_now_iso()
+    note = request.form.get("status_note", "").strip()
+
+    def append_note(text):
+        existing = (po.get("notes") or "").strip()
+        stamp = f"{format_date(local_now().date().isoformat())}: {text}"
+        return (existing + "\n" + stamp).strip()
+
+    if action == "save":
+        conn.execute(
+            "UPDATE purchase_orders SET supplier_id = %s, expected_date = %s, notes = %s, updated_at = %s WHERE id = %s",
+            (optional_int(request.form.get("supplier_id")), request.form.get("expected_date", "").strip(),
+             request.form.get("notes", "").strip(), now, po_id)
+        )
+        flash("Purchase order saved.")
+    elif action == "email":
+        if not po.get("supplier_email"):
+            conn.close()
+            flash("This supplier has no email on file. Add it in Suppliers first.")
+            return redirect(url_for("order_view", po_id=po_id))
+        lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
+        company = account_info()
+        body_lines = [f"Purchase Order {po['po_number']} from {company.get('company_name') or 'ProjectONus'}", ""]
+        for line in lines:
+            desc = f'- {line["quantity"]:g} {line.get("unit_measure") or "UN"} x {line["item_name"]}'
+            if line.get("brand"):
+                desc += f' ({line["brand"]}'
+                desc += f' {line["item_model"]})' if line.get("item_model") else ')'
+            elif line.get("item_model"):
+                desc += f' ({line["item_model"]})'
+            if line.get("comment"):
+                desc += f' - {line["comment"]}'
+            body_lines.append(desc)
+        if po.get("expected_date"):
+            body_lines.append("")
+            body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
+        body_lines.append("")
+        body_lines.append(f"Please confirm availability and pricing. Reference {po['po_number']} on the invoice.")
+        sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}", "\n".join(body_lines))
+        if sent:
+            conn.execute(
+                "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+                (now, append_note(f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"), now, po_id)
+            )
+            flash(f"Purchase order emailed to {po['supplier_email']} and marked Ordered.")
+        else:
+            flash("The email could not be sent. Check SMTP settings.")
+    elif action == "ordered":
+        method = (request.form.get("order_method") or "online").strip()
+        if method not in ("online", "phone", "email", "other"):
+            method = "other"
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'ordered', order_method = %s, ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (method, now, append_note(note or f"Ordered by {method}"), now, po_id)
+        )
+        flash("Purchase order marked Ordered.")
+    elif action == "purchased":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'purchased', purchased_at = COALESCE(purchased_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (now, append_note(note or "Purchased"), now, po_id)
+        )
+        conn.execute(
+            "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s WHERE po_id = %s AND status = 'needs_purchase'",
+            (now, po_id)
+        )
+        flash("Purchase order marked Purchased. Inventory shows the material as waiting arrival.")
+    elif action == "received":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'received', received_at = COALESCE(received_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (now, append_note(note or "Received"), now, po_id)
+        )
+        conn.execute(
+            "UPDATE inventory_items SET status = 'available', location_type = 'warehouse', updated_at = %s WHERE po_id = %s AND status IN ('needs_purchase', 'purchased_waiting_arrival')",
+            (now, po_id)
+        )
+        mark_task_materials_ready(conn, po_id=po_id, place_text="- arrived at the warehouse")
+        flash("Purchase order received. Inventory updated and task workers notified.")
+    elif action == "canceled":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'canceled', notes = %s, updated_at = %s WHERE id = %s",
+            (append_note(note or "Canceled"), now, po_id)
+        )
+        flash("Purchase order canceled.")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("order_view", po_id=po_id))
 
 
 @app.route("/invoices/customers")
@@ -11228,6 +11778,13 @@ def create_global_task():
                 )
                 created_tasks.append((task, assigned))
 
+        if not supplier_mode and created_tasks:
+            material_error = create_task_materials_from_form(conn, created_tasks[0][0], project_id)
+            if material_error:
+                conn.rollback()
+                conn.close()
+                flash(material_error + " No tasks were created - fix the material and try again.")
+                return redirect(url_for("create_global_task"))
         conn.commit()
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
@@ -11539,6 +12096,12 @@ def sync_supplier_task_status(conn, task):
         (new_status, new_status == "completed", utc_now_iso(), task_id)
     )
     task["status"] = new_status
+    if new_status == "completed":
+        # Pickup done -> flip waiting install-task materials to ready and notify.
+        try:
+            mark_task_materials_ready(conn, pickup_task_id=task_id, place_text="- on the truck")
+        except Exception as e:
+            print("Material ready sync skipped:", e)
 
 
 @app.route("/tasks/<int:task_id>/supplier-items/add", methods=["POST"])
@@ -12154,6 +12717,29 @@ def complete_task(task_id):
             """,
             (session.get("user_id"), now, now, task_id, task_id)
         )
+    if mark_entire_task_done:
+        # Materials allocated from stock are consumed when the task is done.
+        try:
+            used_now = utc_now_iso()
+            for m in conn.execute(
+                "SELECT * FROM task_materials WHERE task_id = %s AND source = 'stock' AND status IN ('allocated', 'ready')",
+                (task_id,)
+            ).fetchall():
+                if m.get("inventory_item_id"):
+                    conn.execute(
+                        """
+                        UPDATE inventory_items
+                        SET quantity = GREATEST(COALESCE(quantity, 0) - %s, 0),
+                            status = CASE WHEN COALESCE(quantity, 0) - %s <= 0.001 THEN 'used' ELSE status END,
+                            updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (m["quantity"], m["quantity"], used_now, m["inventory_item_id"])
+                    )
+                conn.execute("UPDATE task_materials SET status = 'used' WHERE id = %s", (m["id"],))
+        except Exception as e:
+            conn.rollback()
+            print("Task material consumption skipped:", e)
     conn.commit()
     notification_ok = True
     try:

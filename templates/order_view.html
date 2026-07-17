@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div>
+            <h2 style="margin-bottom:2px">{{ po.po_number }}</h2>
+            <p class="muted" style="margin:0">
+                <span class="poStatus po-{{ po.status }}">{{ po_status_label(po.status) }}</span>
+                {% if po.order_method %} &middot; Ordered via {{ po.order_method|title }}{% endif %}
+                {% if po.ordered_at %} &middot; Ordered {{ format_date(po.ordered_at) }}{% endif %}
+                {% if po.purchased_at %} &middot; Purchased {{ format_date(po.purchased_at) }}{% endif %}
+                {% if po.received_at %} &middot; Received {{ format_date(po.received_at) }}{% endif %}
+            </p>
+        </div>
+        <a class="btn-link btn-secondary" href="{{ url_for('orders') }}">Back to Orders</a>
+    </div>
+    <p style="margin-top:10px">
+        <strong>Supplier:</strong> {{ po.supplier_name or '-' }}{% if po.supplier_email %} ({{ po.supplier_email }}){% endif %}
+        &nbsp; <strong>Project:</strong> {{ po.project_name or 'General' }}
+        &nbsp; <strong>Needed by:</strong> {{ format_date(po.expected_date) if po.expected_date else '-' }}
+        {% if po.created_by_name %}&nbsp; <strong>Created by:</strong> {{ po.created_by_name }}{% endif %}
+    </p>
+    {% if linked_tasks %}
+        <p class="muted">Linked task{{ '' if linked_tasks|length == 1 else 's' }}:
+        {% for lt in linked_tasks %}#{{ lt.task_number or lt.id }} {{ lt.title }}{% if not loop.last %}, {% endif %}{% endfor %}
+        &mdash; workers are notified automatically when this PO is received.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Items on This Order</h3>
+    <div class="poLinesWrap">
+        <table class="poLinesTable">
+            <thead><tr><th>Qty</th><th>Item</th><th>Brand</th><th>Model #</th><th>Unit Cost</th><th>Comment</th><th></th></tr></thead>
+            <tbody>
+            {% for line in lines %}
+                <tr>
+                    <td>{{ '%g'|format(line.quantity or 1) }} {{ 'PR' if line.unit_measure == 'PR' else 'UN' }}</td>
+                    <td><strong>{{ line.item_name }}</strong></td>
+                    <td>{{ line.brand or '-' }}</td>
+                    <td>{{ line.item_model or '-' }}</td>
+                    <td>{{ format_invoice_money(line.unit_cost) if line.unit_cost is not none else '-' }}</td>
+                    <td>{{ line.comment or '' }}</td>
+                    <td>
+                        {% if po.status == 'draft' %}
+                        <form method="post" action="{{ url_for('delete_order_line', line_id=line.id) }}" style="margin:0" onsubmit="return confirm('Remove this item from the PO?');">
+                            <button type="submit" class="btn-danger" style="margin:0;min-height:30px;padding:4px 10px;font-size:12px">Remove</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7" class="muted">No items yet. Add the first one below.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if po.status in ['draft', 'ordered'] %}
+    <form method="post" action="{{ url_for('add_order_line', po_id=po.id) }}" style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+        <div class="grid">
+            <div>
+                <label>Quantity</label>
+                <div class="qtyUnitBox">
+                    <input type="number" name="quantity" step="0.01" min="0.01" value="1" required>
+                    <select name="unit_measure" class="js-part-unit qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                        <option value="UN" selected>UN</option>
+                        <option value="PR">PR</option>
+                    </select>
+                </div>
+            </div>
+            <div><label>Material / Item</label><input name="item_name" class="js-part-item" list="partCatalogNameList" required placeholder="Search the catalog"></div>
+            <div><label>Brand</label><input name="brand" class="js-part-brand" list="partCatalogBrandList"></div>
+            <div><label>Model #</label><input name="item_model" class="js-part-model" list="partCatalogModelList"></div>
+            <div><label>Unit Cost</label><input name="unit_cost" placeholder="$0.00"></div>
+        </div>
+        <label>Comment</label>
+        <input name="comment" placeholder="Color, size, or ordering note">
+        <button type="submit" class="btn-secondary">Add Item</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Order Details &amp; Status</h3>
+    <form method="post" action="{{ url_for('update_order', po_id=po.id) }}">
+        <input type="hidden" name="action" value="save">
+        <div class="grid">
+            <div>
+                <label>Supplier</label>
+                <select name="supplier_id">
+                    <option value="">Choose supplier</option>
+                    {% for s in suppliers %}<option value="{{ s.id }}" {% if po.supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div><label>Needed By</label><input type="date" name="expected_date" value="{{ po.expected_date or '' }}"></div>
+        </div>
+        <label>Notes / History</label>
+        <textarea name="notes" rows="4">{{ po.notes or '' }}</textarea>
+        <button type="submit" class="btn-secondary">Save Details</button>
+    </form>
+
+    {% if po.status not in ['received', 'canceled'] %}
+    <div class="poActions">
+        <h4>Move This Order Forward</h4>
+        <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm">
+            <input type="hidden" name="action" value="email">
+            <button type="submit" {% if not po.supplier_email %}disabled title="Add an email to this supplier first"{% endif %}>Email PO to Supplier</button>
+            <span class="muted">Sends the item list to {{ po.supplier_email or 'the supplier (no email on file)' }} and marks it Ordered.</span>
+        </form>
+        <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm">
+            <input type="hidden" name="action" value="ordered">
+            <select name="order_method" style="margin:0;width:auto">
+                <option value="online">Ordered online</option>
+                <option value="phone">Ordered by phone</option>
+                <option value="other">Ordered another way</option>
+            </select>
+            <input name="status_note" placeholder="Order # or note (optional)" style="margin:0;max-width:260px">
+            <button type="submit" class="btn-secondary" style="margin:0">Mark Ordered</button>
+        </form>
+        <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm">
+            <input type="hidden" name="action" value="purchased">
+            <input name="status_note" placeholder="Payment / confirmation note (optional)" style="margin:0;max-width:260px">
+            <button type="submit" class="btn-secondary" style="margin:0">Mark Purchased</button>
+        </form>
+        <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm">
+            <input type="hidden" name="action" value="received">
+            <button type="submit" style="margin:0;background:#16a34a">Mark Received</button>
+            <span class="muted">Puts the material in inventory (Warehouse, Available) and notifies the task workers.</span>
+        </form>
+        <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm" onsubmit="return confirm('Cancel this purchase order?');">
+            <input type="hidden" name="action" value="canceled">
+            <button type="submit" class="btn-danger" style="margin:0">Cancel PO</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.poStatus{display:inline-flex;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:800;border:1px solid var(--border)}
+.po-draft{background:rgba(100,116,139,.14);color:#475569}
+.po-ordered{background:rgba(37,99,235,.12);color:#1d4ed8}
+.po-purchased{background:rgba(245,158,11,.16);color:#b45309}
+.po-received{background:rgba(22,163,74,.14);color:#15803d}
+.po-canceled{background:rgba(148,163,184,.16);color:var(--muted);text-decoration:line-through}
+.poLinesWrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+.poLinesTable{width:100%;border-collapse:collapse;min-width:760px;font-size:14px}
+.poLinesTable th,.poLinesTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left}
+.poLinesTable th{background:rgba(148,163,184,.12);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.poActions{border-top:1px solid var(--border);margin-top:16px;padding-top:14px}
+.poActionForm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.poActionForm button{margin:0}
+</style>
+{% include "_part_catalog_autocomplete.html" %}
+{% endblock %}

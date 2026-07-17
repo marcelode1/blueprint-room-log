@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Orders</h2>
+    <p class="muted">Every purchase order lives here. Open one to email it to the supplier, or mark that you ordered it online or by phone, and track its status until the material arrives.</p>
+</div>
+
+<div class="card">
+    <h3>Create a Purchase Order</h3>
+    <form method="post" action="{{ url_for('new_order') }}">
+        <div class="grid">
+            <div>
+                <label>Supplier</label>
+                <select name="supplier_id">
+                    <option value="">Choose later</option>
+                    {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Project (optional)</label>
+                <select name="project_id">
+                    <option value="">General / stock</option>
+                    {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div><label>Needed By</label><input type="date" name="expected_date"></div>
+        </div>
+        <label>Notes</label>
+        <input name="notes" placeholder="Optional note">
+        <button type="submit">Create PO</button>
+    </form>
+</div>
+
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <h3 style="margin:0">Purchase Orders</h3>
+        <form method="get" style="margin:0">
+            <select name="status" onchange="this.form.submit()" style="margin:0;width:auto">
+                <option value="">All statuses</option>
+                {% for value, label in po_status_labels.items() %}
+                    <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+    <div class="poTableWrap">
+        <table class="poTable">
+            <thead>
+                <tr><th>PO #</th><th>Supplier</th><th>Project</th><th>Items</th><th>Needed By</th><th>Status</th><th>Ordered Via</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for po in orders %}
+                <tr>
+                    <td><a href="{{ url_for('order_view', po_id=po.id) }}"><strong>{{ po.po_number }}</strong></a></td>
+                    <td>{{ po.supplier_name or '-' }}</td>
+                    <td>{{ po.project_name or 'General' }}</td>
+                    <td>{{ po.line_count }}</td>
+                    <td>{{ format_date(po.expected_date) if po.expected_date else '-' }}</td>
+                    <td><span class="poStatus po-{{ po.status }}">{{ po_status_label(po.status) }}</span></td>
+                    <td>{{ (po.order_method or '-')|title }}</td>
+                    <td><a class="btn-link btn-secondary" style="margin:0;padding:6px 12px" href="{{ url_for('order_view', po_id=po.id) }}">Open</a></td>
+                </tr>
+            {% else %}
+                <tr><td colspan="8" class="muted">No purchase orders yet{% if status %} with this status{% endif %}.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+.poTableWrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-top:10px}
+.poTable{width:100%;border-collapse:collapse;min-width:820px;font-size:14px}
+.poTable th,.poTable td{border-bottom:1px solid var(--border);padding:9px 10px;text-align:left;white-space:nowrap}
+.poTable th{background:rgba(148,163,184,.12);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.poTable tbody tr:hover{background:rgba(37,99,235,.06)}
+.poStatus{display:inline-flex;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:800;border:1px solid var(--border)}
+.po-draft{background:rgba(100,116,139,.14);color:#475569}
+.po-ordered{background:rgba(37,99,235,.12);color:#1d4ed8}
+.po-purchased{background:rgba(245,158,11,.16);color:#b45309}
+.po-received{background:rgba(22,163,74,.14);color:#15803d}
+.po-canceled{background:rgba(148,163,184,.16);color:var(--muted);text-decoration:line-through}
+</style>
+{% endblock %}

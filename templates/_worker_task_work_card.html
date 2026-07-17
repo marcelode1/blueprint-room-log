@@ -22,6 +22,42 @@
         <p><strong>{{ 'Task Status' if t.supplier_id else 'Room Task Status' }}:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
     </div>
 
+    {% set task_materials = t.get('_task_materials', []) %}
+    {% if task_materials %}
+    <div class="taskMaterialsBox">
+        <h4>Materials for This Task</h4>
+        {% for m in task_materials %}
+        <div class="taskMaterialRow {% if m.status in ['ready', 'allocated'] %}matReady{% elif m.status == 'waiting' %}matWaiting{% endif %}">
+            <p class="taskMaterialName"><strong>{{ m.item_name }}</strong> &mdash; {{ '%g'|format(m.quantity or 1) }} {{ 'PR' if m.unit_measure == 'PR' else 'UN' }}{% if m.brand %} &middot; {{ m.brand }}{% endif %}{% if m.item_model %} &middot; {{ m.item_model }}{% endif %}</p>
+            {% if m.comment %}<p class="taskMaterialComment">{{ m.comment }}</p>{% endif %}
+            <p class="taskMaterialState">
+                {% if m.status == 'used' %}
+                    Used on this task
+                {% elif m.source == 'stock' %}
+                    In stock &mdash; {{ inventory_location_label(m.inv_location) }}{% if m.inv_location_detail %} ({{ m.inv_location_detail }}){% endif %}
+                {% elif m.source == 'po' %}
+                    {{ m.po_number }} &mdash; {{ po_status_label(m.po_status) }}{% if m.po_expected %} &middot; expected {{ format_date(m.po_expected) }}{% endif %}{% if m.status == 'ready' %} &middot; ARRIVED{% endif %}
+                {% elif m.source == 'pickup' %}
+                    Pickup task {{ m.pickup_task_number or m.pickup_task_id }}{% if m.pickup_user_name %} ({{ m.pickup_user_name }}){% endif %} &mdash; {{ 'Picked up - on the truck' if m.status == 'ready' else task_status_label(m.pickup_status) }}
+                {% else %}
+                    Noted on task
+                {% endif %}
+            </p>
+        </div>
+        {% endfor %}
+    </div>
+    <style>
+    .taskMaterialsBox{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(37,99,235,.06)}
+    .taskMaterialsBox h4{margin:0 0 8px}
+    .taskMaterialRow{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:8px 0;background:rgba(255,255,255,.35)}
+    .taskMaterialRow p{margin:2px 0}
+    .taskMaterialComment{white-space:pre-wrap}
+    .taskMaterialState{font-weight:800;font-size:13px}
+    .matReady .taskMaterialState{color:#15803d}
+    .matWaiting .taskMaterialState{color:#b45309}
+    </style>
+    {% endif %}
+
     {% if is_main_admin() %}
         <a class="btn-link" href="{{ url_for('edit_task', task_id=t.id, next=request.full_path) }}">Edit Task</a>
     {% endif %}

@@ -132,6 +132,31 @@
             <div id="taskDraftList" class="taskDraftList"></div>
         </div>
 
+        <div id="taskMaterialsPanel" class="taskMaterialsPanel">
+            <h3>Materials for This Task</h3>
+            <p class="muted" style="margin-top:0">Pick a material from the catalog. The app checks the project inventory: in stock it allocates it, otherwise you can create a PO or a pickup task.</p>
+            <div class="grid">
+                <div>
+                    <label>Quantity</label>
+                    <div class="qtyUnitBox">
+                        <input type="number" id="matQty" step="0.01" min="0.01" value="1">
+                        <select id="matUnit" class="qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
+                            <option value="UN" selected>UN</option>
+                            <option value="PR">PR</option>
+                        </select>
+                    </div>
+                </div>
+                <div><label>Material / Item</label><input id="matName" class="js-part-item" list="partCatalogNameList" placeholder="Search the catalog"></div>
+                <div><label>Brand</label><input id="matBrand" class="js-part-brand" list="partCatalogBrandList"></div>
+                <div><label>Model #</label><input id="matModel" class="js-part-model" list="partCatalogModelList"></div>
+            </div>
+            <label>What needs to be done with this material</label>
+            <input id="matComment" placeholder="e.g. Mount the TV on the north wall, hide the wires">
+            <button type="button" class="btn-secondary" id="matCheckBtn">Check Inventory &amp; Add Material</button>
+            <div id="matList" class="supplierItemList"></div>
+            <input type="hidden" name="task_materials_json" id="taskMaterialsJson">
+        </div>
+
         {% set attachment_project_select_id = "taskProjectSelect" %}
         {% include "_task_attachments_form.html" %}
 
@@ -158,6 +183,53 @@
         <div class="modalActions">
             <button type="button" id="saveNewSupplierBtn">Save Supplier</button>
             <button type="button" class="btn-secondary" id="cancelNewSupplierBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<div class="matOverlay" id="matOverlay" hidden>
+    <div class="matModal">
+        <h3 style="margin-top:0" id="matModalTitle">Material</h3>
+        <div id="matStockBox" class="matChoiceBox" hidden>
+            <label class="matChoice"><input type="radio" name="mat_action" value="stock" checked>
+                <span><strong>Use from inventory</strong> &mdash; <span id="matStockSummary"></span></span></label>
+            <div class="matChoiceFields" id="matStockFields">
+                <select id="matStockItem" style="max-width:none"></select>
+            </div>
+        </div>
+        <div class="matChoiceBox">
+            <label class="matChoice"><input type="radio" name="mat_action" value="po">
+                <span><strong>Create a Purchase Order</strong> &mdash; goes to the Orders page to be emailed or purchased</span></label>
+            <div class="matChoiceFields" id="matPoFields" hidden>
+                <label>Supplier (optional)</label>
+                <select id="matPoSupplier"><option value="">Choose later</option></select>
+                <label>Needed By</label>
+                <input type="date" id="matPoDate">
+            </div>
+        </div>
+        <div class="matChoiceBox">
+            <label class="matChoice"><input type="radio" name="mat_action" value="pickup">
+                <span><strong>Create a pickup task</strong> &mdash; send a worker to get it from a supplier</span></label>
+            <div class="matChoiceFields" id="matPickupFields" hidden>
+                <label>Supplier</label>
+                <select id="matPickupSupplier"><option value="">Choose supplier</option></select>
+                <div class="grid">
+                    <div><label>Pickup Date</label><input type="date" id="matPickupDate"></div>
+                    <div><label>Pickup Time</label><input type="time" id="matPickupTime" value="08:00"></div>
+                </div>
+                <label>Assign Pickup To</label>
+                <select id="matPickupUser">
+                    {% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="matChoiceBox">
+            <label class="matChoice"><input type="radio" name="mat_action" value="note">
+                <span><strong>Just note it on the task</strong> &mdash; no inventory or purchasing action</span></label>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+            <button type="button" id="matConfirmBtn" style="flex:1;margin:0">Add Material to Task</button>
+            <button type="button" class="btn-secondary" id="matCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
         </div>
     </div>
 </div>
@@ -274,6 +346,8 @@
         if(scheduleFields)scheduleFields.style.display=supplierMode?"none":"grid";
         if(taskTextFields)taskTextFields.style.display=supplierMode?"none":"block";
         if(taskBatchPanel)taskBatchPanel.style.display=supplierMode?"none":"block";
+        const materialsPanel=document.getElementById("taskMaterialsPanel");
+        if(materialsPanel)materialsPanel.style.display=supplierMode?"none":"block";
         const titleInput=document.querySelector('[name="title"]');
         const startDateInput=document.querySelector('[name="task_start_date"]');
         const startTimeInput=document.querySelector('[name="task_start_time"]');
@@ -1149,6 +1223,167 @@
         requestRealtimeResponse(true);
     });
     if(realtimeVoiceClearButton)realtimeVoiceClearButton.addEventListener("click",clearRealtimeConversation);
+})();
+</script>
+<style>
+.taskMaterialsPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(37,99,235,.06)}
+.taskMaterialsPanel h3{margin-top:0}
+.matOverlay{position:fixed;inset:0;z-index:2100;background:rgba(15,23,42,.58);display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
+.matOverlay[hidden]{display:none!important}
+.matModal{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:18px 20px;width:100%;max-width:560px;box-shadow:0 18px 60px rgba(15,23,42,.35)}
+.matChoiceBox{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:8px 0;background:rgba(148,163,184,.06)}
+.matChoice{display:flex;gap:10px;align-items:flex-start;margin:0;font-weight:400;cursor:pointer}
+.matChoice input{width:auto;min-height:0;margin:4px 0 0}
+.matChoiceFields{margin:10px 0 2px 26px}
+</style>
+<script>
+(function(){
+    var panel=document.getElementById("taskMaterialsPanel");
+    if(!panel)return;
+    var materials=[];
+    var jsonInput=document.getElementById("taskMaterialsJson");
+    var listEl=document.getElementById("matList");
+    var overlay=document.getElementById("matOverlay");
+    var pending=null;
+    var stockOptions=[];
+    function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+    function localToday(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+    function renderMaterials(){
+        jsonInput.value=JSON.stringify(materials);
+        listEl.innerHTML="";
+        materials.forEach(function(m,index){
+            var row=document.createElement("div");
+            row.className="supplierItemRow";
+            var actionText=m.action==="stock"?"Allocated from inventory — "+m.place
+                :m.action==="po"?"Purchase order will be created (see Orders)"
+                :m.action==="pickup"?"Pickup task will be created — "+(m.pickup_supplier_name||"supplier")
+                :"Note only";
+            var text=document.createElement("div");
+            text.innerHTML="<strong>"+esc(m.item_name)+"</strong> — "+m.quantity+" "+m.unit_measure+
+                (m.brand?" | "+esc(m.brand):"")+(m.item_model?" | "+esc(m.item_model):"")+
+                (m.comment?"<br>"+esc(m.comment):"")+"<br><em>"+esc(actionText)+"</em>";
+            var remove=document.createElement("button");
+            remove.type="button";remove.className="btn-danger";remove.textContent="Remove";
+            remove.addEventListener("click",function(){materials.splice(index,1);renderMaterials();});
+            row.appendChild(text);row.appendChild(remove);
+            listEl.appendChild(row);
+        });
+    }
+    function openOverlay(){overlay.hidden=false;document.body.style.overflow="hidden";}
+    function closeOverlay(){overlay.hidden=true;document.body.style.overflow="";pending=null;}
+    function setAction(value){
+        var radio=overlay.querySelector('input[name="mat_action"][value="'+value+'"]');
+        if(radio)radio.checked=true;
+        document.getElementById("matStockFields").hidden=value!=="stock";
+        document.getElementById("matPoFields").hidden=value!=="po";
+        document.getElementById("matPickupFields").hidden=value!=="pickup";
+    }
+    function fillSuppliers(selectId,suppliers,optionalFirst){
+        var sel=document.getElementById(selectId);
+        sel.innerHTML="";
+        var first=document.createElement("option");
+        first.value="";first.textContent=optionalFirst?"Choose later":"Choose supplier";
+        sel.appendChild(first);
+        (suppliers||[]).forEach(function(s){
+            var o=document.createElement("option");o.value=String(s.id);o.textContent=s.name;sel.appendChild(o);
+        });
+    }
+    overlay.addEventListener("change",function(e){
+        if(e.target.name==="mat_action")setAction(e.target.value);
+    });
+    document.getElementById("matCancelBtn").addEventListener("click",closeOverlay);
+    overlay.addEventListener("click",function(e){if(e.target===overlay)closeOverlay();});
+
+    document.getElementById("matCheckBtn").addEventListener("click",function(){
+        var projectSelect=document.getElementById("taskProjectSelect");
+        var name=document.getElementById("matName").value.trim();
+        var qty=parseFloat(document.getElementById("matQty").value||"1");
+        if(!projectSelect||!projectSelect.value){alert("Choose the project first so the inventory can be checked.");return;}
+        if(!name){alert("Enter the material name.");return;}
+        if(!(qty>0)){alert("Enter a quantity greater than zero.");return;}
+        var params=new URLSearchParams({
+            project_id:projectSelect.value,
+            name:name,
+            model:document.getElementById("matModel").value.trim(),
+            brand:document.getElementById("matBrand").value.trim()
+        });
+        fetch("/tasks/material-check?"+params.toString(),{credentials:"same-origin"})
+            .then(function(r){return r.json();})
+            .then(function(data){
+                pending={
+                    item_name:name,
+                    item_model:document.getElementById("matModel").value.trim(),
+                    brand:document.getElementById("matBrand").value.trim(),
+                    unit_measure:document.getElementById("matUnit").value,
+                    quantity:qty,
+                    comment:document.getElementById("matComment").value.trim()
+                };
+                stockOptions=data.stock||[];
+                document.getElementById("matModalTitle").textContent=name+" — "+qty+" "+pending.unit_measure;
+                var stockBox=document.getElementById("matStockBox");
+                var stockSel=document.getElementById("matStockItem");
+                stockSel.innerHTML="";
+                if(stockOptions.length){
+                    stockBox.hidden=false;
+                    document.getElementById("matStockSummary").textContent=stockOptions[0].label;
+                    stockOptions.forEach(function(s,i){
+                        var o=document.createElement("option");o.value=String(i);o.textContent=s.label;stockSel.appendChild(o);
+                    });
+                    setAction("stock");
+                }else{
+                    stockBox.hidden=true;
+                    setAction("po");
+                }
+                fillSuppliers("matPoSupplier",data.suppliers,true);
+                fillSuppliers("matPickupSupplier",data.suppliers,false);
+                var checkedWorker=document.querySelector('input[name="user_ids"]:checked');
+                if(checkedWorker)document.getElementById("matPickupUser").value=checkedWorker.value;
+                document.getElementById("matPickupDate").value=localToday();
+                document.getElementById("matPoDate").value="";
+                openOverlay();
+            })
+            .catch(function(){alert("The inventory check failed. Try again.");});
+    });
+
+    document.getElementById("matConfirmBtn").addEventListener("click",function(){
+        if(!pending)return;
+        var checked=overlay.querySelector('input[name="mat_action"]:checked');
+        var action=checked?checked.value:"note";
+        pending.action=action;
+        if(action==="stock"){
+            var idx=parseInt(document.getElementById("matStockItem").value||"0",10);
+            var chosen=stockOptions[idx];
+            if(!chosen){alert("Choose the inventory item to allocate.");return;}
+            if(pending.quantity>chosen.available+0.001){
+                alert("Only "+chosen.available+" available there. Lower the quantity or choose another option.");
+                return;
+            }
+            pending.inventory_item_id=chosen.id;
+            pending.place=chosen.place+" — "+chosen.scope;
+        }else if(action==="po"){
+            pending.po_supplier_id=document.getElementById("matPoSupplier").value||"";
+            pending.expected_date=document.getElementById("matPoDate").value||"";
+        }else if(action==="pickup"){
+            var sup=document.getElementById("matPickupSupplier");
+            if(!sup.value){alert("Choose the supplier for the pickup task.");return;}
+            var pu=document.getElementById("matPickupUser");
+            if(!pu.value){alert("Choose the worker for the pickup task.");return;}
+            pending.pickup_supplier_id=sup.value;
+            pending.pickup_supplier_name=sup.options[sup.selectedIndex].textContent;
+            pending.pickup_user_id=pu.value;
+            pending.pickup_date=document.getElementById("matPickupDate").value||"";
+            pending.pickup_time=document.getElementById("matPickupTime").value||"08:00";
+        }
+        materials.push(pending);
+        renderMaterials();
+        closeOverlay();
+        document.getElementById("matName").value="";
+        document.getElementById("matBrand").value="";
+        document.getElementById("matModel").value="";
+        document.getElementById("matComment").value="";
+        document.getElementById("matQty").value="1";
+        document.getElementById("matUnit").value="UN";
+    });
 })();
 </script>
 {% include "_part_catalog_autocomplete.html" %}
