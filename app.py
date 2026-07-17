@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-17 V1"
+APP_BUILD = "2026-07-17 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -11653,6 +11653,7 @@ def update_task_supplier_item(task_id, item_id):
             supplier_pickup_time = %s,
             status = %s,
             supplier_picked_up = %s,
+            location_type = CASE WHEN %s THEN 'truck' ELSE location_type END,
             purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
             purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
             used_note = %s,
@@ -11668,6 +11669,7 @@ def update_task_supplier_item(task_id, item_id):
             part_catalog_id,
             request.form.get("supplier_pickup_time", "").strip(),
             status,
+            status == "picked_up",
             status == "picked_up",
             status == "picked_up",
             session.get("user_id"),
@@ -11746,12 +11748,14 @@ def pickup_task_supplier_item(task_id, item_id):
         return redirect(next_url)
     picked_up = supplier_status == "picked_up"
     now = utc_now_iso()
+    # Picked up -> the material is in stock on the worker's truck; the project
+    # inventory shows it there until it is moved or used.
     conn.execute(
         """
         UPDATE inventory_items
         SET supplier_picked_up = %s,
             status = %s,
-            location_type = 'job_site',
+            location_type = CASE WHEN %s THEN 'truck' ELSE location_type END,
             purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
             purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
             updated_at = %s
@@ -11760,6 +11764,7 @@ def pickup_task_supplier_item(task_id, item_id):
         (
             picked_up,
             supplier_status,
+            picked_up,
             picked_up,
             session.get("user_id"),
             picked_up,
@@ -12135,7 +12140,7 @@ def complete_task(task_id):
             """
             UPDATE inventory_items
             SET status = 'picked_up',
-                location_type = 'job_site',
+                location_type = 'truck',
                 purchased_by = COALESCE(purchased_by, %s),
                 purchased_at = COALESCE(purchased_at, %s),
                 updated_at = %s
@@ -12391,26 +12396,24 @@ def worker_assignment_task_rows(conn, source_task):
 def today_tasks():
     if is_main_admin():
         return redirect(url_for("my_tasks", mode="search"))
-    conn = db()
-    task_day = local_now().date()
-    target_project_id = None
     calendar_task_id = request.args.get("calendar_task", type=int)
     notification_task_id = request.args.get("notification_task", type=int)
     context_task_id = calendar_task_id or notification_task_id
     if context_task_id:
-        context_task = conn.execute(
-            "SELECT project_id, task_start_date, task_date FROM tasks WHERE id = %s AND assigned_user_id = %s",
-            (context_task_id, session.get("user_id"))
-        ).fetchone()
-        task_day = task_scheduled_date_value(context_task) or task_day
-        target_project_id = context_task.get("project_id") if context_task else None
-    task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+        # A task link (notification, SMS, calendar) opens that exact task -
+        # not a project-filtered list where other tasks can hide it.
+        extra = {"calendar_task": calendar_task_id} if calendar_task_id else {}
+        return redirect(url_for("open_task_workspace", task_id=context_task_id, **extra))
+    conn = db()
+    task_day = local_now().date()
+    task_rows = worker_today_task_rows(conn, target_date=task_day)
     received_any = False
     for task_row in task_rows:
         if not task_row.get("accepted_at"):
             received_any = mark_task_assignment_received(conn, task_row) or received_any
     if received_any:
-        task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+        conn.commit()
+        task_rows = worker_today_task_rows(conn, target_date=task_day)
     tasks = load_task_details(conn, task_rows)
     catalog = part_catalog_options(conn)
     conn.close()
@@ -12457,16 +12460,12 @@ def assignment_tasks(task_id):
         conn.close()
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
-    tasks = load_task_details(conn, worker_assignment_task_rows(conn, source_task))
-    catalog = part_catalog_options(conn)
     conn.close()
-    return render_template(
-        "today_tasks.html",
-        tasks=tasks,
-        task_status_options=TASK_STATUS_LABELS,
-        part_catalog=catalog,
-        today=(task_scheduled_date_value(source_task) or local_now().date()).isoformat()
-    )
+    # Open the exact task the worker was sent - never a merged project view.
+    extra = {}
+    if request.args.get("calendar_task", type=int):
+        extra["calendar_task"] = request.args.get("calendar_task", type=int)
+    return redirect(url_for("open_task_workspace", task_id=task_id, **extra))
 
 
 @app.route("/tasks/<int:task_id>/work")
@@ -12501,6 +12500,13 @@ def open_task_workspace(task_id):
         conn.close()
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
+    if task.get("assigned_user_id") == session.get("user_id") and not task.get("accepted_at"):
+        if mark_task_assignment_received(conn, task):
+            conn.commit()
+            refreshed = conn.execute("SELECT accepted_at, status FROM tasks WHERE id = %s", (task_id,)).fetchone()
+            if refreshed:
+                task["accepted_at"] = refreshed.get("accepted_at")
+                task["status"] = refreshed.get("status")
     task = load_task_details(conn, [task], task.get("room_id"))[0]
     catalog = part_catalog_options(conn)
     conn.close()

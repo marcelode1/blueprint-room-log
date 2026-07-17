@@ -18,10 +18,8 @@
         <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
         <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
         {% include "_task_schedule_contact_info.html" %}
-        {% if not t.supplier_id %}
-            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
-            <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
-        {% endif %}
+        <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+        <p><strong>{{ 'Task Status' if t.supplier_id else 'Room Task Status' }}:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
     </div>
 
     {% if is_main_admin() %}
