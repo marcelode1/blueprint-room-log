@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-21 V2"
+APP_BUILD = "2026-07-21 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -86,6 +86,7 @@ COMMON_TIMEZONES = [
 ]
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
+ALLOWED_VIDEOS = {"mp4", "mov", "m4v", "webm", "mkv", "avi"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg", "mp4", "mpeg", "mpga", "flac"}
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
@@ -94,6 +95,10 @@ ALLOWED_PROJECT_FILES = ALLOWED_VENDOR_DOCUMENTS | {"ppt", "pptx", "rtf", "dwg",
 CONTENT_TYPES_BY_EXT = {
     "heic": "image/heic",
     "heif": "image/heif",
+    "mov": "video/quicktime",
+    "m4v": "video/x-m4v",
+    "mkv": "video/x-matroska",
+    "avi": "video/x-msvideo",
 }
 PROJECT_FILE_FOLDERS = [
     {"key": "plans", "label": "Plans"},
@@ -9730,13 +9735,19 @@ def project_gallery(project_id):
         for f in file_rows:
             if f.get("folder_key") not in allowed_keys:
                 continue
-            if file_ext(f.get("original_filename") or "") not in ALLOWED_PHOTOS:
+            ext = file_ext(f.get("original_filename") or "")
+            if ext in ALLOWED_VIDEOS:
+                kind = "video"
+            elif ext in ALLOWED_PHOTOS:
+                kind = "photo"
+            else:
                 continue
             label = folder_labels.get(f.get("folder_key"), "Files")
             if f.get("subfolder_name"):
                 label += " / " + f["subfolder_name"]
             add("Files: " + label, {
                 "photo": f["storage_path"],
+                "kind": kind,
                 "comment": f.get("description") or f.get("original_filename") or "",
                 "by": f.get("user_name") or "Unknown",
                 "date": f.get("created_at") or "",
@@ -9946,8 +9957,8 @@ def project_files(project_id):
             uploads = request.files.getlist(f"{target_folder_key}_files")
         if not uploads:
             uploads = request.files.getlist("capture_files")
-        # Captures include photos and audio recordings, which aren't plain documents.
-        allowed_here = ALLOWED_PROJECT_FILES | ALLOWED_PHOTOS | ALLOWED_AUDIO
+        # Captures include photos, videos, and audio recordings, which aren't plain documents.
+        allowed_here = ALLOWED_PROJECT_FILES | ALLOWED_PHOTOS | ALLOWED_VIDEOS | ALLOWED_AUDIO
         for uploaded in uploads:
             if not uploaded or not uploaded.filename:
                 continue
