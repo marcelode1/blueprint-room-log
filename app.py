@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-21 V1"
+APP_BUILD = "2026-07-21 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -9708,6 +9708,42 @@ def project_gallery(project_id):
             "date": a.get("created_at") or "",
             "context": ctx,
         })
+
+    # Pictures uploaded to the Files section show in the gallery too,
+    # grouped by their folder (only folders this user can view).
+    try:
+        conn2 = db()
+        allowed_keys = project_file_access_keys(conn2, project_id)
+        folder_labels = {f["key"]: f["label"] for f in all_project_file_folders(conn2)}
+        file_rows = conn2.execute(
+            """
+            SELECT project_files.*, users.name AS user_name, project_folders.name AS subfolder_name
+            FROM project_files
+            LEFT JOIN users ON project_files.uploaded_by = users.id
+            LEFT JOIN project_folders ON project_files.folder_id = project_folders.id
+            WHERE project_files.project_id = %s
+            ORDER BY project_files.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
+        conn2.close()
+        for f in file_rows:
+            if f.get("folder_key") not in allowed_keys:
+                continue
+            if file_ext(f.get("original_filename") or "") not in ALLOWED_PHOTOS:
+                continue
+            label = folder_labels.get(f.get("folder_key"), "Files")
+            if f.get("subfolder_name"):
+                label += " / " + f["subfolder_name"]
+            add("Files: " + label, {
+                "photo": f["storage_path"],
+                "comment": f.get("description") or f.get("original_filename") or "",
+                "by": f.get("user_name") or "Unknown",
+                "date": f.get("created_at") or "",
+                "context": "Project Files",
+            })
+    except Exception as e:
+        print("Gallery files section skipped:", e)
 
     ordered = []
     seen = set()
