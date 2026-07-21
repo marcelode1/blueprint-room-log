@@ -3,6 +3,7 @@
 <div class="card" style="max-width:420px;margin:auto;">
     <h2>Mobile User Login</h2>
     <form method="post">
+        {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
         <label>Email</label>
         <input name="email" type="email" value="{{ email or '' }}" required>
         <label>PIN</label>

@@ -150,7 +150,7 @@
 <style>
 .projectFileExplorer{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:16px;align-items:start}.projectFileTree{border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.03);overflow:hidden}.projectFileRoot{padding:14px 16px;font-weight:800;border-bottom:1px solid var(--border)}
 .pfTree,.pfTree ul{list-style:none;margin:0;padding:0}.pfTree ul{margin-left:0}.pfNodeRow{display:flex;align-items:center;gap:4px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}.pfNodeRow:hover{background:rgba(37,99,235,.08)}.pfNodeRow.active{background:var(--primary);color:#fff}.pfNodeRow.active .pfNodeCount{background:#fff;color:var(--primary)}.pfCaret{width:18px;flex:0 0 18px;text-align:center;color:var(--muted);font-size:.8rem;transition:transform .12s ease}.pfCaret.open{transform:rotate(90deg)}.pfCaret.empty{visibility:hidden}.pfNodeIcon{flex:0 0 auto}.pfNodeName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}.pfNodeCount{flex:0 0 auto;min-width:24px;text-align:center;border-radius:999px;padding:1px 7px;font-size:.8rem;color:var(--muted);background:var(--card);border:1px solid var(--border)}.pfKebab{flex:0 0 auto;width:auto!important;min-width:0!important;min-height:0!important;margin:0!important;border:0;background:transparent;color:inherit;cursor:pointer;font-size:1.4rem;line-height:1;padding:4px 10px;border-radius:6px;align-self:center}.pfKebab:hover{background:rgba(0,0,0,.12)}.pfTree ul.pfChildren{margin-left:22px;padding-left:6px;border-left:2px solid var(--border)}
-.pfMenu{position:fixed;z-index:1000;min-width:190px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:6px;max-height:70vh;overflow:auto}.pfMenuBackdrop{position:fixed;inset:0;z-index:999}.pfMenu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);padding:9px 12px;border-radius:6px;cursor:pointer;font-size:.95rem;margin:0}.pfMenu button:hover{background:rgba(37,99,235,.12)}.pfMenu .pfMenuDanger{color:#dc2626}.pfMenuLabel{padding:6px 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}.pfMenuSep{height:1px;background:var(--border);margin:6px 4px}
+.pfMenu{position:fixed;z-index:1000;min-width:190px;max-width:280px;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:6px;max-height:70vh;overflow:auto}.pfMenuBackdrop{position:fixed;inset:0;z-index:999}.pfMenu button{display:block;width:100%;text-align:left;background:transparent;border:0;color:var(--text);padding:9px 12px;border-radius:6px;cursor:pointer;font-size:.95rem;margin:0}.pfMenu button:hover{background:rgba(37,99,235,.12)}.pfMenu .pfMenuDanger{color:#dc2626}.pfMenuLabel{padding:6px 12px;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:800}.pfMenuSep{height:1px;background:var(--border);margin:6px 4px}.pfMenu .pfSendNow{background:var(--primary);color:#fff;text-align:center;font-weight:800}.pfMenu .pfSendNow:hover{background:var(--primary)}.pfMenu .pfSendUserDisabled{color:var(--muted);cursor:not-allowed}
 .projectFilePane{min-width:0}.projectFilePaneHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}.projectFilePaneHeader h3{margin:0}.projectFilePaneHeader p{margin:4px 0 0}.projectFileBreadcrumb{font-weight:800;font-size:1.1rem;overflow-wrap:anywhere}.projectFileBreadcrumb a{color:var(--primary);text-decoration:none}.projectFileBreadcrumb a:hover{text-decoration:underline}.projectFileCrumbSep{color:var(--muted);margin:0 6px}.projectFileCrumbCurrent{color:var(--text)}.projectFileFilesHeader{margin-top:6px;border-top:1px solid var(--border);padding-top:14px}
 .pfFileTable{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px}.pfFileHead,.pfFileRow{display:grid;grid-template-columns:1fr 200px 42px;gap:10px;align-items:center;padding:10px 12px}.pfFileHead{background:rgba(255,255,255,.04);font-weight:800;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);border-bottom:1px solid var(--border)}.pfFileRow{border-bottom:1px solid var(--border);cursor:pointer}.pfFileRow:last-child{border-bottom:0}.pfFileRow:hover{background:rgba(37,99,235,.08)}.pfFileName{display:flex;align-items:center;gap:8px;min-width:0}.pfFileIcon{flex:0 0 auto}.pfFileNameText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.pfFileDate{color:var(--muted);font-size:.92rem;white-space:nowrap}.pfFileKebab{justify-self:end}.projectFileEmpty{border:1px dashed var(--border);border-radius:8px;padding:18px;background:rgba(255,255,255,.03);margin-bottom:14px}.projectFileUploadBox{border-top:1px solid var(--border);margin-top:16px;padding-top:16px}.projectFileUploadTitle{font-weight:800;margin:0 0 10px}.projectFileDropZone{border:2px dashed var(--border);border-radius:8px;background:rgba(37,99,235,.04);display:grid;place-items:center;gap:8px;min-height:170px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease}.projectFileDropZone strong{font-size:1.2rem}.projectFileDropZone span{color:var(--muted);font-weight:700}.projectFileDropZone.dragging{border-color:var(--primary);background:rgba(37,99,235,.12)}.projectFileInput{position:absolute;inline-size:1px;block-size:1px;opacity:0;pointer-events:none}.projectFileChooseButton{margin:0;width:auto}.projectFileChosenList{border:1px solid var(--border);border-radius:8px;background:var(--card);padding:10px;margin:10px 0;overflow-wrap:anywhere}.projectFileUploadBox button{max-width:260px}
 .pfAddTopFolder{width:calc(100% - 20px);margin:10px;padding:10px 12px;border:1px dashed var(--primary);border-radius:8px;background:rgba(37,99,235,.06);color:var(--primary);font-weight:800;cursor:pointer;min-height:0}.pfAddTopFolder:hover{background:rgba(37,99,235,.14)}
@@ -168,7 +168,8 @@ window.PF = {
     folders: {{ folders_json|tojson }},
     selectedKey: {{ selected_folder_key|tojson }},
     currentDirId: {{ current_dir_id|tojson }},
-    customKeys: {{ custom_folder_keys|tojson }}
+    customKeys: {{ custom_folder_keys|tojson }},
+    projectWorkers: {{ project_workers|default([])|tojson }}
 };
 (function(){
     const PF = window.PF;
@@ -414,6 +415,7 @@ window.PF = {
         menuEl.appendChild(menuLabel(file.name));
         menuEl.appendChild(menuButton("Open", ()=>{ closeMenu(); fileOpen(file.url); }));
         menuEl.appendChild(menuButton("Move To…", ()=> showFileMoveMenu(file, x, y)));
+        menuEl.appendChild(menuButton("Send To…", ()=> showFileSendMenu(file, x, y)));
         menuEl.appendChild(menuSep());
         menuEl.appendChild(menuButton("Delete", ()=>{
             closeMenu();
@@ -446,6 +448,59 @@ window.PF = {
                 }));
             });
         }
+        positionMenu(x, y);
+    }
+    function showFileSendMenu(file, x, y){
+        menuEl.innerHTML = "";
+        menuEl.appendChild(menuLabel("Send “"+file.name+"” to"));
+        const workers = PF.projectWorkers || [];
+        if(!workers.length){
+            const none = document.createElement("div");
+            none.className = "pfMenuLabel";
+            none.textContent = "No workers have access to this project yet.";
+            menuEl.appendChild(none);
+            positionMenu(x, y);
+            return;
+        }
+        const selected = new Set();
+        workers.forEach(w=>{
+            const b = document.createElement("button");
+            b.type = "button";
+            const renderText = ()=>{ b.textContent = (selected.has(w.id) ? "☑ " : "☐ ") + w.name + (w.can_login ? "" : " — no login yet"); };
+            if(!w.can_login){ b.disabled = true; b.classList.add("pfSendUserDisabled"); }
+            renderText();
+            b.addEventListener("click", ()=>{
+                if(selected.has(w.id)) selected.delete(w.id); else selected.add(w.id);
+                renderText();
+            });
+            menuEl.appendChild(b);
+        });
+        menuEl.appendChild(menuSep());
+        const send = document.createElement("button");
+        send.type = "button";
+        send.className = "pfSendNow";
+        send.textContent = "Send Now";
+        send.addEventListener("click", ()=>{
+            if(!selected.size){ window.alert("Pick at least one worker first."); return; }
+            const count = selected.size;
+            if(!window.confirm('Send "'+file.name+'" to '+count+' worker'+(count>1?'s':'')+' now?')) return;
+            closeMenu();
+            const form = document.createElement("form");
+            form.method = "post";
+            form.action = "/project/"+PF.projectId+"/files/"+file.id+"/send";
+            const next = document.createElement("input");
+            next.type = "hidden"; next.name = "next";
+            next.value = window.location.pathname + window.location.search;
+            form.appendChild(next);
+            selected.forEach(id=>{
+                const i = document.createElement("input");
+                i.type = "hidden"; i.name = "user_ids"; i.value = id;
+                form.appendChild(i);
+            });
+            document.body.appendChild(form);
+            form.submit();
+        });
+        menuEl.appendChild(send);
         positionMenu(x, y);
     }
     document.querySelectorAll(".pfFileRow").forEach(row=>{

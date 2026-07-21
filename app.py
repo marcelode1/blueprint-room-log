@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-17 V3"
+APP_BUILD = "2026-07-21 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6498,13 +6498,21 @@ def mobile_login():
             session["name"] = user["name"]
             session["role"] = user["role"]
             record_login_notification(user, "mobile")
+            next_url = (request.form.get("next") or "").strip()
+            if next_url.startswith("/") and not next_url.startswith("//"):
+                return redirect(next_url)
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
-        return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
+        return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in, next_url=request.form.get("next", ""))
     invite_token = request.args.get("invite", "").strip()
     if invite_token:
         return redirect(url_for("mobile_create_pin", token=invite_token))
-    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower(), stay_logged_in=True)
+    return render_template(
+        "mobile_login.html",
+        email=request.args.get("email", "").strip().lower(),
+        stay_logged_in=True,
+        next_url=request.args.get("next", "")
+    )
 
 
 @app.route("/mobile/create-pin/<token>", methods=["GET", "POST"])
@@ -10009,6 +10017,23 @@ def project_files(project_id):
             tuple(file_params)
         ).fetchall()
     custom_keys = sorted(custom_folder_keys(conn))
+    project_workers = [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "can_login": bool(row.get("pin_hash")) and bool((row.get("email") or "").strip()),
+        }
+        for row in conn.execute(
+            """
+            SELECT users.id, users.name, users.email, users.pin_hash
+            FROM users
+            JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
+            WHERE users.role <> 'admin'
+            ORDER BY users.name
+            """,
+            (project_id,)
+        ).fetchall()
+    ]
     conn.close()
     return render_template(
         "project_files.html",
@@ -10022,7 +10047,8 @@ def project_files(project_id):
         breadcrumb=breadcrumb,
         current_files=current_files,
         folders_json=folders_json,
-        custom_folder_keys=custom_keys
+        custom_folder_keys=custom_keys,
+        project_workers=project_workers
     )
 
 
@@ -10349,6 +10375,113 @@ def move_project_file(project_id, file_id):
     conn.close()
     flash("File moved.")
     return redirect(url_for("project_files", project_id=project_id, folder=new_key, dir=new_folder_id or None))
+
+
+@app.route("/project/<int:project_id>/files/<int:file_id>/open")
+def open_project_file(project_id, file_id):
+    """Direct link to one project file (used by Send To emails). Requires login;
+    workers land on the mobile login and come straight back to the file."""
+    if "user_id" not in session:
+        return redirect(url_for("mobile_login", next=request.full_path))
+    conn = db()
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not file_row:
+        conn.close()
+        flash("That file is no longer in ProjectONus.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if file_row.get("folder_key") not in project_file_access_keys(conn, project_id):
+        conn.close()
+        flash("You do not have permission to view this file folder.")
+        return redirect(url_for("index"))
+    conn.close()
+    return redirect(url_for("storage_file", storage_path=file_row["storage_path"]))
+
+
+@app.route("/project/<int:project_id>/files/<int:file_id>/send", methods=["POST"])
+@admin_required
+def send_project_file(project_id, file_id):
+    next_url = request.form.get("next") or url_for("project_files", project_id=project_id)
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not project or not file_row:
+        conn.close()
+        flash("Project file not found.")
+        return redirect(next_url)
+    user_ids = []
+    for value in request.form.getlist("user_ids"):
+        try:
+            user_ids.append(int(value))
+        except Exception:
+            pass
+    if not user_ids:
+        conn.close()
+        flash("Choose at least one worker to send the file to.")
+        return redirect(next_url)
+    recipients = conn.execute(
+        """
+        SELECT users.*
+        FROM users
+        JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
+        WHERE users.id = ANY(%s) AND users.role <> 'admin'
+        """,
+        (project_id, user_ids)
+    ).fetchall()
+    filename = file_row.get("original_filename") or "Project file"
+    link = external_url("open_project_file", project_id=project_id, file_id=file_id)
+    now = utc_now_iso()
+    sent_names, skipped_names = [], []
+    for user in recipients:
+        if not (user.get("email") or "").strip() or not user.get("pin_hash"):
+            skipped_names.append(user.get("name") or "worker")
+            continue
+        # Make sure the emailed link will actually open: grant view access to this folder.
+        conn.execute(
+            """
+            INSERT INTO project_file_permissions (project_id, user_id, folder_key, can_view, created_at, updated_at)
+            VALUES (%s, %s, %s, TRUE, %s, %s)
+            ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET can_view = TRUE, updated_at = EXCLUDED.updated_at
+            """,
+            (project_id, user["id"], file_row.get("folder_key"), now, now)
+        )
+        body = (
+            f"Hi {user.get('name') or ''},\n\n"
+            f"{session.get('name') or 'The office'} shared a file with you from project {project.get('name')}:\n\n"
+            f"    {filename}\n\n"
+            f"Open it here (log in with your email and PIN):\n{link}\n\n"
+            f"The file opens right after you log in."
+        )
+        if send_email(user["email"], f"File shared with you: {filename} - {project.get('name')}", body):
+            sent_names.append(user.get("name") or user["email"])
+            try:
+                add_notification(
+                    conn, user["id"], user.get("name") or "", user.get("email") or "", user.get("role") or "",
+                    "task_updated", project_id, None,
+                    f"File shared with you: {filename} ({project.get('name')})"
+                )
+            except Exception as e:
+                print("File share notification failed:", e)
+        else:
+            skipped_names.append(user.get("name") or user["email"])
+    conn.commit()
+    conn.close()
+    message = ""
+    if sent_names:
+        message = f'"{filename}" was emailed to: ' + ", ".join(sent_names) + "."
+    if skipped_names:
+        message += (" " if message else "") + "Could not send to: " + ", ".join(skipped_names) + " (missing email, no active login, or email failed)."
+    flash(message or "Nothing was sent.")
+    return redirect(next_url)
 
 
 
