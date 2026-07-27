@@ -236,6 +236,13 @@
             <p class="muted">This information is used when sending company account details to suppliers.</p>
             <form method="post">
                 <input type="hidden" name="action" value="account_info">
+                {% set company_trade_list = get_app_setting('company_trades', '') %}
+                <label>Fields of Work <span class="muted" style="font-weight:400">(sets the default phase template for new projects)</span></label>
+                <div class="grid" style="margin-bottom:6px">
+                    <label><input type="checkbox" name="company_trades" value="low_voltage" {% if 'low_voltage' in company_trade_list or not company_trade_list %}checked{% endif %}> Low Voltage / AV</label>
+                    <label><input type="checkbox" name="company_trades" value="electrical" {% if 'electrical' in company_trade_list %}checked{% endif %}> Electrical</label>
+                    <label><input type="checkbox" name="company_trades" value="general" {% if 'general' in company_trade_list %}checked{% endif %}> General Construction</label>
+                </div>
                 <div class="grid">
                     <div>
                         <label>Company Name</label>

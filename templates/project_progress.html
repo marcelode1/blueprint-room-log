@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div>
+            <h2 style="margin-bottom:2px">Project Progress</h2>
+            <p class="muted" style="margin:0">Phases update automatically from tagged tasks; switch any phase to Manual to set it yourself.</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+            <button type="button" onclick="window.print()">Print / Save PDF</button>
+        </div>
+    </div>
+</div>
+
+<div class="card progressPaper">
+    <div class="pgHeader">
+        <div>
+            <h1 class="pgTitle">{{ project.name }}</h1>
+            <p class="pgSub">Project Progress Report</p>
+        </div>
+        <div class="pgDonut" style="--pct: {{ overall }}">
+            <div class="pgDonutInner">
+                <span class="pgDonutLabel">Overall<br>Completion</span>
+                <strong>{{ overall }}%</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="pgInfoStrip">
+        <div><span>Customer</span><strong>{{ project.customer_name or '-' }}</strong></div>
+        <div><span>Location</span><strong>{{ project.customer_city or project.customer_address or '-' }}</strong></div>
+        <div><span>Manager</span><strong>{{ manager_name or '-' }}</strong></div>
+        <div><span>Updated</span><strong>{{ today_label }}</strong></div>
+    </div>
+
+    <div class="pgColumns">
+        <div class="pgPhases">
+            {% if phases %}
+                {% for ph in phases %}
+                <div class="pgPhaseRow">
+                    <span class="pgPhaseNum">{{ loop.index }}</span>
+                    <div class="pgPhaseBody">
+                        <div class="pgPhaseTop">
+                            <span class="pgPhaseName">{{ ph.name }}</span>
+                            <strong class="pgPhasePct">{{ ph.pct }}%</strong>
+                        </div>
+                        <div class="pgBar"><div class="pgBarFill {% if ph.pct >= 100 %}full{% endif %}" style="width: {{ ph.pct }}%"></div></div>
+                        <div class="pgPhaseMeta noPrint">
+                            <span class="muted">{{ 'Manual' if ph.mode == 'manual' else ph.source }}</span>
+                            {% if is_main_admin() %}
+                            <form method="post" action="{{ url_for('update_project_phase', project_id=project.id, phase_id=ph.id) }}" class="pgPhaseForm">
+                                <select name="mode">
+                                    <option value="auto" {% if ph.mode != 'manual' %}selected{% endif %}>Auto (tasks)</option>
+                                    <option value="manual" {% if ph.mode == 'manual' %}selected{% endif %}>Manual</option>
+                                </select>
+                                <input type="number" name="manual_pct" min="0" max="100" step="1" value="{{ ph.manual_pct|round|int }}" title="Manual %">
+                                <button type="submit" name="action" value="save">Set</button>
+                                <button type="submit" name="action" value="delete" class="pgDelete" onclick="return confirm('Remove this phase?');">&times;</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="muted">No phases yet.
+                {% if is_main_admin() %}Apply a template to start:{% endif %}</p>
+                {% if is_main_admin() %}
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    {% for key, tpl in phase_templates.items() %}
+                    <form method="post" action="{{ url_for('apply_progress_template', project_id=project.id) }}">
+                        <input type="hidden" name="template_key" value="{{ key }}">
+                        <button type="submit" class="btn-secondary">{{ tpl.label }}</button>
+                    </form>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            {% endif %}
+            {% if is_main_admin() and phases %}
+            <form method="post" action="{{ url_for('add_project_phase', project_id=project.id) }}" class="pgAddForm noPrint">
+                <input name="name" placeholder="Add another phase" style="margin:0">
+                <button type="submit" class="btn-secondary" style="margin:0">Add Phase</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <aside class="pgScope">
+            <div class="pgScopeHead">Scope Items</div>
+            <div class="pgScopeList">
+                {% for item in scope_items %}
+                <div class="pgScopeRow">
+                    {% if is_main_admin() %}
+                    <form method="post" action="{{ url_for('update_scope_item', project_id=project.id, item_id=item.id) }}" style="margin:0;display:flex;gap:8px;align-items:center;flex:1">
+                        <button type="submit" class="pgScopeCheck {% if item.done %}done{% endif %}" title="Toggle">{% if item.done %}&#10003;{% endif %}</button>
+                        <span class="pgScopeLabel {% if item.done %}done{% endif %}">{{ item.label }}</span>
+                    </form>
+                    <form method="post" action="{{ url_for('update_scope_item', project_id=project.id, item_id=item.id) }}" class="noPrint" style="margin:0">
+                        <input type="hidden" name="action" value="delete">
+                        <button type="submit" class="pgScopeDelete" onclick="return confirm('Remove this scope item?');">&times;</button>
+                    </form>
+                    {% else %}
+                    <span class="pgScopeCheck {% if item.done %}done{% endif %}">{% if item.done %}&#10003;{% endif %}</span>
+                    <span class="pgScopeLabel {% if item.done %}done{% endif %}">{{ item.label }}</span>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="muted" style="padding:10px">No scope items yet.</p>
+                {% endfor %}
+            </div>
+            {% if is_main_admin() %}
+            <form method="post" action="{{ url_for('add_scope_item', project_id=project.id) }}" class="pgAddForm noPrint" style="padding:10px">
+                <input name="label" placeholder="Add scope item" style="margin:0">
+                <button type="submit" class="btn-secondary" style="margin:0">Add</button>
+            </form>
+            {% endif %}
+        </aside>
+    </div>
+
+    <div class="pgFocusStrip">
+        <div class="pgFocusBox pgFocusBlue"><span>In Progress</span><p>{{ focus_text }}</p></div>
+        <div class="pgFocusBox pgFocusAmber"><span>Upcoming</span><p>{{ upcoming_text }}</p></div>
+        <div class="pgFocusBox pgFocusRed"><span>Open Items</span><p>{{ open_text }}</p></div>
+    </div>
+</div>
+
+{% if is_main_admin() %}
+<div class="card noPrint">
+    <details>
+        <summary style="cursor:pointer;font-weight:800">&#9998; Edit the In Progress / Upcoming / Open Items text</summary>
+        <p class="muted">These fill in automatically from tasks and orders. Type your own wording to override, or leave a box blank to keep the automatic text.</p>
+        <form method="post" action="{{ url_for('save_progress_focus', project_id=project.id) }}">
+            <div class="grid">
+                <div><label>In Progress</label><input name="progress_focus" value="{{ project.progress_focus or '' }}" placeholder="Auto: {{ focus_text }}"></div>
+                <div><label>Upcoming</label><input name="progress_upcoming" value="{{ project.progress_upcoming or '' }}" placeholder="Auto: {{ upcoming_text }}"></div>
+                <div><label>Open Items</label><input name="progress_open" value="{{ project.progress_open or '' }}" placeholder="Auto: {{ open_text }}"></div>
+            </div>
+            <button type="submit">Save Summary Text</button>
+        </form>
+    </details>
+</div>
+{% endif %}
+
+<style>
+.progressPaper{max-width:1000px;margin-left:auto;margin-right:auto}
+.pgHeader{display:flex;justify-content:space-between;align-items:center;gap:20px;border-bottom:3px solid #1d4ed8;padding-bottom:16px;flex-wrap:wrap}
+.pgTitle{margin:0;font-size:30px;color:#0f172a;text-transform:uppercase;letter-spacing:.5px}
+.pgSub{margin:4px 0 0;color:var(--muted);font-weight:700}
+.pgDonut{--pct:0;width:150px;height:150px;border-radius:50%;background:conic-gradient(#1d4ed8 calc(var(--pct) * 1%), #e2e8f0 0);display:flex;align-items:center;justify-content:center;flex:0 0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pgDonutInner{width:110px;height:110px;border-radius:50%;background:var(--card,#fff);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.pgDonutLabel{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.pgDonutInner strong{font-size:30px;color:#0f172a}
+.pgInfoStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:14px 0;border:1px solid var(--border);border-radius:10px;padding:10px 14px;background:rgba(148,163,184,.07)}
+.pgInfoStrip span{display:block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.pgColumns{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;align-items:start;margin-top:6px}
+.pgPhaseRow{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(148,163,184,.2)}
+.pgPhaseNum{flex:0 0 26px;height:26px;border-radius:50%;background:#1d4ed8;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;margin-top:2px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pgPhaseBody{flex:1;min-width:0}
+.pgPhaseTop{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.pgPhaseName{font-weight:700}
+.pgPhasePct{font-variant-numeric:tabular-nums}
+.pgBar{height:10px;border-radius:999px;background:#e2e8f0;margin-top:5px;overflow:hidden}
+.pgBarFill{height:100%;border-radius:999px;background:#1d4ed8;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pgBarFill.full{background:#16a34a}
+.pgPhaseMeta{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap;font-size:12px}
+.pgPhaseForm{display:flex;gap:6px;align-items:center;margin:0}
+.pgPhaseForm select{width:auto;min-height:30px;padding:3px 6px;margin:0;font-size:12px}
+.pgPhaseForm input{width:64px;min-height:30px;padding:3px 6px;margin:0;font-size:12px}
+.pgPhaseForm button{min-height:30px;padding:3px 10px;margin:0;font-size:12px}
+.pgDelete{background:transparent!important;color:#dc2626!important;border:1px solid #fca5a5!important}
+.pgAddForm{display:flex;gap:8px;margin-top:12px}
+.pgScope{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.pgScopeHead{background:#1e3a8a;color:#fff;font-weight:900;padding:10px 14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pgScopeList{padding:6px 10px}
+.pgScopeRow{display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid rgba(148,163,184,.18)}
+.pgScopeRow:last-child{border-bottom:0}
+.pgScopeCheck{flex:0 0 22px;width:22px!important;height:22px;min-height:0!important;border-radius:50%;border:2px solid #cbd5e1;background:#fff;color:#fff;font-size:13px;font-weight:900;display:flex;align-items:center;justify-content:center;padding:0!important;margin:0!important;cursor:pointer;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pgScopeCheck.done{background:#16a34a;border-color:#16a34a}
+.pgScopeLabel{font-weight:700;font-size:13.5px}
+.pgScopeLabel.done{}
+.pgScopeDelete{background:transparent!important;border:0!important;color:var(--muted)!important;font-size:16px;min-height:0!important;padding:2px 6px!important;margin:0!important;width:auto!important}
+.pgFocusStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:16px}
+.pgFocusBox{border:1px solid var(--border);border-left-width:5px;border-radius:10px;padding:10px 12px}
+.pgFocusBox span{display:block;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.05em}
+.pgFocusBox p{margin:4px 0 0;font-weight:600}
+.pgFocusBlue{border-left-color:#1d4ed8}.pgFocusBlue span{color:#1d4ed8}
+.pgFocusAmber{border-left-color:#f59e0b}.pgFocusAmber span{color:#b45309}
+.pgFocusRed{border-left-color:#dc2626}.pgFocusRed span{color:#b91c1c}
+@media(max-width:820px){.pgColumns{grid-template-columns:1fr}.pgHeader{justify-content:center;text-align:center}}
+@media print{
+    @page{size:letter landscape;margin:.4in}
+    header,.bottom-nav,.backButton,.noPrint,.flash{display:none!important}
+    body{background:white!important}
+    main{max-width:none!important;padding:0!important;margin:0!important}
+    .card{box-shadow:none!important;border:0!important}
+    .progressPaper{max-width:none!important}
+    .pgColumns{grid-template-columns:minmax(0,1fr) 250px!important}
+}
+</style>
+{% endblock %}

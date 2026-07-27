@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-27 V1"
+APP_BUILD = "2026-07-27 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1150,6 +1150,12 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS task_materials_task_idx ON task_materials(task_id)",
         "CREATE INDEX IF NOT EXISTS task_materials_item_idx ON task_materials(inventory_item_id)",
+        "CREATE TABLE IF NOT EXISTS project_phases (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'auto', manual_pct REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_scope_items (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, label TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT FALSE, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phase_id INTEGER REFERENCES project_phases(id) ON DELETE SET NULL",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_focus TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_upcoming TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_open TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
@@ -6983,11 +6989,15 @@ def new_project():
             )
         )
         project_id = cur.fetchone()["id"]
+        template_key = request.form.get("trade_template", "")
+        if template_key in PHASE_TEMPLATES:
+            seed_project_template(conn, project_id, template_key)
         conn.commit()
         conn.close()
         return redirect(url_for("project", project_id=project_id))
 
-    return render_template("new_project.html")
+    default_trade = company_trades()[0]
+    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES, default_trade=default_trade)
 
 
 @app.route("/project/<int:project_id>/edit", methods=["GET", "POST"])
@@ -9770,6 +9780,289 @@ def project_gallery(project_id):
     return render_template("gallery.html", project=project, groups=ordered, total=total)
 
 
+# ---------------------------------------------------------------- project progress + trade templates
+PHASE_TEMPLATES = {
+    "low_voltage": {
+        "label": "Low Voltage / AV",
+        "phases": ["Design & Engineering", "Material Procurement", "Pre-Wire / Rough-In", "Rack & Equipment Install",
+                   "Device Trim-Out", "Programming & Integration", "Testing & Commissioning", "Client Training & Handover"],
+        "scope": ["Network Infrastructure", "Wi-Fi Access Points", "Surveillance Cameras", "Audio / Video",
+                  "Lighting Control", "Access Control", "Intercom / Door Station", "Equipment Rack"],
+    },
+    "electrical": {
+        "label": "Electrical",
+        "phases": ["Design & Permits", "Material Procurement", "Temporary Power", "Underground & Slab Rough",
+                   "Wall Rough-In", "Service & Panel", "Devices & Trim", "Testing & Inspection"],
+        "scope": ["Service Entrance", "Panels & Breakers", "Branch Circuits", "Lighting",
+                  "Receptacles & Devices", "Grounding & Bonding", "Low-Voltage Coordination", "Final Inspection"],
+    },
+    "general": {
+        "label": "General Construction",
+        "phases": ["Site Prep & Permits", "Foundation", "Framing", "MEP Rough-In",
+                   "Insulation & Drywall", "Interior Finishes", "Exterior & Site Work", "Punch List & Handover"],
+        "scope": ["Permits & Approvals", "Structural", "Roofing", "MEP Systems",
+                  "Finishes", "Fixtures", "Site Work", "Final Inspection"],
+    },
+}
+
+
+def task_phase_id_or_none(conn, project_id, raw_value):
+    phase_id = optional_int(raw_value)
+    if not phase_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM project_phases WHERE id = %s AND project_id = %s",
+            (phase_id, project_id)
+        ).fetchone()
+        return phase_id if row else None
+    except Exception:
+        conn.rollback()
+        return None
+
+
+def company_trades():
+    raw = get_app_setting("company_trades", "")
+    keys = [k for k in raw.split(",") if k in PHASE_TEMPLATES]
+    return keys or ["low_voltage"]
+
+
+def seed_project_template(conn, project_id, template_key):
+    template = PHASE_TEMPLATES.get(template_key)
+    if not template:
+        return
+    now = utc_now_iso()
+    existing = conn.execute("SELECT COUNT(*) AS n FROM project_phases WHERE project_id = %s", (project_id,)).fetchone()
+    if int(existing["n"] or 0) == 0:
+        for i, name in enumerate(template["phases"]):
+            conn.execute(
+                "INSERT INTO project_phases (project_id, name, position, mode, manual_pct, created_at) VALUES (%s, %s, %s, 'auto', 0, %s)",
+                (project_id, name, i, now)
+            )
+    existing_scope = conn.execute("SELECT COUNT(*) AS n FROM project_scope_items WHERE project_id = %s", (project_id,)).fetchone()
+    if int(existing_scope["n"] or 0) == 0:
+        for i, label in enumerate(template["scope"]):
+            conn.execute(
+                "INSERT INTO project_scope_items (project_id, label, done, position, created_at) VALUES (%s, %s, FALSE, %s, %s)",
+                (project_id, label, i, now)
+            )
+
+
+def compute_project_progress(conn, project):
+    """Phase percentages: manual value, or auto from tagged tasks; the Material
+    Procurement style phases fall back to inventory status when untagged."""
+    project_id = project["id"]
+    phases = conn.execute(
+        "SELECT * FROM project_phases WHERE project_id = %s ORDER BY position, id",
+        (project_id,)
+    ).fetchall()
+    task_counts = {row["phase_id"]: row for row in conn.execute(
+        """
+        SELECT phase_id, COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status = 'completed') AS done
+        FROM tasks WHERE project_id = %s AND phase_id IS NOT NULL GROUP BY phase_id
+        """,
+        (project_id,)
+    ).fetchall()}
+    material_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status NOT IN ('needs_purchase', 'purchased_waiting_arrival', 'backordered', 'unavailable')) AS ready
+        FROM inventory_items WHERE project_id = %s
+        """,
+        (project_id,)
+    ).fetchone()
+    for phase in phases:
+        counts = task_counts.get(phase["id"])
+        if phase.get("mode") == "manual":
+            pct = float(phase.get("manual_pct") or 0)
+            source = "manual"
+        elif counts and counts["total"]:
+            pct = 100.0 * counts["done"] / counts["total"]
+            source = f'{counts["done"]} of {counts["total"]} tasks done'
+        elif ("procurement" in phase["name"].lower() or "material" in phase["name"].lower()) and material_row and material_row["total"]:
+            pct = 100.0 * material_row["ready"] / material_row["total"]
+            source = f'{material_row["ready"]} of {material_row["total"]} materials in'
+        else:
+            pct = 0.0
+            source = "no tasks tagged yet"
+        phase["pct"] = max(0, min(100, round(pct)))
+        phase["source"] = source
+        phase["task_total"] = counts["total"] if counts else 0
+    overall = round(sum(p["pct"] for p in phases) / len(phases)) if phases else 0
+    return phases, overall
+
+
+@app.route("/project/<int:project_id>/progress")
+@login_required
+def project_progress(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    phases, overall = compute_project_progress(conn, project)
+    scope_items = conn.execute(
+        "SELECT * FROM project_scope_items WHERE project_id = %s ORDER BY position, id",
+        (project_id,)
+    ).fetchall()
+    focus_task = conn.execute(
+        "SELECT title FROM tasks WHERE project_id = %s AND status = 'in_progress' ORDER BY id DESC LIMIT 1",
+        (project_id,)
+    ).fetchone()
+    upcoming_task = conn.execute(
+        """
+        SELECT title, task_start_date FROM tasks
+        WHERE project_id = %s AND status NOT IN ('completed')
+          AND COALESCE(task_start_date, task_date) >= %s
+        ORDER BY COALESCE(task_start_date, task_date), COALESCE(task_start_time, '23:59') LIMIT 1
+        """,
+        (project_id, local_now().date().isoformat())
+    ).fetchone()
+    open_bits = []
+    waiting_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks WHERE project_id = %s AND status IN ('waiting_material', 'waiting_rfi')",
+        (project_id,)
+    ).fetchone()
+    if waiting_row and waiting_row["n"]:
+        open_bits.append(f'{waiting_row["n"]} task(s) waiting on material or RFI')
+    try:
+        po_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM purchase_orders WHERE project_id = %s AND status IN ('draft', 'ordered', 'purchased')",
+            (project_id,)
+        ).fetchone()
+        if po_row and po_row["n"]:
+            open_bits.append(f'{po_row["n"]} open purchase order(s)')
+    except Exception:
+        conn.rollback()
+    conn.close()
+    auto_focus = focus_task["title"] if focus_task else "No task in progress right now"
+    auto_upcoming = (f'{upcoming_task["title"]} ({format_date(upcoming_task["task_start_date"])})'
+                     if upcoming_task else "Nothing scheduled ahead")
+    auto_open = "; ".join(open_bits) if open_bits else "No open items"
+    return render_template(
+        "project_progress.html",
+        project=project,
+        phases=phases,
+        overall=overall,
+        scope_items=scope_items,
+        focus_text=(project.get("progress_focus") or "").strip() or auto_focus,
+        upcoming_text=(project.get("progress_upcoming") or "").strip() or auto_upcoming,
+        open_text=(project.get("progress_open") or "").strip() or auto_open,
+        phase_templates=PHASE_TEMPLATES,
+        manager_name=get_app_setting("company_contact_name", "") or session.get("name") or "",
+        today_label=format_date(local_now().date().isoformat()),
+    )
+
+
+@app.route("/project/<int:project_id>/progress/apply-template", methods=["POST"])
+@admin_required
+def apply_progress_template(project_id):
+    key = request.form.get("template_key", "")
+    conn = db()
+    if key in PHASE_TEMPLATES:
+        seed_project_template(conn, project_id, key)
+        conn.commit()
+        flash(f'{PHASE_TEMPLATES[key]["label"]} template applied.')
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/phase/add", methods=["POST"])
+@admin_required
+def add_project_phase(project_id):
+    name = request.form.get("name", "").strip()[:80]
+    if name:
+        conn = db()
+        pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM project_phases WHERE project_id = %s", (project_id,)).fetchone()["p"]
+        conn.execute(
+            "INSERT INTO project_phases (project_id, name, position, mode, manual_pct, created_at) VALUES (%s, %s, %s, 'auto', 0, %s)",
+            (project_id, name, pos, utc_now_iso())
+        )
+        conn.commit()
+        conn.close()
+        flash(f'Phase "{name}" added.')
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/phase/<int:phase_id>/update", methods=["POST"])
+@admin_required
+def update_project_phase(project_id, phase_id):
+    action = request.form.get("action", "save")
+    conn = db()
+    if action == "delete":
+        conn.execute("DELETE FROM project_phases WHERE id = %s AND project_id = %s", (phase_id, project_id))
+        flash("Phase removed.")
+    else:
+        mode = request.form.get("mode", "auto")
+        if mode not in ("auto", "manual"):
+            mode = "auto"
+        try:
+            manual_pct = max(0.0, min(100.0, float(request.form.get("manual_pct") or 0)))
+        except Exception:
+            manual_pct = 0.0
+        conn.execute(
+            "UPDATE project_phases SET mode = %s, manual_pct = %s WHERE id = %s AND project_id = %s",
+            (mode, manual_pct, phase_id, project_id)
+        )
+        flash("Phase updated.")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/scope/add", methods=["POST"])
+@admin_required
+def add_scope_item(project_id):
+    label = request.form.get("label", "").strip()[:80]
+    if label:
+        conn = db()
+        pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM project_scope_items WHERE project_id = %s", (project_id,)).fetchone()["p"]
+        conn.execute(
+            "INSERT INTO project_scope_items (project_id, label, done, position, created_at) VALUES (%s, %s, FALSE, %s, %s)",
+            (project_id, label, pos, utc_now_iso())
+        )
+        conn.commit()
+        conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/scope/<int:item_id>/update", methods=["POST"])
+@admin_required
+def update_scope_item(project_id, item_id):
+    conn = db()
+    if request.form.get("action") == "delete":
+        conn.execute("DELETE FROM project_scope_items WHERE id = %s AND project_id = %s", (item_id, project_id))
+    else:
+        conn.execute(
+            "UPDATE project_scope_items SET done = NOT done WHERE id = %s AND project_id = %s",
+            (item_id, project_id)
+        )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/focus", methods=["POST"])
+@admin_required
+def save_progress_focus(project_id):
+    conn = db()
+    conn.execute(
+        "UPDATE projects SET progress_focus = %s, progress_upcoming = %s, progress_open = %s WHERE id = %s",
+        (request.form.get("progress_focus", "").strip(), request.form.get("progress_upcoming", "").strip(),
+         request.form.get("progress_open", "").strip(), project_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Progress summary saved. Leave a box blank to go back to automatic text.")
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
 @app.route("/project/<int:project_id>/blueprint")
 @login_required
 def project_blueprint(project_id):
@@ -11898,6 +12191,14 @@ def create_global_task():
             for draft in task_drafts:
                 draft["task_start_date"] = draft.get("task_start_date") or datetime.now().date().isoformat()
                 draft["task_end_date"] = draft.get("task_end_date") or draft["task_start_date"]
+        task_phase_id = optional_int(request.form.get("phase_id"))
+        if task_phase_id:
+            phase_ok = conn.execute(
+                "SELECT 1 FROM project_phases WHERE id = %s AND project_id = %s",
+                (task_phase_id, project_id)
+            ).fetchone()
+            if not phase_ok:
+                task_phase_id = None
         created_tasks = []
         assignment_group_id = uuid.uuid4().hex
 
@@ -11912,8 +12213,8 @@ def create_global_task():
                 task = conn.execute(
                     """
                     INSERT INTO tasks
-                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, phase_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -11932,6 +12233,7 @@ def create_global_task():
                         None,
                         supplier["id"] if supplier else None,
                         supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
+                        task_phase_id,
                         assigned_require_picture,
                         assigned_allow_picture,
                         bool(assigned_permissions.get("write_comments")),
@@ -11985,6 +12287,12 @@ def create_global_task():
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
+    phases_by_project = {}
+    try:
+        for row in conn.execute("SELECT id, name, project_id FROM project_phases ORDER BY project_id, position, id").fetchall():
+            phases_by_project.setdefault(str(row["project_id"]), []).append({"id": row["id"], "name": row["name"]})
+    except Exception:
+        conn.rollback()
     conn.close()
     return render_template(
         "create_task.html",
@@ -11997,7 +12305,8 @@ def create_global_task():
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
         selected_supplier_id=selected_supplier_id,
-        pickup_prefill=pickup_prefill
+        pickup_prefill=pickup_prefill,
+        phases_by_project=phases_by_project
     )
 
 
@@ -12071,6 +12380,7 @@ def edit_task(task_id):
                 task_end_date = %s,
                 title = %s,
                 instructions = %s,
+                phase_id = %s,
                 require_picture = %s,
                 allow_picture_upload = %s,
                 allow_comment = %s,
@@ -12089,6 +12399,7 @@ def edit_task(task_id):
                 end_date,
                 title,
                 request.form.get("instructions", "").strip(),
+                task_phase_id_or_none(conn, task["project_id"], request.form.get("phase_id")),
                 assigned_require_picture,
                 assigned_allow_picture,
                 bool(assigned_permissions.get("write_comments")),
@@ -12128,7 +12439,19 @@ def edit_task(task_id):
 
     task = load_task_details(conn, [task])[0]
     conn.close()
-    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url, task_status_options=TASK_STATUS_LABELS)
+    try:
+        project_phases = conn2 = None
+        conn2 = db()
+        project_phases = conn2.execute(
+            "SELECT id, name FROM project_phases WHERE project_id = %s ORDER BY position, id",
+            (task["project_id"],)
+        ).fetchall()
+        conn2.close()
+    except Exception:
+        project_phases = []
+        if conn2:
+            conn2.close()
+    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url, task_status_options=TASK_STATUS_LABELS, project_phases=project_phases)
 
 
 @app.route("/tasks/<int:task_id>/room-status/<int:room_id>", methods=["POST"])
@@ -15383,6 +15706,8 @@ def settings():
             redirect_tab = "account_info"
             for key in ["company_name", "company_street_address", "company_city", "company_state", "company_zip_code", "company_contact_name", "company_phone", "company_email"]:
                 set_app_setting(key, request.form.get(key, "").strip())
+            trades = [t for t in request.form.getlist("company_trades") if t in PHASE_TEMPLATES]
+            set_app_setting("company_trades", ",".join(trades))
             set_app_setting(
                 "company_address",
                 format_company_address(

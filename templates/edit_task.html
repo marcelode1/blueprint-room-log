@@ -63,6 +63,15 @@
 
         <label>Task Title</label>
         <input name="title" value="{{ task.title or '' }}" required>
+        {% if project_phases %}
+        <label>Project Phase <span class="muted">(optional — feeds the Progress page)</span></label>
+        <select name="phase_id">
+            <option value="">No phase</option>
+            {% for ph in project_phases %}
+                <option value="{{ ph.id }}" {% if task.phase_id == ph.id %}selected{% endif %}>{{ ph.name }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
         <label>Task Information / Instructions</label>
         <textarea name="instructions" rows="6">{{ task.instructions or '' }}</textarea>
 

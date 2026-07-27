@@ -123,6 +123,10 @@
         <div id="taskTextFields">
             <label>Task</label>
             <input name="title" placeholder="Task title">
+            <label>Project Phase <span class="muted" style="font-weight:400">(optional — feeds the Progress page)</span></label>
+            <select name="phase_id" id="taskPhaseSelect">
+                <option value="">No phase</option>
+            </select>
             <label>Task Information / Instructions</label>
             <textarea name="instructions" rows="6" placeholder="Write all details for the worker..."></textarea>
         </div>
@@ -1223,6 +1227,30 @@
         requestRealtimeResponse(true);
     });
     if(realtimeVoiceClearButton)realtimeVoiceClearButton.addEventListener("click",clearRealtimeConversation);
+})();
+</script>
+<script>
+window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
+(function(){
+    var projectSelect=document.getElementById("taskProjectSelect");
+    var phaseSelect=document.getElementById("taskPhaseSelect");
+    if(!projectSelect||!phaseSelect)return;
+    function fillPhases(){
+        var phases=(window.PROJECT_PHASES||{})[projectSelect.value]||[];
+        var current=phaseSelect.value;
+        phaseSelect.innerHTML="";
+        var none=document.createElement("option");
+        none.value="";none.textContent=phases.length?"No phase":"No phases set up for this project";
+        phaseSelect.appendChild(none);
+        phases.forEach(function(p){
+            var o=document.createElement("option");
+            o.value=String(p.id);o.textContent=p.name;
+            if(String(p.id)===current)o.selected=true;
+            phaseSelect.appendChild(o);
+        });
+    }
+    projectSelect.addEventListener("change",fillPhases);
+    fillPhases();
 })();
 </script>
 <style>
