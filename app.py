@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-21 V3"
+APP_BUILD = "2026-07-27 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -9218,7 +9218,7 @@ def test_dtools_connection():
     endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
     if not external_ref:
         flash("Enter a D-Tools Project or Quote ID to test.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="dtools"))
     try:
         payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
         items = dtools_extract_materials(payload, external_ref)
@@ -9227,7 +9227,7 @@ def test_dtools_connection():
         flash(f"D-Tools connected. Found {part_count} part item(s) and {service_count} service/labor item(s).")
     except Exception as e:
         flash(str(e))
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="dtools"))
 
 
 @app.route("/dtools-import", methods=["GET", "POST"])
@@ -15339,6 +15339,19 @@ def confirm_delete_attendance_line():
     )
 
 
+SETTINGS_TABS = [
+    ("company_logo", "Company Logo"),
+    ("contact_card", "Contact Card"),
+    ("email_notifications", "Admin Email Notifications"),
+    ("invoice_settings", "Invoice Settings"),
+    ("dtools", "D-Tools Cloud Integration"),
+    ("permissions", "User Permissions"),
+    ("project_access", "Project Access"),
+    ("account_info", "Account Info"),
+    ("onedrive", "OneDrive Backup"),
+]
+
+
 @app.route("/settings", methods=["GET", "POST"])
 @admin_required
 def settings():
@@ -15504,13 +15517,22 @@ def settings():
                     conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
                 conn.commit()
                 flash("Project access updated.")
-        if redirect_tab:
-            return redirect(url_for("settings", tab=redirect_tab))
-        return redirect(url_for("settings"))
+        action_tabs = {
+            "account_info": "account_info",
+            "logo": "company_logo",
+            "contact_card": "contact_card",
+            "email_notifications": "email_notifications",
+            "invoice_settings": "invoice_settings",
+            "dtools_cloud": "dtools",
+            "onedrive_settings": "onedrive",
+            "permissions": "permissions",
+            "project_access": "project_access",
+        }
+        return redirect(url_for("settings", tab=redirect_tab or action_tabs.get(action, "company_logo")))
 
-    active_tab = request.args.get("tab", "permissions")
-    if active_tab not in ["permissions", "project_access", "account_info"]:
-        active_tab = "permissions"
+    active_tab = request.args.get("tab", "company_logo")
+    if active_tab not in {key for key, _ in SETTINGS_TABS}:
+        active_tab = "company_logo"
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     projects = conn.execute("SELECT id, name, customer_name, customer_address FROM projects ORDER BY name").fetchall()
     permissions = conn.execute("SELECT * FROM user_permissions").fetchall()
@@ -15558,6 +15580,7 @@ def settings():
         file_project_map=file_project_map,
         project_file_folders=settings_file_folders,
         active_tab=active_tab,
+        settings_tabs=SETTINGS_TABS,
         permission_keys=PERMISSION_KEYS,
         onedrive_configured=onedrive_configured(),
         onedrive_connected=onedrive_connected(),
@@ -16085,7 +16108,7 @@ def onedrive_upload(parent_id, filename, data, content_type="application/octet-s
 def onedrive_connect():
     if not onedrive_configured():
         flash("Add the OneDrive Client ID and Secret in Render environment variables first.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     state = secrets.token_urlsafe(24)
     session["onedrive_state"] = state
     return redirect(onedrive_authorize_url(state))
@@ -16097,14 +16120,14 @@ def onedrive_callback():
     error = request.args.get("error_description") or request.args.get("error")
     if error:
         flash(f"OneDrive connection cancelled: {error}")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     if request.args.get("state") != session.pop("onedrive_state", None):
         flash("OneDrive connection failed a security check. Please try again.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     code = request.args.get("code", "")
     if not code:
         flash("OneDrive did not return an authorization code.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     try:
         tok = onedrive_token_request({"grant_type": "authorization_code", "code": code})
         onedrive_save_tokens(tok)
@@ -16118,7 +16141,7 @@ def onedrive_callback():
         flash(f"OneDrive connected. The '{onedrive_root_folder()}' folder is ready.")
     except Exception as e:
         flash(f"Could not connect OneDrive: {e}")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="onedrive"))
 
 
 @app.route("/settings/onedrive/disconnect", methods=["POST"])
@@ -16130,7 +16153,7 @@ def onedrive_disconnect():
     _ONEDRIVE_TOKEN_CACHE["access_token"] = ""
     _ONEDRIVE_TOKEN_CACHE["expires_at"] = 0
     flash("OneDrive disconnected.")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="onedrive"))
 
 
 def onedrive_collect_project_assets(conn, project_id):

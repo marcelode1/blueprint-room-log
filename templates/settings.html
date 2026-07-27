@@ -2,368 +2,387 @@
 {% block content %}
 <div class="card">
     <h2>Admin Settings</h2>
-    <p class="muted">Only the main admin can access this page.</p>
-    <style>
-        .settingsTabs{display:flex;gap:10px;flex-wrap:wrap}
-        .settingsTabs button{width:auto;min-width:180px}
-        .settingsPanel{display:none}
-        .settingsPanel.active{display:block}
-        .settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
-        .projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
-        .projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
-        .fileAccessSection{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
-        .fileAccessProject{border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;background:rgba(255,255,255,.03)}
-        .fileAccessProject h5{margin:0 0 10px;font-size:1rem}
-        .fileAccessFolders{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-        .fileAccessFolders label{border:1px solid var(--border);border-radius:8px;padding:9px;background:var(--card);font-weight:700}
-        @media(max-width:760px){.settingsTabs{display:none}}
-    </style>
-    <div class="settingsTabs desktop-only">
-        <button type="button" class="{% if active_tab != 'permissions' %}btn-secondary{% endif %}" data-settings-tab="permissions">User Permissions</button>
-        <button type="button" class="{% if active_tab != 'project_access' %}btn-secondary{% endif %}" data-settings-tab="projectAccess">Project Access</button>
-        <button type="button" class="{% if active_tab != 'account_info' %}btn-secondary{% endif %}" data-settings-tab="accountInfo">Account Info</button>
+    <p class="muted" style="margin:0">Only the main admin can access this page. Pick a section on the left.</p>
+</div>
+
+<div class="settingsLayout">
+    <aside class="settingsSubNav desktop-only" aria-label="Settings sections">
+        {% for key, label in settings_tabs %}
+            <a class="settingsNavItem {% if active_tab == key %}active{% endif %}" href="{{ url_for('settings', tab=key) }}" data-settings-tab="{{ key }}">{{ label }}</a>
+        {% endfor %}
+    </aside>
+
+    <div class="settingsContent">
+
+        <div class="card settingsPanel {% if active_tab == 'company_logo' %}active{% endif %}" data-settings-panel="company_logo">
+            <h3>Company Logo</h3>
+            {% set logo = get_app_setting("company_logo") %}
+            {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" style="max-height:120px;max-width:320px;background:white;padding:10px;border-radius:12px;">{% endif %}
+            <form method="post" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="logo">
+                <label>Upload Company Logo</label>
+                <input type="file" name="company_logo" accept="image/*,.svg" required>
+                <button type="submit">Save Logo</button>
+            </form>
+            <p class="muted">This logo will show on the first page with "Powered by ProjectONus."</p>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'contact_card' %}active{% endif %}" data-settings-panel="contact_card">
+            <h3>Contact Card</h3>
+            <p class="muted">This is the shareable company business card (the "Contact Card" link in the menu, with QR code). It uses your Account Info (company name, contact name, phone, email, address, logo) plus the fields below. <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Open / preview the card</a>.</p>
+            <form method="post" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="contact_card">
+                <div class="grid">
+                    <div>
+                        <label>Cover Banner Image (optional)</label>
+                        {% set banner = get_app_setting('card_banner') %}
+                        {% if banner %}<div><img src="{{ url_for('storage_file', storage_path=banner) }}" style="max-height:80px;border-radius:10px;border:1px solid var(--border)"></div>{% endif %}
+                        <input type="file" name="card_banner" accept="image/*">
+                        {% if banner %}<label style="font-weight:500"><input type="checkbox" name="remove_card_banner"> Remove banner</label>{% endif %}
+                    </div>
+                    <div>
+                        <label>Profile Photo (optional)</label>
+                        {% set photo = get_app_setting('card_photo') %}
+                        {% if photo %}<div><img src="{{ url_for('storage_file', storage_path=photo) }}" style="height:72px;width:72px;object-fit:cover;border-radius:50%;border:1px solid var(--border)"></div>{% endif %}
+                        <input type="file" name="card_photo" accept="image/*">
+                        {% if photo %}<label style="font-weight:500"><input type="checkbox" name="remove_card_photo"> Remove photo</label>{% endif %}
+                    </div>
+                </div>
+                <div class="grid">
+                    <div>
+                        <label>Title / Role (optional)</label>
+                        <input name="card_title" value="{{ get_app_setting('card_title') }}" placeholder="e.g. Electrical Engineering">
+                    </div>
+                    <div>
+                        <label>Mobile Number (optional)</label>
+                        <input name="company_mobile" type="tel" value="{{ get_app_setting('company_mobile') }}">
+                    </div>
+                    <div>
+                        <label>Website (optional)</label>
+                        <input name="company_website" value="{{ get_app_setting('company_website') }}" placeholder="www.yourcompany.com">
+                    </div>
+                </div>
+                <div class="grid">
+                    <div>
+                        <label>Instagram (optional)</label>
+                        <input name="card_instagram" value="{{ get_app_setting('card_instagram') }}" placeholder="@yourhandle">
+                    </div>
+                    <div>
+                        <label>Facebook (optional)</label>
+                        <input name="card_facebook" value="{{ get_app_setting('card_facebook') }}" placeholder="yourpage or full URL">
+                    </div>
+                    <div>
+                        <label>LinkedIn (optional)</label>
+                        <input name="card_linkedin" value="{{ get_app_setting('card_linkedin') }}" placeholder="username or full URL">
+                    </div>
+                </div>
+                <label>Tagline / Short description (optional)</label>
+                <textarea name="card_tagline" rows="2" placeholder="A short line about your services, shown on the card">{{ get_app_setting('card_tagline') }}</textarea>
+                <button type="submit">Save Contact Card</button>
+            </form>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'email_notifications' %}active{% endif %}" data-settings-panel="email_notifications">
+            <h3>Admin Email Notifications</h3>
+            <p class="muted">Choose which field updates are sent to admin email. In-app admin notifications are always created.</p>
+            <form method="post">
+                <input type="hidden" name="action" value="email_notifications">
+                <div class="grid">
+                    <label><input type="checkbox" name="email_note_comments" {% if get_app_setting("email_note_comments", "1") == "1" %}checked{% endif %}> Email comments</label>
+                    <label><input type="checkbox" name="email_note_pictures" {% if get_app_setting("email_note_pictures", "1") == "1" %}checked{% endif %}> Email pictures</label>
+                    <label><input type="checkbox" name="email_note_audio" {% if get_app_setting("email_note_audio", "1") == "1" %}checked{% endif %}> Email audio</label>
+                </div>
+                <button type="submit">Save Email Notification Settings</button>
+            </form>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'invoice_settings' %}active{% endif %}" data-settings-panel="invoice_settings">
+            <h3>Invoice Settings</h3>
+            <p class="muted">This tax rate is used automatically on invoices.</p>
+            <form method="post">
+                <input type="hidden" name="action" value="invoice_settings">
+                <div class="grid">
+                    <div>
+                        <label>Default Tax Rate %</label>
+                        <input name="default_invoice_tax_rate" type="number" step="0.001" min="0" value="{{ get_app_setting('default_invoice_tax_rate', '0') }}">
+                    </div>
+                </div>
+                <button type="submit">Save Invoice Settings</button>
+            </form>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'dtools' %}active{% endif %}" data-settings-panel="dtools">
+            {% set dtools = dtools_cloud_config() %}
+            <h3>D-Tools Cloud Integration</h3>
+            <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>
+            <form method="post">
+                <input type="hidden" name="action" value="dtools_cloud">
+                <div class="grid">
+                    <div>
+                        <label>D-Tools Cloud API Key</label>
+                        <input name="dtools_cloud_api_key" type="password" placeholder="{% if dtools.api_key %}API key is saved{% else %}Paste API key from D-Tools Cloud{% endif %}">
+                    </div>
+                    <div>
+                        <label>Base API URL</label>
+                        <input name="dtools_cloud_base_url" value="{{ dtools.base_url or 'https://dtcloudapi.d-tools.cloud/api/v1' }}">
+                    </div>
+                    <div>
+                        <label>Material Endpoint Path</label>
+                        <input name="dtools_cloud_material_path" value="{{ dtools.material_path or 'Projects/GetProject' }}" placeholder="Projects/GetProject or Quotes/GetQuote">
+                    </div>
+                    <div>
+                        <label>ID Parameter Name</label>
+                        <input name="dtools_cloud_id_param" value="{{ dtools.id_param or 'Id' }}">
+                    </div>
+                </div>
+                <label>Authorization Header <span class="muted">(leave blank — advanced only)</span></label>
+                <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or '' }}" placeholder="Leave blank unless D-Tools support gives you one">
+                <label><input type="checkbox" name="dtools_cloud_clear_key"> Clear saved API key</label>
+                <button type="submit">Save D-Tools Cloud Settings</button>
+            </form>
+            <p class="muted">Per the D-Tools Cloud API docs, requests authenticate with the <strong>API key only</strong> (sent as the <code>X-API-Key</code> header). Leave Authorization Header blank. IDs used below must be the D-Tools <strong>GUID</strong> (e.g. <code>75E98168-77FF-40C9-A8E5-4F0116C943E6</code>), not the quote/project number.</p>
+            <form method="post" action="{{ url_for('test_dtools_connection') }}">
+                <h4>Test D-Tools Import</h4>
+                <div class="grid">
+                    <div><label>D-Tools Project or Quote ID</label><input name="dtools_ref" placeholder="Paste one real D-Tools ID"></div>
+                    <div><label>Endpoint Path</label><input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}"></div>
+                </div>
+                <button type="submit" class="btn-secondary">Test Connection and Count Items</button>
+            </form>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" data-settings-panel="permissions">
+            <h3>User Permissions</h3>
+            <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
+            {% for u in users %}
+                {% set eff = effective_perms.get(u.id, {}) %}
+                <div class="card">
+                    <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+                    <form method="post">
+                        <input type="hidden" name="action" value="permissions">
+                        <input type="hidden" name="user_id" value="{{ u.id }}">
+                        <div class="grid">
+                            {% for d in permission_grid_defs %}
+                                <label><input type="checkbox" name="{{ d.key }}" {% if eff.get(d.key) %}checked{% endif %}> {{ d.label }}</label>
+                            {% endfor %}
+                        </div>
+                        <div class="fileAccessSection">
+                            <h5>Project Files Access</h5>
+                            <p class="muted">Choose which project folders this user can open. Add project access first if a project is not listed here.</p>
+                            {% if u.role == "admin" %}
+                                <p class="muted">Admin accounts can see every project file folder.</p>
+                            {% else %}
+                                {% set file_projects = file_project_map.get(u.id, []) %}
+                                {% set user_file_access = project_file_access_map.get(u.id, {}) %}
+                                {% if file_projects %}
+                                    {% for project in file_projects %}
+                                        {% set selected_folders = user_file_access.get(project.id, []) %}
+                                        <div class="fileAccessProject">
+                                            <h5>{{ project.name }}</h5>
+                                            <div class="fileAccessFolders">
+                                                {% for folder in project_file_folders %}
+                                                    <label>
+                                                        <input type="checkbox" name="project_file_folders_{{ project.id }}" value="{{ folder.key }}" {% if folder.key in selected_folders %}checked{% endif %}>
+                                                        {{ folder.label }}
+                                                    </label>
+                                                {% endfor %}
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <p class="muted">No project access yet. Add this user to a project under the Project Access section first.</p>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                        <button type="submit">Save Permissions for {{ u.name }}</button>
+                    </form>
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" data-settings-panel="project_access">
+            <h3>Project Access</h3>
+            <p class="muted">Choose which projects each user can see. Workers assigned to a task keep project access until it is revoked here. Admin accounts can see every project automatically.</p>
+            {% for u in users %}
+                {% set selected_projects = project_access_map.get(u.id, []) %}
+                <div class="card">
+                    <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
+                    {% if u.role == "admin" %}
+                        <p class="muted">Admin accounts have access to all projects.</p>
+                    {% else %}
+                        <form method="post">
+                            <input type="hidden" name="action" value="project_access">
+                            <input type="hidden" name="user_id" value="{{ u.id }}">
+                            <div class="projectAccessList">
+                                {% for p in projects %}
+                                    <label>
+                                        <input type="checkbox" name="project_ids" value="{{ p.id }}" {% if p.id in selected_projects %}checked{% endif %}>
+                                        <strong>{{ p.name }}</strong><br>
+                                        <span class="muted">{{ p.customer_name or "No customer" }}{% if p.customer_address %} - {{ p.customer_address }}{% endif %}</span>
+                                    </label>
+                                {% else %}
+                                    <p>No projects created yet.</p>
+                                {% endfor %}
+                            </div>
+                            <button type="submit">Save Project Access for {{ u.name }}</button>
+                        </form>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="card settingsPanel desktop-only {% if active_tab == 'account_info' %}active{% endif %}" data-settings-panel="account_info">
+            <h3>Account Info</h3>
+            <p class="muted">This information is used when sending company account details to suppliers.</p>
+            <form method="post">
+                <input type="hidden" name="action" value="account_info">
+                <div class="grid">
+                    <div>
+                        <label>Company Name</label>
+                        <input name="company_name" value="{{ get_app_setting('company_name', 'ProjectONus') }}" required>
+                    </div>
+                    <div>
+                        <label>Contact Name</label>
+                        <input name="company_contact_name" value="{{ get_app_setting('company_contact_name') }}">
+                    </div>
+                    <div>
+                        <label>Phone Number</label>
+                        <input name="company_phone" type="tel" value="{{ get_app_setting('company_phone') }}">
+                    </div>
+                    <div>
+                        <label>Email</label>
+                        <input name="company_email" type="email" value="{{ get_app_setting('company_email') }}">
+                    </div>
+                </div>
+                <div class="grid">
+                    <div>
+                        <label>Street Name and Number</label>
+                        <input name="company_street_address" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
+                    </div>
+                    <div>
+                        <label>City</label>
+                        <input name="company_city" value="{{ get_app_setting('company_city') }}">
+                    </div>
+                    <div>
+                        <label>State</label>
+                        <input name="company_state" value="{{ get_app_setting('company_state') }}">
+                    </div>
+                    <div>
+                        <label>Zip Code</label>
+                        <input name="company_zip_code" value="{{ get_app_setting('company_zip_code') }}">
+                    </div>
+                </div>
+                <button type="submit">Save Account Info</button>
+            </form>
+        </div>
+
+        <div class="card settingsPanel {% if active_tab == 'onedrive' %}active{% endif %}" data-settings-panel="onedrive">
+            <h3>OneDrive Cloud Backup</h3>
+            <p class="muted">Back up each project's photos and comments to a <strong>{{ onedrive_root_folder }}</strong> folder in OneDrive. Files go straight to the cloud (nothing is stored on a PC). Each project then has <strong>Create Backup Folder</strong> and <strong>Backup Data</strong> buttons, and shows when it was last backed up.</p>
+
+            <details class="dtoolsAdvanced" {% if not onedrive_configured %}open{% endif %}>
+                <summary>📖 First-time setup — how to connect OneDrive (read this)</summary>
+                <ol style="line-height:1.6;padding-left:20px">
+                    <li><strong>Register the app with Microsoft (one time).</strong> Go to <a href="https://portal.azure.com" target="_blank" rel="noopener">portal.azure.com</a> → <em>Microsoft Entra ID → App registrations → New registration</em>.
+                        <ul style="margin:6px 0">
+                            <li>Name: <code>ProjectONus</code></li>
+                            <li>Supported account types: <strong>“Accounts in any organizational directory and personal Microsoft accounts”</strong></li>
+                            <li>Redirect URI → platform <strong>Web</strong> → paste exactly:<br><code>{{ onedrive_redirect_uri }}</code></li>
+                        </ul>
+                    </li>
+                    <li>Open the new app → <strong>Overview</strong> → copy the <strong>Application (client) ID</strong>.</li>
+                    <li><strong>Certificates &amp; secrets → New client secret</strong> → copy the secret’s <strong>Value</strong> (not the ID).</li>
+                    <li>Paste both into the boxes below and click <strong>Save OneDrive Settings</strong>. (Leave Tenant as <code>common</code> — it works for both personal and business OneDrive.)</li>
+                    <li>Click <strong>Connect OneDrive</strong> and sign in with the Microsoft account that owns the OneDrive. Approve access. The <strong>{{ onedrive_root_folder }}</strong> folder is created automatically.</li>
+                    <li>Go to any project → <strong>Create Backup Folder</strong>, then <strong>Backup Data</strong>. Re-pressing only sends new items — nothing is uploaded twice.</li>
+                </ol>
+                <p class="muted">No files are kept on any PC — uploads go directly to OneDrive’s cloud. Business/work accounts may need a Microsoft 365 admin to “grant consent” once.</p>
+            </details>
+
+            <form method="post">
+                <input type="hidden" name="action" value="onedrive_settings">
+                <div class="grid">
+                    <div>
+                        <label>Application (Client) ID</label>
+                        <input name="onedrive_client_id" value="{{ onedrive_client_id }}" placeholder="From Azure app Overview">
+                    </div>
+                    <div>
+                        <label>Client Secret {% if onedrive_secret_saved %}<span class="muted">(saved — leave blank to keep)</span>{% endif %}</label>
+                        <input name="onedrive_client_secret" type="password" placeholder="{% if onedrive_secret_saved %}Secret is saved{% else %}Paste the secret Value{% endif %}">
+                    </div>
+                    <div>
+                        <label>Tenant</label>
+                        <input name="onedrive_tenant" value="{{ onedrive_tenant }}" placeholder="common">
+                    </div>
+                    <div>
+                        <label>OneDrive Folder Name</label>
+                        <input name="onedrive_root_folder" value="{{ onedrive_root_folder }}" placeholder="ProjectONus">
+                    </div>
+                </div>
+                <label>Redirect URI (register this exact value in Azure)</label>
+                <input value="{{ onedrive_redirect_uri }}" readonly onclick="this.select()">
+                <button type="submit">Save OneDrive Settings</button>
+            </form>
+
+            {% if onedrive_connected %}
+                <p class="pill" style="background:#dcfce7;color:#166534;margin-top:12px">Connected{% if onedrive_account %} as {{ onedrive_account }}{% endif %}</p>
+                <p class="muted">The <strong>{{ onedrive_root_folder }}</strong> folder is ready. Use the buttons on each project page.</p>
+                <form method="post" action="{{ url_for('onedrive_disconnect') }}" onsubmit="return confirm('Disconnect OneDrive? Existing backups stay in OneDrive; new backups will stop until you reconnect.');">
+                    <button type="submit" class="btn-danger">Disconnect OneDrive</button>
+                </form>
+            {% elif onedrive_configured %}
+                <p class="muted" style="margin-top:12px">Settings saved. Now sign in once with the Microsoft account that owns the OneDrive.</p>
+                <a class="btn-link" href="{{ url_for('onedrive_connect') }}">Connect OneDrive</a>
+            {% else %}
+                <p class="muted" style="margin-top:12px">Enter the Client ID and Secret above and save, then the Connect button appears.</p>
+            {% endif %}
+        </div>
+
     </div>
 </div>
 
-<div class="card settingsPanel desktop-only {% if active_tab == 'account_info' %}active{% endif %}" id="accountInfoPanel">
-    <h3>Account Info</h3>
-    <p class="muted">This information is used when sending company account details to suppliers.</p>
-    <form method="post">
-        <input type="hidden" name="action" value="account_info">
-        <div class="grid">
-            <div>
-                <label>Company Name</label>
-                <input name="company_name" value="{{ get_app_setting('company_name', 'ProjectONus') }}" required>
-            </div>
-            <div>
-                <label>Contact Name</label>
-                <input name="company_contact_name" value="{{ get_app_setting('company_contact_name') }}">
-            </div>
-            <div>
-                <label>Phone Number</label>
-                <input name="company_phone" type="tel" value="{{ get_app_setting('company_phone') }}">
-            </div>
-            <div>
-                <label>Email</label>
-                <input name="company_email" type="email" value="{{ get_app_setting('company_email') }}">
-            </div>
-        </div>
-        <div class="grid">
-            <div>
-                <label>Street Name and Number</label>
-                <input name="company_street_address" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
-            </div>
-            <div>
-                <label>City</label>
-                <input name="company_city" value="{{ get_app_setting('company_city') }}">
-            </div>
-            <div>
-                <label>State</label>
-                <input name="company_state" value="{{ get_app_setting('company_state') }}">
-            </div>
-            <div>
-                <label>Zip Code</label>
-                <input name="company_zip_code" value="{{ get_app_setting('company_zip_code') }}">
-            </div>
-        </div>
-        <button type="submit">Save Account Info</button>
-    </form>
-</div>
-
-<div class="card">
-    <h3>Company Logo</h3>
-    {% set logo = get_app_setting("company_logo") %}
-    {% if logo %}<img src="{{ url_for('storage_file', storage_path=logo) }}" style="max-height:120px;max-width:320px;background:white;padding:10px;border-radius:12px;">{% endif %}
-    <form method="post" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="logo">
-        <label>Upload Company Logo</label>
-        <input type="file" name="company_logo" accept="image/*,.svg" required>
-        <button type="submit">Save Logo</button>
-    </form>
-    <p class="muted">This logo will show on the first page with "Powered by ProjectONus."</p>
-</div>
-
-<div class="card">
-    <h3>Contact Card</h3>
-    <p class="muted">This is the shareable company business card (the "Contact Card" link in the menu, with QR code). It uses your Account Info above (company name, contact name, phone, email, address, logo) plus the fields below. <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Open / preview the card</a>.</p>
-    <form method="post" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="contact_card">
-        <div class="grid">
-            <div>
-                <label>Cover Banner Image (optional)</label>
-                {% set banner = get_app_setting('card_banner') %}
-                {% if banner %}<div><img src="{{ url_for('storage_file', storage_path=banner) }}" style="max-height:80px;border-radius:10px;border:1px solid var(--border)"></div>{% endif %}
-                <input type="file" name="card_banner" accept="image/*">
-                {% if banner %}<label style="font-weight:500"><input type="checkbox" name="remove_card_banner"> Remove banner</label>{% endif %}
-            </div>
-            <div>
-                <label>Profile Photo (optional)</label>
-                {% set photo = get_app_setting('card_photo') %}
-                {% if photo %}<div><img src="{{ url_for('storage_file', storage_path=photo) }}" style="height:72px;width:72px;object-fit:cover;border-radius:50%;border:1px solid var(--border)"></div>{% endif %}
-                <input type="file" name="card_photo" accept="image/*">
-                {% if photo %}<label style="font-weight:500"><input type="checkbox" name="remove_card_photo"> Remove photo</label>{% endif %}
-            </div>
-        </div>
-        <div class="grid">
-            <div>
-                <label>Title / Role (optional)</label>
-                <input name="card_title" value="{{ get_app_setting('card_title') }}" placeholder="e.g. Electrical Engineering">
-            </div>
-            <div>
-                <label>Mobile Number (optional)</label>
-                <input name="company_mobile" type="tel" value="{{ get_app_setting('company_mobile') }}">
-            </div>
-            <div>
-                <label>Website (optional)</label>
-                <input name="company_website" value="{{ get_app_setting('company_website') }}" placeholder="www.yourcompany.com">
-            </div>
-        </div>
-        <div class="grid">
-            <div>
-                <label>Instagram (optional)</label>
-                <input name="card_instagram" value="{{ get_app_setting('card_instagram') }}" placeholder="@yourhandle">
-            </div>
-            <div>
-                <label>Facebook (optional)</label>
-                <input name="card_facebook" value="{{ get_app_setting('card_facebook') }}" placeholder="yourpage or full URL">
-            </div>
-            <div>
-                <label>LinkedIn (optional)</label>
-                <input name="card_linkedin" value="{{ get_app_setting('card_linkedin') }}" placeholder="username or full URL">
-            </div>
-        </div>
-        <label>Tagline / Short description (optional)</label>
-        <textarea name="card_tagline" rows="2" placeholder="A short line about your services, shown on the card">{{ get_app_setting('card_tagline') }}</textarea>
-        <button type="submit">Save Contact Card</button>
-    </form>
-</div>
-
-<div class="card">
-    <h3>Admin Email Notifications</h3>
-    <p class="muted">Choose which field updates are sent to admin email. In-app admin notifications are always created.</p>
-    <form method="post">
-        <input type="hidden" name="action" value="email_notifications">
-        <div class="grid">
-            <label><input type="checkbox" name="email_note_comments" {% if get_app_setting("email_note_comments", "1") == "1" %}checked{% endif %}> Email comments</label>
-            <label><input type="checkbox" name="email_note_pictures" {% if get_app_setting("email_note_pictures", "1") == "1" %}checked{% endif %}> Email pictures</label>
-            <label><input type="checkbox" name="email_note_audio" {% if get_app_setting("email_note_audio", "1") == "1" %}checked{% endif %}> Email audio</label>
-        </div>
-        <button type="submit">Save Email Notification Settings</button>
-    </form>
-</div>
-
-<div class="card">
-    <h3>Invoice Settings</h3>
-    <p class="muted">This tax rate is used automatically on invoices.</p>
-    <form method="post">
-        <input type="hidden" name="action" value="invoice_settings">
-        <div class="grid">
-            <div>
-                <label>Default Tax Rate %</label>
-                <input name="default_invoice_tax_rate" type="number" step="0.001" min="0" value="{{ get_app_setting('default_invoice_tax_rate', '0') }}">
-            </div>
-        </div>
-        <button type="submit">Save Invoice Settings</button>
-    </form>
-</div>
-
-<div class="card">
-    {% set dtools = dtools_cloud_config() %}
-    <h3>D-Tools Cloud Integration</h3>
-    <p class="muted">Connect D-Tools Cloud so ProjectONus can import project or quote material items into inventory as Needs Purchase.</p>
-    <form method="post">
-        <input type="hidden" name="action" value="dtools_cloud">
-        <div class="grid">
-            <div>
-                <label>D-Tools Cloud API Key</label>
-                <input name="dtools_cloud_api_key" type="password" placeholder="{% if dtools.api_key %}API key is saved{% else %}Paste API key from D-Tools Cloud{% endif %}">
-            </div>
-            <div>
-                <label>Base API URL</label>
-                <input name="dtools_cloud_base_url" value="{{ dtools.base_url or 'https://dtcloudapi.d-tools.cloud/api/v1' }}">
-            </div>
-            <div>
-                <label>Material Endpoint Path</label>
-                <input name="dtools_cloud_material_path" value="{{ dtools.material_path or 'Projects/GetProject' }}" placeholder="Projects/GetProject or Quotes/GetQuote">
-            </div>
-            <div>
-                <label>ID Parameter Name</label>
-                <input name="dtools_cloud_id_param" value="{{ dtools.id_param or 'Id' }}">
-            </div>
-        </div>
-        <label>Authorization Header <span class="muted">(leave blank — advanced only)</span></label>
-        <input name="dtools_cloud_auth_header" value="{{ dtools.auth_header or '' }}" placeholder="Leave blank unless D-Tools support gives you one">
-        <label><input type="checkbox" name="dtools_cloud_clear_key"> Clear saved API key</label>
-        <button type="submit">Save D-Tools Cloud Settings</button>
-    </form>
-    <p class="muted">Per the D-Tools Cloud API docs, requests authenticate with the <strong>API key only</strong> (sent as the <code>X-API-Key</code> header). Leave Authorization Header blank. IDs used below must be the D-Tools <strong>GUID</strong> (e.g. <code>75E98168-77FF-40C9-A8E5-4F0116C943E6</code>), not the quote/project number.</p>
-    <form method="post" action="{{ url_for('test_dtools_connection') }}">
-        <h4>Test D-Tools Import</h4>
-        <div class="grid">
-            <div><label>D-Tools Project or Quote ID</label><input name="dtools_ref" placeholder="Paste one real D-Tools ID"></div>
-            <div><label>Endpoint Path</label><input name="dtools_endpoint_path" value="{{ dtools.material_path or 'Projects/GetProject' }}"></div>
-        </div>
-        <button type="submit" class="btn-secondary">Test Connection and Count Items</button>
-    </form>
-
-    <hr style="margin:22px 0;border:none;border-top:1px solid var(--border)">
-    <h3>OneDrive Cloud Backup</h3>
-    <p class="muted">Back up each project's photos and comments to a <strong>{{ onedrive_root_folder }}</strong> folder in OneDrive. Files go straight to the cloud (nothing is stored on a PC). Each project then has <strong>Create Backup Folder</strong> and <strong>Backup Data</strong> buttons, and shows when it was last backed up.</p>
-
-    <details class="dtoolsAdvanced" {% if not onedrive_configured %}open{% endif %}>
-        <summary>📖 First-time setup — how to connect OneDrive (read this)</summary>
-        <ol style="line-height:1.6;padding-left:20px">
-            <li><strong>Register the app with Microsoft (one time).</strong> Go to <a href="https://portal.azure.com" target="_blank" rel="noopener">portal.azure.com</a> → <em>Microsoft Entra ID → App registrations → New registration</em>.
-                <ul style="margin:6px 0">
-                    <li>Name: <code>ProjectONus</code></li>
-                    <li>Supported account types: <strong>“Accounts in any organizational directory and personal Microsoft accounts”</strong></li>
-                    <li>Redirect URI → platform <strong>Web</strong> → paste exactly:<br><code>{{ onedrive_redirect_uri }}</code></li>
-                </ul>
-            </li>
-            <li>Open the new app → <strong>Overview</strong> → copy the <strong>Application (client) ID</strong>.</li>
-            <li><strong>Certificates &amp; secrets → New client secret</strong> → copy the secret’s <strong>Value</strong> (not the ID).</li>
-            <li>Paste both into the boxes below and click <strong>Save OneDrive Settings</strong>. (Leave Tenant as <code>common</code> — it works for both personal and business OneDrive.)</li>
-            <li>Click <strong>Connect OneDrive</strong> and sign in with the Microsoft account that owns the OneDrive. Approve access. The <strong>{{ onedrive_root_folder }}</strong> folder is created automatically.</li>
-            <li>Go to any project → <strong>Create Backup Folder</strong>, then <strong>Backup Data</strong>. Re-pressing only sends new items — nothing is uploaded twice.</li>
-        </ol>
-        <p class="muted">No files are kept on any PC — uploads go directly to OneDrive’s cloud. Business/work accounts may need a Microsoft 365 admin to “grant consent” once.</p>
-    </details>
-
-    <form method="post">
-        <input type="hidden" name="action" value="onedrive_settings">
-        <div class="grid">
-            <div>
-                <label>Application (Client) ID</label>
-                <input name="onedrive_client_id" value="{{ onedrive_client_id }}" placeholder="From Azure app Overview">
-            </div>
-            <div>
-                <label>Client Secret {% if onedrive_secret_saved %}<span class="muted">(saved — leave blank to keep)</span>{% endif %}</label>
-                <input name="onedrive_client_secret" type="password" placeholder="{% if onedrive_secret_saved %}Secret is saved{% else %}Paste the secret Value{% endif %}">
-            </div>
-            <div>
-                <label>Tenant</label>
-                <input name="onedrive_tenant" value="{{ onedrive_tenant }}" placeholder="common">
-            </div>
-            <div>
-                <label>OneDrive Folder Name</label>
-                <input name="onedrive_root_folder" value="{{ onedrive_root_folder }}" placeholder="ProjectONus">
-            </div>
-        </div>
-        <label>Redirect URI (register this exact value in Azure)</label>
-        <input value="{{ onedrive_redirect_uri }}" readonly onclick="this.select()">
-        <button type="submit">Save OneDrive Settings</button>
-    </form>
-
-    {% if onedrive_connected %}
-        <p class="pill" style="background:#dcfce7;color:#166534;margin-top:12px">Connected{% if onedrive_account %} as {{ onedrive_account }}{% endif %}</p>
-        <p class="muted">The <strong>{{ onedrive_root_folder }}</strong> folder is ready. Use the buttons on each project page.</p>
-        <form method="post" action="{{ url_for('onedrive_disconnect') }}" onsubmit="return confirm('Disconnect OneDrive? Existing backups stay in OneDrive; new backups will stop until you reconnect.');">
-            <button type="submit" class="btn-danger">Disconnect OneDrive</button>
-        </form>
-    {% elif onedrive_configured %}
-        <p class="muted" style="margin-top:12px">Settings saved. Now sign in once with the Microsoft account that owns the OneDrive.</p>
-        <a class="btn-link" href="{{ url_for('onedrive_connect') }}">Connect OneDrive</a>
-    {% else %}
-        <p class="muted" style="margin-top:12px">Enter the Client ID and Secret above and save, then the Connect button appears.</p>
-    {% endif %}
-</div>
-
-<div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" id="permissionsPanel">
-    <h3>User Permissions</h3>
-    <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
-    {% for u in users %}
-        {% set eff = effective_perms.get(u.id, {}) %}
-        <div class="card">
-            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
-            <form method="post">
-                <input type="hidden" name="action" value="permissions">
-                <input type="hidden" name="user_id" value="{{ u.id }}">
-                <div class="grid">
-                    {% for d in permission_grid_defs %}
-                        <label><input type="checkbox" name="{{ d.key }}" {% if eff.get(d.key) %}checked{% endif %}> {{ d.label }}</label>
-                    {% endfor %}
-                </div>
-                <div class="fileAccessSection">
-                    <h5>Project Files Access</h5>
-                    <p class="muted">Choose which project folders this user can open. Add project access first if a project is not listed here.</p>
-                    {% if u.role == "admin" %}
-                        <p class="muted">Admin accounts can see every project file folder.</p>
-                    {% else %}
-                        {% set file_projects = file_project_map.get(u.id, []) %}
-                        {% set user_file_access = project_file_access_map.get(u.id, {}) %}
-                        {% if file_projects %}
-                            {% for project in file_projects %}
-                                {% set selected_folders = user_file_access.get(project.id, []) %}
-                                <div class="fileAccessProject">
-                                    <h5>{{ project.name }}</h5>
-                                    <div class="fileAccessFolders">
-                                        {% for folder in project_file_folders %}
-                                            <label>
-                                                <input type="checkbox" name="project_file_folders_{{ project.id }}" value="{{ folder.key }}" {% if folder.key in selected_folders %}checked{% endif %}>
-                                                {{ folder.label }}
-                                            </label>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p class="muted">No project access yet. Add this user to a project under the Project Access tab first.</p>
-                        {% endif %}
-                    {% endif %}
-                </div>
-                <button type="submit">Save Permissions for {{ u.name }}</button>
-            </form>
-        </div>
-    {% endfor %}
-</div>
-
-<div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" id="projectAccessPanel">
-    <h3>Project Access</h3>
-    <p class="muted">Choose which projects each user can see. Workers assigned to a task keep project access until it is revoked here. Admin accounts can see every project automatically.</p>
-    {% for u in users %}
-        {% set selected_projects = project_access_map.get(u.id, []) %}
-        <div class="card">
-            <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
-            {% if u.role == "admin" %}
-                <p class="muted">Admin accounts have access to all projects.</p>
-            {% else %}
-                <form method="post">
-                    <input type="hidden" name="action" value="project_access">
-                    <input type="hidden" name="user_id" value="{{ u.id }}">
-                    <div class="projectAccessList">
-                        {% for p in projects %}
-                            <label>
-                                <input type="checkbox" name="project_ids" value="{{ p.id }}" {% if p.id in selected_projects %}checked{% endif %}>
-                                <strong>{{ p.name }}</strong><br>
-                                <span class="muted">{{ p.customer_name or "No customer" }}{% if p.customer_address %} - {{ p.customer_address }}{% endif %}</span>
-                            </label>
-                        {% else %}
-                            <p>No projects created yet.</p>
-                        {% endfor %}
-                    </div>
-                    <button type="submit">Save Project Access for {{ u.name }}</button>
-                </form>
-            {% endif %}
-        </div>
-    {% endfor %}
-</div>
+<style>
+.settingsLayout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
+.settingsSubNav{background:#1e293b;border-radius:10px;padding:8px;position:sticky;top:76px;display:flex;flex-direction:column;gap:2px;box-shadow:0 4px 14px rgba(15,23,42,.25)}
+.settingsNavItem{display:block;color:#e2e8f0;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 12px;border-radius:8px;border-left:3px solid transparent}
+.settingsNavItem:hover{background:#334155;color:#fff}
+.settingsNavItem.active{background:var(--primary);color:#fff;border-left-color:#93c5fd}
+.settingsContent{min-width:0}
+.settingsPanel{display:none}
+.settingsPanel.active{display:block}
+.settingsPanel input[type="checkbox"]{width:auto;min-height:auto;margin-right:8px}
+.projectAccessList{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.projectAccessList label{border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
+.fileAccessSection{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
+.fileAccessProject{border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;background:rgba(255,255,255,.03)}
+.fileAccessProject h5{margin:0 0 10px;font-size:1rem}
+.fileAccessFolders{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.fileAccessFolders label{border:1px solid var(--border);border-radius:8px;padding:9px;background:var(--card);font-weight:700}
+@media(max-width:760px){
+    .settingsLayout{display:block}
+    .settingsSubNav{display:none}
+    .settingsPanel{display:block}
+    .settingsPanel.desktop-only{display:none}
+}
+</style>
 
 <script>
-const tabButtons=document.querySelectorAll("[data-settings-tab]");
-const settingsPanels={
-    permissions:document.getElementById("permissionsPanel"),
-    projectAccess:document.getElementById("projectAccessPanel"),
-    accountInfo:document.getElementById("accountInfoPanel")
-};
-tabButtons.forEach(button=>{
-    button.addEventListener("click",()=>{
-        const activeTab=button.dataset.settingsTab;
-        Object.entries(settingsPanels).forEach(([key,panel])=>{
-            if(panel)panel.classList.toggle("active",key===activeTab);
+(function(){
+    const navItems=document.querySelectorAll("[data-settings-tab]");
+    const panels=document.querySelectorAll("[data-settings-panel]");
+    navItems.forEach(item=>{
+        item.addEventListener("click",event=>{
+            event.preventDefault();
+            const key=item.dataset.settingsTab;
+            panels.forEach(panel=>panel.classList.toggle("active",panel.dataset.settingsPanel===key));
+            navItems.forEach(nav=>nav.classList.toggle("active",nav===item));
+            try{
+                const u=new URL(window.location.href);
+                u.searchParams.set("tab",key);
+                window.history.replaceState({}, "", u.toString());
+            }catch(e){}
         });
-        tabButtons.forEach(tab=>tab.classList.add("btn-secondary"));
-        button.classList.remove("btn-secondary");
     });
-});
+})();
 </script>
 {% endblock %}
