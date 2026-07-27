@@ -118,33 +118,34 @@
                         </div>
                     </div>
                 </div>
-                <div class="pgPhases">
+                <div class="pgPhases" id="pgPhases">
                     {% if phases %}
+                        {% if is_main_admin() %}
+                        <div class="pgPhaseTools noPrint">
+                            <button type="button" class="btn-secondary" id="pgEditToggle">&#9998; Edit Phases</button>
+                        </div>
+                        {% endif %}
                         {% for ph in phases %}
-                        <div class="pgPhaseRow">
+                        <div class="pgPhaseRow" title="{{ 'Manual' if ph.mode == 'manual' else ph.source }}">
                             <span class="pgPhaseNum">{{ loop.index }}</span>
                             <span class="pgPhaseIcon">{{ ic(phase_key(ph.name)|trim) }}</span>
-                            <div class="pgPhaseBody">
-                                <div class="pgPhaseTop">
-                                    <span class="pgPhaseName">{{ ph.name }}</span>
-                                    <div class="pgBar"><div class="pgBarFill {% if ph.pct >= 100 %}full{% endif %}" style="width: {{ ph.pct }}%"></div></div>
-                                    <strong class="pgPhasePct">{{ ph.pct }}%</strong>
-                                </div>
-                                <div class="pgPhaseMeta noPrint">
-                                    <span class="muted">{{ 'Manual' if ph.mode == 'manual' else ph.source }}</span>
-                                    {% if is_main_admin() %}
-                                    <form method="post" action="{{ url_for('update_project_phase', project_id=project.id, phase_id=ph.id) }}" class="pgPhaseForm">
-                                        <select name="mode">
-                                            <option value="auto" {% if ph.mode != 'manual' %}selected{% endif %}>Auto (tasks)</option>
-                                            <option value="manual" {% if ph.mode == 'manual' %}selected{% endif %}>Manual</option>
-                                        </select>
-                                        <input type="number" name="manual_pct" min="0" max="100" step="1" value="{{ ph.manual_pct|round|int }}" title="Manual %">
-                                        <button type="submit" name="action" value="save">Set</button>
-                                        <button type="submit" name="action" value="delete" class="pgDelete" onclick="return confirm('Remove this phase?');">&times;</button>
-                                    </form>
-                                    {% endif %}
-                                </div>
+                            <span class="pgPhaseName">{{ ph.name }}</span>
+                            <div class="pgBar"><div class="pgBarFill {% if ph.pct >= 100 %}full{% endif %}" style="width: {{ ph.pct }}%"></div></div>
+                            <strong class="pgPhasePct">{{ ph.pct }}%</strong>
+                            {% if is_main_admin() %}
+                            <div class="pgPhaseEdit noPrint">
+                                <span class="muted">{{ 'Manual' if ph.mode == 'manual' else ph.source }}</span>
+                                <form method="post" action="{{ url_for('update_project_phase', project_id=project.id, phase_id=ph.id) }}" class="pgPhaseForm">
+                                    <select name="mode">
+                                        <option value="auto" {% if ph.mode != 'manual' %}selected{% endif %}>Auto (tasks)</option>
+                                        <option value="manual" {% if ph.mode == 'manual' %}selected{% endif %}>Manual</option>
+                                    </select>
+                                    <input type="number" name="manual_pct" min="0" max="100" step="1" value="{{ ph.manual_pct|round|int }}" title="Manual %">
+                                    <button type="submit" name="action" value="save">Set</button>
+                                    <button type="submit" name="action" value="delete" class="pgDelete" onclick="return confirm('Remove this phase?');">&times;</button>
+                                </form>
                             </div>
+                            {% endif %}
                         </div>
                         {% endfor %}
                     {% else %}
@@ -161,7 +162,7 @@
                         {% endif %}
                     {% endif %}
                     {% if is_main_admin() and phases %}
-                    <form method="post" action="{{ url_for('add_project_phase', project_id=project.id) }}" class="pgAddForm noPrint">
+                    <form method="post" action="{{ url_for('add_project_phase', project_id=project.id) }}" class="pgAddForm pgPhaseEdit noPrint">
                         <input name="name" placeholder="Add another phase" style="margin:0">
                         <button type="submit" class="btn-secondary" style="margin:0">Add Phase</button>
                     </form>
@@ -267,18 +268,19 @@
 .pgDonutInner{width:138px;height:138px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;box-shadow:inset 0 0 0 1px #eef2f7}
 .pgDonutLabel{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#475569}
 .pgDonutInner strong{font-size:44px;color:#0f172a;line-height:1}
-.pgPhaseRow{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid #eef2f7}
+.pgPhaseTools{display:flex;justify-content:flex-end;margin-bottom:4px}
+.pgPhaseTools button{margin:0;min-height:30px;padding:4px 12px;font-size:12.5px}
+.pgPhaseRow{display:grid;grid-template-columns:28px 38px minmax(140px,205px) minmax(0,1fr) 54px;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid #eef2f7}
 .pgPhaseRow:last-of-type{border-bottom:0}
-.pgPhaseNum{flex:0 0 26px;width:26px;height:26px;border-radius:50%;background:#1e3a8a;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
-.pgPhaseIcon{flex:0 0 34px;width:34px;height:34px;border-radius:9px;border:1.5px solid #cbd5e1;color:#334155;padding:6px;background:#f8fafc}
-.pgPhaseBody{flex:1;min-width:0}
-.pgPhaseTop{display:flex;align-items:center;gap:12px}
-.pgPhaseName{flex:0 0 32%;min-width:150px;font-weight:700;color:#0f172a;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pgBar{flex:1;height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}
+.pgPhaseNum{width:26px;height:26px;border-radius:50%;background:#1e3a8a;color:#fff;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}
+.pgPhaseIcon{width:36px;height:36px;border-radius:9px;border:1.5px solid #94a3b8;color:#1e293b;padding:6px;background:#fff}
+.pgPhaseName{font-weight:700;color:#0f172a;font-size:14.5px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pgBar{height:14px;border-radius:999px;background:#e2e8f0;overflow:hidden;min-width:60px}
 .pgBarFill{height:100%;border-radius:999px;background:#2563eb}
 .pgBarFill.full{background:#16a34a}
-.pgPhasePct{flex:0 0 52px;text-align:right;font-variant-numeric:tabular-nums;color:#0f172a}
-.pgPhaseMeta{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:3px;flex-wrap:wrap;font-size:12px}
+.pgPhasePct{text-align:right;font-variant-numeric:tabular-nums;color:#0f172a;font-size:15px}
+.pgPhases .pgPhaseEdit{grid-column:1 / -1;display:none;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:6px 10px}
+.pgPhases.pgEditing .pgPhaseEdit{display:flex}
 .pgPhaseForm{display:flex;gap:6px;align-items:center;margin:0}
 .pgPhaseForm select{width:auto;min-height:28px;padding:2px 6px;margin:0;font-size:12px}
 .pgPhaseForm input{width:60px;min-height:28px;padding:2px 6px;margin:0;font-size:12px}
@@ -311,13 +313,21 @@
 .pgFocusRed{border-left-color:#dc2626}.pgFocusRed span{color:#b91c1c}
 .pgFooterBar{margin-top:14px;background:#1e3a8a;color:#e2e8f0;border-radius:12px;padding:11px 16px;display:flex;align-items:center;justify-content:center;gap:10px;font-weight:600;font-size:13.5px}
 .pgFooterIcon{flex:0 0 20px;width:20px;height:20px}
+@media(max-width:1180px){
+    /* Stack the donut above the phases early so the bars stay long, like the sample. */
+    .pgPanelGrid{grid-template-columns:1fr}
+    .pgDonutWrap{padding-top:0;margin-bottom:6px}
+}
 @media(max-width:900px){
     .pgMain{grid-template-columns:1fr}
     .pgPanelGrid{grid-template-columns:1fr}
     .pgDonutWrap{padding-top:0}
     .pgFocusStrip{grid-template-columns:1fr}
     .pgFocusLead{flex-direction:row;justify-content:flex-start;gap:12px}
-    .pgPhaseName{flex:0 0 40%;min-width:110px;white-space:normal}
+    .pgPhaseRow{grid-template-columns:24px 32px minmax(96px,132px) minmax(0,1fr) 44px;gap:8px}
+    .pgPhaseIcon{width:30px;height:30px;padding:5px}
+    .pgPhaseName{white-space:normal;font-size:13px;overflow:visible}
+    .pgPhasePct{font-size:13.5px}
     .pgTitle{font-size:24px}
     .pgInfoItem{border-right:0;border-bottom:1px solid #e2e8f0}
 }
@@ -331,6 +341,19 @@
     .pgMain{grid-template-columns:minmax(0,1fr) 270px!important}
     .pgPanelGrid{grid-template-columns:200px minmax(0,1fr)!important}
     .pgFocusStrip{grid-template-columns:140px repeat(3,minmax(0,1fr))!important}
+    .pgPanelGrid{grid-template-columns:200px minmax(0,1fr)!important}
 }
 </style>
+<script>
+(function(){
+    var toggle=document.getElementById("pgEditToggle");
+    var phases=document.getElementById("pgPhases");
+    if(!toggle||!phases)return;
+    toggle.addEventListener("click",function(){
+        var editing=phases.classList.toggle("pgEditing");
+        toggle.textContent=editing?"Done Editing":"✎ Edit Phases";
+        toggle.classList.toggle("btn-secondary",!editing);
+    });
+})();
+</script>
 {% endblock %}
