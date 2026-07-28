@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
+﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-27 V4"
+APP_BUILD = "2026-07-28 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1034,6 +1034,7 @@ def init_db():
         "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
         "ALTER TABLE project_blueprints DROP COLUMN IF EXISTS blueprint_id",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_project_progress BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_contact_info BOOLEAN",
@@ -1861,6 +1862,7 @@ PERMISSION_DEFS = [
     {"key": "view_inventory", "label": "View inventory", "grid": True, "worker": False, "customer": False},
     {"key": "edit_inventory", "label": "Edit inventory", "grid": True, "worker": False, "customer": False},
     {"key": "view_project_notes", "label": "View and edit project notes", "grid": True, "worker": False, "customer": False},
+    {"key": "view_project_progress", "label": "View project progress page", "grid": True, "worker": False, "customer": False},
     # Handled by their own UI, not a simple checkbox:
     {"key": "view_project_files", "label": "Access project files", "grid": False, "worker": False, "customer": False},
     {"key": "require_task_picture", "label": "Require task picture", "grid": False, "worker": False, "customer": False},
@@ -4187,7 +4189,7 @@ def dtools_auth_diagnostic():
     if not key:
         key_info = "NO API key is saved in Settings (the X-API-Key header is empty)"
     else:
-        key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
+        key_info = f"API key sent (ends â€¦{key[-4:]}, {len(key)} chars)"
     auth = (config.get("auth_header") or "").strip() or DTOOLS_CLOUD_DEFAULT_AUTH
     auth_kind = "custom" if (config.get("auth_header") or "").strip() else "gateway default"
     return f" [Diagnostic: {key_info}; Authorization header sent ({auth_kind})]"
@@ -7867,7 +7869,7 @@ def invoice_customers():
             entry["open_invoices"].append({
                 "id": inv["id"],
                 "number": inv.get("invoice_number"),
-                "label": f'{inv.get("invoice_number")} · {format_date(inv.get("invoice_date"))} · open {format_invoice_money(open_amount)}',
+                "label": f'{inv.get("invoice_number")} Â· {format_date(inv.get("invoice_date"))} Â· open {format_invoice_money(open_amount)}',
                 "open_raw": round(open_amount, 2),
                 "pay_url": url_for("add_invoice_payment", invoice_id=inv["id"]),
             })
@@ -9110,7 +9112,7 @@ def dtools_unauthorized_hint(message):
     knows to fall back to pasting the Response JSON / public Request URL."""
     text = str(message or "")
     if "401" in text or "Unauthorized" in text or "403" in text or "Access denied" in text:
-        text += (" — D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
+        text += (" â€” D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
                  "(Settings > Integration > Developer) into ProjectONus Settings, and confirm your D-Tools "
                  "plan has Cloud API access enabled. Meanwhile you can import without the API: open the "
                  "proposal in Chrome, copy the GetProposalData Response JSON, and paste it into the "
@@ -9906,6 +9908,10 @@ def project_progress(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if not (is_main_admin() or has_perm("view_project_progress")):
+        conn.close()
+        flash("You do not have permission to view the project progress page.")
+        return redirect(url_for("mobile_project" if is_mobile_request() else "project", project_id=project_id))
     phases, overall = compute_project_progress(conn, project)
     scope_items = conn.execute(
         "SELECT * FROM project_scope_items WHERE project_id = %s ORDER BY position, id",
@@ -10278,7 +10284,7 @@ def project_files(project_id):
         conn.commit()
         conn.close()
         if is_mobile_capture:
-            message = "Added to folder." if uploaded_count else "Nothing was captured — take a picture, record audio, or attach a file first."
+            message = "Added to folder." if uploaded_count else "Nothing was captured â€” take a picture, record audio, or attach a file first."
         else:
             message = "Project files updated."
             if uploaded_count:
@@ -16616,7 +16622,7 @@ def onedrive_backup_project(project_id):
             export = {"project": project["name"], "generated_at": utc_now_iso(), "comments": comments}
             onedrive_upload(folder_id, "comments.json", json.dumps(export, indent=2, default=str).encode("utf-8"), "application/json")
             readable = "\n\n".join(
-                f"[{c['date']}] {c['room'] or 'Project'} — {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
+                f"[{c['date']}] {c['room'] or 'Project'} â€” {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
             ) or "No comments yet."
             onedrive_upload(folder_id, "comments.txt", readable.encode("utf-8"), "text/plain")
         except Exception:

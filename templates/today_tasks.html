@@ -28,7 +28,7 @@
                     <span class="whoName">{{ who }}</span>
                     <span class="whoSub">
                         {% if is_supplier %}<span class="whoTag whoTagSupplier">Supplier</span>{% endif %}
-                        {{ t.project_name or '' }}
+                        {{ t.title or t.project_name or '' }}
                     </span>
                 </span>
                 <span class="colTime" role="cell">{{ (be_there or '—')|lower }}</span>

@@ -37,7 +37,9 @@
     {% endif %}
     <a class="btn-link btn-secondary blueprintDesktopOnly" href="{{ url_for('project_blueprint', project_id=project.id) }}">Blueprint</a>
     <a class="btn-link btn-secondary" href="{{ url_for('project_gallery', project_id=project.id) }}">Gallery</a>
-    <a class="btn-link btn-secondary" href="{{ url_for('project_progress', project_id=project.id) }}">Progress</a>
+    {% if is_main_admin() or has_perm("view_project_progress") %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_progress', project_id=project.id) }}">Progress</a>
+    {% endif %}
 
     {% if is_main_admin() %}
     <div class="desktop-only projectAdminActions">
