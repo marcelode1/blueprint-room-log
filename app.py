@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V9"
+APP_BUILD = "2026-07-31 V10"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6954,7 +6954,7 @@ def paystub_work_done(conn, user_id, start_date, end_date):
     rows = conn.execute(
         """
         SELECT tasks.id, tasks.task_number, tasks.title, tasks.status,
-               tasks.completion_comment, tasks.completed_at, tasks.completion_at,
+               tasks.completion_comment, tasks.completed_at,
                tasks.task_start_date, tasks.task_date,
                projects.name AS project_name
         FROM tasks
@@ -6967,7 +6967,7 @@ def paystub_work_done(conn, user_id, start_date, end_date):
     items = []
     for t in rows:
         day = None
-        done_stamp = t.get("completed_at") or t.get("completion_at")
+        done_stamp = t.get("completed_at")
         if done_stamp:
             dt = parse_iso_datetime(done_stamp)
             if dt:
@@ -7640,7 +7640,12 @@ def paystub_view(stub_id):
         (stub_id,)
     ).fetchall()
     _total, lines, _skipped = attendance_minutes_for_range(conn, stub["user_id"], stub["period_start"], stub["period_end"])
-    work_done = paystub_work_done(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    try:
+        work_done = paystub_work_done(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    except Exception as e:
+        conn.rollback()
+        print("Paystub work list failed:", e)
+        work_done = []
     conn.close()
     classification = user_classification({
         "worker_class": stub.get("user_worker_class"),
