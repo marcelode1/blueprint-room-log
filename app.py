@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-28 V1"
+APP_BUILD = "2026-07-31 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -3625,7 +3625,8 @@ INVENTORY_STATUS_LABELS = {
     "unavailable": "Unavailable",
     "backordered": "Backordered",
     "used": "Used",
-    "needs_purchase": "Needs purchase"
+    "needs_purchase": "Needs purchase",
+    "client_supplied": "Client Supplied"
 }
 
 SUPPLIER_TASK_STATUS_LABELS = {
@@ -5166,6 +5167,49 @@ def dtools_build_location_map(payload):
     return location_map
 
 
+def dtools_is_client_supplied(item):
+    """Detect D-Tools items the customer provides themselves (owner furnished /
+    client supplied). D-Tools exports this under different key names depending on
+    the endpoint, so we scan boolean flags, source/supply text fields, and the
+    item type text."""
+    if not isinstance(item, dict):
+        return False
+    flag_tokens = ("clientsupplied", "clientfurnished", "clientprovided",
+                   "ownerfurnished", "ownersupplied", "ownerprovided",
+                   "customersupplied", "customerfurnished", "customerprovided",
+                   "suppliedbyclient", "providedbyclient", "suppliedbyowner")
+    def flag_walk(obj, depth=0):
+        if depth > 3:
+            return False
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                key_norm = normalize_lookup_key(key)
+                if any(token in key_norm for token in flag_tokens):
+                    text = str(value).strip().lower()
+                    if value is True or text in ("true", "yes", "1", "y"):
+                        return True
+                if isinstance(value, (dict, list)) and flag_walk(value, depth + 1):
+                    return True
+        elif isinstance(obj, list):
+            for value in obj:
+                if flag_walk(value, depth + 1):
+                    return True
+        return False
+
+    if flag_walk(item):
+        return True
+    source_text = dtools_pick(item, [
+        "suppliedBy", "providedBy", "supplySource", "supplyType", "sourceType",
+        "purchaseType", "procurementType", "itemSource", "furnishedBy", "responsibility"
+    ]).lower()
+    if any(token in source_text for token in ("client", "owner", "customer")):
+        return True
+    type_text = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"]).lower()
+    if "client supplied" in type_text or "owner furnished" in type_text or "client furnished" in type_text:
+        return True
+    return False
+
+
 def dtools_normalize_material(item, index, external_ref, resolved_location=""):
     item_type = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"])
     type_text = item_type.lower()
@@ -5205,6 +5249,7 @@ def dtools_normalize_material(item, index, external_ref, resolved_location=""):
         "phase": phase,
         "category": category,
         "item_type": "service" if is_service else "part",
+        "client_supplied": dtools_is_client_supplied(item),
     }
 
 
@@ -5245,6 +5290,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     skipped = 0
     unmatched_rooms = 0
     rooms_created = 0
+    client_supplied_count = 0
     now = utc_now_iso()
 
     # Create any D-Tools location that does not already exist as a room in this
@@ -5306,12 +5352,20 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
         room_id = match_dtools_room(room_lookup, material.get("location"))
         if material.get("location") and not room_id:
             unmatched_rooms += 1
+        is_client_supplied = bool(material.get("client_supplied"))
         detail_parts = []
+        if is_client_supplied:
+            detail_parts.append("Action: Client Supplied")
         for label, key in [("Location", "location"), ("System", "system"), ("Phase", "phase"), ("Category", "category")]:
             if material.get(key):
                 detail_parts.append(f"{label}: {material[key]}")
         location_detail = "; ".join(detail_parts) or "Imported from D-Tools Cloud"
-        used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+        if is_client_supplied:
+            used_note = f"Imported from D-Tools Cloud source {external_ref}. Client Supplied — provided by the client, do not purchase."
+            item_status = "client_supplied"
+        else:
+            used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+            item_status = "needs_purchase"
 
         conn.execute(
             """
@@ -5331,7 +5385,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
                 location_detail[:500],
                 project_id,
                 room_id,
-                "needs_purchase",
+                item_status,
                 session.get("user_id"),
                 used_note,
                 "dtools_cloud",
@@ -5342,12 +5396,14 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
             )
         )
         imported += 1
+        if is_client_supplied:
+            client_supplied_count += 1
 
     conn.execute(
         "UPDATE projects SET dtools_cloud_project_ref = %s WHERE id = %s",
         (external_ref, project_id)
     )
-    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created}
+    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created, "client_supplied": client_supplied_count}
 
 
 def find_matching_project(conn, project_info, external_ref):
@@ -7367,7 +7423,7 @@ def task_material_check():
               AND (%s = '' OR lower(COALESCE(item_model, '')) = lower(%s))
               AND (%s = '' OR lower(COALESCE(brand, '')) = lower(%s))
               AND (inventory_items.project_id = %s OR inventory_items.project_id IS NULL)
-              AND inventory_items.status IN ('available', 'picked_up')
+              AND inventory_items.status IN ('available', 'picked_up', 'client_supplied')
               AND COALESCE(inventory_items.quantity, 0) > 0
             ORDER BY (inventory_items.project_id IS NULL), inventory_items.id
             """,
@@ -9159,6 +9215,8 @@ def import_dtools_inventory(project_id):
                 conn.rollback()
         message = f"D-Tools import complete: {result['imported']} inventory item(s) added as Needs Purchase."
         message += f" {result.get('catalog_saved', 0)} catalog item(s) saved."
+        if result.get("client_supplied"):
+            message += f" {result['client_supplied']} item(s) marked Client Supplied (provided by the client, no purchase needed)."
         if customer_filled:
             message += " Customer details were filled in from D-Tools."
         if result.get("rooms_created"):
@@ -9422,6 +9480,8 @@ def dtools_import():
                         f"{create_result.get('imported', 0)} inventory item(s) added as Needs Purchase. "
                         f"{create_result.get('catalog_saved', 0)} catalog item(s) saved."
                     )
+                    if create_result.get("client_supplied"):
+                        message += f" {create_result['client_supplied']} item(s) marked Client Supplied (provided by the client, no purchase needed)."
                     if create_result.get("services_saved"):
                         message += f" {create_result['services_saved']} service/labor item(s) saved to Items & Catalog."
                     if create_result.get("skipped"):
