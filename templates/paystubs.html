@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Paystubs</h2>
+    <p class="muted">Pick the worker or subcontractor and the pay period. ProjectONus collects the hours from the Time Report and the open expenses for that period.</p>
+    <form method="get" class="psPickForm">
+        <div class="psGrid">
+            <div>
+                <label>Worker / Subcontractor</label>
+                <select name="user_id" required>
+                    <option value="">Choose person</option>
+                    {% for p in people %}
+                        {% set pclass = p.worker_class if p.worker_class in class_labels else 'worker' %}
+                        <option value="{{ p.id }}" {% if p.id == sel_user_id %}selected{% endif %}>
+                            {{ p.name }} — {{ class_labels[pclass] }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Start Date</label>
+                <input name="period_start" type="date" value="{{ period_start }}" required>
+            </div>
+            <div>
+                <label>End Date</label>
+                <input name="period_end" type="date" value="{{ period_end }}" required>
+            </div>
+        </div>
+        <button type="submit">Load Hours &amp; Expenses</button>
+    </form>
+</div>
+
+{% if preview %}
+<div class="card">
+    <h3>Paystub Preview — {{ preview.person.name }}</h3>
+    <div class="psSummary">
+        <div class="psStat"><span>Classification</span><strong>{{ class_labels[preview.classification] }}</strong></div>
+        <div class="psStat"><span>Period</span><strong>{{ format_date(period_start) }} – {{ format_date(period_end) }}</strong></div>
+        <div class="psStat"><span>Hours Worked</span><strong>{{ minutes_text(preview.total_minutes) }}</strong></div>
+        <div class="psStat"><span>Rate</span><strong>{% if preview.rate %}${{ '%.2f'|format(preview.rate) }} {{ rate_units[preview.unit] }}{% else %}Not set{% endif %}</strong></div>
+        <div class="psStat"><span>Gets Paid</span><strong>{{ frequencies.get(preview.person.pay_frequency or 'weekly') }}</strong></div>
+    </div>
+    {% if not preview.rate %}
+        <p class="psWarn">This person has no salary rate yet. Set it in Users &rarr; Classification &amp; Pay, or type the base pay by hand below.</p>
+    {% endif %}
+
+    {% if preview.lines %}
+    <h4 style="margin:14px 0 6px">Time Report Detail</h4>
+    <div class="psLinesWrap">
+        <table class="psLines">
+            <thead><tr><th>Date</th><th>Project</th><th>Time</th></tr></thead>
+            <tbody>
+                {% for l in preview.lines %}
+                    <tr><td>{{ format_date(l.day) }}</td><td>{{ l.project_name }}</td><td>{{ minutes_text(l.minutes) }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p class="muted">No completed clock in / clock out pairs in this period.</p>
+    {% endif %}
+
+    <form method="post" style="margin-top:16px">
+        <input type="hidden" name="user_id" value="{{ preview.person.id }}">
+        <input type="hidden" name="period_start" value="{{ period_start }}">
+        <input type="hidden" name="period_end" value="{{ period_end }}">
+
+        <h4 style="margin:0 0 6px">Expenses in This Period</h4>
+        {% if preview.expenses %}
+            {% for e in preview.expenses %}
+                <label class="psExpRow">
+                    <input type="checkbox" name="expense_ids" value="{{ e.id }}" checked>
+                    <span class="psExpText">{{ format_date(e.expense_date) }} &middot; {{ e.description or '-' }}
+                        <small class="muted">{{ e.project_name or 'No project' }}</small></span>
+                    {% if e.receipt_file %}<a href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Receipt</a>{% endif %}
+                    <strong>{{ format_invoice_money(e.amount) }}</strong>
+                </label>
+            {% endfor %}
+            <p class="muted" style="font-size:13px">Checked expenses ({{ format_invoice_money(preview.expenses_total) }}) will be reimbursed on this paystub.</p>
+        {% else %}
+            <p class="muted">No open expenses for this period.</p>
+        {% endif %}
+
+        <div class="psGrid" style="margin-top:10px">
+            <div>
+                <label>Extra Expense Description (optional)</label>
+                <input name="extra_expense_description" placeholder="Tool reimbursement, bonus...">
+            </div>
+            <div>
+                <label>Extra Expense Amount ($)</label>
+                <input name="extra_expense_amount" type="text" inputmode="decimal" placeholder="0.00">
+            </div>
+            <div>
+                <label>Base Pay ($)</label>
+                <input name="base_pay" type="text" inputmode="decimal" value="{{ '%.2f'|format(preview.suggested) }}" required>
+            </div>
+        </div>
+        <p class="muted" style="font-size:12.5px">Base pay was calculated from the rate ({% if preview.unit == 'hour' %}hours &times; hourly rate{% else %}{{ rate_units[preview.unit]|lower }} prorated by the days in the period{% endif %}). You can change it before creating the stub.</p>
+        <label>Note (shows on the paystub)</label>
+        <input name="notes" placeholder="Optional note">
+        <button type="submit">Create Paystub</button>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Created Paystubs</h3>
+    {% if stubs %}
+    <div class="psLinesWrap">
+        <table class="psLines">
+            <thead><tr><th>Stub #</th><th>Person</th><th>Period</th><th>Hours</th><th>Total</th><th></th></tr></thead>
+            <tbody>
+                {% for s in stubs %}
+                <tr>
+                    <td><strong>PS-{{ '%05d'|format(s.id) }}</strong></td>
+                    <td>{{ s.user_name or '-' }}</td>
+                    <td>{{ format_date(s.period_start) }} – {{ format_date(s.period_end) }}</td>
+                    <td>{{ minutes_text(s.total_minutes) }}</td>
+                    <td><strong>{{ format_invoice_money(s.total_pay) }}</strong></td>
+                    <td><a class="btn-link btn-secondary psOpenBtn" href="{{ url_for('paystub_view', stub_id=s.id) }}">Open</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+        <p class="muted">No paystubs created yet.</p>
+    {% endif %}
+</div>
+
+<style>
+.psGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.psSummary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:8px}
+.psStat{border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:10px}
+.psStat span{display:block;font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:.04em;margin-bottom:3px}
+.psWarn{background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:10px;font-weight:600}
+.psLinesWrap{overflow-x:auto}
+.psLines{width:100%;border-collapse:collapse;min-width:480px}
+.psLines th,.psLines td{border-bottom:1px solid var(--border,#e2e8f0);padding:8px 10px;text-align:left;font-size:14px}
+.psLines th{font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:.03em}
+.psExpRow{display:flex;gap:10px;align-items:center;border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-weight:600;flex-wrap:wrap}
+.psExpRow input{width:auto;min-height:auto;margin:0}
+.psExpRow .psExpText{flex:1;min-width:140px}
+.psExpRow .psExpText small{display:block;font-weight:500}
+.psOpenBtn{width:auto!important;min-height:32px!important;padding:5px 12px!important;margin:0!important;font-size:13px!important}
+</style>
+{% endblock %}

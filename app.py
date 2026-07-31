@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V4"
+APP_BUILD = "2026-07-31 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1108,6 +1108,13 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
         "ALTER TABLE task_attachments ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS worker_class TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate REAL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate_unit TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_frequency TEXT",
+        "CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, doc_type TEXT NOT NULL, file_path TEXT NOT NULL, original_name TEXT, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate REAL, pay_rate_unit TEXT, pay_frequency TEXT, base_pay REAL NOT NULL DEFAULT 0, expenses_total REAL NOT NULL DEFAULT 0, total_pay REAL NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS tasks_assignment_group_id_idx ON tasks(assignment_group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
@@ -6846,6 +6853,126 @@ def logout():
     return redirect(url_for("login"))
 
 
+USER_CLASS_LABELS = {
+    "worker": "Worker (Employee)",
+    "customer": "Customer",
+    "subcontractor": "Subcontractor",
+}
+PAY_RATE_UNITS = {
+    "hour": "Per Hour",
+    "week": "Per Week",
+    "month": "Per Month",
+    "year": "Per Year",
+}
+PAY_FREQUENCIES = {
+    "daily": "Every day",
+    "weekly": "Every week",
+    "every_15_days": "Every 15 days",
+    "monthly": "End of the month",
+}
+USER_DOC_TYPES = {
+    "driver_license": "Driver License",
+    "business_license": "Business License",
+    "insurance": "Insurance",
+    "trade_license": "Trade License",
+    "other": "Other Document",
+}
+
+
+def user_classification(user):
+    wc = (user.get("worker_class") or "").strip()
+    if wc in USER_CLASS_LABELS:
+        return wc
+    return "customer" if (user.get("role") or "") == "customer" else "worker"
+
+
+def attendance_minutes_for_range(conn, user_id, start_date, end_date):
+    """Total worked minutes from the Time Report between two dates (inclusive),
+    plus a per-day/per-project breakdown for the paystub."""
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    except Exception:
+        return 0, []
+    events = conn.execute(
+        """
+        SELECT attendance_events.*, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.user_id = %s
+          AND attendance_events.created_at >= %s AND attendance_events.created_at < %s
+        ORDER BY attendance_events.created_at ASC, attendance_events.id
+        """,
+        (
+            user_id,
+            (start_dt - timedelta(days=2)).isoformat(),
+            (end_dt + timedelta(days=3)).isoformat(),
+        )
+    ).fetchall()
+    in_range = []
+    for e in events:
+        local_dt = local_datetime(e.get("created_at"), event_timezone_name(e))
+        if not local_dt:
+            continue
+        day = local_dt.date().isoformat()
+        if start_date <= day <= end_date:
+            e = dict(e)
+            e["_local_day"] = day
+            in_range.append(e)
+    pairs = build_attendance_pairs(in_range)
+    total = 0
+    day_map = {}
+    for p in pairs:
+        ci, co = p.get("check_in"), p.get("check_out")
+        if not ci or not co:
+            continue
+        minutes = duration_minutes(ci.get("created_at"), co.get("created_at"))
+        if minutes <= 0:
+            continue
+        total += minutes
+        key = (ci.get("_local_day") or "", ci.get("project_name") or "No project")
+        day_map[key] = day_map.get(key, 0) + minutes
+    lines = [
+        {"day": k[0], "project_name": k[1], "minutes": v}
+        for k, v in sorted(day_map.items())
+    ]
+    return total, lines
+
+
+def compute_base_pay(rate, unit, total_minutes, start_date, end_date):
+    """Suggest the base pay for a period: hourly uses Time Report hours, salary
+    units prorate by calendar days in the period."""
+    try:
+        rate = float(rate or 0)
+    except Exception:
+        rate = 0.0
+    if rate <= 0:
+        return 0.0
+    try:
+        days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
+    except Exception:
+        days = 0
+    if days <= 0:
+        return 0.0
+    if unit == "hour":
+        return round(rate * (total_minutes / 60.0), 2)
+    if unit == "week":
+        return round(rate * days / 7.0, 2)
+    if unit == "month":
+        return round(rate * days / 30.4375, 2)
+    if unit == "year":
+        return round(rate * days / 365.25, 2)
+    return 0.0
+
+
+def parse_money_value(raw):
+    cleaned = str(raw or "").replace("$", "").replace(",", "").strip()
+    try:
+        return round(float(cleaned), 2)
+    except Exception:
+        return 0.0
+
+
 @app.route("/users", methods=["GET", "POST"])
 @admin_required
 def users():
@@ -6856,15 +6983,16 @@ def users():
     if request.method == "POST":
         try:
             email = request.form["email"].strip().lower()
-            role = request.form.get("role", "worker")
-            if role not in ["customer", "worker"]:
-                role = "worker"
+            worker_class = request.form.get("role", "worker")
+            if worker_class not in USER_CLASS_LABELS:
+                worker_class = "worker"
+            role = "customer" if worker_class == "customer" else "worker"
             phone_number = request.form.get("phone_number", "").strip()
             sms_enabled = "sms_enabled" in request.form
 
             invite_token = new_token()
             conn.execute(
-                "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, worker_class, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     request.form["name"].strip(),
                     email,
@@ -6875,6 +7003,7 @@ def users():
                     invite_token,
                     datetime.now().isoformat(),
                     role,
+                    worker_class,
                     datetime.now().isoformat()
                 )
             ).fetchone()
@@ -6893,9 +7022,24 @@ def users():
             conn.rollback()
             flash("That email may already exist.")
 
-    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, created_at, invite_token FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, worker_class, pay_rate, pay_rate_unit, pay_frequency, created_at, invite_token FROM users ORDER BY name").fetchall()
+    docs_by_user = {}
+    try:
+        for doc in conn.execute("SELECT * FROM user_documents ORDER BY created_at DESC").fetchall():
+            docs_by_user.setdefault(doc["user_id"], []).append(doc)
+    except Exception:
+        conn.rollback()
     conn.close()
-    return render_template("users.html", users=users)
+    return render_template(
+        "users.html",
+        users=users,
+        docs_by_user=docs_by_user,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        doc_types=USER_DOC_TYPES,
+        user_classification=user_classification,
+    )
 
 
 @app.route("/users/<int:user_id>/pin", methods=["POST"])
@@ -6996,6 +7140,382 @@ def delete_user(user_id):
 
     flash("User deleted.")
     return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/classification", methods=["POST"])
+@admin_required
+def update_user_classification(user_id):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s AND role <> 'admin'", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    worker_class = request.form.get("worker_class", "worker")
+    if worker_class not in USER_CLASS_LABELS:
+        worker_class = "worker"
+    unit = request.form.get("pay_rate_unit", "hour")
+    if unit not in PAY_RATE_UNITS:
+        unit = "hour"
+    frequency = request.form.get("pay_frequency", "weekly")
+    if frequency not in PAY_FREQUENCIES:
+        frequency = "weekly"
+    rate = parse_money_value(request.form.get("pay_rate"))
+    role = "customer" if worker_class == "customer" else "worker"
+    conn.execute(
+        "UPDATE users SET worker_class = %s, pay_rate = %s, pay_rate_unit = %s, pay_frequency = %s, role = %s WHERE id = %s",
+        (worker_class, rate if rate > 0 else None, unit, frequency, role, user_id)
+    )
+    conn.commit()
+    conn.close()
+    flash(f"Classification saved for {user['name']}: {USER_CLASS_LABELS[worker_class]}.")
+    return redirect(url_for("users") + f"#userRow{user_id}")
+
+
+@app.route("/users/<int:user_id>/documents", methods=["POST"])
+@admin_required
+def upload_user_document(user_id):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    doc_type = request.form.get("doc_type", "other")
+    if doc_type not in USER_DOC_TYPES:
+        doc_type = "other"
+    uploaded = first_uploaded_file("doc_file", "doc_file_camera")
+    if not uploaded:
+        conn.close()
+        flash("Choose a file to upload.")
+        return redirect(url_for("users") + f"#userRow{user_id}")
+    try:
+        path = upload_file_to_storage(uploaded)
+    except Exception as e:
+        conn.close()
+        print("User document upload failed:", e)
+        flash("The document could not be uploaded. Try again.")
+        return redirect(url_for("users") + f"#userRow{user_id}")
+    conn.execute(
+        "INSERT INTO user_documents (user_id, doc_type, file_path, original_name, uploaded_by, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, doc_type, path, uploaded.filename or "", session.get("user_id"), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash(f"{USER_DOC_TYPES[doc_type]} uploaded for {user['name']}.")
+    return redirect(url_for("users") + f"#userRow{user_id}")
+
+
+@app.route("/users/documents/<int:doc_id>/delete", methods=["POST"])
+@admin_required
+def delete_user_document(doc_id):
+    conn = db()
+    doc = conn.execute("SELECT * FROM user_documents WHERE id = %s", (doc_id,)).fetchone()
+    if doc:
+        conn.execute("DELETE FROM user_documents WHERE id = %s", (doc_id,))
+        conn.commit()
+        flash("Document removed.")
+    conn.close()
+    target = doc["user_id"] if doc else ""
+    return redirect(url_for("users") + (f"#userRow{target}" if target else ""))
+
+
+@app.route("/expenses", methods=["GET", "POST"])
+@login_required
+def expenses():
+    if session.get("role") == "customer":
+        flash("Expenses are only for workers and subcontractors.")
+        return redirect(url_for("index") if session.get("role") == "admin" else url_for("mobile_home"))
+    conn = db()
+    if request.method == "POST":
+        target_user_id = session.get("user_id")
+        if is_main_admin() and request.form.get("user_id", type=int):
+            target_user_id = request.form.get("user_id", type=int)
+        amount = parse_money_value(request.form.get("amount"))
+        expense_date = (request.form.get("expense_date") or "").strip() or local_now().date().isoformat()
+        description = (request.form.get("description") or "").strip()
+        project_id = request.form.get("project_id", type=int)
+        if amount <= 0:
+            flash("Enter the expense amount.")
+        else:
+            receipt_path = None
+            uploaded = first_uploaded_file("receipt", "receipt_camera")
+            if uploaded:
+                try:
+                    receipt_path = upload_file_to_storage(uploaded)
+                except Exception as e:
+                    print("Expense receipt upload failed:", e)
+                    flash("The receipt picture could not be uploaded, but the expense was saved. You can delete it and try again.")
+            conn.execute(
+                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (target_user_id, project_id, expense_date, amount, description, receipt_path, utc_now_iso())
+            )
+            conn.commit()
+            flash(f"Expense of {format_invoice_money(amount)} saved.")
+        return redirect(url_for("expenses"))
+
+    if is_main_admin():
+        rows = conn.execute(
+            """
+            SELECT work_expenses.*, users.name AS user_name, projects.name AS project_name
+            FROM work_expenses
+            LEFT JOIN users ON work_expenses.user_id = users.id
+            LEFT JOIN projects ON work_expenses.project_id = projects.id
+            ORDER BY work_expenses.expense_date DESC, work_expenses.id DESC
+            LIMIT 300
+            """
+        ).fetchall()
+        team = conn.execute(
+            "SELECT id, name FROM users WHERE role <> 'customer' ORDER BY name"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT work_expenses.*, users.name AS user_name, projects.name AS project_name
+            FROM work_expenses
+            LEFT JOIN users ON work_expenses.user_id = users.id
+            LEFT JOIN projects ON work_expenses.project_id = projects.id
+            WHERE work_expenses.user_id = %s
+            ORDER BY work_expenses.expense_date DESC, work_expenses.id DESC
+            LIMIT 300
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+        team = []
+    projects = fetch_visible_projects(conn)
+    conn.close()
+    return render_template(
+        "expenses.html",
+        expenses=rows,
+        projects=projects,
+        team=team,
+        today=local_now().date().isoformat(),
+    )
+
+
+@app.route("/expenses/<int:expense_id>/delete", methods=["POST"])
+@login_required
+def delete_expense(expense_id):
+    conn = db()
+    exp = conn.execute("SELECT * FROM work_expenses WHERE id = %s", (expense_id,)).fetchone()
+    if not exp:
+        conn.close()
+        flash("Expense not found.")
+        return redirect(url_for("expenses"))
+    if not is_main_admin() and exp["user_id"] != session.get("user_id"):
+        conn.close()
+        flash("You can only delete your own expenses.")
+        return redirect(url_for("expenses"))
+    if exp.get("paystub_id"):
+        conn.close()
+        flash("This expense is already part of a paystub. Delete the paystub first.")
+        return redirect(url_for("expenses"))
+    conn.execute("DELETE FROM work_expenses WHERE id = %s", (expense_id,))
+    conn.commit()
+    conn.close()
+    flash("Expense deleted.")
+    return redirect(url_for("expenses"))
+
+
+@app.route("/paystubs", methods=["GET", "POST"])
+@admin_required
+def paystubs():
+    conn = db()
+    if request.method == "POST":
+        user_id = request.form.get("user_id", type=int)
+        period_start = (request.form.get("period_start") or "").strip()
+        period_end = (request.form.get("period_end") or "").strip()
+        person = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone() if user_id else None
+        if not person or not period_start or not period_end or period_end < period_start:
+            conn.close()
+            flash("Pick the person and a valid start and end date.")
+            return redirect(url_for("paystubs"))
+        total_minutes, _lines = attendance_minutes_for_range(conn, user_id, period_start, period_end)
+        base_pay = parse_money_value(request.form.get("base_pay"))
+        notes = (request.form.get("notes") or "").strip()
+        expense_ids = [int(x) for x in request.form.getlist("expense_ids") if str(x).isdigit()]
+        stub = conn.execute(
+            "INSERT INTO paystubs (user_id, period_start, period_end, total_minutes, pay_rate, pay_rate_unit, pay_frequency, base_pay, expenses_total, total_pay, notes, created_by, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s) RETURNING id",
+            (
+                user_id, period_start, period_end, total_minutes,
+                person.get("pay_rate"), person.get("pay_rate_unit") or "hour",
+                person.get("pay_frequency") or "weekly",
+                base_pay, notes, session.get("user_id"), utc_now_iso()
+            )
+        ).fetchone()
+        stub_id = stub["id"]
+        if expense_ids:
+            conn.execute(
+                "UPDATE work_expenses SET paystub_id = %s WHERE id = ANY(%s) AND user_id = %s AND paystub_id IS NULL",
+                (stub_id, expense_ids, user_id)
+            )
+        extra_amount = parse_money_value(request.form.get("extra_expense_amount"))
+        extra_desc = (request.form.get("extra_expense_description") or "").strip()
+        if extra_amount > 0:
+            conn.execute(
+                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, NULL, %s, %s)",
+                (user_id, period_end, extra_amount, extra_desc or "Added on paystub", stub_id, utc_now_iso())
+            )
+        exp_total = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM work_expenses WHERE paystub_id = %s",
+            (stub_id,)
+        ).fetchone()["total"] or 0
+        conn.execute(
+            "UPDATE paystubs SET expenses_total = %s, total_pay = %s WHERE id = %s",
+            (round(float(exp_total), 2), round(base_pay + float(exp_total), 2), stub_id)
+        )
+        conn.commit()
+        conn.close()
+        flash("Paystub created.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+
+    people = conn.execute(
+        "SELECT id, name, email, role, worker_class, pay_rate, pay_rate_unit, pay_frequency FROM users WHERE role <> 'customer' AND role <> 'admin' ORDER BY name"
+    ).fetchall()
+    people = [p for p in people if user_classification(p) in ("worker", "subcontractor")]
+
+    preview = None
+    sel_user_id = request.args.get("user_id", type=int)
+    period_start = (request.args.get("period_start") or "").strip()
+    period_end = (request.args.get("period_end") or "").strip()
+    if sel_user_id and period_start and period_end and period_end >= period_start:
+        person = conn.execute("SELECT * FROM users WHERE id = %s", (sel_user_id,)).fetchone()
+        if person:
+            total_minutes, lines = attendance_minutes_for_range(conn, sel_user_id, period_start, period_end)
+            rate = float(person.get("pay_rate") or 0)
+            unit = person.get("pay_rate_unit") or "hour"
+            suggested = compute_base_pay(rate, unit, total_minutes, period_start, period_end)
+            open_expenses = conn.execute(
+                """
+                SELECT work_expenses.*, projects.name AS project_name
+                FROM work_expenses
+                LEFT JOIN projects ON work_expenses.project_id = projects.id
+                WHERE work_expenses.user_id = %s AND work_expenses.paystub_id IS NULL
+                  AND work_expenses.expense_date >= %s AND work_expenses.expense_date <= %s
+                ORDER BY work_expenses.expense_date, work_expenses.id
+                """,
+                (sel_user_id, period_start, period_end)
+            ).fetchall()
+            preview = {
+                "person": person,
+                "classification": user_classification(person),
+                "total_minutes": total_minutes,
+                "lines": lines,
+                "rate": rate,
+                "unit": unit,
+                "suggested": suggested,
+                "expenses": open_expenses,
+                "expenses_total": round(sum(float(e.get("amount") or 0) for e in open_expenses), 2),
+            }
+
+    stubs = conn.execute(
+        """
+        SELECT paystubs.*, users.name AS user_name
+        FROM paystubs
+        LEFT JOIN users ON paystubs.user_id = users.id
+        ORDER BY paystubs.created_at DESC
+        LIMIT 100
+        """
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "paystubs.html",
+        people=people,
+        preview=preview,
+        stubs=stubs,
+        sel_user_id=sel_user_id,
+        period_start=period_start,
+        period_end=period_end,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        minutes_text=minutes_text,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs/<int:stub_id>")
+@admin_required
+def paystub_view(stub_id):
+    conn = db()
+    stub = conn.execute(
+        """
+        SELECT paystubs.*, users.name AS user_name, users.email AS user_email,
+               users.worker_class AS user_worker_class, users.role AS user_role
+        FROM paystubs
+        LEFT JOIN users ON paystubs.user_id = users.id
+        WHERE paystubs.id = %s
+        """,
+        (stub_id,)
+    ).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    stub_expenses = conn.execute(
+        """
+        SELECT work_expenses.*, projects.name AS project_name
+        FROM work_expenses
+        LEFT JOIN projects ON work_expenses.project_id = projects.id
+        WHERE work_expenses.paystub_id = %s
+        ORDER BY work_expenses.expense_date, work_expenses.id
+        """,
+        (stub_id,)
+    ).fetchall()
+    _total, lines = attendance_minutes_for_range(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    conn.close()
+    classification = user_classification({
+        "worker_class": stub.get("user_worker_class"),
+        "role": stub.get("user_role"),
+    })
+    return render_template(
+        "paystub_view.html",
+        stub=stub,
+        stub_expenses=stub_expenses,
+        lines=lines,
+        company=account_info(),
+        classification=classification,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        minutes_text=minutes_text,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs/<int:stub_id>/edit", methods=["POST"])
+@admin_required
+def edit_paystub(stub_id):
+    conn = db()
+    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    base_pay = parse_money_value(request.form.get("base_pay"))
+    notes = (request.form.get("notes") or "").strip()
+    exp_total = float(stub.get("expenses_total") or 0)
+    conn.execute(
+        "UPDATE paystubs SET base_pay = %s, total_pay = %s, notes = %s WHERE id = %s",
+        (base_pay, round(base_pay + exp_total, 2), notes, stub_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Paystub updated.")
+    return redirect(url_for("paystub_view", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/delete", methods=["POST"])
+@admin_required
+def delete_paystub(stub_id):
+    conn = db()
+    conn.execute("UPDATE work_expenses SET paystub_id = NULL WHERE paystub_id = %s AND receipt_file IS NOT NULL", (stub_id,))
+    conn.execute("DELETE FROM work_expenses WHERE paystub_id = %s", (stub_id,))
+    conn.execute("DELETE FROM paystubs WHERE id = %s", (stub_id,))
+    conn.commit()
+    conn.close()
+    flash("Paystub deleted. Its expenses with receipts went back to the open expense list.")
+    return redirect(url_for("paystubs"))
 
 
 @app.route("/projects/new", methods=["GET", "POST"])

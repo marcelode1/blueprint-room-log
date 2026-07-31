@@ -14,10 +14,11 @@
         <input name="phone_number" type="tel" placeholder="+15551234567">
         <label><input type="checkbox" name="sms_enabled"> Allow text messages for this user</label>
 
-        <label>Role</label>
+        <label>Classification</label>
         <select name="role">
+            <option value="worker">Worker (Employee)</option>
+            <option value="subcontractor">Subcontractor</option>
             <option value="customer">Customer</option>
-            <option value="worker">Worker</option>
         </select>
 
         <button type="submit">Send Mobile Invitation</button>
@@ -51,16 +52,31 @@
             background: #f8fafc;
         }
         .userRow {
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 12px;
-            align-items: center;
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 10px;
             margin-bottom: 10px;
             background: white;
         }
+        .userHeadRow { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+        .classBadge { display:inline-block; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.03em;
+            padding:3px 10px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+        .classBadge.worker { background:#dbeafe; color:#1d4ed8; }
+        .classBadge.subcontractor { background:#fef3c7; color:#b45309; }
+        .classBadge.customer { background:#dcfce7; color:#15803d; }
+        .classBadge.admin { background:#e2e8f0; color:#334155; }
+        .userTabBar { display:flex; gap:6px; margin:12px 0 0; border-bottom:2px solid #e2e8f0; flex-wrap:wrap; }
+        .userTabBtn { width:auto !important; min-height:34px !important; margin:0 !important; padding:7px 14px !important;
+            border-radius:8px 8px 0 0 !important; font-size:13px !important; background:#f1f5f9 !important; color:#334155 !important;
+            border:1px solid #e2e8f0 !important; border-bottom:none !important; }
+        .userTabBtn.activeTab { background:var(--primary, #2563eb) !important; color:white !important; }
+        .userTabPanel { padding-top:12px; }
+        .userTabPanel.hiddenPanel { display:none; }
+        .payFieldsGrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; }
+        .docRow { display:flex; justify-content:space-between; gap:10px; align-items:center; border:1px solid #e2e8f0;
+            border-radius:8px; padding:8px 10px; margin-bottom:6px; flex-wrap:wrap; }
+        .docRow form { margin:0; }
+        .docRow .btn-danger { width:auto !important; min-height:32px !important; padding:5px 10px !important; margin:0 !important; font-size:12px !important; }
         .deleteConfirm {
             display: none;
             margin-top: 8px;
@@ -92,18 +108,48 @@
             margin-right: 8px;
         }
         @media(max-width:700px){
-            .userRow { grid-template-columns: 1fr; }
             .confirmButtons { flex-direction: column; }
             .confirmButtons button { width: 100%; }
         }
     </style>
 
     {% for u in users %}
+        {% set uclass = 'admin' if u.role == 'admin' else user_classification(u) %}
         <div class="userRow" id="userRow{{ u.id }}" data-user-name="{{ u.name|lower }}" data-user-email="{{ u.email|lower }}">
-            <div>
-                <strong>{{ u.name }}</strong><br>
-                <span>{{ u.email }}</span><br>
-                <small>Role: {{ u.role }}</small>
+            <div class="userHeadRow">
+                <div>
+                    <strong>{{ u.name }}</strong>
+                    <span class="classBadge {{ uclass }}">{{ 'Admin' if uclass == 'admin' else class_labels[uclass] }}</span><br>
+                    <span>{{ u.email }}</span>
+                </div>
+                <div>
+                    {% if u.id != session.get("user_id") %}
+                        <button type="button" class="btn-danger" onclick="showDeleteConfirm('{{ u.id }}')">Delete</button>
+                        <div class="deleteConfirm" id="deleteConfirm{{ u.id }}">
+                            <strong>Delete this user?</strong>
+                            <p>This cannot be undone.</p>
+                            <div class="confirmButtons">
+                                <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}">
+                                    <button type="submit" class="btn-danger">Yes</button>
+                                </form>
+                                <button type="button" class="btn-secondary" onclick="hideDeleteConfirm('{{ u.id }}')">No</button>
+                            </div>
+                        </div>
+                    {% else %}
+                        <small>You are logged in with this account</small>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if u.role != 'admin' %}
+            <div class="userTabBar">
+                <button type="button" class="userTabBtn activeTab" data-user="{{ u.id }}" data-panel="profile">Profile</button>
+                <button type="button" class="userTabBtn" data-user="{{ u.id }}" data-panel="class">Classification &amp; Pay</button>
+                <button type="button" class="userTabBtn" data-user="{{ u.id }}" data-panel="docs">Documents</button>
+            </div>
+            {% endif %}
+
+            <div class="userTabPanel" id="panel-profile-{{ u.id }}">
                 <p class="muted">Cellphone: {{ u.phone_number or "Not set" }}{% if u.sms_enabled %} - Text enabled{% else %} - Text disabled{% endif %}</p>
                 {% if u.role != "admin" %}
                 <form method="post" action="{{ url_for('update_user_pin', user_id=u.id) }}" style="margin-top:10px;">
@@ -126,30 +172,82 @@
                 </div>
             </div>
 
-            <div>
-                {% if u.id != session.get("user_id") %}
-                    <button type="button" class="btn-danger" onclick="showDeleteConfirm('{{ u.id }}')">
-                        Delete
-                    </button>
+            {% if u.role != 'admin' %}
+            <div class="userTabPanel hiddenPanel" id="panel-class-{{ u.id }}">
+                <form method="post" action="{{ url_for('update_user_classification', user_id=u.id) }}">
+                    <label>Classification</label>
+                    <select name="worker_class" class="classSelect" data-user="{{ u.id }}">
+                        {% for value, label in class_labels.items() %}
+                            <option value="{{ value }}" {% if uclass == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="payFields" id="payFields{{ u.id }}" {% if uclass == 'customer' %}style="display:none"{% endif %}>
+                        <div class="payFieldsGrid">
+                            <div>
+                                <label>Salary Rate ($)</label>
+                                <input name="pay_rate" type="text" inputmode="decimal" value="{{ ('%.2f'|format(u.pay_rate)) if u.pay_rate else '' }}" placeholder="0.00">
+                            </div>
+                            <div>
+                                <label>Rate Is</label>
+                                <select name="pay_rate_unit">
+                                    {% for value, label in rate_units.items() %}
+                                        <option value="{{ value }}" {% if (u.pay_rate_unit or 'hour') == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label>Gets Paid</label>
+                                <select name="pay_frequency">
+                                    {% for value, label in frequencies.items() %}
+                                        <option value="{{ value }}" {% if (u.pay_frequency or 'weekly') == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <p class="muted" style="font-size:12.5px">Hourly rates multiply the Time Report hours. Week / month / year rates are prorated by the days in the paystub period.</p>
+                    </div>
+                    <button type="submit">Save Classification &amp; Pay</button>
+                </form>
+            </div>
 
-                    <div class="deleteConfirm" id="deleteConfirm{{ u.id }}">
-                        <strong>Delete this user?</strong>
-                        <p>This cannot be undone.</p>
-
-                        <div class="confirmButtons">
-                            <form method="post" action="{{ url_for('delete_user', user_id=u.id) }}">
-                                <button type="submit" class="btn-danger">Yes</button>
+            <div class="userTabPanel hiddenPanel" id="panel-docs-{{ u.id }}">
+                {% set udocs = docs_by_user.get(u.id, []) %}
+                {% if udocs %}
+                    {% for d in udocs %}
+                        <div class="docRow">
+                            <div>
+                                <strong>{{ doc_types.get(d.doc_type, d.doc_type) }}</strong><br>
+                                <a href="{{ url_for('storage_file', storage_path=d.file_path) }}" target="_blank" rel="noopener">{{ d.original_name or 'Open document' }}</a>
+                                <span class="muted" style="font-size:12px"> &middot; {{ format_date(d.created_at) }}</span>
+                            </div>
+                            <form method="post" action="{{ url_for('delete_user_document', doc_id=d.id) }}"
+                                  onsubmit="return confirm('Remove this document?');">
+                                <button type="submit" class="btn-danger">Remove</button>
                             </form>
-
-                            <button type="button" class="btn-secondary" onclick="hideDeleteConfirm('{{ u.id }}')">
-                                No
-                            </button>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="muted">No documents on file. Upload driver license, business license, insurance, or trade license.</p>
+                {% endif %}
+                <form method="post" action="{{ url_for('upload_user_document', user_id=u.id) }}" enctype="multipart/form-data" style="margin-top:10px">
+                    <div class="payFieldsGrid">
+                        <div>
+                            <label>Document Type</label>
+                            <select name="doc_type">
+                                {% for value, label in doc_types.items() %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label>File (photo or PDF)</label>
+                            <input type="file" name="doc_file" accept="image/*,.pdf" required>
                         </div>
                     </div>
-                {% else %}
-                    <small>You are logged in with this account</small>
-                {% endif %}
+                    <button type="submit" class="btn-secondary">Upload Document</button>
+                </form>
             </div>
+            {% endif %}
         </div>
     {% else %}
         <p>No users found.</p>
@@ -171,7 +269,7 @@ function updateUserSearch() {
         const name = row.dataset.userName || "";
         const email = row.dataset.userEmail || "";
         const match = !term || name.startsWith(term) || email.startsWith(term) || name.includes(term) || email.includes(term);
-        row.style.display = match ? "grid" : "none";
+        row.style.display = match ? "block" : "none";
         if (match) shown += 1;
     });
     userSearchCount.textContent = shown + " user" + (shown === 1 ? "" : "s") + " shown";
@@ -209,5 +307,23 @@ function hideDeleteConfirm(userId) {
     const box = document.getElementById("deleteConfirm" + userId);
     if (box) box.style.display = "none";
 }
+
+document.querySelectorAll(".userTabBtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const uid = btn.dataset.user;
+        document.querySelectorAll(`.userTabBtn[data-user="${uid}"]`).forEach(b => b.classList.toggle("activeTab", b === btn));
+        ["profile", "class", "docs"].forEach(name => {
+            const panel = document.getElementById(`panel-${name}-${uid}`);
+            if (panel) panel.classList.toggle("hiddenPanel", name !== btn.dataset.panel);
+        });
+    });
+});
+
+document.querySelectorAll(".classSelect").forEach(sel => {
+    sel.addEventListener("change", () => {
+        const pay = document.getElementById("payFields" + sel.dataset.user);
+        if (pay) pay.style.display = sel.value === "customer" ? "none" : "block";
+    });
+});
 </script>
 {% endblock %}

@@ -72,6 +72,7 @@
             {% if is_main_admin() %}<a href="{{ url_for('parts_catalog') }}">Items & Catalog</a>{% endif %}
             {% if not is_main_admin() %}
                 <a href="{{ url_for('my_time_report') }}">Time Report</a>
+                {% if session.get("role") != "customer" %}<a href="{{ url_for('expenses') }}">Expenses</a>{% endif %}
             {% endif %}
             <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
             {% if is_main_admin() %}
@@ -80,6 +81,8 @@
                 <a href="{{ url_for('dtools_import') }}">D-Tools Import</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
                 <a href="{{ url_for('attendance_report') }}">Time Report</a>
+                <a href="{{ url_for('paystubs') }}">Paystubs</a>
+                <a href="{{ url_for('expenses') }}">Expenses</a>
                 <a href="{{ url_for('project_report') }}">Project Report</a>
                 <a href="{{ url_for('team_map') }}">Where Is My Team</a>
                 <a href="{{ url_for('backup') }}">Backup</a>
@@ -100,6 +103,7 @@
         <a href="{{ url_for('today_tasks') }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('my_time_report') }}">Time Report</a>
+        {% if session.get("role") != "customer" %}<a href="{{ url_for('expenses') }}">Expenses</a>{% endif %}
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
@@ -122,6 +126,8 @@
         <a href="{{ url_for('dtools_import') }}">D-Tools Import</a>
         <a href="{{ url_for('settings') }}">Settings</a>
         <a href="{{ url_for('attendance_report') }}">Time Report</a>
+        <a href="{{ url_for('paystubs') }}">Paystubs</a>
+        <a href="{{ url_for('expenses') }}">Expenses</a>
         <a href="{{ url_for('team_map') }}">Where Is My Team</a>
         <a href="{{ url_for('backup') }}">Backup</a>
         <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
@@ -278,6 +284,7 @@
         <a href="{{ url_for('today_tasks') }}">Today's Tasks</a>
         <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         <a href="{{ url_for('my_time_report') }}">Time Report</a>
+        {% if session.get("role") != "customer" %}<a href="{{ url_for('expenses') }}">Expenses</a>{% endif %}
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
     {% else %}
