@@ -234,20 +234,21 @@
                     <p class="muted">No documents on file. Upload driver license, business license, insurance, or trade license.</p>
                 {% endif %}
                 <form method="post" action="{{ url_for('upload_user_document', user_id=u.id) }}" enctype="multipart/form-data" style="margin-top:10px">
-                    <div class="payFieldsGrid">
-                        <div>
-                            <label>Document Type</label>
-                            <select name="doc_type">
-                                {% for value, label in doc_types.items() %}
-                                    <option value="{{ value }}">{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div>
-                            <label>File (photo or PDF)</label>
-                            <input type="file" name="doc_file" accept="image/*,.pdf" required>
-                        </div>
-                    </div>
+                    <label>Document Type</label>
+                    <select name="doc_type">
+                        {% for value, label in doc_types.items() %}
+                            <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <label>Document (take a picture or attach a photo / PDF)</label>
+                    {% set media_id = 'user_doc_' ~ u.id %}
+                    {% set media_camera_name = 'doc_file_camera' %}
+                    {% set media_upload_name = 'doc_file' %}
+                    {% set media_audio_name = '' %}
+                    {% set media_comment_name = '' %}
+                    {% set media_upload_accept = 'image/*,.heic,.heif,.pdf' %}
+                    {% set media_save_label = 'Ready to Upload' %}
+                    {% include "_mobile_media_bar.html" %}
                     <button type="submit" class="btn-secondary">Upload Document</button>
                 </form>
             </div>

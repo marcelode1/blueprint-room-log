@@ -126,7 +126,11 @@
                     <td>{{ format_date(e.expense_date) }}</td>
                     <td>{{ e.description or '-' }}</td>
                     <td>{{ e.project_name or '-' }}</td>
-                    <td class="noPrint">{% if e.receipt_file %}<a href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Open</a>{% else %}-{% endif %}</td>
+                    <td class="noPrint">
+                        {% if e.receipt_file %}<a href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Open</a>{% endif %}
+                        {% if e.audio_file %}<a href="{{ url_for('storage_file', storage_path=e.audio_file) }}" target="_blank" rel="noopener">&#127908; Audio</a>{% endif %}
+                        {% if not e.receipt_file and not e.audio_file %}-{% endif %}
+                    </td>
                     <td>{{ format_invoice_money(e.amount) }}</td>
                 </tr>
             {% endfor %}
@@ -155,8 +159,15 @@
             <div><label>Description</label><input name="description" placeholder="Gas, parking, materials..." required></div>
             <div><label>Amount ($)</label><input name="amount" type="text" inputmode="decimal" placeholder="0.00" required></div>
             <div><label>Date</label><input name="expense_date" type="date" value="{{ stub.period_end }}"></div>
-            <div><label>Receipt Picture (optional)</label><input type="file" name="receipt" accept="image/*"></div>
         </div>
+        <label>Receipt (take a picture, record audio, or attach — optional)</label>
+        {% set media_id = 'stub_expense_receipt' %}
+        {% set media_camera_name = 'receipt_camera' %}
+        {% set media_upload_name = 'receipt' %}
+        {% set media_audio_name = 'receipt_audio' %}
+        {% set media_comment_name = '' %}
+        {% set media_save_label = 'Attach to Expense' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="submit">Add Expense Line</button>
     </form>
 </div>

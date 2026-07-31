@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V11"
+APP_BUILD = "2026-07-31 V12"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1114,6 +1114,7 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_frequency TEXT",
         "CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, doc_type TEXT NOT NULL, file_path TEXT NOT NULL, original_name TEXT, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
+        "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate REAL, pay_rate_unit TEXT, pay_frequency TEXT, base_pay REAL NOT NULL DEFAULT 0, expenses_total REAL NOT NULL DEFAULT 0, total_pay REAL NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_at TEXT",
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
@@ -7341,9 +7342,16 @@ def expenses():
                 except Exception as e:
                     print("Expense receipt upload failed:", e)
                     flash("The receipt picture could not be uploaded, but the expense was saved. You can delete it and try again.")
+            audio_path = None
+            audio_uploaded = first_uploaded_file("receipt_audio")
+            if audio_uploaded:
+                try:
+                    audio_path = upload_file_to_storage(audio_uploaded)
+                except Exception as e:
+                    print("Expense audio upload failed:", e)
             conn.execute(
-                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (target_user_id, project_id, expense_date, amount, description, receipt_path, utc_now_iso())
+                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (target_user_id, project_id, expense_date, amount, description, receipt_path, audio_path, utc_now_iso())
             )
             conn.commit()
             flash(f"Expense of {format_invoice_money(amount)} saved.")
@@ -7853,9 +7861,16 @@ def add_paystub_expense(stub_id):
             receipt_path = upload_file_to_storage(uploaded)
         except Exception as e:
             print("Paystub expense receipt upload failed:", e)
+    audio_path = None
+    audio_uploaded = first_uploaded_file("receipt_audio")
+    if audio_uploaded:
+        try:
+            audio_path = upload_file_to_storage(audio_uploaded)
+        except Exception as e:
+            print("Paystub expense audio upload failed:", e)
     conn.execute(
-        "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)",
-        (stub["user_id"], expense_date, amount, description, receipt_path, stub_id, utc_now_iso())
+        "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, audio_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)",
+        (stub["user_id"], expense_date, amount, description, receipt_path, audio_path, stub_id, utc_now_iso())
     )
     exp_total = conn.execute(
         "SELECT COALESCE(SUM(amount), 0) AS total FROM work_expenses WHERE paystub_id = %s",

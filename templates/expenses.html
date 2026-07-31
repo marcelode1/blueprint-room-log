@@ -35,8 +35,14 @@
         </div>
         <label>What Was It For</label>
         <input name="description" placeholder="Gas, parking, materials from Home Depot..." required>
-        <label>Receipt Picture</label>
-        <input type="file" name="receipt" accept="image/*" capture="environment" required>
+        <label>Receipt (take a picture, record audio, or attach)</label>
+        {% set media_id = 'expense_receipt' %}
+        {% set media_camera_name = 'receipt_camera' %}
+        {% set media_upload_name = 'receipt' %}
+        {% set media_audio_name = 'receipt_audio' %}
+        {% set media_comment_name = '' %}
+        {% set media_save_label = 'Attach to Expense' %}
+        {% include "_mobile_media_bar.html" %}
         <button type="submit">Save Expense</button>
     </form>
 </div>
@@ -56,6 +62,9 @@
                 <strong class="expAmt">{{ format_invoice_money(e.amount) }}</strong>
                 {% if e.receipt_file %}
                     <a class="expReceipt" href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Receipt</a>
+                {% endif %}
+                {% if e.audio_file %}
+                    <a class="expReceipt" href="{{ url_for('storage_file', storage_path=e.audio_file) }}" target="_blank" rel="noopener">&#127908; Audio</a>
                 {% endif %}
                 {% if e.paystub_id %}
                     <a class="expStubTag{% if e.stub_paid_at %} expPaidTag{% endif %}" {% if is_main_admin() %}href="{{ url_for('paystub_view', stub_id=e.paystub_id) }}"{% endif %}>
