@@ -27,9 +27,11 @@
         <div class="receiptCompanyBox">
             {% set logo = get_app_setting("company_logo") %}
             {% if logo %}<img class="receiptLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
+            <p class="stubCompanyName">{{ company.company_name }}</p>
             {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
-            {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ format_us_phone(company.company_phone) or company.company_phone }}</p>{% endif %}
             {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+            {% if company.company_website %}<p>{{ company.company_website }}</p>{% endif %}
         </div>
         <div class="receiptMeta">
             <h1>Paystub</h1>
@@ -49,6 +51,9 @@
             <p><strong>{{ stub.user_name or '-' }}</strong></p>
             <p>{{ class_labels.get(classification, classification) }}</p>
             {% if stub.user_email %}<p>{{ stub.user_email }}</p>{% endif %}
+            {% if stub.user_phone %}<p>{{ format_us_phone(stub.user_phone) or stub.user_phone }}</p>{% endif %}
+            {% if stub.pay_rate %}<p>Rate: ${{ '%.2f'|format(stub.pay_rate) }} {{ rate_units.get(stub.pay_rate_unit, '') }}</p>{% endif %}
+            <p>Paid {{ frequencies.get(stub.pay_frequency, stub.pay_frequency or '-')|lower }}</p>
         </div>
         <div class="receiptAmountBox">
             <span>Total Pay</span>
@@ -67,8 +72,26 @@
         </tbody>
     </table>
 
+    {% if work_done %}
+    <h3 class="stubSectionTitle">Work Performed</h3>
+    <table class="stubDetailTable">
+        <thead><tr><th>Date</th><th>Task #</th><th>Work Done</th><th>Project</th><th>Status</th></tr></thead>
+        <tbody>
+            {% for w in work_done %}
+                <tr>
+                    <td>{{ format_date(w.day) }}</td>
+                    <td>{{ w.task_number }}</td>
+                    <td><strong>{{ w.title }}</strong>{% if w.comment %}<br><span class="workComment">&ldquo;{{ w.comment }}&rdquo;</span>{% endif %}</td>
+                    <td>{{ w.project_name }}</td>
+                    <td>{{ w.status }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
     {% if lines %}
-    <h3 class="stubSectionTitle">Work Detail <span class="noPrint" style="font-weight:500;text-transform:none;letter-spacing:0">&mdash; click a line to check it on the Time Report</span></h3>
+    <h3 class="stubSectionTitle">Hours Detail (Time Report) <span class="noPrint" style="font-weight:500;text-transform:none;letter-spacing:0">&mdash; click a line to check it on the Time Report</span></h3>
     {% set back_here = url_for('paystub_view', stub_id=stub.id) %}
     {% set hourly = stub.pay_rate_unit == 'hour' and stub.pay_rate %}
     <table class="stubDetailTable">
@@ -167,6 +190,8 @@
 .receiptPaper{max-width:760px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}
 .receiptHeader{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:30px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}
 .receiptCompanyBox p{margin:3px 0}
+.stubCompanyName{font-size:22px;font-weight:900;color:#0f172a;margin:0 0 4px!important}
+.workComment{font-size:12.5px;color:#475569;font-style:italic}
 .receiptLogo{max-width:300px;max-height:170px;object-fit:contain;margin-bottom:12px}
 .receiptMeta{text-align:right}
 .receiptMeta h1{font-size:32px;text-transform:uppercase;margin:0 0 12px}

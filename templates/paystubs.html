@@ -86,7 +86,7 @@
         {% if preview.expenses %}
             {% for e in preview.expenses %}
                 <label class="psExpRow">
-                    <input type="checkbox" name="expense_ids" value="{{ e.id }}" checked>
+                    <input type="checkbox" name="expense_ids" value="{{ e.id }}" data-amount="{{ '%.2f'|format(e.amount or 0) }}" checked>
                     <span class="psExpText">{{ format_date(e.expense_date) }} &middot; {{ e.description or '-' }}
                         <small class="muted">{{ e.project_name or 'No project' }}</small></span>
                     {% if e.receipt_file %}<a href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Receipt</a>{% endif %}
@@ -98,23 +98,33 @@
             <p class="muted">No open expenses for this period.</p>
         {% endif %}
 
-        <div class="psGrid" style="margin-top:10px">
-            <div>
-                <label>Extra Expense Description (optional)</label>
-                <input name="extra_expense_description" placeholder="Tool reimbursement, bonus...">
+        <h4 style="margin:14px 0 6px">Extra Expense Lines</h4>
+        <p class="muted" style="font-size:12.5px;margin-top:0">Add as many expense lines as needed — each one is added to the total.</p>
+        <div id="extraExpenseLines">
+            <div class="extraExpLine">
+                <input name="extra_expense_description" placeholder="Tool reimbursement, bonus, gas...">
+                <input name="extra_expense_amount" class="extraExpAmount" type="text" inputmode="decimal" placeholder="0.00">
+                <button type="button" class="btn-danger extraExpRemove" title="Remove this line">&times;</button>
             </div>
-            <div>
-                <label>Extra Expense Amount ($)</label>
-                <input name="extra_expense_amount" type="text" inputmode="decimal" placeholder="0.00">
-            </div>
+        </div>
+        <button type="button" class="btn-secondary" id="addExpenseLineBtn">+ Add Another Expense Line</button>
+
+        <div class="psGrid" style="margin-top:14px">
             <div>
                 <label>Base Pay ($)</label>
-                <input name="base_pay" type="text" inputmode="decimal" value="{{ '%.2f'|format(preview.suggested) }}" required>
+                <input name="base_pay" id="basePayInput" type="text" inputmode="decimal" value="{{ '%.2f'|format(preview.suggested) }}" required>
             </div>
         </div>
         <p class="muted" style="font-size:12.5px">Base pay was calculated from the rate ({% if preview.unit == 'hour' %}hours &times; hourly rate{% else %}{{ rate_units[preview.unit]|lower }} prorated by the days in the period{% endif %}). You can change it before creating the stub.</p>
         <label>Note (shows on the paystub)</label>
         <input name="notes" placeholder="Optional note">
+
+        <div class="psLiveTotal">
+            <span>Base Pay <strong id="ltBase">$0.00</strong></span>
+            <span>+ Expenses <strong id="ltExp">$0.00</strong></span>
+            <span class="ltGrand">TOTAL <strong id="ltTotal">$0.00</strong></span>
+        </div>
+
         <button type="submit">Create Paystub</button>
     </form>
 </div>
@@ -167,5 +177,58 @@
 .psTotalRow td{border-top:2px solid #172033;background:#f8fafc}
 .psPaidPill{font-size:11px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:999px;padding:4px 9px;white-space:nowrap}
 .psOpenPill{font-size:11px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:999px;padding:4px 9px;white-space:nowrap}
+.extraExpLine{display:grid;grid-template-columns:minmax(0,1fr) 130px 40px;gap:8px;align-items:center;margin-bottom:8px}
+.extraExpLine input{margin:0}
+.extraExpRemove{width:40px!important;min-height:40px!important;padding:0!important;margin:0!important;font-size:18px!important;line-height:1!important}
+#addExpenseLineBtn{width:auto!important;min-height:36px!important;padding:8px 14px!important;font-size:13px!important;margin:0 0 4px!important}
+.psLiveTotal{display:flex;gap:18px;align-items:center;flex-wrap:wrap;border:2px solid #172033;border-radius:12px;padding:12px 16px;margin:14px 0;font-weight:700;color:#334155}
+.psLiveTotal .ltGrand{margin-left:auto;font-size:15px}
+.psLiveTotal .ltGrand strong{font-size:22px;color:#0f172a}
+@media(max-width:560px){.extraExpLine{grid-template-columns:minmax(0,1fr) 100px 36px}}
 </style>
+
+<script>
+(function(){
+    const form = document.querySelector("#extraExpenseLines") ? document.querySelector("#extraExpenseLines").closest("form") : null;
+    if (!form) return;
+    const linesBox = document.getElementById("extraExpenseLines");
+    const addBtn = document.getElementById("addExpenseLineBtn");
+    const basePay = document.getElementById("basePayInput");
+    const money = v => "$" + (Math.round(v * 100) / 100).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const num = v => { const n = parseFloat(String(v || "").replace(/[$,]/g, "")); return isNaN(n) ? 0 : n; };
+
+    function updateTotal(){
+        const base = num(basePay.value);
+        let exp = 0;
+        form.querySelectorAll('input[name="expense_ids"]:checked').forEach(cb => { exp += num(cb.dataset.amount); });
+        form.querySelectorAll(".extraExpAmount").forEach(inp => { exp += num(inp.value); });
+        document.getElementById("ltBase").textContent = money(base);
+        document.getElementById("ltExp").textContent = money(exp);
+        document.getElementById("ltTotal").textContent = money(base + exp);
+    }
+
+    function wireLine(line){
+        line.querySelector(".extraExpAmount").addEventListener("input", updateTotal);
+        line.querySelector(".extraExpRemove").addEventListener("click", () => {
+            if (linesBox.querySelectorAll(".extraExpLine").length > 1) line.remove();
+            else { line.querySelectorAll("input").forEach(i => i.value = ""); }
+            updateTotal();
+        });
+    }
+
+    addBtn.addEventListener("click", () => {
+        const first = linesBox.querySelector(".extraExpLine");
+        const clone = first.cloneNode(true);
+        clone.querySelectorAll("input").forEach(i => i.value = "");
+        linesBox.appendChild(clone);
+        wireLine(clone);
+        clone.querySelector("input").focus();
+    });
+
+    linesBox.querySelectorAll(".extraExpLine").forEach(wireLine);
+    basePay.addEventListener("input", updateTotal);
+    form.querySelectorAll('input[name="expense_ids"]').forEach(cb => cb.addEventListener("change", updateTotal));
+    updateTotal();
+})();
+</script>
 {% endblock %}

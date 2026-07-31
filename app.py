@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V7"
+APP_BUILD = "2026-07-31 V9"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6948,6 +6948,52 @@ def attendance_minutes_for_range(conn, user_id, start_date, end_date, excluded_d
     return total, lines, skipped_days
 
 
+def paystub_work_done(conn, user_id, start_date, end_date):
+    """Tasks the person worked on during the pay period - the title, project,
+    status, and the completion comment they typed during the day."""
+    rows = conn.execute(
+        """
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.status,
+               tasks.completion_comment, tasks.completed_at, tasks.completion_at,
+               tasks.task_start_date, tasks.task_date,
+               projects.name AS project_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.assigned_user_id = %s
+        ORDER BY tasks.id
+        """,
+        (user_id,)
+    ).fetchall()
+    items = []
+    for t in rows:
+        day = None
+        done_stamp = t.get("completed_at") or t.get("completion_at")
+        if done_stamp:
+            dt = parse_iso_datetime(done_stamp)
+            if dt:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                day = dt.astimezone(app_timezone()).date().isoformat()
+        if not day:
+            d = task_scheduled_date_value(t)
+            day = d.isoformat() if d else None
+        if not day or not (start_date <= day <= end_date):
+            continue
+        status = (t.get("status") or "open").replace("_", " ").title()
+        if done_stamp:
+            status = "Completed"
+        items.append({
+            "day": day,
+            "task_number": t.get("task_number") or f'T-{t.get("id")}',
+            "title": t.get("title") or "-",
+            "project_name": t.get("project_name") or "No project",
+            "status": status,
+            "comment": (t.get("completion_comment") or "").strip(),
+        })
+    items.sort(key=lambda x: (x["day"], x["task_number"]))
+    return items
+
+
 def paystub_covered_days(conn, user_id, exclude_stub_id=None):
     """Days already claimed by this user's existing paystubs (any status)."""
     days = set()
@@ -7474,12 +7520,15 @@ def paystubs():
                 "UPDATE work_expenses SET paystub_id = %s WHERE id = ANY(%s) AND user_id = %s AND paystub_id IS NULL",
                 (stub_id, expense_ids, user_id)
             )
-        extra_amount = parse_money_value(request.form.get("extra_expense_amount"))
-        extra_desc = (request.form.get("extra_expense_description") or "").strip()
-        if extra_amount > 0:
+        extra_descs = request.form.getlist("extra_expense_description")
+        extra_amounts = request.form.getlist("extra_expense_amount")
+        for extra_desc, extra_raw in zip(extra_descs, extra_amounts):
+            extra_amount = parse_money_value(extra_raw)
+            if extra_amount <= 0:
+                continue
             conn.execute(
                 "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, NULL, %s, %s)",
-                (user_id, period_end, extra_amount, extra_desc or "Added on paystub", stub_id, utc_now_iso())
+                (user_id, period_end, extra_amount, (extra_desc or "").strip() or "Added on paystub", stub_id, utc_now_iso())
             )
         exp_total = conn.execute(
             "SELECT COALESCE(SUM(amount), 0) AS total FROM work_expenses WHERE paystub_id = %s",
@@ -7568,6 +7617,7 @@ def paystub_view(stub_id):
     stub = conn.execute(
         """
         SELECT paystubs.*, users.name AS user_name, users.email AS user_email,
+               users.phone_number AS user_phone,
                users.worker_class AS user_worker_class, users.role AS user_role
         FROM paystubs
         LEFT JOIN users ON paystubs.user_id = users.id
@@ -7590,6 +7640,7 @@ def paystub_view(stub_id):
         (stub_id,)
     ).fetchall()
     _total, lines, _skipped = attendance_minutes_for_range(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    work_done = paystub_work_done(conn, stub["user_id"], stub["period_start"], stub["period_end"])
     conn.close()
     classification = user_classification({
         "worker_class": stub.get("user_worker_class"),
@@ -7600,6 +7651,7 @@ def paystub_view(stub_id):
         stub=stub,
         stub_expenses=stub_expenses,
         lines=lines,
+        work_done=work_done,
         company=account_info(),
         classification=classification,
         class_labels=USER_CLASS_LABELS,
