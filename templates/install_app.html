@@ -191,6 +191,11 @@ svg.icn{width:100%;height:100%;display:block}
 #startBox .go{background:var(--primary);border:none;color:#fff;font-size:19px;font-weight:800;padding:16px;border-radius:12px;cursor:pointer;font-family:inherit}
 #startBox .go:hover{background:var(--primary2)}
 #startBox small{color:#64748b;font-size:13px}
+#startBox .choiceRow{display:flex;gap:12px}
+#startBox .goAlt{flex:1;background:#1c2a47;border:1px solid #2c3d63;color:var(--text);font-size:16px;font-weight:800;padding:13px;border-radius:12px;cursor:pointer;font-family:inherit}
+#startBox .goAlt:hover{background:#243559;border-color:var(--primary2)}
+.platChip{cursor:pointer;transition:all .2s}
+.platChip:hover{border-color:var(--primary2);background:#1c2a47}
 
 /* ============ SCRIPT PANEL ============ */
 #scriptPanel{position:absolute;right:20px;top:20px;bottom:90px;width:460px;background:rgba(10,16,30,.97);border:1px solid #22314f;border-radius:16px;z-index:150;padding:22px;overflow-y:auto;display:none}
@@ -229,6 +234,7 @@ svg.icn{width:100%;height:100%;display:block}
 #stage.portrait #startBox h1{font-size:22px}
 #stage.portrait #startBox p{font-size:14.5px}
 #stage.portrait #startBox .go{font-size:16px;padding:13px}
+#stage.portrait #startBox .goAlt{font-size:14px;padding:11px}
 #stage.portrait #startBox small{font-size:12px}
 </style>
 </head>
@@ -418,8 +424,12 @@ svg.icn{width:100%;height:100%;display:block}
         <div id="startBox">
             <h1>📱 Put ProjectONus on Your Phone</h1>
             <p>Watch how to turn this website into an app icon on your phone —<br>no app store needed, just 4 quick taps.</p>
-            <button class="go" id="startBtn">▶ &nbsp;Watch (1 minute)</button>
-            <small>Works on iPhone (Safari) and Android (Chrome).</small>
+            <button class="go" id="startBtn">▶ &nbsp;Watch Both (1 minute)</button>
+            <div class="choiceRow">
+                <button class="goAlt" id="startIosBtn">🍎 iPhone Only</button>
+                <button class="goAlt" id="startAndBtn">🤖 Android Only</button>
+            </div>
+            <small>iPhone uses Safari &middot; Android uses Chrome.</small>
         </div>
     </div>
 
@@ -566,6 +576,7 @@ function renderCaption(sc){
 }
 
 // ---------- playback engine ----------
+let jumpMap = null, startIdx = 0;
 let idx = 0, playing = false, sceneStart = 0, elapsedBefore = 0, rafId = null, sceneTimer = null;
 const playBtn = document.getElementById("playBtn");
 const fill = document.getElementById("progressFill");
@@ -596,7 +607,8 @@ function enterScene(i){
     sceneStart = performance.now();
     if(playing){
         sceneTimer = setTimeout(()=>{
-            if(idx < SCENES.length-1) enterScene(idx+1);
+            const nxt = (jumpMap && jumpMap[idx] !== undefined) ? jumpMap[idx] : idx + 1;
+            if(idx < SCENES.length-1 && nxt < SCENES.length) enterScene(nxt);
             else pause(true);
         }, sc.dur);
     }
@@ -605,7 +617,7 @@ function enterScene(i){
 function play(){
     if(playing) return;
     playing = true; playBtn.textContent = "❚❚ Pause";
-    if(idx === SCENES.length-1 && fill.style.width === "100%") idx = 0;
+    if(idx === SCENES.length-1 && fill.style.width === "100%") idx = startIdx;
     enterScene(idx);
 }
 function pause(finished){
@@ -620,7 +632,7 @@ function goTo(i, keepState){
     if(!wasPlaying) tick();
 }
 playBtn.onclick = ()=> playing ? pause(false) : play();
-document.getElementById("restartBtn").onclick = ()=>{ pause(false); idx = 0; play(); };
+document.getElementById("restartBtn").onclick = ()=>{ pause(false); idx = startIdx; play(); };
 document.getElementById("prevBtn").onclick = ()=> goTo(idx-1);
 document.getElementById("nextBtn").onclick = ()=> goTo(idx+1);
 document.getElementById("progressWrap").onclick = (e)=>{
@@ -643,12 +655,22 @@ addEventListener("keydown", e=>{
 
 // ---------- start overlay ----------
 const APP_URL = {{ app_host|tojson }};
-document.getElementById("startBtn").onclick = ()=>{
-    let url = APP_URL;
-    document.querySelectorAll(".urlText").forEach(el=>el.textContent = url);
+function startWith(mode){
+    document.querySelectorAll(".urlText").forEach(el=>el.textContent = APP_URL);
     document.getElementById("startOverlay").style.display = "none";
-    play();
-};
+    if(mode === "ios"){ jumpMap = {5: 11}; startIdx = 1; }
+    else if(mode === "android"){ jumpMap = null; startIdx = 6; }
+    else { jumpMap = null; startIdx = 0; }
+    pause(false); idx = startIdx; play();
+}
+document.getElementById("startBtn").onclick = ()=>startWith("all");
+document.getElementById("startIosBtn").onclick = ()=>startWith("ios");
+document.getElementById("startAndBtn").onclick = ()=>startWith("android");
+document.querySelectorAll(".bigCard").forEach(card=>{
+    const chips = card.querySelectorAll(".platChip");
+    if(chips[0]) chips[0].onclick = ()=>startWith("ios");
+    if(chips[1]) chips[1].onclick = ()=>startWith("android");
+});
 tick();
 </script>
 </body>
