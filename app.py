@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V5"
+APP_BUILD = "2026-07-31 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6973,6 +6973,61 @@ def parse_money_value(raw):
         return 0.0
 
 
+def process_user_invite(conn):
+    """Create the invited user and email their PIN setup link."""
+    try:
+        email = request.form["email"].strip().lower()
+        worker_class = request.form.get("role", "worker")
+        if worker_class not in USER_CLASS_LABELS:
+            worker_class = "worker"
+        role = "customer" if worker_class == "customer" else "worker"
+        phone_number = request.form.get("phone_number", "").strip()
+        sms_enabled = "sms_enabled" in request.form
+
+        invite_token = new_token()
+        conn.execute(
+            "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, worker_class, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                request.form["name"].strip(),
+                email,
+                phone_number,
+                sms_enabled,
+                unusable_password_hash(),
+                None,
+                invite_token,
+                datetime.now().isoformat(),
+                role,
+                worker_class,
+                datetime.now().isoformat()
+            )
+        ).fetchone()
+        conn.commit()
+        invite_link = external_url("mobile_create_pin", token=invite_token)
+        sent = send_email(
+            email,
+            "You are invited to ProjectONus",
+            "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
+        )
+        if sent:
+            flash("User added and mobile invitation email sent.")
+        else:
+            flash("User added. Email could not be sent, so share this setup link with the user: " + invite_link)
+    except Exception:
+        conn.rollback()
+        flash("That email may already exist.")
+
+
+@app.route("/users/invite", methods=["GET", "POST"])
+@admin_required
+def users_invite():
+    if request.method == "POST":
+        conn = db()
+        process_user_invite(conn)
+        conn.close()
+        return redirect(url_for("users_invite"))
+    return render_template("users_invite.html")
+
+
 @app.route("/users", methods=["GET", "POST"])
 @admin_required
 def users():
@@ -6981,46 +7036,7 @@ def users():
     ensure_part_catalog_tables(conn)
     backfill_part_catalog_from_inventory(conn)
     if request.method == "POST":
-        try:
-            email = request.form["email"].strip().lower()
-            worker_class = request.form.get("role", "worker")
-            if worker_class not in USER_CLASS_LABELS:
-                worker_class = "worker"
-            role = "customer" if worker_class == "customer" else "worker"
-            phone_number = request.form.get("phone_number", "").strip()
-            sms_enabled = "sms_enabled" in request.form
-
-            invite_token = new_token()
-            conn.execute(
-                "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, worker_class, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (
-                    request.form["name"].strip(),
-                    email,
-                    phone_number,
-                    sms_enabled,
-                    unusable_password_hash(),
-                    None,
-                    invite_token,
-                    datetime.now().isoformat(),
-                    role,
-                    worker_class,
-                    datetime.now().isoformat()
-                )
-            ).fetchone()
-            conn.commit()
-            invite_link = external_url("mobile_create_pin", token=invite_token)
-            sent = send_email(
-                email,
-                "You are invited to ProjectONus",
-                "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
-            )
-            if sent:
-                flash("User added and mobile invitation email sent.")
-            else:
-                flash("User added. Email could not be sent, so share this setup link with the user: " + invite_link)
-        except Exception:
-            conn.rollback()
-            flash("That email may already exist.")
+        process_user_invite(conn)
 
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, worker_class, pay_rate, pay_rate_unit, pay_frequency, created_at, invite_token FROM users ORDER BY name").fetchall()
     docs_by_user = {}

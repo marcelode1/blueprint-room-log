@@ -76,7 +76,13 @@
             {% endif %}
             <a href="{{ url_for('notifications') }}" title="Notifications" data-notification-link>Notifications <span data-notification-badge style="background:#dc2626;color:white;border-radius:999px;padding:2px 6px;font-size:12px;{% if not live_unread_count %}display:none;{% endif %}">{{ live_unread_count }}</span></a>
             {% if is_main_admin() %}
-                <a href="{{ url_for('users') }}">Users</a>
+                <div class="navDropdown">
+                    <div class="navDropdownButton" tabindex="0">Users</div>
+                    <div class="navDropdownMenu">
+                        <a href="{{ url_for('users_invite') }}">Invite Mobile User</a>
+                        <a href="{{ url_for('users') }}">Users</a>
+                    </div>
+                </div>
                 <a href="{{ url_for('suppliers') }}">Suppliers</a>
                 <a href="{{ url_for('dtools_import') }}">D-Tools Import</a>
                 <a href="{{ url_for('settings') }}" title="Settings">Settings</a>
@@ -121,7 +127,11 @@
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('parts_catalog') }}">Items & Catalog</a>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
-        <a href="{{ url_for('users') }}">Users</a>
+        <details class="mobileMenuGroup">
+            <summary>Users</summary>
+            <a href="{{ url_for('users_invite') }}">Invite Mobile User</a>
+            <a href="{{ url_for('users') }}">Users</a>
+        </details>
         <a href="{{ url_for('suppliers') }}">Suppliers</a>
         <a href="{{ url_for('dtools_import') }}">D-Tools Import</a>
         <a href="{{ url_for('settings') }}">Settings</a>

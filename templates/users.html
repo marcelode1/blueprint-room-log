@@ -2,62 +2,66 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Invite Mobile User</h2>
-    <form method="post">
-        <label>Name</label>
-        <input name="name" required>
+    <div class="usersHeadBar">
+        <h2 style="margin:0">Users</h2>
+        <a class="btn-link btn-secondary usersInviteBtn" href="{{ url_for('users_invite') }}">+ Invite Mobile User</a>
+    </div>
 
-        <label>Email</label>
-        <input name="email" type="email" required>
-
-        <label>Cellphone Number</label>
-        <input name="phone_number" type="tel" placeholder="+15551234567">
-        <label><input type="checkbox" name="sms_enabled"> Allow text messages for this user</label>
-
-        <label>Classification</label>
-        <select name="role">
-            <option value="worker">Worker (Employee)</option>
-            <option value="subcontractor">Subcontractor</option>
-            <option value="customer">Customer</option>
-        </select>
-
-        <button type="submit">Send Mobile Invitation</button>
-    </form>
-    <p class="muted">The invitation email sends a setup link. The user creates their own 4-digit PIN from that link.</p>
-    <p class="muted">Text messages require Twilio settings on Render: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.</p>
-</div>
-
-<div class="card">
-    <h2>Users</h2>
-    <button type="button" class="btn-secondary" id="showUserSearchBtn">Search Users</button>
-    <div id="userSearchPanel" class="userSearchPanel" style="display:none;">
-        <label>Type User Name</label>
-        <input id="userSearchInput" placeholder="Start typing the first letters">
+    <div class="userSearchPanel">
+        <label>Search Users</label>
+        <input id="userSearchInput" placeholder="Start typing a name or email" autocomplete="off">
         <label>Go Directly to User</label>
         <select id="userJumpSelect">
             <option value="">Choose user</option>
             {% for u in users %}
-                <option value="userRow{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
+                <option value="{{ u.id }}">{{ u.name }} - {{ u.email }}</option>
             {% endfor %}
         </select>
         <p id="userSearchCount" class="muted"></p>
     </div>
 
+    <button type="button" class="btn-secondary" id="backToListBtn" style="display:none">&larr; All Users</button>
+
+    <div id="userPlateList">
+        {% for u in users %}
+            {% set uclass = 'admin' if u.role == 'admin' else user_classification(u) %}
+            <div class="userPlate" data-target="{{ u.id }}" data-user-name="{{ u.name|lower }}" data-user-email="{{ u.email|lower }}" tabindex="0">
+                <div>
+                    <strong>{{ u.name }}</strong>
+                    <span class="classBadge {{ uclass }}">{{ 'Admin' if uclass == 'admin' else class_labels[uclass] }}</span><br>
+                    <span class="muted">{{ u.email }}</span>
+                </div>
+                <span class="plateOpen">Open &rsaquo;</span>
+            </div>
+        {% else %}
+            <p>No users found.</p>
+        {% endfor %}
+    </div>
+
     <style>
+        .usersHeadBar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+        .usersInviteBtn { width:auto !important; margin:0 !important; }
         .userSearchPanel {
-            margin: 12px 0 18px;
+            margin: 0 0 14px;
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 10px;
             background: #f8fafc;
         }
+        .userPlate { display:flex; justify-content:space-between; align-items:center; gap:12px; border:1px solid #ddd;
+            border-radius:10px; padding:12px 14px; margin-bottom:8px; background:white; cursor:pointer; }
+        .userPlate:hover { border-color: var(--primary, #2563eb); background:#f0f6ff; }
+        .plateOpen { font-weight:800; color:var(--primary, #2563eb); white-space:nowrap; }
+        #backToListBtn { width:auto !important; margin:0 0 12px !important; }
         .userRow {
+            display: none;
             padding: 12px;
             border: 1px solid #ddd;
             border-radius: 10px;
             margin-bottom: 10px;
             background: white;
         }
+        .userRow.openCard { display:block; }
         .userHeadRow { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap; }
         .classBadge { display:inline-block; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.03em;
             padding:3px 10px; border-radius:999px; margin-left:8px; vertical-align:middle; }
@@ -115,7 +119,7 @@
 
     {% for u in users %}
         {% set uclass = 'admin' if u.role == 'admin' else user_classification(u) %}
-        <div class="userRow" id="userRow{{ u.id }}" data-user-name="{{ u.name|lower }}" data-user-email="{{ u.email|lower }}">
+        <div class="userRow" id="userRow{{ u.id }}">
             <div class="userHeadRow">
                 <div>
                     <strong>{{ u.name }}</strong>
@@ -249,53 +253,63 @@
             </div>
             {% endif %}
         </div>
-    {% else %}
-        <p>No users found.</p>
     {% endfor %}
 </div>
 
 <script>
-const showUserSearchBtn = document.getElementById("showUserSearchBtn");
-const userSearchPanel = document.getElementById("userSearchPanel");
 const userSearchInput = document.getElementById("userSearchInput");
 const userJumpSelect = document.getElementById("userJumpSelect");
 const userSearchCount = document.getElementById("userSearchCount");
-const userRows = Array.from(document.querySelectorAll(".userRow"));
+const userPlateList = document.getElementById("userPlateList");
+const backToListBtn = document.getElementById("backToListBtn");
+const userPlates = Array.from(document.querySelectorAll(".userPlate"));
+const userCards = Array.from(document.querySelectorAll(".userRow"));
 
 function updateUserSearch() {
     const term = (userSearchInput.value || "").trim().toLowerCase();
     let shown = 0;
-    userRows.forEach(row => {
-        const name = row.dataset.userName || "";
-        const email = row.dataset.userEmail || "";
+    userPlates.forEach(plate => {
+        const name = plate.dataset.userName || "";
+        const email = plate.dataset.userEmail || "";
         const match = !term || name.startsWith(term) || email.startsWith(term) || name.includes(term) || email.includes(term);
-        row.style.display = match ? "block" : "none";
+        plate.style.display = match ? "flex" : "none";
         if (match) shown += 1;
     });
     userSearchCount.textContent = shown + " user" + (shown === 1 ? "" : "s") + " shown";
 }
 
-if (showUserSearchBtn && userSearchPanel) {
-    showUserSearchBtn.addEventListener("click", () => {
-        const opening = userSearchPanel.style.display === "none";
-        userSearchPanel.style.display = opening ? "block" : "none";
-        if (opening && userSearchInput) userSearchInput.focus();
-        updateUserSearch();
-    });
+function openUser(userId) {
+    userCards.forEach(card => card.classList.toggle("openCard", card.id === "userRow" + userId));
+    userPlateList.style.display = "none";
+    backToListBtn.style.display = "inline-flex";
 }
-if (userSearchInput) userSearchInput.addEventListener("input", updateUserSearch);
+
+function showUserList() {
+    userCards.forEach(card => card.classList.remove("openCard"));
+    userPlateList.style.display = "block";
+    backToListBtn.style.display = "none";
+    updateUserSearch();
+}
+
+userPlates.forEach(plate => {
+    plate.addEventListener("click", () => openUser(plate.dataset.target));
+    plate.addEventListener("keydown", e => { if (e.key === "Enter") openUser(plate.dataset.target); });
+});
+backToListBtn.addEventListener("click", showUserList);
+if (userSearchInput) userSearchInput.addEventListener("input", () => {
+    if (backToListBtn.style.display !== "none") showUserList();
+    updateUserSearch();
+});
 if (userJumpSelect) {
     userJumpSelect.addEventListener("change", () => {
-        const row = document.getElementById(userJumpSelect.value);
-        if (!row) return;
-        if (userSearchInput) {
-            userSearchInput.value = "";
-            updateUserSearch();
-        }
-        row.scrollIntoView({behavior: "smooth", block: "center"});
-        row.style.outline = "3px solid #2563eb";
-        setTimeout(() => { row.style.outline = ""; }, 1800);
+        if (userJumpSelect.value) openUser(userJumpSelect.value);
     });
+}
+updateUserSearch();
+
+// Reopen the same user after saving classification, documents, etc.
+if (location.hash && location.hash.startsWith("#userRow")) {
+    openUser(location.hash.replace("#userRow", ""));
 }
 
 function showDeleteConfirm(userId) {
