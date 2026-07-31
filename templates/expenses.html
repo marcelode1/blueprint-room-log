@@ -58,10 +58,12 @@
                     <a class="expReceipt" href="{{ url_for('storage_file', storage_path=e.receipt_file) }}" target="_blank" rel="noopener">Receipt</a>
                 {% endif %}
                 {% if e.paystub_id %}
-                    <a class="expStubTag" {% if is_main_admin() %}href="{{ url_for('paystub_view', stub_id=e.paystub_id) }}"{% endif %}>In Paystub PS-{{ '%05d'|format(e.paystub_id) }}</a>
-                {% else %}
-                    <form method="post" action="{{ url_for('delete_expense', expense_id=e.id) }}"
-                          onsubmit="return confirm('Delete this expense?');">
+                    <a class="expStubTag{% if e.stub_paid_at %} expPaidTag{% endif %}" {% if is_main_admin() %}href="{{ url_for('paystub_view', stub_id=e.paystub_id) }}"{% endif %}>
+                        {% if e.stub_paid_at %}PAID &middot; PS-{{ '%05d'|format(e.paystub_id) }}{% else %}In Paystub PS-{{ '%05d'|format(e.paystub_id) }}{% endif %}
+                    </a>
+                {% elif is_main_admin() %}
+                    <form method="post" action="{{ url_for('request_expense_delete', expense_id=e.id) }}"
+                          onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
                         <button type="submit" class="btn-danger expDelBtn">Delete</button>
                     </form>
                 {% endif %}
@@ -83,7 +85,8 @@
 .expSide form{margin:0}
 .expAmt{font-size:17px}
 .expReceipt{font-weight:700;font-size:13px;border:1px solid var(--border,#e2e8f0);border-radius:999px;padding:4px 10px;text-decoration:none}
-.expStubTag{font-size:12px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:999px;padding:4px 10px;text-decoration:none}
+.expStubTag{font-size:12px;font-weight:800;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:4px 10px;text-decoration:none}
+.expPaidTag{background:#dcfce7;color:#15803d}
 .expDelBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
 </style>
 {% endblock %}

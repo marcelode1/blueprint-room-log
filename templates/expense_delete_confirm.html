@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Delete Expense</h2>
+    <p><strong>{{ exp.user_name or 'Unknown' }}</strong> - {{ format_date(exp.expense_date) }}</p>
+    <p class="muted">{{ exp.description or '-' }} &middot; {{ exp.project_name or 'No project' }} &middot; {{ format_invoice_money(exp.amount) }}</p>
+    {% if exp.receipt_file %}
+        <a class="btn-link btn-secondary" href="{{ url_for('storage_file', storage_path=exp.receipt_file) }}" target="_blank" rel="noopener">Open Receipt</a>
+    {% endif %}
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this expense.</p>
+    <form method="post" action="{{ url_for('confirm_expense_delete', expense_id=exp.id) }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Expense</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('expenses') }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

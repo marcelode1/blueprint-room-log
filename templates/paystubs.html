@@ -44,15 +44,32 @@
         <p class="psWarn">This person has no salary rate yet. Set it in Users &rarr; Classification &amp; Pay, or type the base pay by hand below.</p>
     {% endif %}
 
+    {% if preview.skipped_days %}
+        <p class="psWarn">{{ preview.skipped_days|length }} day(s) in this period were skipped because they are already on another paystub.</p>
+    {% endif %}
+
     {% if preview.lines %}
-    <h4 style="margin:14px 0 6px">Time Report Detail</h4>
+    <h4 style="margin:14px 0 6px">Time Report Detail <span class="muted" style="font-weight:500;font-size:12.5px">&mdash; click a line to check it on the Time Report</span></h4>
+    {% set back_here = url_for('paystubs', user_id=preview.person.id, period_start=period_start, period_end=period_end) %}
     <div class="psLinesWrap">
         <table class="psLines">
-            <thead><tr><th>Date</th><th>Project</th><th>Time</th></tr></thead>
+            <thead><tr><th>Date</th><th>Project</th><th>Time</th><th>Amount</th></tr></thead>
             <tbody>
                 {% for l in preview.lines %}
-                    <tr><td>{{ format_date(l.day) }}</td><td>{{ l.project_name }}</td><td>{{ minutes_text(l.minutes) }}</td></tr>
+                    {% set check_url = url_for('attendance_report', period='day', date=l.day, user_id=preview.person.id, project_id=l.project_id or '', back_to=back_here) %}
+                    <tr class="psLineClick" onclick="window.location='{{ check_url }}'">
+                        <td><a href="{{ check_url }}">{{ format_date(l.day) }}</a></td>
+                        <td>{{ l.project_name }}</td>
+                        <td>{{ minutes_text(l.minutes) }}</td>
+                        <td>{% if preview.unit == 'hour' and preview.rate %}{{ format_invoice_money(preview.rate * l.minutes / 60) }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
                 {% endfor %}
+                <tr class="psTotalRow">
+                    <td><strong>Total</strong></td>
+                    <td></td>
+                    <td><strong>{{ minutes_text(preview.total_minutes) }}</strong></td>
+                    <td><strong>{{ format_invoice_money(preview.suggested) }}</strong></td>
+                </tr>
             </tbody>
         </table>
     </div>
@@ -108,7 +125,7 @@
     {% if stubs %}
     <div class="psLinesWrap">
         <table class="psLines">
-            <thead><tr><th>Stub #</th><th>Person</th><th>Period</th><th>Hours</th><th>Total</th><th></th></tr></thead>
+            <thead><tr><th>Stub #</th><th>Person</th><th>Period</th><th>Hours</th><th>Total</th><th>Status</th><th></th></tr></thead>
             <tbody>
                 {% for s in stubs %}
                 <tr>
@@ -117,6 +134,7 @@
                     <td>{{ format_date(s.period_start) }} – {{ format_date(s.period_end) }}</td>
                     <td>{{ minutes_text(s.total_minutes) }}</td>
                     <td><strong>{{ format_invoice_money(s.total_pay) }}</strong></td>
+                    <td>{% if s.paid_at %}<span class="psPaidPill">PAID {{ format_date(s.paid_at) }}</span>{% else %}<span class="psOpenPill">Not paid</span>{% endif %}</td>
                     <td><a class="btn-link btn-secondary psOpenBtn" href="{{ url_for('paystub_view', stub_id=s.id) }}">Open</a></td>
                 </tr>
                 {% endfor %}
@@ -143,5 +161,11 @@
 .psExpRow .psExpText{flex:1;min-width:140px}
 .psExpRow .psExpText small{display:block;font-weight:500}
 .psOpenBtn{width:auto!important;min-height:32px!important;padding:5px 12px!important;margin:0!important;font-size:13px!important}
+.psLineClick{cursor:pointer}
+.psLineClick:hover{background:#f0f6ff}
+.psLineClick a{font-weight:700;text-decoration:none}
+.psTotalRow td{border-top:2px solid #172033;background:#f8fafc}
+.psPaidPill{font-size:11px;font-weight:800;background:#dcfce7;color:#15803d;border-radius:999px;padding:4px 9px;white-space:nowrap}
+.psOpenPill{font-size:11px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:999px;padding:4px 9px;white-space:nowrap}
 </style>
 {% endblock %}
