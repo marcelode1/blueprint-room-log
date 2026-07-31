@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Delete Paystub PS-{{ '%05d'|format(stub.id) }}</h2>
+    <p><strong>{{ stub.user_name or 'Unknown' }}</strong> &middot; {{ format_date(stub.period_start) }} – {{ format_date(stub.period_end) }} &middot; {{ format_invoice_money(stub.total_pay) }}</p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this paystub. Expenses with receipts go back to the open expense list.</p>
+    <form method="post" action="{{ url_for('confirm_paystub_delete', stub_id=stub.id) }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required>
+        <button type="submit" class="btn-danger">Delete Paystub</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('paystubs') }}">Cancel</a>
+    </form>
+</div>
+{% endblock %}

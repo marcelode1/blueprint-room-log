@@ -145,7 +145,15 @@
                     <td>{{ minutes_text(s.total_minutes) }}</td>
                     <td><strong>{{ format_invoice_money(s.total_pay) }}</strong></td>
                     <td>{% if s.paid_at %}<span class="psPaidPill">PAID {{ format_date(s.paid_at) }}</span>{% else %}<span class="psOpenPill">Not paid</span>{% endif %}</td>
-                    <td><a class="btn-link btn-secondary psOpenBtn" href="{{ url_for('paystub_view', stub_id=s.id) }}">Open</a></td>
+                    <td class="psRowActions">
+                        <a class="btn-link btn-secondary psOpenBtn" href="{{ url_for('paystub_view', stub_id=s.id) }}">Open</a>
+                        {% if not s.paid_at %}
+                        <form method="post" action="{{ url_for('request_paystub_delete', stub_id=s.id) }}"
+                              onsubmit="return confirm('Delete paystub PS-{{ '%05d'|format(s.id) }}? A 6-digit PIN will be sent to your admin email to confirm.');">
+                            <button type="submit" class="btn-danger psDelBtn">Delete</button>
+                        </form>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -171,6 +179,9 @@
 .psExpRow .psExpText{flex:1;min-width:140px}
 .psExpRow .psExpText small{display:block;font-weight:500}
 .psOpenBtn{width:auto!important;min-height:32px!important;padding:5px 12px!important;margin:0!important;font-size:13px!important}
+.psRowActions{white-space:nowrap}
+.psRowActions form{display:inline-block;margin:0 0 0 6px}
+.psDelBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
 .psLineClick{cursor:pointer}
 .psLineClick:hover{background:#f0f6ff}
 .psLineClick a{font-weight:700;text-decoration:none}

@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-07-31 V10"
+APP_BUILD = "2026-07-31 V11"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1118,6 +1118,7 @@ def init_db():
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_at TEXT",
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS expense_delete_codes (id SERIAL PRIMARY KEY, expense_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS paystub_delete_codes (id SERIAL PRIMARY KEY, paystub_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS tasks_assignment_group_id_idx ON tasks(assignment_group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
@@ -7693,11 +7694,15 @@ def edit_paystub(stub_id):
     return redirect(url_for("paystub_view", stub_id=stub_id))
 
 
-@app.route("/paystubs/<int:stub_id>/delete", methods=["POST"])
+@app.route("/paystubs/<int:stub_id>/delete-request", methods=["POST"])
 @admin_required
-def delete_paystub(stub_id):
+def request_paystub_delete(stub_id):
+    """Deleting a paystub requires an emailed 6-digit PIN, like clock records."""
     conn = db()
-    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    stub = conn.execute(
+        "SELECT paystubs.*, users.name AS user_name FROM paystubs LEFT JOIN users ON paystubs.user_id = users.id WHERE paystubs.id = %s",
+        (stub_id,)
+    ).fetchone()
     if not stub:
         conn.close()
         flash("Paystub not found.")
@@ -7706,13 +7711,86 @@ def delete_paystub(stub_id):
         conn.close()
         flash("This paystub is marked PAID and cannot be deleted. Mark it unpaid first.")
         return redirect(url_for("paystub_view", stub_id=stub_id))
-    conn.execute("UPDATE work_expenses SET paystub_id = NULL WHERE paystub_id = %s AND receipt_file IS NOT NULL", (stub_id,))
-    conn.execute("DELETE FROM work_expenses WHERE paystub_id = %s", (stub_id,))
-    conn.execute("DELETE FROM paystubs WHERE id = %s", (stub_id,))
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("paystubs"))
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (admin["id"], stub_id))
+    conn.execute(
+        "INSERT INTO paystub_delete_codes (paystub_id, admin_id, pin_hash, expires_at, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (stub_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
     conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete paystub PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this paystub is:",
+            "",
+            pin,
+            "",
+            f"Paystub: PS-{stub_id:05d}",
+            f"Person: {stub.get('user_name') or 'Unknown'}",
+            f"Period: {stub.get('period_start')} to {stub.get('period_end')}",
+            f"Total: {format_invoice_money(stub.get('total_pay'))}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (admin["id"], stub_id))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("paystubs"))
     conn.close()
-    flash("Paystub deleted. Its expenses with receipts went back to the open expense list.")
-    return redirect(url_for("paystubs"))
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_paystub_delete", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/delete-confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_paystub_delete(stub_id):
+    conn = db()
+    stub = conn.execute(
+        "SELECT paystubs.*, users.name AS user_name FROM paystubs LEFT JOIN users ON paystubs.user_id = users.id WHERE paystubs.id = %s",
+        (stub_id,)
+    ).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            "SELECT * FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session.get("user_id"), stub_id)
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("paystubs"))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_paystub_delete", stub_id=stub_id))
+        conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (session.get("user_id"), stub_id))
+        conn.execute("UPDATE work_expenses SET paystub_id = NULL WHERE paystub_id = %s AND receipt_file IS NOT NULL", (stub_id,))
+        conn.execute("DELETE FROM work_expenses WHERE paystub_id = %s", (stub_id,))
+        conn.execute("DELETE FROM paystubs WHERE id = %s", (stub_id,))
+        conn.commit()
+        conn.close()
+        flash("Paystub deleted. Its expenses with receipts went back to the open expense list.")
+        return redirect(url_for("paystubs"))
+    conn.close()
+    return render_template(
+        "paystub_delete_confirm.html",
+        stub=stub,
+        format_date=format_date,
+    )
 
 
 @app.route("/paystubs/<int:stub_id>/mark-paid", methods=["POST"])

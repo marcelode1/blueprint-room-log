@@ -172,9 +172,9 @@
             <p class="muted" style="font-size:13px">The expense total stays the same; the total pay is recalculated as base pay + expenses.</p>
             <button type="submit">Save Changes</button>
         </form>
-        <form method="post" action="{{ url_for('delete_paystub', stub_id=stub.id) }}" style="margin-top:8px"
-              onsubmit="return confirm('Delete this paystub? Expenses with receipts go back to the open expense list.');">
-            <button type="submit" class="btn-danger">Delete Paystub</button>
+        <form method="post" action="{{ url_for('request_paystub_delete', stub_id=stub.id) }}" style="margin-top:8px"
+              onsubmit="return confirm('Delete this paystub? A 6-digit PIN will be sent to your admin email to confirm.');">
+            <button type="submit" class="btn-danger">Delete Paystub (PIN)</button>
         </form>
     </details>
 </div>
