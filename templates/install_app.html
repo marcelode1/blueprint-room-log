@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProjectONus — Install as an App (Tutorial Video)</title>
+<style>
+:root{
+    --bg:#0b1220; --bg2:#101a30; --card:#16223c;
+    --primary:#2563eb; --primary2:#3b82f6; --green:#16a34a;
+    --text:#f1f5f9; --muted:#94a3b8; --gold:#f59e0b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;color:var(--text);overflow:hidden}
+
+/* ============ SCALED 16:9 STAGE ============ */
+#stageWrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+#stage{width:1600px;height:900px;position:relative;background:
+    radial-gradient(1200px 700px at 78% 30%, #14213d 0%, var(--bg) 60%);
+    transform-origin:center center;overflow:hidden;border-radius:6px}
+
+/* subtle grid backdrop */
+#stage::before{content:"";position:absolute;inset:0;
+    background-image:linear-gradient(rgba(148,163,184,.05) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(148,163,184,.05) 1px,transparent 1px);
+    background-size:60px 60px;pointer-events:none}
+
+/* ============ CAPTION PANEL (left) ============ */
+#captionPanel{position:absolute;left:90px;top:0;bottom:70px;width:640px;display:flex;flex-direction:column;justify-content:center;gap:26px;z-index:5}
+#brandRow{display:flex;align-items:center;gap:16px}
+#brandLogo{width:58px;height:58px;border-radius:14px;background:linear-gradient(135deg,var(--primary),#60a5fa);
+    display:flex;align-items:center;justify-content:center;font-weight:900;font-size:26px;color:#fff;box-shadow:0 10px 30px rgba(37,99,235,.45)}
+#brandName{font-size:26px;font-weight:800;letter-spacing:.02em}
+#brandName small{display:block;font-size:14px;font-weight:600;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+#platformTag{display:inline-flex;align-items:center;gap:10px;font-size:20px;font-weight:800;
+    padding:10px 20px;border-radius:999px;width:max-content;transition:all .4s;
+    background:rgba(37,99,235,.15);border:1.5px solid rgba(59,130,246,.45);color:#93c5fd}
+#platformTag.androidTag{background:rgba(22,163,74,.14);border-color:rgba(34,197,94,.45);color:#86efac}
+#platformTag.hidden{opacity:0}
+#stepBig{font-size:56px;line-height:1.12;font-weight:900;letter-spacing:-.01em;transition:opacity .35s, transform .35s}
+#stepSub{font-size:26px;line-height:1.5;color:var(--muted);max-width:560px;transition:opacity .35s}
+#stepSub b{color:var(--text)}
+.capFade{opacity:0;transform:translateY(14px)}
+#stepCount{font-size:17px;font-weight:800;color:var(--gold);letter-spacing:.14em;text-transform:uppercase;transition:opacity .35s}
+
+/* ============ PHONE (right) ============ */
+#phoneZone{position:absolute;right:150px;top:50%;transform:translateY(-52%);z-index:5}
+#phone{width:390px;height:800px;border-radius:52px;background:#000;padding:14px;
+    box-shadow:0 40px 90px rgba(0,0,0,.6), 0 0 0 2px #1e293b, 0 0 90px rgba(37,99,235,.14);
+    position:relative;transition:box-shadow .5s}
+#phone.androidSkin{box-shadow:0 40px 90px rgba(0,0,0,.6), 0 0 0 2px #1e293b, 0 0 90px rgba(22,163,74,.2)}
+#screen{width:100%;height:100%;border-radius:40px;background:#fff;overflow:hidden;position:relative}
+.notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:120px;height:30px;background:#000;border-radius:999px;z-index:60}
+#phone.androidSkin .notch{width:26px;height:26px;border-radius:50%;top:18px}
+
+/* ---- browser chrome (shared) ---- */
+.browserBar{position:absolute;left:0;right:0;display:flex;align-items:center;gap:8px;padding:0 12px;background:#f8fafc;z-index:20}
+#iosTopPad{top:0;height:54px;background:#f8fafc}
+#iosBottomBar{bottom:0;height:96px;flex-direction:column;justify-content:flex-start;padding-top:8px;border-top:1px solid #e2e8f0}
+#iosUrlPill{width:92%;background:#e9eef5;border-radius:12px;padding:9px 14px;font-size:14px;color:#0f172a;text-align:center;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#iosToolRow{display:flex;justify-content:space-around;width:100%;margin-top:9px;color:#2563eb}
+.iosTool{width:26px;height:26px;position:relative}
+svg.icn{width:100%;height:100%;display:block}
+#androidTopBar{top:0;height:92px;flex-wrap:wrap;align-content:flex-end;padding-bottom:10px;border-bottom:1px solid #e2e8f0}
+#androidUrlPill{flex:1;background:#eef1f6;border-radius:999px;padding:10px 16px;font-size:14px;color:#0f172a;font-weight:600;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden}
+#androidMenuBtn{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;flex:none}
+.dots3{display:flex;flex-direction:column;gap:3.5px}
+.dots3 i{width:4.5px;height:4.5px;border-radius:50%;background:#334155;display:block}
+
+/* ---- app page inside browser ---- */
+#appPage{position:absolute;left:0;right:0;top:54px;bottom:96px;background:linear-gradient(180deg,#f1f5f9,#e8eef7);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:top .3s,bottom .3s}
+#phone.androidSkin #appPage{top:92px;bottom:0}
+.appLogo{width:86px;height:86px;border-radius:20px;background:linear-gradient(135deg,var(--primary),#60a5fa);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:38px;box-shadow:0 12px 26px rgba(37,99,235,.35)}
+.appTitle{font-size:24px;font-weight:900;color:#0f172a}
+.appTag{font-size:13px;color:#64748b;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.appBtn{margin-top:6px;background:var(--primary);color:#fff;font-weight:800;font-size:15px;padding:12px 44px;border-radius:10px}
+.appFields{display:grid;gap:10px;width:70%}
+.appFields span{display:block;height:40px;border-radius:9px;background:#fff;border:1px solid #dbe3ee}
+
+/* ---- iOS share sheet ---- */
+#shareSheet{position:absolute;left:8px;right:8px;bottom:-560px;height:540px;background:rgba(246,248,251,.98);border-radius:22px 22px 0 0;z-index:40;transition:bottom .55s cubic-bezier(.2,.8,.25,1);box-shadow:0 -18px 50px rgba(15,23,42,.28)}
+#shareSheet .grabber{width:40px;height:5px;border-radius:99px;background:#cbd5e1;margin:10px auto 6px}
+#shareHead{display:flex;align-items:center;gap:10px;padding:8px 16px 12px;border-bottom:1px solid #e2e8f0}
+#shareHead .mini{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--primary),#60a5fa);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:17px}
+#shareHead div b{display:block;font-size:14px;color:#0f172a}
+#shareHead div small{font-size:12px;color:#64748b}
+#shareRows{padding:6px 0;transition:transform .5s ease}
+.shareRow{display:flex;align-items:center;justify-content:space-between;padding:13px 18px;font-size:15px;color:#0f172a;font-weight:600;border-bottom:1px solid #eef2f7;position:relative}
+.shareRow .rowIcon{width:24px;height:24px;color:#475569}
+.shareRow.hl{background:#e0ecff;border-radius:12px;margin:2px 8px;border-bottom:none;outline:2.5px solid var(--primary)}
+#stage.sheetUp #shareSheet{bottom:0}
+#stage.sheetScrolled #shareRows{transform:translateY(-96px)}
+
+/* ---- iOS add dialog ---- */
+#iosDialog{position:absolute;inset:0;background:#f6f8fb;z-index:45;opacity:0;pointer-events:none;transition:opacity .35s;display:flex;flex-direction:column}
+#stage.iosDialogOpen #iosDialog{opacity:1}
+#iosDialogBar{display:flex;justify-content:space-between;align-items:center;padding:60px 18px 14px;border-bottom:1px solid #e2e8f0;font-size:16px}
+#iosDialogBar .cancel{color:#2563eb;font-weight:600}
+#iosDialogBar b{font-size:16px;color:#0f172a}
+#iosDialogBar .addBtn{color:#2563eb;font-weight:800;position:relative;padding:6px 10px;border-radius:8px}
+#iosDialogBody{display:flex;gap:14px;padding:22px 18px;align-items:center}
+#iosDialogBody .mini{width:58px;height:58px;border-radius:13px;background:linear-gradient(135deg,var(--primary),#60a5fa);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:24px}
+#iosDialogBody div b{display:block;font-size:16px;color:#0f172a;margin-bottom:3px}
+#iosDialogBody div small{font-size:12.5px;color:#64748b;word-break:break-all}
+
+/* ---- Android menu ---- */
+#androidMenu{position:absolute;top:64px;right:10px;width:230px;background:#fff;border-radius:14px;box-shadow:0 18px 50px rgba(15,23,42,.3);z-index:40;padding:6px 0;opacity:0;transform:translateY(-12px) scale(.96);transform-origin:top right;transition:all .3s;pointer-events:none}
+#stage.andMenuOpen #androidMenu{opacity:1;transform:translateY(0) scale(1)}
+.andRow{display:flex;align-items:center;gap:12px;padding:12px 16px;font-size:14.5px;color:#0f172a;font-weight:600;position:relative}
+.andRow .rowIcon{width:20px;height:20px;color:#475569}
+.andRow.hl{background:#dcfce7;border-radius:10px;margin:2px 8px;outline:2.5px solid var(--green)}
+
+/* ---- Android dialog ---- */
+#andDialog{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-40%);background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(15,23,42,.4);z-index:45;padding:22px;opacity:0;pointer-events:none;transition:all .35s}
+#stage.andDialogOpen #andDialog{opacity:1;transform:translateY(-50%)}
+#andDialog h4{font-size:17px;color:#0f172a;margin-bottom:16px}
+#andDialogRow{display:flex;gap:13px;align-items:center;margin-bottom:20px}
+#andDialogRow .mini{width:52px;height:52px;border-radius:13px;background:linear-gradient(135deg,var(--primary),#60a5fa);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:22px}
+#andDialogRow div b{display:block;font-size:15px;color:#0f172a}
+#andDialogRow div small{font-size:12px;color:#64748b;word-break:break-all}
+#andDialogBtns{display:flex;justify-content:flex-end;gap:20px;font-weight:800;font-size:14.5px}
+#andDialogBtns .cancel{color:#64748b}
+#andDialogBtns .add{color:var(--green);position:relative;padding:6px 10px;border-radius:8px}
+
+/* ---- Home screen ---- */
+#homeScreen{position:absolute;inset:0;z-index:50;opacity:0;pointer-events:none;transition:opacity .4s;
+    background:linear-gradient(160deg,#1e3a8a 0%,#0f172a 70%);padding:74px 22px 20px;display:flex;flex-direction:column}
+#stage.homeShown #homeScreen{opacity:1}
+#homeGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 10px}
+.hIcon{display:flex;flex-direction:column;align-items:center;gap:6px}
+.hIcon .tile{width:58px;height:58px;border-radius:14px;background:rgba(255,255,255,.16);backdrop-filter:blur(4px)}
+.hIcon span{font-size:11px;color:rgba(255,255,255,.85);font-weight:600}
+.hIcon.newApp .tile{background:linear-gradient(135deg,var(--primary),#60a5fa);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:24px;box-shadow:0 0 0 3px rgba(255,255,255,.9), 0 8px 26px rgba(37,99,235,.6)}
+#stage.homeShown .hIcon.newApp{animation:popIn .7s cubic-bezier(.2,1.4,.4,1) .25s both}
+@keyframes popIn{0%{transform:scale(0);opacity:0}100%{transform:scale(1);opacity:1}}
+#homeDock{margin-top:auto;background:rgba(255,255,255,.12);border-radius:24px;padding:12px;display:flex;justify-content:space-around}
+#homeDock .tile{width:54px;height:54px;border-radius:13px;background:rgba(255,255,255,.2)}
+
+/* ---- Fullscreen app (outro on phone) ---- */
+#fullApp{position:absolute;inset:0;z-index:55;background:linear-gradient(180deg,#f1f5f9,#e8eef7);opacity:0;pointer-events:none;transition:opacity .45s;display:flex;flex-direction:column}
+#stage.fullAppShown #fullApp{opacity:1}
+#fullApp .fhead{background:var(--primary);color:#fff;padding:60px 18px 16px;font-weight:900;font-size:19px;display:flex;align-items:center;gap:10px}
+#fullApp .fhead .mini{width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;font-size:15px}
+#fullApp .fbody{padding:18px;display:grid;gap:12px}
+#fullApp .fcard{background:#fff;border:1px solid #dbe3ee;border-radius:14px;height:74px;display:flex;align-items:center;gap:12px;padding:0 14px}
+#fullApp .fcard i{width:44px;height:44px;border-radius:11px;background:#e0ecff;flex:none}
+#fullApp .fcard .l1{width:60%;height:12px;border-radius:6px;background:#dbe3ee;margin-bottom:8px}
+#fullApp .fcard .l2{width:40%;height:9px;border-radius:6px;background:#e8eef7}
+
+/* ---- Tap ripple ---- */
+.tap{position:absolute;width:56px;height:56px;border-radius:50%;pointer-events:none;z-index:70;opacity:0;
+    background:radial-gradient(circle,rgba(37,99,235,.55) 0%,rgba(37,99,235,.18) 55%,transparent 70%);
+    border:3px solid rgba(59,130,246,.9);transform:translate(-50%,-50%) scale(.4)}
+.tapGo{animation:tapAnim 1s ease-out 1 both}
+@keyframes tapAnim{0%{opacity:0;transform:translate(-50%,-50%) scale(.4)}25%{opacity:1;transform:translate(-50%,-50%) scale(1)}60%{opacity:.85;transform:translate(-50%,-50%) scale(.85)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.5)}}
+
+/* ---- INTRO / OUTRO full-stage cards ---- */
+.bigCard{position:absolute;inset:0;z-index:80;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;text-align:center;background:
+    radial-gradient(1000px 600px at 50% 35%, #14213d 0%, var(--bg) 65%);transition:opacity .5s;opacity:0;pointer-events:none}
+#stage.introShown #introCard, #stage.outroShown #outroCard{opacity:1}
+.bigLogo{width:130px;height:130px;border-radius:30px;background:linear-gradient(135deg,var(--primary),#60a5fa);display:flex;align-items:center;justify-content:center;font-size:58px;font-weight:900;color:#fff;box-shadow:0 24px 70px rgba(37,99,235,.5);animation:floaty 3.4s ease-in-out infinite}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}
+.bigTitle{font-size:64px;font-weight:900;letter-spacing:-.01em;line-height:1.1}
+.bigSub{font-size:28px;color:var(--muted);max-width:900px;line-height:1.5}
+.bigSub b{color:var(--text)}
+.platRow{display:flex;gap:26px;margin-top:8px}
+.platChip{display:flex;align-items:center;gap:12px;font-size:22px;font-weight:800;padding:14px 30px;border-radius:16px;background:var(--card);border:1px solid #22314f}
+.platChip svg{width:30px;height:30px}
+
+/* ============ CONTROL BAR ============ */
+#controls{position:absolute;left:0;right:0;bottom:0;height:70px;background:rgba(8,13,26,.92);border-top:1px solid #1e293b;display:flex;align-items:center;gap:18px;padding:0 26px;z-index:100}
+#controls button{background:#1c2a47;border:1px solid #2c3d63;color:var(--text);font-size:15px;font-weight:700;padding:9px 18px;border-radius:10px;cursor:pointer;font-family:inherit}
+#controls button:hover{background:#243559}
+#controls a.ctlBack{background:#1c2a47;border:1px solid #2c3d63;color:var(--text);font-size:15px;font-weight:700;padding:9px 16px;border-radius:10px;text-decoration:none}
+#controls a.ctlBack:hover{background:#243559}
+#playBtn{min-width:110px;background:var(--primary)!important;border-color:var(--primary2)!important}
+#progressWrap{flex:1;height:8px;border-radius:99px;background:#1c2a47;position:relative;cursor:pointer}
+#progressFill{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:99px;background:linear-gradient(90deg,var(--primary),#60a5fa);transition:width .2s linear}
+#dots{display:flex;gap:7px}
+.dot{width:11px;height:11px;border-radius:50%;background:#26375c;cursor:pointer;border:none;padding:0!important;min-width:0}
+.dot.on{background:var(--primary2);box-shadow:0 0 8px rgba(59,130,246,.8)}
+#timeLbl{font-size:13.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:84px;text-align:right}
+
+/* ============ START OVERLAY ============ */
+#startOverlay{position:absolute;inset:0;z-index:200;background:rgba(6,10,20,.94);display:flex;align-items:center;justify-content:center}
+#startBox{background:var(--card);border:1px solid #22314f;border-radius:22px;padding:44px 50px;max-width:640px;text-align:center;display:grid;gap:18px}
+#startBox h1{font-size:32px}
+#startBox p{color:var(--muted);font-size:17px;line-height:1.55}
+#startBox input{background:#0e1730;border:1.5px solid #2c3d63;border-radius:12px;color:var(--text);font-size:17px;padding:14px 16px;text-align:center;font-family:inherit;outline:none}
+#startBox input:focus{border-color:var(--primary2)}
+#startBox .go{background:var(--primary);border:none;color:#fff;font-size:19px;font-weight:800;padding:16px;border-radius:12px;cursor:pointer;font-family:inherit}
+#startBox .go:hover{background:var(--primary2)}
+#startBox small{color:#64748b;font-size:13px}
+
+/* ============ SCRIPT PANEL ============ */
+#scriptPanel{position:absolute;right:20px;top:20px;bottom:90px;width:460px;background:rgba(10,16,30,.97);border:1px solid #22314f;border-radius:16px;z-index:150;padding:22px;overflow-y:auto;display:none}
+#scriptPanel.open{display:block}
+#scriptPanel h3{margin-bottom:14px;font-size:19px}
+#scriptPanel p{font-size:14.5px;color:#cbd5e1;line-height:1.6;margin-bottom:12px}
+#scriptPanel p b{color:var(--gold)}
+#stage.recordMode #controls{opacity:0;pointer-events:auto}
+#stage.recordMode #controls:hover{opacity:1}
+</style>
+</head>
+<body>
+<div id="stageWrap">
+<div id="stage" data-scene="s0" class="introShown">
+
+    <!-- INTRO -->
+    <div class="bigCard" id="introCard">
+        <div class="bigLogo">P</div>
+        <div class="bigTitle">Turn ProjectONus<br>Into an App</div>
+        <div class="bigSub">No app store needed. In <b>4 quick taps</b>, your ProjectONus link becomes an icon on your phone — and opens full screen like a real app.</div>
+        <div class="platRow">
+            <div class="platChip"><svg viewBox="0 0 24 24" fill="#e2e8f0"><path d="M17.05 12.54c-.03-2.9 2.37-4.29 2.48-4.36-1.35-1.97-3.45-2.24-4.2-2.27-1.79-.18-3.49 1.05-4.4 1.05-.9 0-2.3-1.02-3.79-1-1.95.03-3.75 1.13-4.75 2.88-2.03 3.52-.52 8.73 1.46 11.58.97 1.4 2.12 2.96 3.63 2.9 1.46-.06 2.01-.94 3.77-.94 1.76 0 2.26.94 3.8.91 1.57-.03 2.57-1.42 3.53-2.83 1.11-1.62 1.57-3.19 1.6-3.27-.04-.02-3.06-1.17-3.13-4.65zM14.16 4.06c.8-.97 1.34-2.32 1.19-3.66-1.15.05-2.55.77-3.38 1.74-.74.85-1.39 2.23-1.22 3.54 1.29.1 2.6-.65 3.41-1.62z"/></svg> iPhone</div>
+            <div class="platChip"><svg viewBox="0 0 24 24" fill="#86efac"><path d="M6.38 8.75h11.24c.35 0 .63.28.63.63v8.12c0 .7-.56 1.25-1.25 1.25h-.62v2.5c0 .69-.56 1.25-1.25 1.25s-1.25-.56-1.25-1.25v-2.5h-3.75v2.5c0 .69-.56 1.25-1.25 1.25S7.63 21.94 7.63 21.25v-2.5H7c-.69 0-1.25-.55-1.25-1.25V9.38c0-.35.28-.63.63-.63zM3.25 8.75c.69 0 1.25.56 1.25 1.25v5c0 .69-.56 1.25-1.25 1.25S2 15.69 2 15V10c0-.69.56-1.25 1.25-1.25zm17.5 0c.69 0 1.25.56 1.25 1.25v5c0 .69-.56 1.25-1.25 1.25s-1.25-.56-1.25-1.25V10c0-.69.56-1.25 1.25-1.25zM8.9 2.1l-1-1.44c-.07-.1-.05-.24.06-.31.1-.07.24-.04.31.06l1.03 1.49c.83-.37 1.75-.58 2.7-.58s1.87.21 2.7.58L15.73.41c.07-.1.21-.13.31-.06.11.07.13.21.06.31l-1 1.44c1.76.94 2.99 2.65 3.15 4.65H5.75c.16-2 1.39-3.71 3.15-4.65zm.35 2.9c.35 0 .63-.28.63-.62 0-.35-.28-.63-.63-.63s-.62.28-.62.63c0 .34.27.62.62.62zm5.5 0c.35 0 .62-.28.62-.62 0-.35-.27-.63-.62-.63s-.63.28-.63.63c0 .34.28.62.63.62z"/></svg> Android</div>
+        </div>
+    </div>
+
+    <!-- OUTRO -->
+    <div class="bigCard" id="outroCard">
+        <div class="bigLogo">P</div>
+        <div class="bigTitle">That's It!</div>
+        <div class="bigSub">One tap on the icon and ProjectONus opens <b>full screen — just like a real app</b>.<br>Same login, same projects, always up to date. Nothing to install, nothing to update.</div>
+        <div class="platRow">
+            <div class="platChip">✓ &nbsp;Works on iPhone</div>
+            <div class="platChip">✓ &nbsp;Works on Android</div>
+        </div>
+    </div>
+
+    <!-- CAPTIONS -->
+    <div id="captionPanel">
+        <div id="brandRow">
+            <div id="brandLogo">P</div>
+            <div id="brandName">ProjectONus<small>Install as an App</small></div>
+        </div>
+        <div id="platformTag" class="hidden">iPhone · Safari</div>
+        <div id="stepCount"></div>
+        <div id="stepBig"></div>
+        <div id="stepSub"></div>
+    </div>
+
+    <!-- PHONE -->
+    <div id="phoneZone">
+    <div id="phone">
+        <div id="screen">
+            <div class="notch"></div>
+
+            <!-- iOS top -->
+            <div class="browserBar" id="iosTopPad"></div>
+
+            <!-- Android top bar -->
+            <div class="browserBar" id="androidTopBar" style="display:none">
+                <div id="androidUrlPill">🔒 <span class="urlText">your-link</span></div>
+                <div id="androidMenuBtn"><div class="dots3"><i></i><i></i><i></i></div>
+                    <div class="tap" id="tapAndMenu"></div>
+                </div>
+            </div>
+
+            <!-- app page -->
+            <div id="appPage">
+                <div class="appLogo">P</div>
+                <div class="appTitle">ProjectONus</div>
+                <div class="appTag">Project Management</div>
+                <div class="appFields"><span></span><span></span></div>
+                <div class="appBtn">Login</div>
+            </div>
+
+            <!-- iOS bottom bar -->
+            <div class="browserBar" id="iosBottomBar">
+                <div id="iosUrlPill">🔒 <span class="urlText">your-link</span></div>
+                <div id="iosToolRow">
+                    <div class="iosTool"><svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></div>
+                    <div class="iosTool"><svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></div>
+                    <div class="iosTool" id="iosShareBtn">
+                        <svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3m0 0L8 7m4-4l4 4"/><path d="M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>
+                        <div class="tap" id="tapShare"></div>
+                    </div>
+                    <div class="iosTool"><svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20V4a2 2 0 00-2-2H6a2 2 0 00-2 2v15.5z"/></svg></div>
+                    <div class="iosTool"><svg class="icn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
+                </div>
+            </div>
+
+            <!-- iOS share sheet -->
+            <div id="shareSheet">
+                <div class="grabber"></div>
+                <div id="shareHead"><div class="mini">P</div><div><b>ProjectONus</b><small class="urlText">your-link</small></div></div>
+                <div id="shareRows">
+                    <div class="shareRow">Copy <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg></div>
+                    <div class="shareRow">Add to Reading List <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20V4a2 2 0 00-2-2H6a2 2 0 00-2 2v15.5z"/></svg></div>
+                    <div class="shareRow">Add Bookmark <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg></div>
+                    <div class="shareRow" id="rowAddHome">Add to Home Screen
+                        <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>
+                        <div class="tap" id="tapAddHome"></div>
+                    </div>
+                    <div class="shareRow">Markup <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></div>
+                    <div class="shareRow">Print <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7"/><rect x="6" y="14" width="12" height="8"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/></svg></div>
+                </div>
+            </div>
+
+            <!-- iOS add-to-home dialog -->
+            <div id="iosDialog">
+                <div id="iosDialogBar">
+                    <span class="cancel">Cancel</span><b>Add to Home Screen</b>
+                    <span class="addBtn">Add<div class="tap" id="tapIosAdd"></div></span>
+                </div>
+                <div id="iosDialogBody">
+                    <div class="mini">P</div>
+                    <div><b>ProjectONus</b><small class="urlText">your-link</small></div>
+                </div>
+            </div>
+
+            <!-- Android menu -->
+            <div id="androidMenu">
+                <div class="andRow">New tab <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></div>
+                <div class="andRow">History</div>
+                <div class="andRow">Downloads</div>
+                <div class="andRow">Share…</div>
+                <div class="andRow" id="andRowAddHome">Add to Home screen
+                    <svg class="rowIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg>
+                    <div class="tap" id="tapAndAddHome"></div>
+                </div>
+                <div class="andRow">Settings</div>
+            </div>
+
+            <!-- Android dialog -->
+            <div id="andDialog">
+                <h4>Add to Home screen</h4>
+                <div id="andDialogRow">
+                    <div class="mini">P</div>
+                    <div><b>ProjectONus</b><small class="urlText">your-link</small></div>
+                </div>
+                <div id="andDialogBtns">
+                    <span class="cancel">Cancel</span>
+                    <span class="add">Add<div class="tap" id="tapAndAdd"></div></span>
+                </div>
+            </div>
+
+            <!-- Home screen -->
+            <div id="homeScreen">
+                <div id="homeGrid">
+                    <div class="hIcon"><div class="tile"></div><span>Phone</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Messages</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Camera</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Photos</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Mail</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Maps</span></div>
+                    <div class="hIcon"><div class="tile"></div><span>Calendar</span></div>
+                    <div class="hIcon newApp"><div class="tile">P</div><span>ProjectONus</span></div>
+                </div>
+                <div id="homeDock"><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div></div>
+            </div>
+
+            <!-- Fullscreen app -->
+            <div id="fullApp">
+                <div class="fhead"><div class="mini">P</div> ProjectONus</div>
+                <div class="fbody">
+                    <div class="fcard"><i></i><div><div class="l1"></div><div class="l2"></div></div></div>
+                    <div class="fcard"><i></i><div><div class="l1"></div><div class="l2"></div></div></div>
+                    <div class="fcard"><i></i><div><div class="l1"></div><div class="l2"></div></div></div>
+                    <div class="fcard"><i></i><div><div class="l1"></div><div class="l2"></div></div></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+    </div>
+
+    <!-- NARRATION SCRIPT -->
+    <div id="scriptPanel">
+        <h3>🎙️ Narration Script (read while recording)</h3>
+        <p><b>Intro:</b> "Did you know you can turn ProjectONus into an app on your phone? No app store, no download — just four quick taps. Let me show you, first on iPhone, then on Android."</p>
+        <p><b>iPhone 1:</b> "On your iPhone, open Safari and go to your ProjectONus link — the same one you use to log in."</p>
+        <p><b>iPhone 2:</b> "Now tap the Share button — that's the square with the arrow at the bottom of the screen."</p>
+        <p><b>iPhone 3:</b> "Scroll down a little and tap 'Add to Home Screen'."</p>
+        <p><b>iPhone 4:</b> "You'll see the ProjectONus icon and name. Just tap 'Add' in the top corner."</p>
+        <p><b>iPhone 5:</b> "And that's it — ProjectONus is now on your home screen, right next to your other apps."</p>
+        <p><b>Android 1:</b> "On Android it's just as easy. Open Chrome and go to your ProjectONus link."</p>
+        <p><b>Android 2:</b> "Tap the three dots menu in the top right corner."</p>
+        <p><b>Android 3:</b> "Then tap 'Add to Home screen'. On some phones this says 'Install app' — same thing."</p>
+        <p><b>Android 4:</b> "Confirm by tapping 'Add'."</p>
+        <p><b>Android 5:</b> "Done! The ProjectONus icon is now on your home screen."</p>
+        <p><b>Outro:</b> "From now on, one tap opens ProjectONus full screen — just like a real app. Same login, same projects, always up to date. Thanks for watching!"</p>
+    </div>
+
+    <!-- START OVERLAY -->
+    <div id="startOverlay">
+        <div id="startBox">
+            <h1>📱 Put ProjectONus on Your Phone</h1>
+            <p>Watch how to turn this website into an app icon on your phone —<br>no app store needed, just 4 quick taps.</p>
+            <button class="go" id="startBtn">▶ &nbsp;Watch (1 minute)</button>
+            <small>Works on iPhone (Safari) and Android (Chrome).</small>
+        </div>
+    </div>
+
+    <!-- CONTROLS -->
+    <div id="controls">
+        <a class="ctlBack" href="{{ back_url }}">← Back</a>
+        <button id="playBtn">▶ Play</button>
+        <button id="restartBtn">↺ Restart</button>
+        <button id="prevBtn">‹ Back</button>
+        <button id="nextBtn">Next ›</button>
+        <div id="progressWrap"><div id="progressFill"></div></div>
+        <div id="dots"></div>
+        <div id="timeLbl">0:00 / 0:00</div>
+        <button id="scriptBtn">🎙️ Script</button>
+        <button id="recordBtn" title="Hides this bar while playing (hover to bring it back)">🎥 Record mode</button>
+    </div>
+
+</div>
+</div>
+
+<script>
+// ---------- responsive stage scaling ----------
+const stage = document.getElementById("stage");
+function fitStage(){
+    const s = Math.min(innerWidth / 1600, innerHeight / 900);
+    stage.style.transform = `scale(${s})`;
+}
+addEventListener("resize", fitStage); fitStage();
+
+// ---------- scene definitions ----------
+const SCENES = [
+    { dur: 5000, count: "", big: "", sub: "", plat: null,
+      setup(){ set("introShown"); } },
+
+    { dur: 5500, count: "iPhone · Step 1 of 4", plat: "ios",
+      big: "Open Safari and go to your ProjectONus link",
+      sub: "Use the <b>same web address</b> you already use to log in. You can find it in your welcome email or ask your admin.",
+      setup(){ phoneSkin("ios"); } },
+
+    { dur: 5500, count: "iPhone · Step 2 of 4", plat: "ios",
+      big: "Tap the <span style='color:#60a5fa'>Share</span> button",
+      sub: "It's the square with the <b>arrow pointing up</b>, at the bottom center of Safari.",
+      setup(){ phoneSkin("ios"); tap("tapShare", 300); later(()=>set("sheetUp"), 1400); } },
+
+    { dur: 6000, count: "iPhone · Step 3 of 4", plat: "ios",
+      big: "Choose “Add to Home Screen”",
+      sub: "Scroll down a little in the menu — then tap <b>Add to Home Screen</b>.",
+      setup(){ phoneSkin("ios"); set("sheetUp");
+               later(()=>set("sheetUp","sheetScrolled"), 700);
+               tap("tapAddHome", 2100);
+               later(()=>set("iosDialogOpen"), 3300); } },
+
+    { dur: 5000, count: "iPhone · Step 4 of 4", plat: "ios",
+      big: "Tap <span style='color:#60a5fa'>Add</span>",
+      sub: "Safari shows the ProjectONus name and icon. Tap <b>Add</b> in the top right corner.",
+      setup(){ phoneSkin("ios"); set("iosDialogOpen"); tap("tapIosAdd", 1600);
+               later(()=>set("homeShown"), 2900); } },
+
+    { dur: 5500, count: "iPhone · Done ✓", plat: "ios",
+      big: "ProjectONus is on your home screen!",
+      sub: "The icon works like any other app — <b>one tap and you're in</b>.",
+      setup(){ phoneSkin("ios"); set("homeShown"); } },
+
+    { dur: 5500, count: "Android · Step 1 of 4", plat: "android",
+      big: "Open Chrome and go to your ProjectONus link",
+      sub: "Same address as always — just open it in <b>Chrome</b> on your Android phone.",
+      setup(){ phoneSkin("android"); } },
+
+    { dur: 5500, count: "Android · Step 2 of 4", plat: "android",
+      big: "Tap the <span style='color:#86efac'>⋮ menu</span>",
+      sub: "The <b>three dots</b> in the top right corner of Chrome.",
+      setup(){ phoneSkin("android"); tap("tapAndMenu", 400); later(()=>set("andMenuOpen"), 1500); } },
+
+    { dur: 6000, count: "Android · Step 3 of 4", plat: "android",
+      big: "Tap “Add to Home screen”",
+      sub: "On some phones this says <b>“Install app”</b> — it does the same thing.",
+      setup(){ phoneSkin("android"); set("andMenuOpen"); tap("tapAndAddHome", 1300);
+               later(()=>set("andDialogOpen"), 2600); } },
+
+    { dur: 5000, count: "Android · Step 4 of 4", plat: "android",
+      big: "Tap <span style='color:#86efac'>Add</span>",
+      sub: "Confirm, and Android places the icon for you.",
+      setup(){ phoneSkin("android"); set("andDialogOpen"); tap("tapAndAdd", 1500);
+               later(()=>set("homeShown"), 2800); } },
+
+    { dur: 5500, count: "Android · Done ✓", plat: "android",
+      big: "ProjectONus is on your home screen!",
+      sub: "Tap it anytime — it opens instantly, <b>full screen</b>.",
+      setup(){ phoneSkin("android"); set("homeShown");
+               later(()=>{ set("homeShown","fullAppShown"); }, 3200); } },
+
+    { dur: 7000, count: "", big: "", sub: "", plat: null,
+      setup(){ set("outroShown"); } },
+];
+const TOTAL = SCENES.reduce((a,s)=>a+s.dur,0);
+
+// ---------- state helpers ----------
+const FLAGS = ["introShown","outroShown","sheetUp","sheetScrolled","iosDialogOpen",
+               "andMenuOpen","andDialogOpen","homeShown","fullAppShown"];
+let timeouts = [];
+function later(fn, ms){ timeouts.push(setTimeout(fn, ms)); }
+function clearLater(){ timeouts.forEach(clearTimeout); timeouts = []; }
+function set(...flags){ FLAGS.forEach(f=>stage.classList.toggle(f, flags.includes(f))); }
+function phoneSkin(kind){
+    const android = kind === "android";
+    document.getElementById("phone").classList.toggle("androidSkin", android);
+    document.getElementById("androidTopBar").style.display = android ? "flex" : "none";
+    document.getElementById("iosTopPad").style.display = android ? "none" : "flex";
+    document.getElementById("iosBottomBar").style.display = android ? "none" : "flex";
+}
+function tap(id, delay){
+    later(()=>{
+        const el = document.getElementById(id);
+        el.classList.remove("tapGo"); void el.offsetWidth; el.classList.add("tapGo");
+    }, delay);
+}
+
+// ---------- caption rendering ----------
+const stepCount = document.getElementById("stepCount");
+const stepBig = document.getElementById("stepBig");
+const stepSub = document.getElementById("stepSub");
+const platformTag = document.getElementById("platformTag");
+const capPanel = document.getElementById("captionPanel");
+function renderCaption(sc){
+    const isCard = !sc.big;
+    capPanel.style.opacity = isCard ? 0 : 1;
+    document.getElementById("phoneZone").style.opacity = isCard ? 0 : 1;
+    [stepBig, stepSub, stepCount].forEach(el=>el.classList.add("capFade"));
+    setTimeout(()=>{
+        stepCount.textContent = sc.count || "";
+        stepBig.innerHTML = sc.big || "";
+        stepSub.innerHTML = sc.sub || "";
+        if(sc.plat === "ios"){ platformTag.textContent = "iPhone · Safari"; platformTag.className = ""; }
+        else if(sc.plat === "android"){ platformTag.textContent = "Android · Chrome"; platformTag.className = "androidTag"; }
+        else platformTag.className = "hidden";
+        [stepBig, stepSub, stepCount].forEach(el=>el.classList.remove("capFade"));
+    }, 180);
+}
+
+// ---------- playback engine ----------
+let idx = 0, playing = false, sceneStart = 0, elapsedBefore = 0, rafId = null, sceneTimer = null;
+const playBtn = document.getElementById("playBtn");
+const fill = document.getElementById("progressFill");
+const timeLbl = document.getElementById("timeLbl");
+const dotsBox = document.getElementById("dots");
+SCENES.forEach((_,i)=>{
+    const d = document.createElement("button");
+    d.className = "dot"; d.onclick = ()=>{ goTo(i, true); };
+    dotsBox.appendChild(d);
+});
+function fmt(ms){ const s = Math.round(ms/1000); return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; }
+function updateDots(){ [...dotsBox.children].forEach((d,i)=>d.classList.toggle("on", i===idx)); }
+function elapsedAt(i){ return SCENES.slice(0,i).reduce((a,s)=>a+s.dur,0); }
+function tick(){
+    const el = elapsedBefore + (playing ? (performance.now() - sceneStart) : 0);
+    fill.style.width = Math.min(100, el/TOTAL*100) + "%";
+    timeLbl.textContent = `${fmt(Math.min(el,TOTAL))} / ${fmt(TOTAL)}`;
+    if(playing) rafId = requestAnimationFrame(tick);
+}
+function enterScene(i){
+    clearLater(); clearTimeout(sceneTimer);
+    idx = i; elapsedBefore = elapsedAt(i);
+    const sc = SCENES[i];
+    renderCaption(sc);
+    set();
+    sc.setup();
+    updateDots();
+    sceneStart = performance.now();
+    if(playing){
+        sceneTimer = setTimeout(()=>{
+            if(idx < SCENES.length-1) enterScene(idx+1);
+            else pause(true);
+        }, sc.dur);
+    }
+    tick();
+}
+function play(){
+    if(playing) return;
+    playing = true; playBtn.textContent = "❚❚ Pause";
+    if(idx === SCENES.length-1 && fill.style.width === "100%") idx = 0;
+    enterScene(idx);
+}
+function pause(finished){
+    playing = false; clearTimeout(sceneTimer); cancelAnimationFrame(rafId);
+    playBtn.textContent = finished ? "↺ Replay" : "▶ Play";
+    if(finished){ elapsedBefore = TOTAL; idx = 0; tick(); idx = SCENES.length-1; }
+}
+function goTo(i, keepState){
+    const wasPlaying = playing;
+    playing = wasPlaying;
+    enterScene(Math.max(0, Math.min(SCENES.length-1, i)));
+    if(!wasPlaying) tick();
+}
+playBtn.onclick = ()=> playing ? pause(false) : play();
+document.getElementById("restartBtn").onclick = ()=>{ pause(false); idx = 0; play(); };
+document.getElementById("prevBtn").onclick = ()=> goTo(idx-1);
+document.getElementById("nextBtn").onclick = ()=> goTo(idx+1);
+document.getElementById("progressWrap").onclick = (e)=>{
+    const r = e.currentTarget.getBoundingClientRect();
+    const t = (e.clientX - r.left)/r.width * TOTAL;
+    let acc = 0;
+    for(let i=0;i<SCENES.length;i++){ acc += SCENES[i].dur; if(t < acc){ goTo(i); break; } }
+};
+document.getElementById("scriptBtn").onclick = ()=> document.getElementById("scriptPanel").classList.toggle("open");
+document.getElementById("recordBtn").onclick = function(){
+    stage.classList.toggle("recordMode");
+    this.textContent = stage.classList.contains("recordMode") ? "🎥 Record mode: ON" : "🎥 Record mode";
+};
+addEventListener("keydown", e=>{
+    if(e.target.tagName === "INPUT") return;
+    if(e.code === "Space"){ e.preventDefault(); playBtn.onclick(); }
+    if(e.code === "ArrowRight") goTo(idx+1);
+    if(e.code === "ArrowLeft") goTo(idx-1);
+});
+
+// ---------- start overlay ----------
+const APP_URL = {{ app_host|tojson }};
+document.getElementById("startBtn").onclick = ()=>{
+    let url = APP_URL;
+    document.querySelectorAll(".urlText").forEach(el=>el.textContent = url);
+    document.getElementById("startOverlay").style.display = "none";
+    play();
+};
+tick();
+</script>
+</body>
+</html>
