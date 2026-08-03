@@ -111,7 +111,8 @@
             <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
             <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
             <p><span>Total Amount</span><strong>{{ format_invoice_money(totals_breakdown.total_amount) }}</strong></p>
-            <p><span>Payments/Credit</span><strong>{% if totals_breakdown.payments_credit %}-{{ format_invoice_money(totals_breakdown.payments_credit) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
+            <p><span>Payments</span><strong>{% if totals_breakdown.payments %}-{{ format_invoice_money(totals_breakdown.payments) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
+            <p><span>Credit</span><strong>{% if totals_breakdown.credit %}-{{ format_invoice_money(totals_breakdown.credit) }}{% else %}{{ format_invoice_money(0) }}{% endif %}</strong></p>
             <p class="invoiceGrandTotal"><span>Balance Due</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
         </div>
     </div>

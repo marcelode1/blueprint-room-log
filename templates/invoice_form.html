@@ -195,7 +195,8 @@
                 <p><span>Total Labor</span><strong id="liveTotalLabor">$0.00</strong></p>
                 <p><span>Total Sales Tax</span><strong id="liveTotalTax">$0.00</strong></p>
                 <p><span>Total Amount</span><strong id="liveTotalAmount">$0.00</strong></p>
-                <p><span>Payments/Credit</span><strong id="livePaymentsCredit">$0.00</strong></p>
+                <p><span>Payments</span><strong id="livePayments">$0.00</strong></p>
+                <p><span>Credit</span><strong id="liveCredit">$0.00</strong></p>
                 <p class="invoiceLiveBalance"><span>Balance Due</span><strong id="liveBalanceDue">$0.00</strong></p>
             </div>
         </div>
@@ -412,6 +413,7 @@ const saveBeforeLeaving=document.getElementById("saveBeforeLeaving");
 const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
 const keepEditingInvoice=document.getElementById("keepEditingInvoice");
 const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
+const invoicePaidTotal=Number("{{ paid_total if paid_total is defined and paid_total else 0 }}")||0;
 const newRoomModal=document.getElementById("newRoomModal");
 const newRoomForm=document.getElementById("newInvoiceRoomForm");
 const newRoomError=document.getElementById("newRoomError");
@@ -552,13 +554,14 @@ function updateInvoiceLiveTotals(){
     });
     const tax=taxableSubtotal*(invoiceTaxRate/100);
     const totalAmount=material+labor+tax;
-    const balanceDue=(material+labor-paymentsCredit)+tax;
+    const balanceDue=Math.max((material+labor-paymentsCredit)+tax-invoicePaidTotal,0);
     const setTotal=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=money(value);};
     setTotal("liveTotalMaterial",material);
     setTotal("liveTotalLabor",labor);
     setTotal("liveTotalTax",tax);
     setTotal("liveTotalAmount",totalAmount);
-    setTotal("livePaymentsCredit",paymentsCredit ? -paymentsCredit : 0);
+    setTotal("livePayments",invoicePaidTotal ? -invoicePaidTotal : 0);
+    setTotal("liveCredit",paymentsCredit ? -paymentsCredit : 0);
     setTotal("liveBalanceDue",balanceDue);
 }
 function refreshLineIndexes(){
@@ -953,12 +956,26 @@ invoiceDirty=false;
    Click = clean field, nothing opens. Typing shows matches that start with
    the typed letters. Enter with no existing match opens the New Item window. */
 let combo=null; // {input, box, matches, index, kind}
-function comboBoxFor(input){
-    const wrap=input.closest(".lineCombo");
-    return wrap?wrap.querySelector(".lineSuggest"):null;
+const suggestFloat=document.createElement("div");
+suggestFloat.className="lineSuggest suggestFloat";
+suggestFloat.hidden=true;
+document.body.appendChild(suggestFloat);
+function positionSuggestFloat(input){
+    const r=input.getBoundingClientRect();
+    suggestFloat.style.left=Math.max(8,Math.min(r.left,window.innerWidth-330))+"px";
+    suggestFloat.style.minWidth=Math.max(r.width,240)+"px";
+    const spaceBelow=window.innerHeight-r.bottom;
+    if(spaceBelow<250&&r.top>260){
+        suggestFloat.style.top="";
+        suggestFloat.style.bottom=(window.innerHeight-r.top+2)+"px";
+    }else{
+        suggestFloat.style.bottom="";
+        suggestFloat.style.top=(r.bottom+2)+"px";
+    }
 }
 function hideCombo(){
-    if(combo&&combo.box){combo.box.hidden=true;combo.box.innerHTML="";}
+    suggestFloat.hidden=true;
+    suggestFloat.innerHTML="";
     combo=null;
 }
 function comboHighlight(){
@@ -967,8 +984,7 @@ function comboHighlight(){
     if(combo.index>=0&&combo.box.children[combo.index])combo.box.children[combo.index].scrollIntoView({block:"nearest"});
 }
 function renderCombo(input,matches,kind){
-    const box=comboBoxFor(input);
-    if(!box)return;
+    const box=suggestFloat;
     box.innerHTML="";
     if(!matches.length){box.hidden=true;combo=null;return;}
     matches.forEach((m,i)=>{
@@ -979,6 +995,7 @@ function renderCombo(input,matches,kind){
         b.textContent=m.label;
         box.appendChild(b);
     });
+    positionSuggestFloat(input);
     box.hidden=false;
     combo={input,box,matches,index:-1,kind};
 }
@@ -1102,7 +1119,7 @@ invoiceLines.addEventListener("keydown",event=>{
         pickComboOption(combo.index);
     }
 },true);
-invoiceLines.addEventListener("mousedown",event=>{
+suggestFloat.addEventListener("mousedown",event=>{
     const optionBtn=event.target.closest(".lineSuggestOpt");
     if(!optionBtn)return;
     event.preventDefault();
@@ -1114,6 +1131,11 @@ invoiceLines.addEventListener("focusout",event=>{
         setTimeout(()=>{if(combo&&combo.input===input)hideCombo();},160);
     }
 });
+document.addEventListener("scroll",event=>{
+    if(event.target===suggestFloat)return;
+    if(combo)positionSuggestFloat(combo.input);
+},true);
+window.addEventListener("resize",()=>{if(combo)positionSuggestFloat(combo.input);});
 </script>
 
 <style>
@@ -1130,6 +1152,7 @@ invoiceLines.addEventListener("focusout",event=>{
 .lineCombo{position:relative}
 .lineCombo .lineItemSearch{width:100%}
 .lineSuggest{position:absolute;top:100%;left:0;min-width:100%;max-width:360px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);z-index:40;max-height:240px;overflow-y:auto;margin-top:2px}
+.lineSuggest.suggestFloat{position:fixed;top:auto;left:auto;min-width:240px;max-width:380px;width:max-content;z-index:9999;margin-top:0}
 .lineSuggest[hidden]{display:none}
 .lineSuggestOpt{display:block!important;width:100%!important;text-align:left!important;background:#fff!important;border:none!important;border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:7px 10px!important;margin:0!important;min-height:0!important;font-size:12.5px!important;font-weight:600!important;color:#0f172a!important;cursor:pointer;white-space:normal!important;line-height:1.3!important}
 .lineSuggestOpt:last-child{border-bottom:none!important}

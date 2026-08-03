@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-03 V2"
+APP_BUILD = "2026-08-03 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2383,6 +2383,8 @@ def invoice_totals_breakdown(invoice, lines):
         "labor": round(labor, 2),
         "sales_tax": round(tax_total, 2),
         "total_amount": round(total_amount, 2),
+        "credit": round(payments_credit, 2),
+        "payments": 0.0,
         "payments_credit": round(payments_credit, 2),
         "balance_due": round(balance_due, 2),
     }
@@ -2465,14 +2467,25 @@ def invoice_paid_stamp_date(invoice):
     return format_date(raw)
 
 
-def invoice_browser_pdf_attachment(invoice, lines, company):
+def invoice_breakdown_with_payments(invoice, lines, paid_total=0.0):
+    """Totals breakdown with recorded payments folded in as their own line."""
+    totals = invoice_totals_breakdown(invoice, lines)
+    paid_total = round(float(paid_total or 0), 2)
+    totals["payments"] = paid_total
+    totals["payments_credit"] = round(totals["credit"] + paid_total, 2)
+    if paid_total:
+        totals["balance_due"] = round(max(float(invoice.get("total") or 0) - paid_total, 0), 2)
+    return totals
+
+
+def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0):
     try:
         from playwright.sync_api import sync_playwright
     except Exception as e:
         return None, f"Browser PDF support is not installed. {e}"
 
     invoice_number = secure_filename(invoice.get("invoice_number") or "invoice-preview") or "invoice"
-    totals = invoice_totals_breakdown(invoice, lines)
+    totals = invoice_breakdown_with_payments(invoice, lines, paid_total)
     formatted_lines = []
     for idx, line in enumerate(lines, 1):
         formatted_lines.append({
@@ -2485,6 +2498,8 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
             "line_total": format_invoice_money(line.get("line_total")),
         })
     payments_credit_val = totals.get("payments_credit") or 0
+    payments_val = totals.get("payments") or 0
+    credit_val = totals.get("credit") or 0
     html = render_template(
         "invoice_email_attachment.html",
         invoice=invoice,
@@ -2506,6 +2521,8 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
         total_sales_tax=format_invoice_money(totals.get("sales_tax")),
         total_amount=format_invoice_money(totals.get("total_amount")),
         payments_credit=("-" + format_invoice_money(payments_credit_val)) if payments_credit_val else format_invoice_money(0),
+        payments_total=("-" + format_invoice_money(payments_val)) if payments_val else format_invoice_money(0),
+        credit_total=("-" + format_invoice_money(credit_val)) if credit_val else format_invoice_money(0),
         balance_due=format_invoice_money(totals.get("balance_due")),
         paid_stamp_date=invoice_paid_stamp_date(invoice),
     )
@@ -2541,7 +2558,7 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def manual_invoice_pdf_attachment(invoice, lines, company):
+def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
     if fitz is None:
         return None, "PDF support is not available on this server."
     doc = fitz.open()
@@ -2712,7 +2729,7 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
         y = row_top + row_height
         page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.45)
         y += 2
-    totals = invoice_totals_breakdown(invoice, lines)
+    totals = invoice_breakdown_with_payments(invoice, lines, paid_total)
     if y + 126 > footer_top - 8:
         page = doc.new_page(width=page_width, height=page_height)
         y = 56
@@ -2729,10 +2746,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
         ("Total Labor", "labor"),
         ("Total Sales Tax", "sales_tax"),
         ("Total Amount", "total_amount"),
-        ("Payments/Credit", "payments_credit"),
+        ("Payments", "payments"),
+        ("Credit", "credit"),
     ]:
         value = format_invoice_money(totals[key])
-        if key == "payments_credit" and totals[key]:
+        if key in ("payments", "credit") and totals[key]:
             value = "-" + value
         text(358, totals_y, label, 8.4)
         box_text(500, totals_y, 76, value, 8.4, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
@@ -2785,11 +2803,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def invoice_pdf_attachment(invoice, lines, company):
-    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company)
+def invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
+    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company, paid_total)
     if attachment:
         return attachment, ""
-    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company)
+    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company, paid_total)
     if fallback_attachment:
         return fallback_attachment, ""
     return None, error or fallback_error or "Invoice PDF could not be created."
@@ -2801,7 +2819,8 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
         return False, "Add a customer email before sending this invoice."
     company = account_info()
     subject = f"Invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}"
-    attachment, error = invoice_pdf_attachment(invoice, lines, company)
+    paid_total = invoice_paid_total(conn, invoice["id"]) if invoice.get("id") else 0.0
+    attachment, error = invoice_pdf_attachment(invoice, lines, company, paid_total)
     if error:
         return False, error
     sent = send_email(to_email, subject, invoice_email_body(invoice, company), attachments=[attachment])
@@ -9157,10 +9176,8 @@ def invoice_view(invoice_id):
     if not invoice:
         flash("Invoice not found.")
         return redirect(url_for("invoices"))
-    totals_breakdown = invoice_totals_breakdown(invoice, lines)
     paid_total = round(sum(float(p.get("amount") or 0) for p in payments), 2)
-    totals_breakdown["payments_credit"] = round(totals_breakdown["payments_credit"] + paid_total, 2)
-    totals_breakdown["balance_due"] = round(max(float(invoice.get("total") or 0) - paid_total, 0), 2)
+    totals_breakdown = invoice_breakdown_with_payments(invoice, lines, paid_total)
     return render_template(
         "invoice_view.html", invoice=invoice, lines=lines, company=account_info(),
         email_logs=email_logs, totals_breakdown=totals_breakdown,
@@ -9203,8 +9220,9 @@ def edit_invoice(invoice_id):
     selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone() if invoice.get("project_id") else None
     invoice_rooms = invoice_room_options(conn, invoice["project_id"]) if invoice.get("project_id") else []
     rooms_by_project = invoice_rooms_by_project(conn)
+    edit_invoice_paid_total = invoice_paid_total(conn, invoice_id)
     conn.close()
-    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, invoice_rooms=invoice_rooms, rooms_by_project=rooms_by_project, selected_project=selected_project, default_tax_rate=default_invoice_tax_rate(), today=local_now().date().isoformat(), form_action=url_for("edit_invoice", invoice_id=invoice_id))
+    return render_template("invoice_form.html", invoice=invoice, lines=existing_lines, projects=projects, saved_items=saved_items, part_catalog=catalog, invoice_rooms=invoice_rooms, rooms_by_project=rooms_by_project, selected_project=selected_project, default_tax_rate=default_invoice_tax_rate(), today=local_now().date().isoformat(), paid_total=edit_invoice_paid_total, form_action=url_for("edit_invoice", invoice_id=invoice_id))
 
 
 @app.route("/invoices/<int:invoice_id>/send", methods=["POST"])
@@ -9225,7 +9243,7 @@ def send_invoice(invoice_id):
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
     company = account_info()
     subject = f"Invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}"
-    attachment, error = invoice_pdf_attachment(invoice, lines, company)
+    attachment, error = invoice_pdf_attachment(invoice, lines, company, invoice_paid_total(conn, invoice_id))
     if error:
         conn.close()
         flash(error)
