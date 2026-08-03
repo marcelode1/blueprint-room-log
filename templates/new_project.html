@@ -6,6 +6,13 @@
     <form method="post" enctype="multipart/form-data">
         <label>Project Name</label>
         <input name="name" required>
+        <label>Project Type <span class="muted" style="font-weight:400">(loads the phase checklist for the Progress page)</span></label>
+        <select name="trade_template">
+            {% for key, tpl in phase_templates.items() %}
+                <option value="{{ key }}" {% if key == default_trade %}selected{% endif %}>{{ tpl.label }}</option>
+            {% endfor %}
+            <option value="">No template</option>
+        </select>
         <label>Customer Name</label>
         <input name="customer_name" autocomplete="name">
         <label>Street Address</label>

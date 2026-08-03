@@ -126,8 +126,31 @@
                             <td>
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
                                 <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
-                                <input type="hidden" name="line_part_catalog_id" class="lineCatalogId" value="{{ line.part_catalog_id or '' }}">
-                                <input type="text" class="lineItemInput" autocomplete="off" spellcheck="false" placeholder="Type item name" value="{{ line.item_name }}">
+                                <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                    <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
+                                        data-name="{{ line.item_name }}"
+                                        data-description="{{ line.description or '' }}"
+                                        data-price="{{ line.unit_price or 0 }}"
+                                        data-type="{{ line.item_type or 'part' }}"
+                                        data-taxable="{{ '1' if line.taxable else '0' }}"
+                                        selected>
+                                        {{ line.item_name or 'Saved item' }}{% if line.item_type == 'service' %} (Labor){% endif %}
+                                    </option>
+                                    <option value="__new__">NEW ITEM</option>
+                                    {% for item in part_catalog %}
+                                        {% if not line.part_catalog_id or line.part_catalog_id != item.id %}
+                                        <option value="{{ item.id }}"
+                                            data-name="{{ item.item_name }}"
+                                            data-description="{{ item.description or '' }}"
+                                            data-price="{{ item.unit_price or 0 }}"
+                                            data-type="{{ item.item_type or 'part' }}"
+                                            data-taxable="{{ '1' if item.taxable else '0' }}"
+                                            >
+                                            {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                                        </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                </select>
                             </td>
                             <td><textarea name="line_description" class="lineDescription" rows="1">{{ line.description or '' }}</textarea></td>
                             <td>
@@ -175,8 +198,20 @@
                 <td>
                     <input type="hidden" name="line_item_name" class="lineItemName">
                     <input type="hidden" name="line_item_type" class="lineItemType" value="part">
-                    <input type="hidden" name="line_part_catalog_id" class="lineCatalogId" value="">
-                    <input type="text" class="lineItemInput" autocomplete="off" spellcheck="false" placeholder="Type item name">
+                    <select name="line_part_catalog_id" class="lineItemSelect" required>
+                        <option value="__new__">NEW ITEM</option>
+                        <option value="" selected hidden>Choose item</option>
+                        {% for item in part_catalog %}
+                            <option value="{{ item.id }}"
+                                data-name="{{ item.item_name }}"
+                                data-description="{{ item.description or '' }}"
+                                data-price="{{ item.unit_price or 0 }}"
+                                data-type="{{ item.item_type or 'part' }}"
+                                data-taxable="{{ '1' if item.taxable else '0' }}">
+                                {{ item.item_name }}{% if item.item_type == 'service' %} (Labor){% endif %}{% if item.brand %} - {{ item.brand }}{% endif %}{% if item.item_model %} / {{ item.item_model }}{% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
                 </td>
                 <td><textarea name="line_description" class="lineDescription" rows="1"></textarea></td>
                 <td>
@@ -365,14 +400,7 @@ const newRoomError=document.getElementById("newRoomError");
 const closeNewRoomModal=document.getElementById("closeNewRoomModal");
 const invoiceRoomsByProject={{ rooms_by_project|default({})|tojson }};
 let currentInvoiceProjectId="{{ selected_project.id if selected_project else (invoice.project_id if invoice and invoice.project_id else '') }}";
-const invoiceCatalog=[
-{% for item in part_catalog %}
-    {id:{{ item.id }},name:{{ (item.item_name or '')|tojson }},brand:{{ (item.brand or '')|tojson }},model:{{ (item.item_model or '')|tojson }},description:{{ (item.description or '')|tojson }},price:Number("{{ item.unit_price or 0 }}")||0,type:{{ (item.item_type or 'part')|tojson }},taxable:{{ 'true' if item.taxable else 'false' }}}{{ "," if not loop.last }}
-{% endfor %}
-];
-const invoiceCatalogById={};
-invoiceCatalog.forEach(item=>{invoiceCatalogById[String(item.id)]=item;});
-let pendingItemLine=null;
+let pendingItemSelect=null;
 let pendingLocationSelect=null;
 let pendingCatalogUpdate=null;
 let invoiceDirty=false;
@@ -472,9 +500,10 @@ function addRoomToInvoiceOptions(room, selectToChoose=null){
         lineTemplate.content.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
     }
 }
-function lineCatalogItem(line){
-    const id=line?.querySelector(".lineCatalogId")?.value||"";
-    return invoiceCatalogById[id]||null;
+function selectedCatalogOption(line){
+    const select=line?.querySelector(".lineItemSelect");
+    if(!select||!select.value||select.value==="__new__"||!/^\d+$/.test(select.value))return null;
+    return select.options[select.selectedIndex]||null;
 }
 function updateLineAmount(line){
     const qty=Number(line.querySelector(".lineQty")?.value||0);
@@ -524,168 +553,64 @@ function refreshLineIndexes(){
     });
     updateInvoiceLiveTotals();
 }
-const suggestBox=document.createElement("div");
-suggestBox.id="invoiceSuggestBox";
-suggestBox.hidden=true;
-document.body.appendChild(suggestBox);
-let suggestInput=null;
-let suggestMode="";
-let suggestMatches=[];
-let suggestIndex=-1;
-function normText(value){return String(value||"").trim().toLowerCase();}
-function catalogLabel(item){
-    const typeLabel=item.type==="service"?" (Labor)":"";
-    return [`${item.name}${typeLabel}`,item.brand,item.model].filter(Boolean).join(" - ");
-}
-function hideSuggest(){
-    suggestBox.hidden=true;
-    suggestBox.innerHTML="";
-    suggestInput=null;
-    suggestMode="";
-    suggestMatches=[];
-    suggestIndex=-1;
-}
-function renderSuggest(){
-    suggestBox.innerHTML="";
-    if(!suggestMatches.length||!suggestInput){hideSuggest();return;}
-    suggestMatches.forEach((match,index)=>{
-        const row=document.createElement("div");
-        row.className="invoiceSuggestOption"+(index===suggestIndex?" active":"");
-        row.textContent=match.label;
-        row.dataset.index=String(index);
-        suggestBox.appendChild(row);
+function lockSelectedItem(select){
+    if(!select||!select.value||select.value==="__new__")return;
+    Array.from(select.options).forEach(option=>{
+        option.defaultSelected=false;
+        option.selected=option.value===select.value;
     });
-    const rect=suggestInput.getBoundingClientRect();
-    suggestBox.style.left=`${rect.left}px`;
-    suggestBox.style.top=`${rect.bottom+2}px`;
-    suggestBox.style.minWidth=`${rect.width}px`;
-    suggestBox.hidden=false;
-    const active=suggestBox.querySelector(".invoiceSuggestOption.active");
-    if(active)active.scrollIntoView({block:"nearest"});
+    const selected=select.options[select.selectedIndex];
+    if(selected)selected.defaultSelected=true;
+    select.dataset.selectedValue=select.value;
 }
-function itemSuggestions(text){
-    const query=normText(text);
-    if(!query)return[];
-    const starts=[];
-    const contains=[];
-    invoiceCatalog.forEach(item=>{
-        const name=normText(item.name);
-        if(!name)return;
-        if(name.startsWith(query))starts.push(item);
-        else if(normText(catalogLabel(item)).includes(query))contains.push(item);
-    });
-    return starts.concat(contains).slice(0,8).map(item=>({label:catalogLabel(item),item}));
+function lockAllSelectedItems(){
+    invoiceLines.querySelectorAll(".lineItemSelect").forEach(lockSelectedItem);
 }
-function descriptionSuggestions(text){
-    const query=normText(text);
-    if(!query)return[];
-    const seen=new Set();
-    const matches=[];
-    invoiceCatalog.forEach(item=>{
-        const description=String(item.description||"").trim();
-        const key=normText(description);
-        if(!description||!key.startsWith(query)||seen.has(key))return;
-        seen.add(key);
-        matches.push({label:description,item});
-    });
-    return matches.slice(0,8);
-}
-function showSuggestions(input,mode){
-    const matches=mode==="item"?itemSuggestions(input.value):descriptionSuggestions(input.value);
-    suggestInput=input;
-    suggestMode=mode;
-    suggestMatches=matches;
-    suggestIndex=matches.length?0:-1;
-    renderSuggest();
-}
-function chooseSuggestion(index){
-    const match=suggestMatches[index];
-    const input=suggestInput;
-    const mode=suggestMode;
-    if(!match||!input)return;
-    const line=input.closest(".invoiceLine");
-    hideSuggest();
-    if(!line)return;
-    if(mode==="item"){
-        applyCatalogItemToLine(line,match.item);
-        line.querySelector(".lineDescription")?.focus();
-    }else{
-        input.value=match.label;
-        markInvoiceDirty();
+function applySelectedItem(select){
+    const line=select.closest(".invoiceLine");
+    const option=select.options[select.selectedIndex];
+    if(!line||!option)return;
+    if(option.value==="__new__"){
+        openNewItemModal(select);
+        return;
     }
-}
-function applyCatalogItemToLine(line,item){
-    const itemInput=line.querySelector(".lineItemInput");
     const name=line.querySelector(".lineItemName");
     const type=line.querySelector(".lineItemType");
-    const catalogId=line.querySelector(".lineCatalogId");
     const description=line.querySelector(".lineDescription");
     const price=line.querySelector(".lineUnitPrice");
     const taxable=line.querySelector(".lineTaxable");
-    if(itemInput)itemInput.value=item.name||"";
-    if(name)name.value=item.name||"";
-    if(type)type.value=item.type||"part";
-    if(catalogId)catalogId.value=String(item.id);
-    if(description)description.value=item.description||"";
-    if(price)price.value=money(item.price||0);
-    if(taxable)taxable.checked=!!item.taxable;
-    markCatalogBaseline(line);
-    updateLineAmount(line);
-    updateInvoiceLiveTotals();
-    markInvoiceDirty();
-}
-function syncTypedItem(input){
-    const line=input.closest(".invoiceLine");
-    if(!line)return;
-    const name=line.querySelector(".lineItemName");
-    const catalogId=line.querySelector(".lineCatalogId");
-    if(name)name.value=input.value.trim();
-    if(catalogId)catalogId.value="";
-}
-function linkExactCatalogMatch(input){
-    const line=input.closest(".invoiceLine");
-    if(!line)return;
-    const catalogId=line.querySelector(".lineCatalogId");
-    if(catalogId&&catalogId.value)return;
-    const typed=normText(input.value);
-    if(!typed)return;
-    const item=invoiceCatalog.find(entry=>normText(entry.name)===typed);
-    if(!item)return;
-    if(catalogId)catalogId.value=String(item.id);
-    const type=line.querySelector(".lineItemType");
-    if(type)type.value=item.type||"part";
-    const description=line.querySelector(".lineDescription");
-    const price=line.querySelector(".lineUnitPrice");
-    const taxable=line.querySelector(".lineTaxable");
-    if(description&&!description.value.trim())description.value=item.description||"";
-    if(price&&parseMoney(price.value)===0)price.value=money(item.price||0);
-    if(taxable&&!taxable.checked)taxable.checked=!!item.taxable;
+    if(name)name.value=option.dataset.name||option.textContent.trim();
+    if(type)type.value=option.dataset.type||"part";
+    if(description)description.value=option.dataset.description||"";
+    if(price)price.value=money(option.dataset.price||0);
+    if(taxable)taxable.checked=option.dataset.taxable==="1";
+    lockSelectedItem(select);
     markCatalogBaseline(line);
     updateLineAmount(line);
     updateInvoiceLiveTotals();
 }
 function markCatalogBaseline(line,useCurrent=false){
-    const item=lineCatalogItem(line);
-    if(!item)return;
+    const option=selectedCatalogOption(line);
+    if(!option)return;
     const description=line.querySelector(".lineDescription");
     const price=line.querySelector(".lineUnitPrice");
-    if(description)description.dataset.catalogBaseline=useCurrent ? (description.value||"").trim() : (item.description||"");
-    if(price)price.dataset.catalogBaseline=String(useCurrent ? parseMoney(price.value||0) : Number(item.price||0));
+    if(description)description.dataset.catalogBaseline=useCurrent ? (description.value||"").trim() : (option.dataset.description||"");
+    if(price)price.dataset.catalogBaseline=String(useCurrent ? parseMoney(price.value||0) : parseMoney(option.dataset.price||0));
 }
 function openCatalogUpdatePrompt(line){
-    const item=lineCatalogItem(line);
-    if(!item||!catalogUpdateModal)return;
+    const option=selectedCatalogOption(line);
+    if(!option||!catalogUpdateModal)return;
     const description=line.querySelector(".lineDescription");
     const price=line.querySelector(".lineUnitPrice");
     const newDescription=(description?.value||"").trim();
     const newPrice=parseMoney(price?.value||0);
-    const oldDescription=description?.dataset.catalogBaseline ?? (item.description||"");
-    const oldPrice=Number(price?.dataset.catalogBaseline ?? item.price ?? 0);
+    const oldDescription=description?.dataset.catalogBaseline ?? (option.dataset.description||"");
+    const oldPrice=Number(price?.dataset.catalogBaseline ?? option.dataset.price ?? 0);
     const descriptionChanged=newDescription!==String(oldDescription||"").trim();
     const priceChanged=Math.abs(newPrice-oldPrice)>0.009;
     if(!descriptionChanged&&!priceChanged)return;
-    pendingCatalogUpdate={line,partId:item.id,description:newDescription,unitPrice:newPrice};
-    const itemName=item.name||line.querySelector(".lineItemName")?.value||"this item";
+    pendingCatalogUpdate={line,option,partId:option.value,description:newDescription,unitPrice:newPrice};
+    const itemName=option.dataset.name||line.querySelector(".lineItemName")?.value||"this item";
     if(catalogUpdateMessage)catalogUpdateMessage.textContent=`Save the new description or price for ${itemName} to Items & Catalog for future invoices?`;
     if(catalogUpdateError)catalogUpdateError.textContent="";
     catalogUpdateModal.hidden=false;
@@ -694,47 +619,32 @@ function closeCatalogUpdatePrompt(){
     pendingCatalogUpdate=null;
     if(catalogUpdateModal)catalogUpdateModal.hidden=true;
 }
-function updateCatalogItemEverywhere(item){
-    const entry=invoiceCatalogById[String(item.id)];
-    if(!entry)return;
-    entry.description=item.description||"";
-    entry.price=Number(item.unit_price||0);
-    entry.name=item.item_name||entry.name;
-    entry.type=item.item_type||entry.type||"part";
-    entry.taxable=!!item.taxable;
-}
-function registerCatalogItem(raw){
-    const item={
-        id:raw.id,
-        name:raw.item_name||"",
-        brand:raw.brand||"",
-        model:raw.item_model||"",
-        description:raw.description||"",
-        price:Number(raw.unit_price||0),
-        type:raw.item_type||"part",
-        taxable:!!raw.taxable
-    };
-    const existing=invoiceCatalogById[String(item.id)];
-    if(existing){
-        Object.assign(existing,item);
-        return existing;
+function updateCatalogOptionEverywhere(item){
+    document.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.name=item.item_name||option.dataset.name||"";
+        option.dataset.type=item.item_type||option.dataset.type||"part";
+        option.dataset.taxable=item.taxable?"1":"0";
+    });
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
+            option.dataset.description=item.description||"";
+            option.dataset.price=item.unit_price||0;
+            option.dataset.name=item.item_name||option.dataset.name||"";
+            option.dataset.type=item.item_type||option.dataset.type||"part";
+            option.dataset.taxable=item.taxable?"1":"0";
+        });
     }
-    invoiceCatalog.push(item);
-    invoiceCatalog.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-    invoiceCatalogById[String(item.id)]=item;
-    return item;
 }
-function openNewItemModal(line,presetName=""){
-    pendingItemLine=line;
-    hideSuggest();
+function openNewItemModal(select){
+    pendingItemSelect=select;
     newItemForm.reset();
     document.getElementById("newItemError").textContent="";
-    const nameField=newItemForm.querySelector('input[name="item_name"]');
-    if(nameField)nameField.value=presetName||"";
     newItemModal.hidden=false;
-    requestAnimationFrame(()=>nameField?.focus());
 }
 function addInvoiceLine(data={}, afterLine=null){
+    lockAllSelectedItems();
     const wrapper=document.createElement("tbody");
     wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
     const line=wrapper.firstElementChild;
@@ -744,23 +654,50 @@ function addInvoiceLine(data={}, afterLine=null){
         invoiceLines.appendChild(line);
     }
     refreshLocationSelect(line.querySelector(".lineLocation"), data.location||"");
-    const catalogItem=data.part_catalog_id?invoiceCatalogById[String(data.part_catalog_id)]:null;
-    if(catalogItem)applyCatalogItemToLine(line,catalogItem);
+    const select=line.querySelector(".lineItemSelect");
+    if(data.part_catalog_id&&select){
+        select.value=String(data.part_catalog_id);
+        applySelectedItem(select);
+    }
+    lockAllSelectedItems();
     refreshLineIndexes();
     requestAnimationFrame(()=>{
         const gridWrap=document.querySelector(".invoiceGridWrap");
         if(gridWrap&&!afterLine)gridWrap.scrollTop=gridWrap.scrollHeight;
         line.scrollIntoView({block:"nearest",inline:"nearest"});
-        const firstInput=line.querySelector(".lineItemInput");
+        const firstInput=line.querySelector(".lineItemSelect");
         if(firstInput)firstInput.focus({preventScroll:true});
     });
     markInvoiceDirty();
+}
+function appendCatalogOption(item, targetSelect){
+    const addOptionToSelect=(select)=>{
+        if(select.querySelector(`option[value="${item.id}"]`))return;
+        const option=document.createElement("option");
+        option.value=String(item.id);
+        option.dataset.name=item.item_name||"";
+        option.dataset.description=item.description||"";
+        option.dataset.price=item.unit_price||0;
+        option.dataset.taxable=item.taxable?"1":"0";
+        option.dataset.type=item.item_type||"part";
+        const typeLabel=option.dataset.type==="service"?" (Labor)":"";
+        option.textContent=[`${item.item_name||""}${typeLabel}`,item.brand,item.item_model].filter(Boolean).join(" - ");
+        select.appendChild(option);
+    };
+    document.querySelectorAll(".lineItemSelect").forEach(addOptionToSelect);
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(".lineItemSelect").forEach(addOptionToSelect);
+    }
+    if(targetSelect){
+        targetSelect.value=String(item.id);
+        applySelectedItem(targetSelect);
+    }
 }
 
 document.getElementById("addInvoiceLine").addEventListener("click",()=>addInvoiceLine());
 document.getElementById("closeNewItemModal").addEventListener("click",()=>{
     newItemModal.hidden=true;
-    pendingItemLine=null;
+    if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
 });
 if(closeNewRoomModal){
     closeNewRoomModal.addEventListener("click",()=>{
@@ -769,62 +706,26 @@ if(closeNewRoomModal){
     });
 }
 invoiceLines.addEventListener("change",event=>{
+    if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
     if(event.target.matches(".lineLocation")&&event.target.value==="__new_room__"){
         openNewRoomModal(event.target);
     }
     markInvoiceDirty();
 });
-invoiceLines.addEventListener("input",event=>{
-    if(event.target.matches(".lineItemInput")){
-        syncTypedItem(event.target);
-        showSuggestions(event.target,"item");
+invoiceLines.addEventListener("click",event=>{
+    if(event.target.matches(".lineItemSelect")&&event.target.value==="__new__"){
+        openNewItemModal(event.target);
     }
-    if(event.target.matches(".lineDescription"))showSuggestions(event.target,"description");
+});
+invoiceLines.addEventListener("input",event=>{
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
     markInvoiceDirty();
 });
 invoiceLines.addEventListener("keydown",event=>{
-    const suggestOpen=suggestInput===event.target&&!suggestBox.hidden&&suggestMatches.length>0;
-    if(suggestOpen&&(event.key==="ArrowDown"||event.key==="ArrowUp")){
-        event.preventDefault();
-        const step=event.key==="ArrowDown"?1:-1;
-        suggestIndex=(suggestIndex+step+suggestMatches.length)%suggestMatches.length;
-        renderSuggest();
-        return;
-    }
-    if(suggestOpen&&event.key==="Escape"){
-        hideSuggest();
-        return;
-    }
     if(event.key!=="Enter")return;
-    if(event.target.matches(".lineItemInput")){
-        event.preventDefault();
-        if(suggestOpen&&suggestIndex>=0){
-            chooseSuggestion(suggestIndex);
-            return;
-        }
-        hideSuggest();
-        const typed=event.target.value.trim();
-        if(!typed)return;
-        const line=event.target.closest(".invoiceLine");
-        const exact=invoiceCatalog.find(entry=>normText(entry.name)===normText(typed));
-        if(exact&&line){
-            applyCatalogItemToLine(line,exact);
-            line.querySelector(".lineDescription")?.focus();
-        }else{
-            openNewItemModal(line,typed);
-        }
-        return;
-    }
     if(event.target.matches(".lineDescription,.lineUnitPrice")){
-        if(event.target.matches(".lineDescription")&&suggestOpen&&suggestIndex>=0){
-            event.preventDefault();
-            chooseSuggestion(suggestIndex);
-            return;
-        }
         event.preventDefault();
-        hideSuggest();
         if(event.target.matches(".lineUnitPrice")){
             formatMoneyInput(event.target);
             updateLineAmount(event.target.closest(".invoiceLine"));
@@ -832,29 +733,6 @@ invoiceLines.addEventListener("keydown",event=>{
         openCatalogUpdatePrompt(event.target.closest(".invoiceLine"));
     }
 });
-suggestBox.addEventListener("mousedown",event=>{
-    const option=event.target.closest(".invoiceSuggestOption");
-    if(!option)return;
-    event.preventDefault();
-    chooseSuggestion(Number(option.dataset.index));
-});
-invoiceLines.addEventListener("focusout",event=>{
-    if(event.target.matches(".lineItemInput")){
-        const input=event.target;
-        setTimeout(()=>{
-            if(suggestInput===input)hideSuggest();
-            linkExactCatalogMatch(input);
-        },150);
-    }
-    if(event.target.matches(".lineDescription")){
-        const input=event.target;
-        setTimeout(()=>{if(suggestInput===input)hideSuggest();},150);
-    }
-});
-document.addEventListener("scroll",event=>{
-    if(event.target===suggestBox)return;
-    if(!suggestBox.hidden)hideSuggest();
-},true);
 invoiceLines.addEventListener("blur",event=>{
     if(event.target.matches(".lineUnitPrice")){
         formatMoneyInput(event.target);
@@ -880,7 +758,7 @@ if(saveCatalogUpdate){
             const response=await fetch(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,{method:"POST",body:formData});
             const payload=await response.json();
             if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not update catalog item.");
-            updateCatalogItemEverywhere(payload.item);
+            updateCatalogOptionEverywhere(payload.item);
             markCatalogBaseline(pendingCatalogUpdate.line);
             closeCatalogUpdatePrompt();
         }catch(err){
@@ -917,22 +795,16 @@ newItemForm.addEventListener("submit",async event=>{
         if(response.status===409&&payload.duplicate&&payload.item){
             const useExisting=confirm(`${payload.error} Use the existing item for this invoice line?`);
             if(useExisting){
-                const item=registerCatalogItem(payload.item);
-                if(pendingItemLine)applyCatalogItemToLine(pendingItemLine,item);
+                appendCatalogOption(payload.item,pendingItemSelect);
                 newItemModal.hidden=true;
-                pendingItemLine?.querySelector(".lineDescription")?.focus();
-                pendingItemLine=null;
             }else{
                 error.textContent="Change the item name, brand, or model to create a new item.";
             }
             return;
         }
         if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
-        const item=registerCatalogItem(payload.item);
-        if(pendingItemLine)applyCatalogItemToLine(pendingItemLine,item);
+        appendCatalogOption(payload.item,pendingItemSelect);
         newItemModal.hidden=true;
-        pendingItemLine?.querySelector(".lineDescription")?.focus();
-        pendingItemLine=null;
     }catch(err){
         error.textContent=err.message||"Could not create item.";
     }
@@ -982,6 +854,7 @@ if(invoiceForm){
         markInvoiceDirty();
     });
     invoiceForm.addEventListener("submit",event=>{
+        lockAllSelectedItems();
         const submitter=event.submitter;
         const isPreview=submitter&&submitter.getAttribute("formtarget")==="_blank";
         if(isPreview){
@@ -1021,6 +894,7 @@ if(saveBeforeLeaving){
     saveBeforeLeaving.addEventListener("click",()=>{
         allowInvoiceLeave=true;
         invoiceDirty=false;
+        lockAllSelectedItems();
         if(invoiceForm){
             const submitButton=invoiceForm.querySelector('button[type="submit"]:not([formaction])');
             if(submitButton&&invoiceForm.requestSubmit)invoiceForm.requestSubmit(submitButton);
@@ -1042,6 +916,7 @@ if(keepEditingInvoice){
 }
 if(invoiceLines&&lineRows().length===0)addInvoiceLine();
 invoiceLines.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+lockAllSelectedItems();
 invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
 lineRows().forEach(markCatalogBaseline);
 refreshLineIndexes();
@@ -1056,11 +931,6 @@ invoiceDirty=false;
 .invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
 .invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:4px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:30px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:30px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:230px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:160px;min-width:150px}.invoiceGridTable .lineLocation{width:max-content!important;min-width:150px;max-width:320px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:118px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:70px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}.invoiceLineActions{display:grid;gap:3px}.invoiceLineActions button{width:100%!important;min-height:22px!important;padding:2px 5px!important;margin:0!important;border-radius:5px!important;font-size:11px!important;line-height:1.1!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
-#invoiceSuggestBox{position:fixed;z-index:120;max-height:260px;overflow:auto;background:#fff;border:1px solid #94a3b8;border-radius:6px;box-shadow:0 14px 34px rgba(15,23,42,.22);min-width:220px;max-width:440px}
-#invoiceSuggestBox[hidden]{display:none}
-.invoiceSuggestOption{padding:6px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid #eef2f7;white-space:normal}
-.invoiceSuggestOption:last-child{border-bottom:none}
-.invoiceSuggestOption.active,.invoiceSuggestOption:hover{background:#dbeafe}
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog,.newRoomDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
 @media(min-width:901px){main:has(#invoiceForm){max-width:none;padding:10px 12px 18px}body.proTestTheme main:has(#invoiceForm){padding:10px 12px 18px}.invoiceHeaderActions{margin-bottom:2px}.invoiceTopTextFields{gap:8px;margin:4px 0 6px}.invoiceTopTextFields textarea{min-height:58px}.invoiceLinePanel{margin:8px 0}.invoiceLineToolbar{padding:4px 8px}.invoiceLineToolbar button{min-height:26px;padding:4px 9px;margin:0}.invoiceGridWrap{height:calc(100vh - 188px);min-height:660px;max-height:none}.invoiceGridTable{min-width:1380px}.invoiceGridTable th,.invoiceGridTable td{padding:2px 3px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:24px;padding:2px 5px;font-size:12px}.invoiceGridTable textarea{min-height:24px;line-height:1.15}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:310px}.invoiceGridTable th:nth-child(4),.invoiceGridTable td:nth-child(4){width:390px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:210px;min-width:180px}.invoiceGridTable .lineLocation{min-width:180px;max-width:360px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:130px}.invoiceGridTable .removeInvoiceLine,.invoiceGridTable .insertInvoiceLine{min-height:20px!important;padding:2px 4px!important;font-size:10px!important}.invoiceLiveTotals{margin:6px 10px 6px auto;padding:7px 10px;font-size:13px}.invoiceLiveTotals p{margin:2px 0}.invoiceLiveBalance{padding-top:5px;font-size:18px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceTopTextFields{grid-template-columns:1fr}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}

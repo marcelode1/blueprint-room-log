@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
+﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-06-28 onedrive + dtools-customer V3"
+APP_BUILD = "2026-07-31 V12"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -86,6 +86,7 @@ COMMON_TIMEZONES = [
 ]
 
 ALLOWED_PHOTOS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
+ALLOWED_VIDEOS = {"mp4", "mov", "m4v", "webm", "mkv", "avi"}
 ALLOWED_AUDIO = {"webm", "mp3", "m4a", "wav", "ogg", "mp4", "mpeg", "mpga", "flac"}
 ALLOWED_LOGOS = {"png", "jpg", "jpeg", "webp", "gif", "svg"}
 ALLOWED_BLUEPRINTS = {"pdf", "png", "jpg", "jpeg", "webp"}
@@ -94,6 +95,10 @@ ALLOWED_PROJECT_FILES = ALLOWED_VENDOR_DOCUMENTS | {"ppt", "pptx", "rtf", "dwg",
 CONTENT_TYPES_BY_EXT = {
     "heic": "image/heic",
     "heif": "image/heif",
+    "mov": "video/quicktime",
+    "m4v": "video/x-m4v",
+    "mkv": "video/x-matroska",
+    "avi": "video/x-msvideo",
 }
 PROJECT_FILE_FOLDERS = [
     {"key": "plans", "label": "Plans"},
@@ -1029,6 +1034,7 @@ def init_db():
         "ALTER TABLE project_blueprints ADD COLUMN IF NOT EXISTS blueprint_preview_file TEXT",
         "ALTER TABLE project_blueprints DROP COLUMN IF EXISTS blueprint_id",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS create_rooms BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_project_progress BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS edit_inventory BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS view_contact_info BOOLEAN",
@@ -1102,6 +1108,18 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS created_at TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
         "ALTER TABLE task_attachments ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS worker_class TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate REAL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate_unit TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_frequency TEXT",
+        "CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, doc_type TEXT NOT NULL, file_path TEXT NOT NULL, original_name TEXT, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
+        "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS audio_file TEXT",
+        "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate REAL, pay_rate_unit TEXT, pay_frequency TEXT, base_pay REAL NOT NULL DEFAULT 0, expenses_total REAL NOT NULL DEFAULT 0, total_pay REAL NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_at TEXT",
+        "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        "CREATE TABLE IF NOT EXISTS expense_delete_codes (id SERIAL PRIMARY KEY, expense_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS paystub_delete_codes (id SERIAL PRIMARY KEY, paystub_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS tasks_assignment_group_id_idx ON tasks(assignment_group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
@@ -1136,14 +1154,30 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS project_files (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, storage_path TEXT NOT NULL, original_filename TEXT, file_size INTEGER, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_folders (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, folder_key TEXT NOT NULL, parent_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE, name TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS folder_id INTEGER REFERENCES project_folders(id) ON DELETE CASCADE",
+        "ALTER TABLE project_files ADD COLUMN IF NOT EXISTS description TEXT",
         "CREATE INDEX IF NOT EXISTS project_folders_lookup_idx ON project_folders(project_id, folder_key, parent_id)",
         "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
+        "CREATE TABLE IF NOT EXISTS custom_file_folders (id SERIAL PRIMARY KEY, folder_key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS task_materials_task_idx ON task_materials(task_id)",
+        "CREATE INDEX IF NOT EXISTS task_materials_item_idx ON task_materials(inventory_item_id)",
+        "CREATE TABLE IF NOT EXISTS project_phases (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'auto', manual_pct REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_scope_items (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, label TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT FALSE, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+        "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phase_id INTEGER REFERENCES project_phases(id) ON DELETE SET NULL",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_focus TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_upcoming TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_open TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -1670,6 +1704,32 @@ def load_task_details(conn, tasks, room_id=None):
                     "updated_at": status.get("updated_at") if status else None,
                 })
         task["_room_statuses"] = room_statuses
+        try:
+            task["_task_materials"] = conn.execute(
+                """
+                SELECT task_materials.*,
+                       inventory_items.location_type AS inv_location,
+                       inventory_items.location_detail AS inv_location_detail,
+                       inventory_items.status AS inv_status,
+                       purchase_orders.po_number AS po_number,
+                       purchase_orders.status AS po_status,
+                       purchase_orders.expected_date AS po_expected,
+                       pt.task_number AS pickup_task_number,
+                       pt.status AS pickup_status,
+                       pu.name AS pickup_user_name
+                FROM task_materials
+                LEFT JOIN inventory_items ON task_materials.inventory_item_id = inventory_items.id
+                LEFT JOIN purchase_orders ON task_materials.po_id = purchase_orders.id
+                LEFT JOIN tasks pt ON task_materials.pickup_task_id = pt.id
+                LEFT JOIN users pu ON pt.assigned_user_id = pu.id
+                WHERE task_materials.task_id = %s
+                ORDER BY task_materials.id
+                """,
+                (task["id"],)
+            ).fetchall()
+        except Exception:
+            conn.rollback()
+            task["_task_materials"] = []
         detailed.append(task)
     return detailed
 
@@ -1814,6 +1874,7 @@ PERMISSION_DEFS = [
     {"key": "view_inventory", "label": "View inventory", "grid": True, "worker": False, "customer": False},
     {"key": "edit_inventory", "label": "Edit inventory", "grid": True, "worker": False, "customer": False},
     {"key": "view_project_notes", "label": "View and edit project notes", "grid": True, "worker": False, "customer": False},
+    {"key": "view_project_progress", "label": "View project progress page", "grid": True, "worker": False, "customer": False},
     # Handled by their own UI, not a simple checkbox:
     {"key": "view_project_files", "label": "Access project files", "grid": False, "worker": False, "customer": False},
     {"key": "require_task_picture", "label": "Require task picture", "grid": False, "worker": False, "customer": False},
@@ -1867,8 +1928,9 @@ def has_perm(permission):
 
 
 def project_file_access_keys(conn, project_id, user_id=None):
+    valid = valid_project_folder_keys(conn)
     if is_main_admin():
-        return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+        return valid
     uid = user_id or session.get("user_id")
     if not uid or not project_id:
         return set()
@@ -1882,7 +1944,6 @@ def project_file_access_keys(conn, project_id, user_id=None):
         """,
         (project_id, uid)
     ).fetchall()
-    valid = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
     return {row["folder_key"] for row in rows if row.get("folder_key") in valid}
 
 
@@ -2113,6 +2174,21 @@ def ensure_invoice_tables(conn):
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate REAL NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total REAL NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TEXT",
+        """
+        CREATE TABLE IF NOT EXISTS invoice_payments (
+            id SERIAL PRIMARY KEY,
+            invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+            amount REAL NOT NULL,
+            payment_date TEXT NOT NULL,
+            method TEXT,
+            reference TEXT,
+            notes TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS invoice_payments_invoice_idx ON invoice_payments(invoice_id)",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
@@ -2381,6 +2457,14 @@ def invoice_logo_data_uri():
     return f"data:{mime_type};base64,{base64.b64encode(logo_bytes).decode('ascii')}"
 
 
+def invoice_paid_stamp_date(invoice):
+    """Date text for the PAID stamp - empty string when the invoice isn't paid in full."""
+    if (invoice or {}).get("status") != "paid":
+        return ""
+    raw = invoice.get("paid_at") or invoice.get("updated_at") or invoice.get("invoice_date")
+    return format_date(raw)
+
+
 def invoice_browser_pdf_attachment(invoice, lines, company):
     try:
         from playwright.sync_api import sync_playwright
@@ -2423,6 +2507,7 @@ def invoice_browser_pdf_attachment(invoice, lines, company):
         total_amount=format_invoice_money(totals.get("total_amount")),
         payments_credit=("-" + format_invoice_money(payments_credit_val)) if payments_credit_val else format_invoice_money(0),
         balance_due=format_invoice_money(totals.get("balance_due")),
+        paid_stamp_date=invoice_paid_stamp_date(invoice),
     )
     invoice_url = external_url("invoice_view", invoice_id=invoice["id"]) if invoice.get("id") else ""
     try:
@@ -2675,6 +2760,24 @@ def manual_invoice_pdf_attachment(invoice, lines, company):
     if page_count:
         last_page = doc.load_page(page_count - 1)
         last_page.insert_textbox(fitz.Rect(244, page_height - 70, 368, page_height - 54), "Privacy Policy", fontsize=8, fontname="helv", color=(0.20, 0.24, 0.32), align=fitz.TEXT_ALIGN_CENTER)
+
+    # Rubber-stamp style PAID mark with the paid date, angled across the top of page 1.
+    if invoice_paid_stamp_date(invoice):
+        try:
+            stamp_page = doc.load_page(0)
+            stamp_color = (0.13, 0.16, 0.22)
+            pivot = fitz.Point(330, 125)
+            rot = fitz.Matrix(1, 1).prerotate(-12)
+            word_rect = fitz.Rect(170, 72, 490, 132)
+            date_rect = fitz.Rect(170, 124, 490, 154)
+            try:
+                stamp_page.insert_textbox(word_rect, "PAID", fontsize=46, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot), fill_opacity=0.82)
+                stamp_page.insert_textbox(date_rect, invoice_paid_stamp_date(invoice), fontsize=16, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot), fill_opacity=0.82)
+            except TypeError:
+                stamp_page.insert_textbox(word_rect, "PAID", fontsize=46, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot))
+                stamp_page.insert_textbox(date_rect, invoice_paid_stamp_date(invoice), fontsize=16, fontname="hebo", color=stamp_color, align=fitz.TEXT_ALIGN_CENTER, morph=(pivot, rot))
+        except Exception as e:
+            print("PAID stamp skipped:", e)
 
     pdf_bytes = doc.tobytes()
     doc.close()
@@ -3534,7 +3637,8 @@ INVENTORY_STATUS_LABELS = {
     "unavailable": "Unavailable",
     "backordered": "Backordered",
     "used": "Used",
-    "needs_purchase": "Needs purchase"
+    "needs_purchase": "Needs purchase",
+    "client_supplied": "Client Supplied"
 }
 
 SUPPLIER_TASK_STATUS_LABELS = {
@@ -3567,6 +3671,21 @@ def clean_inventory_status(value):
 def clean_supplier_task_status(value):
     value = (value or "").strip()
     return value if value in SUPPLIER_TASK_STATUS_LABELS else ""
+
+
+UNIT_MEASURE_LABELS = {
+    "UN": "Unit",
+    "PR": "Pair",
+}
+
+
+def clean_unit_measure(value):
+    value = str(value or "").strip().upper()
+    return value if value in UNIT_MEASURE_LABELS else ""
+
+
+def unit_measure_label(value):
+    return UNIT_MEASURE_LABELS.get(clean_unit_measure(value) or "UN", "Unit")
 
 
 def clean_inventory_location(value):
@@ -3630,6 +3749,8 @@ def ensure_part_catalog_tables(conn):
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -3643,7 +3764,7 @@ def ensure_part_catalog_tables(conn):
             print("Part catalog migration skipped:", e)
 
 
-def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None):
+def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None, unit_measure=""):
     item_name = (item_name or "").strip()
     if not item_name:
         return None
@@ -3653,6 +3774,7 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
     category = (category or "").strip()
     description = clean_catalog_description(description)
     item_type = (item_type or "part").strip() or "part"
+    unit_measure = clean_unit_measure(unit_measure)
     existing = conn.execute(
         """
         SELECT id FROM part_catalog
@@ -3675,21 +3797,22 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
                 unit_cost = COALESCE(%s, unit_cost),
                 taxable = COALESCE(%s, taxable),
                 item_type = COALESCE(NULLIF(%s, ''), item_type),
+                unit_measure = COALESCE(NULLIF(%s, ''), unit_measure, 'UN'),
                 is_active = TRUE,
                 updated_at = %s
             WHERE id = %s
             """,
-            (category, description, part_number, unit_price, unit_cost, taxable, item_type, now, existing["id"])
+            (category, description, part_number, unit_price, unit_cost, taxable, item_type, unit_measure, now, existing["id"])
         )
         return existing["id"]
     row = conn.execute(
         """
         INSERT INTO part_catalog
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
         RETURNING id
         """,
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, now)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure or "UN", now, now)
     ).fetchone()
     return row["id"] if row else None
 
@@ -3702,6 +3825,7 @@ def backfill_part_catalog_from_inventory(conn):
         FROM inventory_items
         WHERE COALESCE(item_name, '') <> ''
           AND part_catalog_id IS NULL
+          AND COALESCE(catalog_opt_out, FALSE) = FALSE
         ORDER BY id
         """
     ).fetchall()
@@ -3757,7 +3881,7 @@ def part_catalog_options(conn):
     sync_part_catalog_sources(conn)
     rows = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
         ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
@@ -3832,7 +3956,8 @@ def create_supplier_inventory_item(conn, supplier, project_id, room_id):
         note_parts.append(purchase_note)
     item_model = request.form.get("supplier_model", "").strip()
     brand = request.form.get("supplier_brand", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
+    unit_measure = clean_unit_measure(request.form.get("supplier_unit_measure"))
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part", unit_measure=unit_measure)
     return conn.execute(
         """
         INSERT INTO inventory_items
@@ -3947,12 +4072,17 @@ def supplier_items_from_task_form(conn, supplier):
             note_parts.append(purchase_note)
         item_model = (row.get("model") or "").strip()
         brand = (row.get("brand") or "").strip()
-        part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part")
+        unit_measure = clean_unit_measure(row.get("unit_measure"))
+        if row.get("save_to_catalog") is False:
+            # Admin chose not to add this one-off material to the catalog.
+            part_catalog_id = None
+        else:
+            part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, "", item_type="part", unit_measure=unit_measure)
         created.append(conn.execute(
             """
             INSERT INTO inventory_items
-            (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+            (item_date, quantity, item_name, item_model, brand, part_catalog_id, catalog_opt_out, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'new', 'job_site', %s, %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
             RETURNING *
             """,
             (
@@ -3962,6 +4092,7 @@ def supplier_items_from_task_form(conn, supplier):
                 item_model,
                 brand,
                 part_catalog_id,
+                row.get("save_to_catalog") is False,
                 "",
                 project_id,
                 room_id,
@@ -4071,7 +4202,7 @@ def dtools_auth_diagnostic():
     if not key:
         key_info = "NO API key is saved in Settings (the X-API-Key header is empty)"
     else:
-        key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
+        key_info = f"API key sent (ends â€¦{key[-4:]}, {len(key)} chars)"
     auth = (config.get("auth_header") or "").strip() or DTOOLS_CLOUD_DEFAULT_AUTH
     auth_kind = "custom" if (config.get("auth_header") or "").strip() else "gateway default"
     return f" [Diagnostic: {key_info}; Authorization header sent ({auth_kind})]"
@@ -4394,7 +4525,7 @@ def insert_inventory_item(conn, fixed_project_id=None, fixed_room_id=None):
     item_model = (request.form.get("item_model") or request.form.get("part_number") or "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     conn.execute(
         """
         INSERT INTO inventory_items
@@ -5048,6 +5179,49 @@ def dtools_build_location_map(payload):
     return location_map
 
 
+def dtools_is_client_supplied(item):
+    """Detect D-Tools items the customer provides themselves (owner furnished /
+    client supplied). D-Tools exports this under different key names depending on
+    the endpoint, so we scan boolean flags, source/supply text fields, and the
+    item type text."""
+    if not isinstance(item, dict):
+        return False
+    flag_tokens = ("clientsupplied", "clientfurnished", "clientprovided",
+                   "ownerfurnished", "ownersupplied", "ownerprovided",
+                   "customersupplied", "customerfurnished", "customerprovided",
+                   "suppliedbyclient", "providedbyclient", "suppliedbyowner")
+    def flag_walk(obj, depth=0):
+        if depth > 3:
+            return False
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                key_norm = normalize_lookup_key(key)
+                if any(token in key_norm for token in flag_tokens):
+                    text = str(value).strip().lower()
+                    if value is True or text in ("true", "yes", "1", "y"):
+                        return True
+                if isinstance(value, (dict, list)) and flag_walk(value, depth + 1):
+                    return True
+        elif isinstance(obj, list):
+            for value in obj:
+                if flag_walk(value, depth + 1):
+                    return True
+        return False
+
+    if flag_walk(item):
+        return True
+    source_text = dtools_pick(item, [
+        "suppliedBy", "providedBy", "supplySource", "supplyType", "sourceType",
+        "purchaseType", "procurementType", "itemSource", "furnishedBy", "responsibility"
+    ]).lower()
+    if any(token in source_text for token in ("client", "owner", "customer")):
+        return True
+    type_text = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"]).lower()
+    if "client supplied" in type_text or "owner furnished" in type_text or "client furnished" in type_text:
+        return True
+    return False
+
+
 def dtools_normalize_material(item, index, external_ref, resolved_location=""):
     item_type = dtools_pick(item, ["itemType", "type", "category", "categoryName", "lineType"])
     type_text = item_type.lower()
@@ -5087,6 +5261,7 @@ def dtools_normalize_material(item, index, external_ref, resolved_location=""):
         "phase": phase,
         "category": category,
         "item_type": "service" if is_service else "part",
+        "client_supplied": dtools_is_client_supplied(item),
     }
 
 
@@ -5127,6 +5302,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
     skipped = 0
     unmatched_rooms = 0
     rooms_created = 0
+    client_supplied_count = 0
     now = utc_now_iso()
 
     # Create any D-Tools location that does not already exist as a room in this
@@ -5188,12 +5364,20 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
         room_id = match_dtools_room(room_lookup, material.get("location"))
         if material.get("location") and not room_id:
             unmatched_rooms += 1
+        is_client_supplied = bool(material.get("client_supplied"))
         detail_parts = []
+        if is_client_supplied:
+            detail_parts.append("Action: Client Supplied")
         for label, key in [("Location", "location"), ("System", "system"), ("Phase", "phase"), ("Category", "category")]:
             if material.get(key):
                 detail_parts.append(f"{label}: {material[key]}")
         location_detail = "; ".join(detail_parts) or "Imported from D-Tools Cloud"
-        used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+        if is_client_supplied:
+            used_note = f"Imported from D-Tools Cloud source {external_ref}. Client Supplied — provided by the client, do not purchase."
+            item_status = "client_supplied"
+        else:
+            used_note = f"Imported from D-Tools Cloud source {external_ref}. Marked needs purchase."
+            item_status = "needs_purchase"
 
         conn.execute(
             """
@@ -5213,7 +5397,7 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
                 location_detail[:500],
                 project_id,
                 room_id,
-                "needs_purchase",
+                item_status,
                 session.get("user_id"),
                 used_note,
                 "dtools_cloud",
@@ -5224,12 +5408,14 @@ def import_dtools_materials(conn, project_id, external_ref, payload):
             )
         )
         imported += 1
+        if is_client_supplied:
+            client_supplied_count += 1
 
     conn.execute(
         "UPDATE projects SET dtools_cloud_project_ref = %s WHERE id = %s",
         (external_ref, project_id)
     )
-    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created}
+    return {"found": len(materials), "imported": imported, "catalog_saved": catalog_saved, "services_saved": services_saved, "skipped": skipped, "unmatched_rooms": unmatched_rooms, "rooms_created": rooms_created, "client_supplied": client_supplied_count}
 
 
 def find_matching_project(conn, project_info, external_ref):
@@ -5839,6 +6025,7 @@ def utility_processor():
         format_datetime=format_datetime,
         format_invoice_money=format_invoice_money,
         invoice_terms_for_due_date=invoice_terms_for_due_date,
+        invoice_paid_stamp_date=invoice_paid_stamp_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
         task_instruction_text=task_instruction_text,
@@ -5863,6 +6050,7 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
+        po_status_label=po_status_label,
         supplier_task_status_options=SUPPLIER_TASK_STATUS_LABELS,
         inventory_condition_label=inventory_condition_label,
         task_status_label=task_status_label,
@@ -6370,6 +6558,14 @@ def login():
     return render_template("login.html", admin_exists=admin_exists)
 
 
+@app.route("/install-app")
+def install_app_tutorial():
+    """Animated walkthrough showing how to add ProjectONus to a phone home
+    screen. Public so the login pages can link to it."""
+    back_url = url_for("index") if session.get("user_id") else url_for("login")
+    return render_template("install_app.html", app_host=request.host, back_url=back_url)
+
+
 @app.route("/mobile/login", methods=["GET", "POST"])
 def mobile_login():
     if request.method == "POST":
@@ -6391,13 +6587,21 @@ def mobile_login():
             session["name"] = user["name"]
             session["role"] = user["role"]
             record_login_notification(user, "mobile")
+            next_url = (request.form.get("next") or "").strip()
+            if next_url.startswith("/") and not next_url.startswith("//"):
+                return redirect(next_url)
             return redirect(url_for("mobile_home"))
         flash("Invalid email or PIN.")
-        return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in)
+        return render_template("mobile_login.html", email=email, stay_logged_in=stay_logged_in, next_url=request.form.get("next", ""))
     invite_token = request.args.get("invite", "").strip()
     if invite_token:
         return redirect(url_for("mobile_create_pin", token=invite_token))
-    return render_template("mobile_login.html", email=request.args.get("email", "").strip().lower(), stay_logged_in=True)
+    return render_template(
+        "mobile_login.html",
+        email=request.args.get("email", "").strip().lower(),
+        stay_logged_in=True,
+        next_url=request.args.get("next", "")
+    )
 
 
 @app.route("/mobile/create-pin/<token>", methods=["GET", "POST"])
@@ -6654,6 +6858,256 @@ def logout():
     return redirect(url_for("login"))
 
 
+USER_CLASS_LABELS = {
+    "worker": "Worker (Employee)",
+    "customer": "Customer",
+    "subcontractor": "Subcontractor",
+}
+PAY_RATE_UNITS = {
+    "hour": "Per Hour",
+    "week": "Per Week",
+    "month": "Per Month",
+    "year": "Per Year",
+}
+PAY_FREQUENCIES = {
+    "daily": "Every day",
+    "weekly": "Every week",
+    "every_15_days": "Every 15 days",
+    "monthly": "End of the month",
+}
+USER_DOC_TYPES = {
+    "driver_license": "Driver License",
+    "business_license": "Business License",
+    "insurance": "Insurance",
+    "trade_license": "Trade License",
+    "other": "Other Document",
+}
+
+
+def user_classification(user):
+    wc = (user.get("worker_class") or "").strip()
+    if wc in USER_CLASS_LABELS:
+        return wc
+    return "customer" if (user.get("role") or "") == "customer" else "worker"
+
+
+def attendance_minutes_for_range(conn, user_id, start_date, end_date, excluded_days=None):
+    """Total worked minutes from the Time Report between two dates (inclusive),
+    plus a per-day/per-project breakdown for the paystub. Days in excluded_days
+    (already on another paystub) are skipped and reported back."""
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    except Exception:
+        return 0, [], set()
+    excluded_days = excluded_days or set()
+    skipped_days = set()
+    events = conn.execute(
+        """
+        SELECT attendance_events.*, projects.name AS project_name
+        FROM attendance_events
+        LEFT JOIN projects ON attendance_events.project_id = projects.id
+        WHERE attendance_events.user_id = %s
+          AND attendance_events.created_at >= %s AND attendance_events.created_at < %s
+        ORDER BY attendance_events.created_at ASC, attendance_events.id
+        """,
+        (
+            user_id,
+            (start_dt - timedelta(days=2)).isoformat(),
+            (end_dt + timedelta(days=3)).isoformat(),
+        )
+    ).fetchall()
+    in_range = []
+    for e in events:
+        local_dt = local_datetime(e.get("created_at"), event_timezone_name(e))
+        if not local_dt:
+            continue
+        day = local_dt.date().isoformat()
+        if start_date <= day <= end_date:
+            if day in excluded_days:
+                skipped_days.add(day)
+                continue
+            e = dict(e)
+            e["_local_day"] = day
+            in_range.append(e)
+    pairs = build_attendance_pairs(in_range)
+    total = 0
+    day_map = {}
+    for p in pairs:
+        ci, co = p.get("check_in"), p.get("check_out")
+        if not ci or not co:
+            continue
+        minutes = duration_minutes(ci.get("created_at"), co.get("created_at"))
+        if minutes <= 0:
+            continue
+        total += minutes
+        key = (ci.get("_local_day") or "", ci.get("project_id") or 0, ci.get("project_name") or "No project")
+        day_map[key] = day_map.get(key, 0) + minutes
+    lines = [
+        {"day": k[0], "project_id": k[1] or "", "project_name": k[2], "minutes": v}
+        for k, v in sorted(day_map.items())
+    ]
+    return total, lines, skipped_days
+
+
+def paystub_work_done(conn, user_id, start_date, end_date):
+    """Tasks the person worked on during the pay period - the title, project,
+    status, and the completion comment they typed during the day."""
+    rows = conn.execute(
+        """
+        SELECT tasks.id, tasks.task_number, tasks.title, tasks.status,
+               tasks.completion_comment, tasks.completed_at,
+               tasks.task_start_date, tasks.task_date,
+               projects.name AS project_name
+        FROM tasks
+        LEFT JOIN projects ON tasks.project_id = projects.id
+        WHERE tasks.assigned_user_id = %s
+        ORDER BY tasks.id
+        """,
+        (user_id,)
+    ).fetchall()
+    items = []
+    for t in rows:
+        day = None
+        done_stamp = t.get("completed_at")
+        if done_stamp:
+            dt = parse_iso_datetime(done_stamp)
+            if dt:
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                day = dt.astimezone(app_timezone()).date().isoformat()
+        if not day:
+            d = task_scheduled_date_value(t)
+            day = d.isoformat() if d else None
+        if not day or not (start_date <= day <= end_date):
+            continue
+        status = (t.get("status") or "open").replace("_", " ").title()
+        if done_stamp:
+            status = "Completed"
+        items.append({
+            "day": day,
+            "task_number": t.get("task_number") or f'T-{t.get("id")}',
+            "title": t.get("title") or "-",
+            "project_name": t.get("project_name") or "No project",
+            "status": status,
+            "comment": (t.get("completion_comment") or "").strip(),
+        })
+    items.sort(key=lambda x: (x["day"], x["task_number"]))
+    return items
+
+
+def paystub_covered_days(conn, user_id, exclude_stub_id=None):
+    """Days already claimed by this user's existing paystubs (any status)."""
+    days = set()
+    rows = conn.execute(
+        "SELECT id, period_start, period_end FROM paystubs WHERE user_id = %s",
+        (user_id,)
+    ).fetchall()
+    for r in rows:
+        if exclude_stub_id and r["id"] == exclude_stub_id:
+            continue
+        try:
+            d0 = datetime.strptime(r["period_start"], "%Y-%m-%d").date()
+            d1 = datetime.strptime(r["period_end"], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        guard = 0
+        while d0 <= d1 and guard < 400:
+            days.add(d0.isoformat())
+            d0 += timedelta(days=1)
+            guard += 1
+    return days
+
+
+def compute_base_pay(rate, unit, total_minutes, start_date, end_date):
+    """Suggest the base pay for a period: hourly uses Time Report hours, salary
+    units prorate by calendar days in the period."""
+    try:
+        rate = float(rate or 0)
+    except Exception:
+        rate = 0.0
+    if rate <= 0:
+        return 0.0
+    try:
+        days = (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days + 1
+    except Exception:
+        days = 0
+    if days <= 0:
+        return 0.0
+    if unit == "hour":
+        return round(rate * (total_minutes / 60.0), 2)
+    if unit == "week":
+        return round(rate * days / 7.0, 2)
+    if unit == "month":
+        return round(rate * days / 30.4375, 2)
+    if unit == "year":
+        return round(rate * days / 365.25, 2)
+    return 0.0
+
+
+def parse_money_value(raw):
+    cleaned = str(raw or "").replace("$", "").replace(",", "").strip()
+    try:
+        return round(float(cleaned), 2)
+    except Exception:
+        return 0.0
+
+
+def process_user_invite(conn):
+    """Create the invited user and email their PIN setup link."""
+    try:
+        email = request.form["email"].strip().lower()
+        worker_class = request.form.get("role", "worker")
+        if worker_class not in USER_CLASS_LABELS:
+            worker_class = "worker"
+        role = "customer" if worker_class == "customer" else "worker"
+        phone_number = request.form.get("phone_number", "").strip()
+        sms_enabled = "sms_enabled" in request.form
+
+        invite_token = new_token()
+        conn.execute(
+            "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, worker_class, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                request.form["name"].strip(),
+                email,
+                phone_number,
+                sms_enabled,
+                unusable_password_hash(),
+                None,
+                invite_token,
+                datetime.now().isoformat(),
+                role,
+                worker_class,
+                datetime.now().isoformat()
+            )
+        ).fetchone()
+        conn.commit()
+        invite_link = external_url("mobile_create_pin", token=invite_token)
+        sent = send_email(
+            email,
+            "You are invited to ProjectONus",
+            "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
+        )
+        if sent:
+            flash("User added and mobile invitation email sent.")
+        else:
+            flash("User added. Email could not be sent, so share this setup link with the user: " + invite_link)
+    except Exception:
+        conn.rollback()
+        flash("That email may already exist.")
+
+
+@app.route("/users/invite", methods=["GET", "POST"])
+@admin_required
+def users_invite():
+    if request.method == "POST":
+        conn = db()
+        process_user_invite(conn)
+        conn.close()
+        return redirect(url_for("users_invite"))
+    return render_template("users_invite.html")
+
+
 @app.route("/users", methods=["GET", "POST"])
 @admin_required
 def users():
@@ -6662,48 +7116,26 @@ def users():
     ensure_part_catalog_tables(conn)
     backfill_part_catalog_from_inventory(conn)
     if request.method == "POST":
-        try:
-            email = request.form["email"].strip().lower()
-            role = request.form.get("role", "worker")
-            if role not in ["customer", "worker"]:
-                role = "worker"
-            phone_number = request.form.get("phone_number", "").strip()
-            sms_enabled = "sms_enabled" in request.form
+        process_user_invite(conn)
 
-            invite_token = new_token()
-            conn.execute(
-                "INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (
-                    request.form["name"].strip(),
-                    email,
-                    phone_number,
-                    sms_enabled,
-                    unusable_password_hash(),
-                    None,
-                    invite_token,
-                    datetime.now().isoformat(),
-                    role,
-                    datetime.now().isoformat()
-                )
-            ).fetchone()
-            conn.commit()
-            invite_link = external_url("mobile_create_pin", token=invite_token)
-            sent = send_email(
-                email,
-                "You are invited to ProjectONus",
-                "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
-            )
-            if sent:
-                flash("User added and mobile invitation email sent.")
-            else:
-                flash("User added. Email could not be sent, so share this setup link with the user: " + invite_link)
-        except Exception:
-            conn.rollback()
-            flash("That email may already exist.")
-
-    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, created_at, invite_token FROM users ORDER BY name").fetchall()
+    users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role, worker_class, pay_rate, pay_rate_unit, pay_frequency, created_at, invite_token FROM users ORDER BY name").fetchall()
+    docs_by_user = {}
+    try:
+        for doc in conn.execute("SELECT * FROM user_documents ORDER BY created_at DESC").fetchall():
+            docs_by_user.setdefault(doc["user_id"], []).append(doc)
+    except Exception:
+        conn.rollback()
     conn.close()
-    return render_template("users.html", users=users)
+    return render_template(
+        "users.html",
+        users=users,
+        docs_by_user=docs_by_user,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        doc_types=USER_DOC_TYPES,
+        user_classification=user_classification,
+    )
 
 
 @app.route("/users/<int:user_id>/pin", methods=["POST"])
@@ -6806,6 +7238,654 @@ def delete_user(user_id):
     return redirect(url_for("users"))
 
 
+@app.route("/users/<int:user_id>/classification", methods=["POST"])
+@admin_required
+def update_user_classification(user_id):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s AND role <> 'admin'", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    worker_class = request.form.get("worker_class", "worker")
+    if worker_class not in USER_CLASS_LABELS:
+        worker_class = "worker"
+    unit = request.form.get("pay_rate_unit", "hour")
+    if unit not in PAY_RATE_UNITS:
+        unit = "hour"
+    frequency = request.form.get("pay_frequency", "weekly")
+    if frequency not in PAY_FREQUENCIES:
+        frequency = "weekly"
+    rate = parse_money_value(request.form.get("pay_rate"))
+    role = "customer" if worker_class == "customer" else "worker"
+    conn.execute(
+        "UPDATE users SET worker_class = %s, pay_rate = %s, pay_rate_unit = %s, pay_frequency = %s, role = %s WHERE id = %s",
+        (worker_class, rate if rate > 0 else None, unit, frequency, role, user_id)
+    )
+    conn.commit()
+    conn.close()
+    flash(f"Classification saved for {user['name']}: {USER_CLASS_LABELS[worker_class]}.")
+    return redirect(url_for("users") + f"#userRow{user_id}")
+
+
+@app.route("/users/<int:user_id>/documents", methods=["POST"])
+@admin_required
+def upload_user_document(user_id):
+    conn = db()
+    user = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        flash("User not found.")
+        return redirect(url_for("users"))
+    doc_type = request.form.get("doc_type", "other")
+    if doc_type not in USER_DOC_TYPES:
+        doc_type = "other"
+    uploaded = first_uploaded_file("doc_file", "doc_file_camera")
+    if not uploaded:
+        conn.close()
+        flash("Choose a file to upload.")
+        return redirect(url_for("users") + f"#userRow{user_id}")
+    try:
+        path = upload_file_to_storage(uploaded)
+    except Exception as e:
+        conn.close()
+        print("User document upload failed:", e)
+        flash("The document could not be uploaded. Try again.")
+        return redirect(url_for("users") + f"#userRow{user_id}")
+    conn.execute(
+        "INSERT INTO user_documents (user_id, doc_type, file_path, original_name, uploaded_by, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+        (user_id, doc_type, path, uploaded.filename or "", session.get("user_id"), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash(f"{USER_DOC_TYPES[doc_type]} uploaded for {user['name']}.")
+    return redirect(url_for("users") + f"#userRow{user_id}")
+
+
+@app.route("/users/documents/<int:doc_id>/delete", methods=["POST"])
+@admin_required
+def delete_user_document(doc_id):
+    conn = db()
+    doc = conn.execute("SELECT * FROM user_documents WHERE id = %s", (doc_id,)).fetchone()
+    if doc:
+        conn.execute("DELETE FROM user_documents WHERE id = %s", (doc_id,))
+        conn.commit()
+        flash("Document removed.")
+    conn.close()
+    target = doc["user_id"] if doc else ""
+    return redirect(url_for("users") + (f"#userRow{target}" if target else ""))
+
+
+@app.route("/expenses", methods=["GET", "POST"])
+@login_required
+def expenses():
+    if session.get("role") == "customer":
+        flash("Expenses are only for workers and subcontractors.")
+        return redirect(url_for("index") if session.get("role") == "admin" else url_for("mobile_home"))
+    conn = db()
+    if request.method == "POST":
+        target_user_id = session.get("user_id")
+        if is_main_admin() and request.form.get("user_id", type=int):
+            target_user_id = request.form.get("user_id", type=int)
+        amount = parse_money_value(request.form.get("amount"))
+        expense_date = (request.form.get("expense_date") or "").strip() or local_now().date().isoformat()
+        description = (request.form.get("description") or "").strip()
+        project_id = request.form.get("project_id", type=int)
+        if amount <= 0:
+            flash("Enter the expense amount.")
+        else:
+            receipt_path = None
+            uploaded = first_uploaded_file("receipt", "receipt_camera")
+            if uploaded:
+                try:
+                    receipt_path = upload_file_to_storage(uploaded)
+                except Exception as e:
+                    print("Expense receipt upload failed:", e)
+                    flash("The receipt picture could not be uploaded, but the expense was saved. You can delete it and try again.")
+            audio_path = None
+            audio_uploaded = first_uploaded_file("receipt_audio")
+            if audio_uploaded:
+                try:
+                    audio_path = upload_file_to_storage(audio_uploaded)
+                except Exception as e:
+                    print("Expense audio upload failed:", e)
+            conn.execute(
+                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (target_user_id, project_id, expense_date, amount, description, receipt_path, audio_path, utc_now_iso())
+            )
+            conn.commit()
+            flash(f"Expense of {format_invoice_money(amount)} saved.")
+        return redirect(url_for("expenses"))
+
+    if is_main_admin():
+        rows = conn.execute(
+            """
+            SELECT work_expenses.*, users.name AS user_name, projects.name AS project_name,
+                   paystubs.paid_at AS stub_paid_at
+            FROM work_expenses
+            LEFT JOIN users ON work_expenses.user_id = users.id
+            LEFT JOIN projects ON work_expenses.project_id = projects.id
+            LEFT JOIN paystubs ON work_expenses.paystub_id = paystubs.id
+            ORDER BY work_expenses.expense_date DESC, work_expenses.id DESC
+            LIMIT 300
+            """
+        ).fetchall()
+        team = conn.execute(
+            "SELECT id, name FROM users WHERE role <> 'customer' ORDER BY name"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT work_expenses.*, users.name AS user_name, projects.name AS project_name,
+                   paystubs.paid_at AS stub_paid_at
+            FROM work_expenses
+            LEFT JOIN users ON work_expenses.user_id = users.id
+            LEFT JOIN projects ON work_expenses.project_id = projects.id
+            LEFT JOIN paystubs ON work_expenses.paystub_id = paystubs.id
+            WHERE work_expenses.user_id = %s
+            ORDER BY work_expenses.expense_date DESC, work_expenses.id DESC
+            LIMIT 300
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+        team = []
+    projects = fetch_visible_projects(conn)
+    conn.close()
+    return render_template(
+        "expenses.html",
+        expenses=rows,
+        projects=projects,
+        team=team,
+        today=local_now().date().isoformat(),
+    )
+
+
+@app.route("/expenses/<int:expense_id>/delete-request", methods=["POST"])
+@admin_required
+def request_expense_delete(expense_id):
+    """Only the admin can delete an expense, and only with an emailed 6-digit PIN."""
+    conn = db()
+    exp = conn.execute(
+        "SELECT work_expenses.*, users.name AS user_name FROM work_expenses LEFT JOIN users ON work_expenses.user_id = users.id WHERE work_expenses.id = %s",
+        (expense_id,)
+    ).fetchone()
+    if not exp:
+        conn.close()
+        flash("Expense not found.")
+        return redirect(url_for("expenses"))
+    if exp.get("paystub_id"):
+        conn.close()
+        flash("This expense is on a paystub. Delete or unmark the paystub first.")
+        return redirect(url_for("expenses"))
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("expenses"))
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM expense_delete_codes WHERE admin_id = %s AND expense_id = %s", (admin["id"], expense_id))
+    conn.execute(
+        "INSERT INTO expense_delete_codes (expense_id, admin_id, pin_hash, expires_at, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (expense_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete expense PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this expense is:",
+            "",
+            pin,
+            "",
+            f"Who spent it: {exp.get('user_name') or 'Unknown'}",
+            f"Amount: {format_invoice_money(exp.get('amount'))}",
+            f"Description: {exp.get('description') or '-'}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM expense_delete_codes WHERE admin_id = %s AND expense_id = %s", (admin["id"], expense_id))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("expenses"))
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_expense_delete", expense_id=expense_id))
+
+
+@app.route("/expenses/<int:expense_id>/delete-confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_expense_delete(expense_id):
+    conn = db()
+    exp = conn.execute(
+        "SELECT work_expenses.*, users.name AS user_name, projects.name AS project_name FROM work_expenses LEFT JOIN users ON work_expenses.user_id = users.id LEFT JOIN projects ON work_expenses.project_id = projects.id WHERE work_expenses.id = %s",
+        (expense_id,)
+    ).fetchone()
+    if not exp:
+        conn.close()
+        flash("Expense not found.")
+        return redirect(url_for("expenses"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            "SELECT * FROM expense_delete_codes WHERE admin_id = %s AND expense_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session.get("user_id"), expense_id)
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("expenses"))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_expense_delete", expense_id=expense_id))
+        conn.execute("DELETE FROM expense_delete_codes WHERE admin_id = %s AND expense_id = %s", (session.get("user_id"), expense_id))
+        conn.execute("DELETE FROM work_expenses WHERE id = %s", (expense_id,))
+        conn.commit()
+        conn.close()
+        flash("Expense deleted.")
+        return redirect(url_for("expenses"))
+    conn.close()
+    return render_template(
+        "expense_delete_confirm.html",
+        exp=exp,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs", methods=["GET", "POST"])
+@admin_required
+def paystubs():
+    conn = db()
+    if request.method == "POST":
+        user_id = request.form.get("user_id", type=int)
+        period_start = (request.form.get("period_start") or "").strip()
+        period_end = (request.form.get("period_end") or "").strip()
+        person = conn.execute("SELECT * FROM users WHERE id = %s", (user_id,)).fetchone() if user_id else None
+        if not person or not period_start or not period_end or period_end < period_start:
+            conn.close()
+            flash("Pick the person and a valid start and end date.")
+            return redirect(url_for("paystubs"))
+        covered = paystub_covered_days(conn, user_id)
+        total_minutes, _lines, _skipped = attendance_minutes_for_range(conn, user_id, period_start, period_end, excluded_days=covered)
+        base_pay = parse_money_value(request.form.get("base_pay"))
+        notes = (request.form.get("notes") or "").strip()
+        expense_ids = [int(x) for x in request.form.getlist("expense_ids") if str(x).isdigit()]
+        stub = conn.execute(
+            "INSERT INTO paystubs (user_id, period_start, period_end, total_minutes, pay_rate, pay_rate_unit, pay_frequency, base_pay, expenses_total, total_pay, notes, created_by, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0, 0, %s, %s, %s) RETURNING id",
+            (
+                user_id, period_start, period_end, total_minutes,
+                person.get("pay_rate"), person.get("pay_rate_unit") or "hour",
+                person.get("pay_frequency") or "weekly",
+                base_pay, notes, session.get("user_id"), utc_now_iso()
+            )
+        ).fetchone()
+        stub_id = stub["id"]
+        if expense_ids:
+            conn.execute(
+                "UPDATE work_expenses SET paystub_id = %s WHERE id = ANY(%s) AND user_id = %s AND paystub_id IS NULL",
+                (stub_id, expense_ids, user_id)
+            )
+        extra_descs = request.form.getlist("extra_expense_description")
+        extra_amounts = request.form.getlist("extra_expense_amount")
+        for extra_desc, extra_raw in zip(extra_descs, extra_amounts):
+            extra_amount = parse_money_value(extra_raw)
+            if extra_amount <= 0:
+                continue
+            conn.execute(
+                "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, NULL, %s, %s)",
+                (user_id, period_end, extra_amount, (extra_desc or "").strip() or "Added on paystub", stub_id, utc_now_iso())
+            )
+        exp_total = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM work_expenses WHERE paystub_id = %s",
+            (stub_id,)
+        ).fetchone()["total"] or 0
+        conn.execute(
+            "UPDATE paystubs SET expenses_total = %s, total_pay = %s WHERE id = %s",
+            (round(float(exp_total), 2), round(base_pay + float(exp_total), 2), stub_id)
+        )
+        conn.commit()
+        conn.close()
+        flash("Paystub created.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+
+    people = conn.execute(
+        "SELECT id, name, email, role, worker_class, pay_rate, pay_rate_unit, pay_frequency FROM users WHERE role <> 'customer' AND role <> 'admin' ORDER BY name"
+    ).fetchall()
+    people = [p for p in people if user_classification(p) in ("worker", "subcontractor")]
+
+    preview = None
+    sel_user_id = request.args.get("user_id", type=int)
+    period_start = (request.args.get("period_start") or "").strip()
+    period_end = (request.args.get("period_end") or "").strip()
+    if sel_user_id and period_start and period_end and period_end >= period_start:
+        person = conn.execute("SELECT * FROM users WHERE id = %s", (sel_user_id,)).fetchone()
+        if person:
+            covered = paystub_covered_days(conn, sel_user_id)
+            total_minutes, lines, skipped_days = attendance_minutes_for_range(conn, sel_user_id, period_start, period_end, excluded_days=covered)
+            rate = float(person.get("pay_rate") or 0)
+            unit = person.get("pay_rate_unit") or "hour"
+            suggested = compute_base_pay(rate, unit, total_minutes, period_start, period_end)
+            open_expenses = conn.execute(
+                """
+                SELECT work_expenses.*, projects.name AS project_name
+                FROM work_expenses
+                LEFT JOIN projects ON work_expenses.project_id = projects.id
+                WHERE work_expenses.user_id = %s AND work_expenses.paystub_id IS NULL
+                  AND work_expenses.expense_date >= %s AND work_expenses.expense_date <= %s
+                ORDER BY work_expenses.expense_date, work_expenses.id
+                """,
+                (sel_user_id, period_start, period_end)
+            ).fetchall()
+            preview = {
+                "person": person,
+                "classification": user_classification(person),
+                "total_minutes": total_minutes,
+                "lines": lines,
+                "rate": rate,
+                "unit": unit,
+                "suggested": suggested,
+                "expenses": open_expenses,
+                "expenses_total": round(sum(float(e.get("amount") or 0) for e in open_expenses), 2),
+                "skipped_days": sorted(skipped_days),
+            }
+
+    stubs = conn.execute(
+        """
+        SELECT paystubs.*, users.name AS user_name
+        FROM paystubs
+        LEFT JOIN users ON paystubs.user_id = users.id
+        ORDER BY paystubs.created_at DESC
+        LIMIT 100
+        """
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "paystubs.html",
+        people=people,
+        preview=preview,
+        stubs=stubs,
+        sel_user_id=sel_user_id,
+        period_start=period_start,
+        period_end=period_end,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        minutes_text=minutes_text,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs/<int:stub_id>")
+@admin_required
+def paystub_view(stub_id):
+    conn = db()
+    stub = conn.execute(
+        """
+        SELECT paystubs.*, users.name AS user_name, users.email AS user_email,
+               users.phone_number AS user_phone,
+               users.worker_class AS user_worker_class, users.role AS user_role
+        FROM paystubs
+        LEFT JOIN users ON paystubs.user_id = users.id
+        WHERE paystubs.id = %s
+        """,
+        (stub_id,)
+    ).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    stub_expenses = conn.execute(
+        """
+        SELECT work_expenses.*, projects.name AS project_name
+        FROM work_expenses
+        LEFT JOIN projects ON work_expenses.project_id = projects.id
+        WHERE work_expenses.paystub_id = %s
+        ORDER BY work_expenses.expense_date, work_expenses.id
+        """,
+        (stub_id,)
+    ).fetchall()
+    _total, lines, _skipped = attendance_minutes_for_range(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    try:
+        work_done = paystub_work_done(conn, stub["user_id"], stub["period_start"], stub["period_end"])
+    except Exception as e:
+        conn.rollback()
+        print("Paystub work list failed:", e)
+        work_done = []
+    conn.close()
+    classification = user_classification({
+        "worker_class": stub.get("user_worker_class"),
+        "role": stub.get("user_role"),
+    })
+    return render_template(
+        "paystub_view.html",
+        stub=stub,
+        stub_expenses=stub_expenses,
+        lines=lines,
+        work_done=work_done,
+        company=account_info(),
+        classification=classification,
+        class_labels=USER_CLASS_LABELS,
+        rate_units=PAY_RATE_UNITS,
+        frequencies=PAY_FREQUENCIES,
+        minutes_text=minutes_text,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs/<int:stub_id>/edit", methods=["POST"])
+@admin_required
+def edit_paystub(stub_id):
+    conn = db()
+    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if stub.get("paid_at"):
+        conn.close()
+        flash("This paystub is marked PAID and cannot be changed. Mark it unpaid first.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+    base_pay = parse_money_value(request.form.get("base_pay"))
+    notes = (request.form.get("notes") or "").strip()
+    exp_total = float(stub.get("expenses_total") or 0)
+    conn.execute(
+        "UPDATE paystubs SET base_pay = %s, total_pay = %s, notes = %s WHERE id = %s",
+        (base_pay, round(base_pay + exp_total, 2), notes, stub_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Paystub updated.")
+    return redirect(url_for("paystub_view", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/delete-request", methods=["POST"])
+@admin_required
+def request_paystub_delete(stub_id):
+    """Deleting a paystub requires an emailed 6-digit PIN, like clock records."""
+    conn = db()
+    stub = conn.execute(
+        "SELECT paystubs.*, users.name AS user_name FROM paystubs LEFT JOIN users ON paystubs.user_id = users.id WHERE paystubs.id = %s",
+        (stub_id,)
+    ).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if stub.get("paid_at"):
+        conn.close()
+        flash("This paystub is marked PAID and cannot be deleted. Mark it unpaid first.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("paystubs"))
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (admin["id"], stub_id))
+    conn.execute(
+        "INSERT INTO paystub_delete_codes (paystub_id, admin_id, pin_hash, expires_at, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (stub_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete paystub PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this paystub is:",
+            "",
+            pin,
+            "",
+            f"Paystub: PS-{stub_id:05d}",
+            f"Person: {stub.get('user_name') or 'Unknown'}",
+            f"Period: {stub.get('period_start')} to {stub.get('period_end')}",
+            f"Total: {format_invoice_money(stub.get('total_pay'))}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (admin["id"], stub_id))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("paystubs"))
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_paystub_delete", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/delete-confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_paystub_delete(stub_id):
+    conn = db()
+    stub = conn.execute(
+        "SELECT paystubs.*, users.name AS user_name FROM paystubs LEFT JOIN users ON paystubs.user_id = users.id WHERE paystubs.id = %s",
+        (stub_id,)
+    ).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            "SELECT * FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session.get("user_id"), stub_id)
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("paystubs"))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_paystub_delete", stub_id=stub_id))
+        conn.execute("DELETE FROM paystub_delete_codes WHERE admin_id = %s AND paystub_id = %s", (session.get("user_id"), stub_id))
+        conn.execute("UPDATE work_expenses SET paystub_id = NULL WHERE paystub_id = %s AND receipt_file IS NOT NULL", (stub_id,))
+        conn.execute("DELETE FROM work_expenses WHERE paystub_id = %s", (stub_id,))
+        conn.execute("DELETE FROM paystubs WHERE id = %s", (stub_id,))
+        conn.commit()
+        conn.close()
+        flash("Paystub deleted. Its expenses with receipts went back to the open expense list.")
+        return redirect(url_for("paystubs"))
+    conn.close()
+    return render_template(
+        "paystub_delete_confirm.html",
+        stub=stub,
+        format_date=format_date,
+    )
+
+
+@app.route("/paystubs/<int:stub_id>/mark-paid", methods=["POST"])
+@admin_required
+def mark_paystub_paid(stub_id):
+    conn = db()
+    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if not stub.get("paid_at"):
+        conn.execute(
+            "UPDATE paystubs SET paid_at = %s, paid_by = %s WHERE id = %s",
+            (utc_now_iso(), session.get("user_id"), stub_id)
+        )
+        conn.commit()
+        flash("Paystub marked as PAID. Its hours and expenses are now locked.")
+    conn.close()
+    return redirect(url_for("paystub_view", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/mark-unpaid", methods=["POST"])
+@admin_required
+def mark_paystub_unpaid(stub_id):
+    conn = db()
+    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    if stub and stub.get("paid_at"):
+        conn.execute("UPDATE paystubs SET paid_at = NULL, paid_by = NULL WHERE id = %s", (stub_id,))
+        conn.commit()
+        flash("Paystub marked as unpaid again.")
+    conn.close()
+    return redirect(url_for("paystub_view", stub_id=stub_id))
+
+
+@app.route("/paystubs/<int:stub_id>/add-expense", methods=["POST"])
+@admin_required
+def add_paystub_expense(stub_id):
+    conn = db()
+    stub = conn.execute("SELECT * FROM paystubs WHERE id = %s", (stub_id,)).fetchone()
+    if not stub:
+        conn.close()
+        flash("Paystub not found.")
+        return redirect(url_for("paystubs"))
+    if stub.get("paid_at"):
+        conn.close()
+        flash("This paystub is marked PAID. Mark it unpaid before adding expenses.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+    amount = parse_money_value(request.form.get("amount"))
+    if amount <= 0:
+        conn.close()
+        flash("Enter the expense amount.")
+        return redirect(url_for("paystub_view", stub_id=stub_id))
+    description = (request.form.get("description") or "").strip() or "Added on paystub"
+    expense_date = (request.form.get("expense_date") or "").strip() or local_now().date().isoformat()
+    receipt_path = None
+    uploaded = first_uploaded_file("receipt", "receipt_camera")
+    if uploaded:
+        try:
+            receipt_path = upload_file_to_storage(uploaded)
+        except Exception as e:
+            print("Paystub expense receipt upload failed:", e)
+    audio_path = None
+    audio_uploaded = first_uploaded_file("receipt_audio")
+    if audio_uploaded:
+        try:
+            audio_path = upload_file_to_storage(audio_uploaded)
+        except Exception as e:
+            print("Paystub expense audio upload failed:", e)
+    conn.execute(
+        "INSERT INTO work_expenses (user_id, project_id, expense_date, amount, description, receipt_file, audio_file, paystub_id, created_at) VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)",
+        (stub["user_id"], expense_date, amount, description, receipt_path, audio_path, stub_id, utc_now_iso())
+    )
+    exp_total = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM work_expenses WHERE paystub_id = %s",
+        (stub_id,)
+    ).fetchone()["total"] or 0
+    conn.execute(
+        "UPDATE paystubs SET expenses_total = %s, total_pay = %s WHERE id = %s",
+        (round(float(exp_total), 2), round(float(stub.get("base_pay") or 0) + float(exp_total), 2), stub_id)
+    )
+    conn.commit()
+    conn.close()
+    flash(f"Expense of {format_invoice_money(amount)} added to the paystub.")
+    return redirect(url_for("paystub_view", stub_id=stub_id))
+
+
 @app.route("/projects/new", methods=["GET", "POST"])
 @admin_required
 def new_project():
@@ -6863,11 +7943,15 @@ def new_project():
             )
         )
         project_id = cur.fetchone()["id"]
+        template_key = request.form.get("trade_template", "")
+        if template_key in PHASE_TEMPLATES:
+            seed_project_template(conn, project_id, template_key)
         conn.commit()
         conn.close()
         return redirect(url_for("project", project_id=project_id))
 
-    return render_template("new_project.html")
+    default_trade = company_trades()[0]
+    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES, default_trade=default_trade)
 
 
 @app.route("/project/<int:project_id>/edit", methods=["GET", "POST"])
@@ -6940,6 +8024,838 @@ def edit_project(project_id):
 
     conn.close()
     return render_template("edit_project.html", project=project)
+
+
+INVOICE_STATUS_VALUES = ["draft", "sent", "paid", "overdue", "canceled"]
+INVOICE_PAYMENT_METHODS = ["Cash", "Check", "Credit Card", "Zelle", "ACH / Bank Transfer", "Other"]
+
+
+def invoice_paid_total(conn, invoice_id):
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS paid FROM invoice_payments WHERE invoice_id = %s",
+        (invoice_id,)
+    ).fetchone()
+    return float(row["paid"] or 0)
+
+
+def refresh_invoice_payment_status(conn, invoice_id):
+    """After a payment is added or removed, keep the invoice status honest:
+    fully covered -> paid; no longer covered -> back to sent/draft."""
+    invoice = conn.execute("SELECT * FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        return 0.0, 0.0
+    paid = invoice_paid_total(conn, invoice_id)
+    total = float(invoice.get("total") or 0)
+    now = utc_now_iso()
+    if total > 0 and paid >= total - 0.005:
+        if invoice.get("status") != "paid":
+            conn.execute(
+                "UPDATE invoices SET status = 'paid', paid_at = COALESCE(paid_at, %s), updated_at = %s WHERE id = %s",
+                (now, now, invoice_id)
+            )
+    elif invoice.get("status") == "paid":
+        fallback = "sent" if invoice.get("sent_at") else "draft"
+        conn.execute(
+            "UPDATE invoices SET status = %s, paid_at = NULL, updated_at = %s WHERE id = %s",
+            (fallback, now, invoice_id)
+        )
+    return paid, total
+
+
+@app.route("/invoices/<int:invoice_id>/payments/add", methods=["POST"])
+@admin_required
+def add_invoice_payment(invoice_id):
+    next_url = request.form.get("next") or url_for("invoice_view", invoice_id=invoice_id)
+    conn = db()
+    ensure_invoice_tables(conn)
+    invoice = conn.execute("SELECT * FROM invoices WHERE id = %s", (invoice_id,)).fetchone()
+    if not invoice:
+        conn.close()
+        flash("Invoice not found.")
+        return redirect(url_for("invoice_customers"))
+    amount = parse_invoice_money(request.form.get("amount"))
+    if not amount or amount <= 0:
+        conn.close()
+        flash("Enter a payment amount greater than zero.")
+        return redirect(next_url)
+    method = (request.form.get("method") or "").strip()
+    if method not in INVOICE_PAYMENT_METHODS:
+        method = "Other"
+    conn.execute(
+        """
+        INSERT INTO invoice_payments (invoice_id, amount, payment_date, method, reference, notes, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            invoice_id,
+            round(float(amount), 2),
+            request.form.get("payment_date") or local_now().date().isoformat(),
+            method,
+            request.form.get("reference", "").strip(),
+            request.form.get("notes", "").strip(),
+            session.get("user_id"),
+            utc_now_iso(),
+        )
+    )
+    paid, total = refresh_invoice_payment_status(conn, invoice_id)
+    conn.commit()
+    conn.close()
+    remaining = max(total - paid, 0)
+    if remaining <= 0.005:
+        flash(f'Payment of {format_invoice_money(amount)} applied. Invoice {invoice["invoice_number"]} is now PAID IN FULL.')
+    else:
+        flash(f'Payment of {format_invoice_money(amount)} applied to invoice {invoice["invoice_number"]}. Remaining balance: {format_invoice_money(remaining)}.')
+    return redirect(next_url)
+
+
+@app.route("/invoices/payments/<int:payment_id>")
+@admin_required
+def payment_receipt(payment_id):
+    """Printable receipt document for one payment - the paper trail that lives
+    in the customer's records."""
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute(
+        """
+        SELECT invoice_payments.*, users.name AS created_by_name
+        FROM invoice_payments
+        LEFT JOIN users ON invoice_payments.created_by = users.id
+        WHERE invoice_payments.id = %s
+        """,
+        (payment_id,)
+    ).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    invoice = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        WHERE invoices.id = %s
+        """,
+        (payment["invoice_id"],)
+    ).fetchone()
+    paid_total = invoice_paid_total(conn, payment["invoice_id"]) if invoice else 0.0
+    conn.close()
+    total = float(invoice.get("total") or 0) if invoice else 0.0
+    return render_template(
+        "payment_receipt.html",
+        payment=payment,
+        invoice=invoice,
+        company=account_info(),
+        paid_total=paid_total,
+        balance_after=max(total - paid_total, 0),
+        payment_methods=INVOICE_PAYMENT_METHODS,
+    )
+
+
+@app.route("/invoices/payments/<int:payment_id>/edit", methods=["POST"])
+@admin_required
+def edit_invoice_payment(payment_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute("SELECT * FROM invoice_payments WHERE id = %s", (payment_id,)).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    next_url = request.form.get("next") or url_for("payment_receipt", payment_id=payment_id)
+    amount = parse_invoice_money(request.form.get("amount"))
+    if not amount or amount <= 0:
+        conn.close()
+        flash("Enter a payment amount greater than zero.")
+        return redirect(next_url)
+    method = (request.form.get("method") or "").strip()
+    if method not in INVOICE_PAYMENT_METHODS:
+        method = payment.get("method") or "Other"
+    conn.execute(
+        """
+        UPDATE invoice_payments
+        SET amount = %s, payment_date = %s, method = %s, reference = %s, notes = %s
+        WHERE id = %s
+        """,
+        (
+            round(float(amount), 2),
+            request.form.get("payment_date") or payment.get("payment_date") or local_now().date().isoformat(),
+            method,
+            request.form.get("reference", "").strip(),
+            request.form.get("notes", "").strip(),
+            payment_id,
+        )
+    )
+    paid, total = refresh_invoice_payment_status(conn, payment["invoice_id"])
+    conn.commit()
+    conn.close()
+    remaining = max(total - paid, 0)
+    flash("Payment updated." + (" The invoice is PAID IN FULL." if remaining <= 0.005 else f" Remaining balance: {format_invoice_money(remaining)}."))
+    return redirect(next_url)
+
+
+@app.route("/invoices/payments/<int:payment_id>/delete", methods=["POST"])
+@admin_required
+def delete_invoice_payment(payment_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute("SELECT * FROM invoice_payments WHERE id = %s", (payment_id,)).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    next_url = request.form.get("next") or url_for("invoice_view", invoice_id=payment["invoice_id"])
+    conn.execute("DELETE FROM invoice_payments WHERE id = %s", (payment_id,))
+    refresh_invoice_payment_status(conn, payment["invoice_id"])
+    conn.commit()
+    conn.close()
+    flash(f'Payment of {format_invoice_money(payment["amount"])} removed. The invoice balance was updated.')
+    return redirect(next_url)
+
+
+# ---------------------------------------------------------------- orders (purchase orders) + task materials
+PO_STATUS_LABELS = {
+    "draft": "Draft",
+    "ordered": "Ordered",
+    "purchased": "Purchased",
+    "received": "Received",
+    "canceled": "Canceled",
+}
+
+
+def po_status_label(value):
+    return PO_STATUS_LABELS.get(str(value or "").strip(), "Draft")
+
+
+def ensure_orders_tables(conn):
+    statements = [
+        "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Orders migration skipped:", e)
+
+
+def next_po_number(conn):
+    year = local_now().strftime("%Y")
+    row = conn.execute("SELECT COUNT(*) AS n FROM purchase_orders WHERE po_number LIKE %s", (f"PO-{year}-%",)).fetchone()
+    n = int(row["n"] or 0) + 1
+    while True:
+        candidate = f"PO-{year}-{n:04d}"
+        exists = conn.execute("SELECT 1 FROM purchase_orders WHERE po_number = %s", (candidate,)).fetchone()
+        if not exists:
+            return candidate
+        n += 1
+
+
+def inventory_reserved_quantity(conn, item_id):
+    row = conn.execute(
+        "SELECT COALESCE(SUM(quantity), 0) AS reserved FROM task_materials "
+        "WHERE inventory_item_id = %s AND source = 'stock' AND status IN ('allocated', 'waiting', 'ready')",
+        (item_id,)
+    ).fetchone()
+    return float(row["reserved"] or 0)
+
+
+def mark_task_materials_ready(conn, po_id=None, pickup_task_id=None, place_text=""):
+    """Flip waiting task materials to ready and tell the install task's worker."""
+    if not po_id and not pickup_task_id:
+        return
+    where = "task_materials.po_id = %s" if po_id else "task_materials.pickup_task_id = %s"
+    rows = conn.execute(
+        f"""
+        SELECT task_materials.*, tasks.assigned_user_id, tasks.project_id AS parent_project_id,
+               tasks.task_number AS parent_task_number, tasks.id AS parent_task_id,
+               users.name AS assigned_name, users.email AS assigned_email, users.role AS assigned_role
+        FROM task_materials
+        JOIN tasks ON task_materials.task_id = tasks.id
+        LEFT JOIN users ON tasks.assigned_user_id = users.id
+        WHERE {where} AND task_materials.status = 'waiting'
+        """,
+        (po_id or pickup_task_id,)
+    ).fetchall()
+    for row in rows:
+        conn.execute("UPDATE task_materials SET status = 'ready' WHERE id = %s", (row["id"],))
+        if row.get("assigned_user_id"):
+            try:
+                add_notification(
+                    conn,
+                    row["assigned_user_id"],
+                    row.get("assigned_name") or "",
+                    row.get("assigned_email") or "",
+                    row.get("assigned_role") or "",
+                    "task_updated",
+                    row.get("parent_project_id"),
+                    row.get("parent_task_id"),
+                    f'Material ready: {row.get("item_name")} {place_text}'.strip() + f' - task {row.get("parent_task_number") or row.get("parent_task_id")}'
+                )
+            except Exception as e:
+                print("Material ready notification failed:", e)
+
+
+@app.route("/tasks/material-check")
+@admin_required
+def task_material_check():
+    conn = db()
+    ensure_orders_tables(conn)
+    project_id = request.args.get("project_id", type=int)
+    name = (request.args.get("name") or "").strip()
+    model = (request.args.get("model") or "").strip()
+    brand = (request.args.get("brand") or "").strip()
+    stock = []
+    if name:
+        rows = conn.execute(
+            """
+            SELECT inventory_items.*, projects.name AS project_name
+            FROM inventory_items
+            LEFT JOIN projects ON inventory_items.project_id = projects.id
+            WHERE lower(item_name) = lower(%s)
+              AND (%s = '' OR lower(COALESCE(item_model, '')) = lower(%s))
+              AND (%s = '' OR lower(COALESCE(brand, '')) = lower(%s))
+              AND (inventory_items.project_id = %s OR inventory_items.project_id IS NULL)
+              AND inventory_items.status IN ('available', 'picked_up', 'client_supplied')
+              AND COALESCE(inventory_items.quantity, 0) > 0
+            ORDER BY (inventory_items.project_id IS NULL), inventory_items.id
+            """,
+            (name, model, model, brand, brand, project_id)
+        ).fetchall()
+        for item in rows:
+            available = float(item.get("quantity") or 0) - inventory_reserved_quantity(conn, item["id"])
+            if available <= 0.001:
+                continue
+            place = inventory_location_label(item.get("location_type"))
+            if item.get("location_detail"):
+                place += f' ({item["location_detail"]})'
+            scope = "Project inventory" if item.get("project_id") else "General inventory"
+            stock.append({
+                "id": item["id"],
+                "available": round(available, 2),
+                "place": place,
+                "scope": scope,
+                "label": f'{scope}: {available:g} available - {place}',
+            })
+    suppliers = [{"id": s["id"], "name": s["name"]} for s in fetch_suppliers(conn)]
+    conn.close()
+    return jsonify({"stock": stock, "suppliers": suppliers})
+
+
+def create_task_materials_from_form(conn, primary_task, project_id):
+    """Turn the Create Task materials list into allocations, POs, and pickup tasks."""
+    raw = request.form.get("task_materials_json", "").strip()
+    if not raw:
+        return ""
+    try:
+        rows = json.loads(raw)
+    except Exception:
+        return "The materials list could not be read. Add the materials again."
+    if not isinstance(rows, list):
+        return ""
+    ensure_orders_tables(conn)
+    now = utc_now_iso()
+    today = local_now().date().isoformat()
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("item_name") or "").strip()
+        if not name:
+            continue
+        try:
+            qty = max(float(m.get("quantity") or 1), 0.01)
+        except Exception:
+            qty = 1.0
+        model = str(m.get("item_model") or "").strip()
+        brand = str(m.get("brand") or "").strip()
+        unit = clean_unit_measure(m.get("unit_measure")) or "UN"
+        comment = str(m.get("comment") or "").strip()
+        action = str(m.get("action") or "note").strip()
+        part_catalog_id = upsert_part_catalog(conn, name, model, brand, "", item_type="part", unit_measure=unit)
+        inventory_item_id = None
+        po_id = None
+        pickup_task_id = None
+        status = "ready"
+
+        if action == "stock":
+            item_id = optional_int(m.get("inventory_item_id"))
+            item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone() if item_id else None
+            if not item:
+                return f"The inventory item for {name} was not found."
+            available = float(item.get("quantity") or 0) - inventory_reserved_quantity(conn, item_id)
+            if qty > available + 0.001:
+                return f"Only {available:g} of {name} is available in inventory."
+            inventory_item_id = item_id
+            status = "allocated"
+        elif action == "po":
+            po_number = next_po_number(conn)
+            supplier_id = optional_int(m.get("po_supplier_id"))
+            po_row = conn.execute(
+                """
+                INSERT INTO purchase_orders (po_number, supplier_id, project_id, status, order_method, expected_date, notes, created_by, created_at, updated_at)
+                VALUES (%s, %s, %s, 'draft', '', %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (po_number, supplier_id, project_id, str(m.get("expected_date") or "").strip(),
+                 f"Created from task {primary_task.get('task_number') or primary_task.get('id')}",
+                 session.get("user_id"), now, now)
+            ).fetchone()
+            po_id = po_row["id"]
+            conn.execute(
+                "INSERT INTO purchase_order_lines (po_id, part_catalog_id, item_name, item_model, brand, unit_measure, quantity, unit_cost, comment, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)",
+                (po_id, part_catalog_id, name, model, brand, unit, qty, comment, now)
+            )
+            inv = conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, po_id, used_note, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, NULL, '', 'needs_purchase', %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (today, qty, name, model, brand, part_catalog_id, f"PO {po_number}", project_id,
+                 session.get("user_id"), supplier_id, po_id, comment, now, now)
+            ).fetchone()
+            inventory_item_id = inv["id"]
+            status = "waiting"
+        elif action == "pickup":
+            supplier_id = optional_int(m.get("pickup_supplier_id"))
+            supplier = conn.execute("SELECT * FROM suppliers WHERE id = %s", (supplier_id,)).fetchone() if supplier_id else None
+            if not supplier:
+                return f"Choose a supplier for the pickup of {name}."
+            pickup_user_id = optional_int(m.get("pickup_user_id"))
+            assigned = conn.execute(
+                "SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE id = %s AND role <> 'admin'",
+                (pickup_user_id,)
+            ).fetchone() if pickup_user_id else None
+            if not assigned:
+                return f"Choose a worker for the pickup of {name}."
+            pickup_date = str(m.get("pickup_date") or "").strip() or today
+            pickup_time = str(m.get("pickup_time") or "").strip() or "08:00"
+            inv = conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, part_catalog_id, item_condition, location_type, location_detail, project_id, room_id, supplier_pickup_time, status, added_by, supplier_id, used_note, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'new', 'job_site', '', %s, NULL, %s, 'needs_purchase', %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (pickup_date, qty, name, model, brand, part_catalog_id, project_id, pickup_time,
+                 session.get("user_id"), supplier_id, comment, now, now)
+            ).fetchone()
+            grant_project_access(conn, assigned["id"], project_id, assigned.get("role"))
+            created_at = utc_now_iso()
+            p_number = next_task_number(conn, created_at)
+            ptask = conn.execute(
+                """
+                INSERT INTO tasks
+                (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+                VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, TRUE, TRUE, TRUE, 'sent_to_worker', %s, %s)
+                RETURNING *
+                """,
+                (p_number, project_id, assigned["id"], session.get("user_id"), pickup_date, pickup_date,
+                 pickup_time, pickup_date, f"Supplier pickup - {supplier.get('name') or 'Supplier'}",
+                 comment, supplier_id, inv["id"], uuid.uuid4().hex, created_at)
+            ).fetchone()
+            link_supplier_items_to_task(conn, ptask["id"], [inv])
+            try:
+                add_notification(
+                    conn, assigned["id"], assigned["name"], assigned["email"], assigned["role"],
+                    "task_assigned", project_id, ptask["id"],
+                    f"New task assigned: {task_display_name(ptask)}. Be there {task_schedule_text(ptask)}. Project access granted."
+                )
+            except Exception as e:
+                print("Pickup task notification failed:", e)
+            pickup_task_id = ptask["id"]
+            inventory_item_id = inv["id"]
+            status = "waiting"
+
+        conn.execute(
+            """
+            INSERT INTO task_materials
+            (task_id, part_catalog_id, inventory_item_id, po_id, pickup_task_id, item_name, item_model, brand, unit_measure, quantity, comment, source, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (primary_task["id"], part_catalog_id, inventory_item_id, po_id, pickup_task_id,
+             name, model, brand, unit, qty, comment, action, status, now)
+        )
+    return ""
+
+
+@app.route("/orders")
+@admin_required
+def orders():
+    conn = db()
+    ensure_orders_tables(conn)
+    status = (request.args.get("status") or "").strip()
+    where = "WHERE purchase_orders.status = %s" if status in PO_STATUS_LABELS else ""
+    params = (status,) if where else ()
+    rows = conn.execute(
+        f"""
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, projects.name AS project_name,
+               (SELECT COUNT(*) FROM purchase_order_lines WHERE purchase_order_lines.po_id = purchase_orders.id) AS line_count
+        FROM purchase_orders
+        LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
+        LEFT JOIN projects ON purchase_orders.project_id = projects.id
+        {where}
+        ORDER BY purchase_orders.created_at DESC, purchase_orders.id DESC
+        """,
+        params
+    ).fetchall()
+    suppliers = fetch_suppliers(conn)
+    projects = conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()
+    conn.close()
+    return render_template("orders.html", orders=rows, status=status, po_status_labels=PO_STATUS_LABELS,
+                           suppliers=suppliers, projects=projects)
+
+
+@app.route("/orders/new", methods=["POST"])
+@admin_required
+def new_order():
+    conn = db()
+    ensure_orders_tables(conn)
+    now = utc_now_iso()
+    po_number = next_po_number(conn)
+    row = conn.execute(
+        """
+        INSERT INTO purchase_orders (po_number, supplier_id, project_id, status, order_method, expected_date, notes, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, 'draft', '', %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (po_number, optional_int(request.form.get("supplier_id")), optional_int(request.form.get("project_id")),
+         request.form.get("expected_date", "").strip(), request.form.get("notes", "").strip(),
+         session.get("user_id"), now, now)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    flash(f"Purchase order {po_number} created. Add the items below.")
+    return redirect(url_for("order_view", po_id=row["id"]))
+
+
+@app.route("/orders/<int:po_id>")
+@admin_required
+def order_view(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        """
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
+               projects.name AS project_name, users.name AS created_by_name
+        FROM purchase_orders
+        LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
+        LEFT JOIN projects ON purchase_orders.project_id = projects.id
+        LEFT JOIN users ON purchase_orders.created_by = users.id
+        WHERE purchase_orders.id = %s
+        """,
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
+    linked_tasks = conn.execute(
+        """
+        SELECT DISTINCT tasks.id, tasks.task_number, tasks.title
+        FROM task_materials JOIN tasks ON task_materials.task_id = tasks.id
+        WHERE task_materials.po_id = %s
+        """,
+        (po_id,)
+    ).fetchall()
+    suppliers = fetch_suppliers(conn)
+    catalog = part_catalog_options(conn)
+    conn.close()
+    return render_template("order_view.html", po=po, lines=lines, suppliers=suppliers,
+                           linked_tasks=linked_tasks, part_catalog=catalog,
+                           po_status_labels=PO_STATUS_LABELS)
+
+
+@app.route("/orders/<int:po_id>/line/add", methods=["POST"])
+@admin_required
+def add_order_line(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute("SELECT * FROM purchase_orders WHERE id = %s", (po_id,)).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    name = request.form.get("item_name", "").strip()
+    if not name:
+        conn.close()
+        flash("Enter the material name.")
+        return redirect(url_for("order_view", po_id=po_id))
+    try:
+        qty = max(float(request.form.get("quantity") or 1), 0.01)
+    except Exception:
+        qty = 1.0
+    model = request.form.get("item_model", "").strip()
+    brand = request.form.get("brand", "").strip()
+    unit = clean_unit_measure(request.form.get("unit_measure")) or "UN"
+    unit_cost = parse_invoice_money(request.form.get("unit_cost")) if request.form.get("unit_cost", "").strip() else None
+    part_catalog_id = upsert_part_catalog(conn, name, model, brand, "", item_type="part", unit_measure=unit)
+    conn.execute(
+        "INSERT INTO purchase_order_lines (po_id, part_catalog_id, item_name, item_model, brand, unit_measure, quantity, unit_cost, comment, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (po_id, part_catalog_id, name, model, brand, unit, qty, unit_cost,
+         request.form.get("comment", "").strip(), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash("Item added to the purchase order.")
+    return redirect(url_for("order_view", po_id=po_id))
+
+
+@app.route("/orders/lines/<int:line_id>/delete", methods=["POST"])
+@admin_required
+def delete_order_line(line_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    line = conn.execute("SELECT * FROM purchase_order_lines WHERE id = %s", (line_id,)).fetchone()
+    if not line:
+        conn.close()
+        flash("Purchase order line not found.")
+        return redirect(url_for("orders"))
+    conn.execute("DELETE FROM purchase_order_lines WHERE id = %s", (line_id,))
+    conn.commit()
+    conn.close()
+    flash("Item removed from the purchase order.")
+    return redirect(url_for("order_view", po_id=line["po_id"]))
+
+
+@app.route("/orders/<int:po_id>/update", methods=["POST"])
+@admin_required
+def update_order(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        "SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email "
+        "FROM purchase_orders LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id "
+        "WHERE purchase_orders.id = %s",
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    action = request.form.get("action", "save")
+    now = utc_now_iso()
+    note = request.form.get("status_note", "").strip()
+
+    def append_note(text):
+        existing = (po.get("notes") or "").strip()
+        stamp = f"{format_date(local_now().date().isoformat())}: {text}"
+        return (existing + "\n" + stamp).strip()
+
+    if action == "save":
+        conn.execute(
+            "UPDATE purchase_orders SET supplier_id = %s, expected_date = %s, notes = %s, updated_at = %s WHERE id = %s",
+            (optional_int(request.form.get("supplier_id")), request.form.get("expected_date", "").strip(),
+             request.form.get("notes", "").strip(), now, po_id)
+        )
+        flash("Purchase order saved.")
+    elif action == "email":
+        if not po.get("supplier_email"):
+            conn.close()
+            flash("This supplier has no email on file. Add it in Suppliers first.")
+            return redirect(url_for("order_view", po_id=po_id))
+        lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
+        company = account_info()
+        body_lines = [f"Purchase Order {po['po_number']} from {company.get('company_name') or 'ProjectONus'}", ""]
+        for line in lines:
+            desc = f'- {line["quantity"]:g} {line.get("unit_measure") or "UN"} x {line["item_name"]}'
+            if line.get("brand"):
+                desc += f' ({line["brand"]}'
+                desc += f' {line["item_model"]})' if line.get("item_model") else ')'
+            elif line.get("item_model"):
+                desc += f' ({line["item_model"]})'
+            if line.get("comment"):
+                desc += f' - {line["comment"]}'
+            body_lines.append(desc)
+        if po.get("expected_date"):
+            body_lines.append("")
+            body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
+        body_lines.append("")
+        body_lines.append(f"Please confirm availability and pricing. Reference {po['po_number']} on the invoice.")
+        sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}", "\n".join(body_lines))
+        if sent:
+            conn.execute(
+                "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+                (now, append_note(f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"), now, po_id)
+            )
+            flash(f"Purchase order emailed to {po['supplier_email']} and marked Ordered.")
+        else:
+            flash("The email could not be sent. Check SMTP settings.")
+    elif action == "ordered":
+        method = (request.form.get("order_method") or "online").strip()
+        if method not in ("online", "phone", "email", "other"):
+            method = "other"
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'ordered', order_method = %s, ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (method, now, append_note(note or f"Ordered by {method}"), now, po_id)
+        )
+        flash("Purchase order marked Ordered.")
+    elif action == "purchased":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'purchased', purchased_at = COALESCE(purchased_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (now, append_note(note or "Purchased"), now, po_id)
+        )
+        conn.execute(
+            "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s WHERE po_id = %s AND status = 'needs_purchase'",
+            (now, po_id)
+        )
+        flash("Purchase order marked Purchased. Inventory shows the material as waiting arrival.")
+    elif action == "received":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'received', received_at = COALESCE(received_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            (now, append_note(note or "Received"), now, po_id)
+        )
+        conn.execute(
+            "UPDATE inventory_items SET status = 'available', location_type = 'warehouse', updated_at = %s WHERE po_id = %s AND status IN ('needs_purchase', 'purchased_waiting_arrival')",
+            (now, po_id)
+        )
+        mark_task_materials_ready(conn, po_id=po_id, place_text="- arrived at the warehouse")
+        flash("Purchase order received. Inventory updated and task workers notified.")
+    elif action == "canceled":
+        conn.execute(
+            "UPDATE purchase_orders SET status = 'canceled', notes = %s, updated_at = %s WHERE id = %s",
+            (append_note(note or "Canceled"), now, po_id)
+        )
+        flash("Purchase order canceled.")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("order_view", po_id=po_id))
+
+
+@app.route("/invoices/customers")
+@admin_required
+def invoice_customers():
+    """QuickBooks-style hub: customer list on the left, that customer's
+    information and invoice history on the right."""
+    conn = db()
+    ensure_invoice_tables(conn)
+    rows = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name,
+               (SELECT COALESCE(SUM(amount), 0) FROM invoice_payments
+                WHERE invoice_payments.invoice_id = invoices.id) AS paid_total
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        ORDER BY invoices.invoice_date DESC, invoices.id DESC
+        """
+    ).fetchall()
+    payment_rows = conn.execute(
+        """
+        SELECT invoice_payments.*, invoices.customer_name, invoices.invoice_number,
+               invoices.id AS invoice_id, users.name AS created_by_name
+        FROM invoice_payments
+        JOIN invoices ON invoice_payments.invoice_id = invoices.id
+        LEFT JOIN users ON invoice_payments.created_by = users.id
+        ORDER BY invoice_payments.payment_date DESC, invoice_payments.id DESC
+        """
+    ).fetchall()
+    conn.close()
+
+    today = local_now().date()
+    customers = {}
+    for inv in rows:
+        display_name = (inv.get("customer_name") or "").strip() or "No customer name"
+        key = display_name.lower()
+        entry = customers.setdefault(key, {
+            "key": key,
+            "name": display_name,
+            "email": "",
+            "phone": "",
+            "address": "",
+            "projects": [],
+            "balance": 0.0,
+            "total_billed": 0.0,
+            "total_payments": 0.0,
+            "invoices": [],
+            "open_invoices": [],
+            "payments": [],
+        })
+        # Newest invoice wins for contact info (rows are newest-first, keep first seen).
+        if not entry["email"] and (inv.get("customer_email") or "").strip():
+            entry["email"] = inv["customer_email"].strip()
+        if not entry["phone"] and (inv.get("customer_phone") or "").strip():
+            entry["phone"] = inv["customer_phone"].strip()
+        if not entry["address"] and (inv.get("billing_address") or "").strip():
+            entry["address"] = inv["billing_address"].strip()
+        if inv.get("project_name") and inv["project_name"] not in entry["projects"]:
+            entry["projects"].append(inv["project_name"])
+
+        status = (inv.get("status") or "draft").strip()
+        total = float(inv.get("total") or 0)
+        paid = float(inv.get("paid_total") or 0)
+        is_open = status not in ("paid", "canceled")
+        open_amount = max(total - paid, 0) if is_open else 0.0
+        aging = ""
+        raw_due = str(inv.get("due_date") or "").strip()
+        if is_open and raw_due:
+            try:
+                due = datetime.strptime(raw_due[:10], "%Y-%m-%d").date()
+                if due < today:
+                    aging = str((today - due).days)
+            except Exception:
+                pass
+        entry["total_billed"] += total
+        entry["balance"] += open_amount
+        entry["invoices"].append({
+            "number": inv.get("invoice_number"),
+            "date": format_date(inv.get("invoice_date")),
+            "due": format_date(inv.get("due_date")) if inv.get("due_date") else "-",
+            "aging": aging,
+            "status": status,
+            "amount": format_invoice_money(total),
+            "paid": format_invoice_money(paid),
+            "open": format_invoice_money(open_amount),
+            "is_open": is_open,
+            "project": inv.get("project_name") or "",
+            "view_url": url_for("invoice_view", invoice_id=inv["id"]),
+            "edit_url": url_for("edit_invoice", invoice_id=inv["id"]),
+        })
+        if is_open and open_amount > 0.005:
+            entry["open_invoices"].append({
+                "id": inv["id"],
+                "number": inv.get("invoice_number"),
+                "label": f'{inv.get("invoice_number")} Â· {format_date(inv.get("invoice_date"))} Â· open {format_invoice_money(open_amount)}',
+                "open_raw": round(open_amount, 2),
+                "pay_url": url_for("add_invoice_payment", invoice_id=inv["id"]),
+            })
+
+    # Attach every payment to its customer so the hub shows the full money trail.
+    for pay in payment_rows:
+        key = ((pay.get("customer_name") or "").strip() or "No customer name").lower()
+        entry = customers.get(key)
+        if not entry:
+            continue
+        amount = float(pay.get("amount") or 0)
+        entry["total_payments"] += amount
+        entry["payments"].append({
+            "date": format_date(pay.get("payment_date")),
+            "amount": format_invoice_money(amount),
+            "method": pay.get("method") or "-",
+            "reference": pay.get("reference") or "",
+            "notes": pay.get("notes") or "",
+            "by": pay.get("created_by_name") or "",
+            "invoice_number": pay.get("invoice_number"),
+            "invoice_url": url_for("invoice_view", invoice_id=pay["invoice_id"]),
+            "receipt_url": url_for("payment_receipt", payment_id=pay["id"]),
+        })
+
+    customer_list = sorted(customers.values(), key=lambda c: c["name"].lower())
+    for c in customer_list:
+        c["balance_label"] = format_invoice_money(c["balance"])
+        c["total_billed_label"] = format_invoice_money(c["total_billed"])
+        c["total_payments_label"] = format_invoice_money(c["total_payments"])
+    return render_template(
+        "invoice_customers.html",
+        customers=customer_list,
+        selected_key=(request.args.get("c") or "").strip().lower(),
+    )
 
 
 @app.route("/invoices")
@@ -7233,11 +9149,25 @@ def invoice_view(invoice_id):
         "SELECT invoice_email_logs.*, users.name AS sent_by_name FROM invoice_email_logs LEFT JOIN users ON invoice_email_logs.sent_by = users.id WHERE invoice_id = %s ORDER BY sent_at DESC",
         (invoice_id,)
     ).fetchall() if invoice else []
+    payments = conn.execute(
+        "SELECT invoice_payments.*, users.name AS created_by_name FROM invoice_payments LEFT JOIN users ON invoice_payments.created_by = users.id WHERE invoice_id = %s ORDER BY payment_date, id",
+        (invoice_id,)
+    ).fetchall() if invoice else []
     conn.close()
     if not invoice:
         flash("Invoice not found.")
         return redirect(url_for("invoices"))
-    return render_template("invoice_view.html", invoice=invoice, lines=lines, company=account_info(), email_logs=email_logs, totals_breakdown=invoice_totals_breakdown(invoice, lines))
+    totals_breakdown = invoice_totals_breakdown(invoice, lines)
+    paid_total = round(sum(float(p.get("amount") or 0) for p in payments), 2)
+    totals_breakdown["payments_credit"] = round(totals_breakdown["payments_credit"] + paid_total, 2)
+    totals_breakdown["balance_due"] = round(max(float(invoice.get("total") or 0) - paid_total, 0), 2)
+    return render_template(
+        "invoice_view.html", invoice=invoice, lines=lines, company=account_info(),
+        email_logs=email_logs, totals_breakdown=totals_breakdown,
+        payments=payments, paid_total=paid_total,
+        payment_methods=INVOICE_PAYMENT_METHODS,
+        today=local_now().date().isoformat()
+    )
 
 
 @app.route("/invoices/<int:invoice_id>/edit", methods=["GET", "POST"])
@@ -7449,6 +9379,7 @@ def parts_catalog():
         item_type = request.form.get("item_type", "part")
         if item_type not in ["part", "service"]:
             item_type = "part"
+        unit_measure = clean_unit_measure(request.form.get("unit_measure")) or "UN"
         taxable = request.form.get("taxable") == "1"
         now = utc_now_iso()
         duplicate_item = conn.execute(
@@ -7481,11 +9412,12 @@ def parts_catalog():
                     unit_cost = %s,
                     taxable = %s,
                     item_type = %s,
+                    unit_measure = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, now, part_id)
+                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, now, part_id)
             )
             flash("Catalog item updated.")
         else:
@@ -7500,7 +9432,8 @@ def parts_catalog():
                 item_type,
                 category,
                 part_number,
-                unit_cost
+                unit_cost,
+                unit_measure
             )
             flash("Catalog item saved.")
         conn.commit()
@@ -7574,7 +9507,7 @@ def create_part_catalog_json():
         return jsonify({"ok": False, "error": "Item name is required."}), 400
     duplicate_item = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
           AND lower(item_name) = lower(%s)
@@ -7609,7 +9542,7 @@ def create_part_catalog_json():
     )
     row = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE id = %s
         """,
@@ -7656,7 +9589,7 @@ def quick_update_part_catalog_json(part_id):
     )
     updated = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
         FROM part_catalog
         WHERE id = %s
         """,
@@ -8131,7 +10064,7 @@ def dtools_unauthorized_hint(message):
     knows to fall back to pasting the Response JSON / public Request URL."""
     text = str(message or "")
     if "401" in text or "Unauthorized" in text or "403" in text or "Access denied" in text:
-        text += (" — D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
+        text += (" â€” D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
                  "(Settings > Integration > Developer) into ProjectONus Settings, and confirm your D-Tools "
                  "plan has Cloud API access enabled. Meanwhile you can import without the API: open the "
                  "proposal in Chrome, copy the GetProposalData Response JSON, and paste it into the "
@@ -8178,6 +10111,8 @@ def import_dtools_inventory(project_id):
                 conn.rollback()
         message = f"D-Tools import complete: {result['imported']} inventory item(s) added as Needs Purchase."
         message += f" {result.get('catalog_saved', 0)} catalog item(s) saved."
+        if result.get("client_supplied"):
+            message += f" {result['client_supplied']} item(s) marked Client Supplied (provided by the client, no purchase needed)."
         if customer_filled:
             message += " Customer details were filled in from D-Tools."
         if result.get("rooms_created"):
@@ -8196,45 +10131,6 @@ def import_dtools_inventory(project_id):
         flash(dtools_unauthorized_hint(str(e)))
     conn.close()
     return redirect(url_for("project_materials", project_id=project_id))
-
-
-@app.route("/dtools/customer-debug")
-@admin_required
-def dtools_customer_debug():
-    """Temporary diagnostic: dumps the raw D-Tools opportunity + client records so
-    we can map customer-detail field names exactly. Open with ?name=<opportunity name>."""
-    name = request.args.get("name", "").strip()
-    out = {"name": name or "(none - showing recent opportunities)"}
-    try:
-        params = {"pageSize": 8}
-        if name:
-            params["search"] = name
-        raw = dtools_cloud_api_get("Opportunities/GetOpportunities", params)
-        rows = dtools_collect_project_candidates(raw)
-        out["opportunity_count"] = len(rows)
-        out["first_opportunity_raw"] = rows[0] if rows else None
-        out["all_opportunity_names"] = [dtools_pick(r, ["name"]) for r in rows]
-        client_id = dtools_pick(rows[0], ["clientId", "accountId", "customerId", "clientID"]) if rows else ""
-        out["client_id"] = client_id
-        # Try a GetOpportunity singular detail (may hold contact info inline)
-        if rows:
-            try:
-                out["opportunity_detail_raw"] = dtools_cloud_api_get("Opportunities/GetOpportunity", {"id": rows[0]["id"]})
-            except Exception as e:
-                out["opportunity_detail_error"] = str(e)
-        # Try every plausible client/account endpoint and show what comes back
-        if client_id:
-            for path in ("Clients/GetClient", "Accounts/GetAccount", "Contacts/GetContact",
-                         "Clients/GetClients", "Accounts/GetAccounts", "Clients/Get", "Account/GetAccount"):
-                key = path.replace("/", "_")
-                try:
-                    out[key] = dtools_cloud_api_get(path, {"id": client_id})
-                except Exception as e:
-                    out[key + "_error"] = str(e)[:160]
-        out["extracted_by_app"] = dtools_customer_info("opportunity", rows[0]["id"]) if rows else {}
-    except Exception as e:
-        out["error"] = str(e)
-    return jsonify(out)
 
 
 @app.route("/project/<int:project_id>/materials/preview-dtools", methods=["POST"])
@@ -8288,7 +10184,7 @@ def test_dtools_connection():
     endpoint_path = request.form.get("dtools_endpoint_path", "").strip()
     if not external_ref:
         flash("Enter a D-Tools Project or Quote ID to test.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="dtools"))
     try:
         payload = dtools_cloud_fetch_payload(external_ref, endpoint_path)
         items = dtools_extract_materials(payload, external_ref)
@@ -8297,7 +10193,7 @@ def test_dtools_connection():
         flash(f"D-Tools connected. Found {part_count} part item(s) and {service_count} service/labor item(s).")
     except Exception as e:
         flash(str(e))
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="dtools"))
 
 
 @app.route("/dtools-import", methods=["GET", "POST"])
@@ -8480,6 +10376,8 @@ def dtools_import():
                         f"{create_result.get('imported', 0)} inventory item(s) added as Needs Purchase. "
                         f"{create_result.get('catalog_saved', 0)} catalog item(s) saved."
                     )
+                    if create_result.get("client_supplied"):
+                        message += f" {create_result['client_supplied']} item(s) marked Client Supplied (provided by the client, no purchase needed)."
                     if create_result.get("services_saved"):
                         message += f" {create_result['services_saved']} service/labor item(s) saved to Items & Catalog."
                     if create_result.get("skipped"):
@@ -8712,8 +10610,494 @@ def project(project_id):
     )
 
 
-def valid_project_folder_keys():
-    return {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+@app.route("/project/<int:project_id>/gallery")
+@login_required
+def project_gallery(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    rooms = conn.execute("SELECT id, name FROM rooms WHERE project_id = %s ORDER BY lower(name)", (project_id,)).fetchall()
+    notes = conn.execute(
+        """
+        SELECT notes.photo_file, notes.comment, notes.note_date, notes.created_at,
+               rooms.name AS room_name, users.name AS user_name
+        FROM notes
+        JOIN rooms ON notes.room_id = rooms.id
+        LEFT JOIN users ON notes.user_id = users.id
+        WHERE rooms.project_id = %s AND COALESCE(notes.photo_file, '') <> ''
+        ORDER BY notes.created_at DESC
+        """,
+        (project_id,)
+    ).fetchall()
+    attachments = []
+    try:
+        attachments = conn.execute(
+            """
+            SELECT task_attachments.storage_path AS photo_file, task_attachments.comment,
+                   task_attachments.created_at, tasks.title AS task_title,
+                   rooms.name AS room_name, users.name AS user_name
+            FROM task_attachments
+            JOIN tasks ON task_attachments.task_id = tasks.id
+            LEFT JOIN rooms ON task_attachments.room_id = rooms.id
+            LEFT JOIN users ON task_attachments.created_by = users.id
+            WHERE tasks.project_id = %s AND task_attachments.file_type = 'photo'
+              AND COALESCE(task_attachments.storage_path, '') <> ''
+            ORDER BY task_attachments.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
+    except Exception:
+        conn.rollback()
+    conn.close()
+
+    groups = {}
+
+    def add(room_name, item):
+        key = room_name or "Project general"
+        groups.setdefault(key, []).append(item)
+
+    for n in notes:
+        add(n.get("room_name"), {
+            "photo": n["photo_file"],
+            "comment": n.get("comment") or "",
+            "by": n.get("user_name") or "Unknown",
+            "date": n.get("note_date") or n.get("created_at") or "",
+            "context": "Room update",
+        })
+    for a in attachments:
+        ctx = ("Task: " + a["task_title"]) if a.get("task_title") else "Task photo"
+        add(a.get("room_name"), {
+            "photo": a["photo_file"],
+            "comment": a.get("comment") or "",
+            "by": a.get("user_name") or "Unknown",
+            "date": a.get("created_at") or "",
+            "context": ctx,
+        })
+
+    # Pictures uploaded to the Files section show in the gallery too,
+    # grouped by their folder (only folders this user can view).
+    try:
+        conn2 = db()
+        allowed_keys = project_file_access_keys(conn2, project_id)
+        folder_labels = {f["key"]: f["label"] for f in all_project_file_folders(conn2)}
+        file_rows = conn2.execute(
+            """
+            SELECT project_files.*, users.name AS user_name, project_folders.name AS subfolder_name
+            FROM project_files
+            LEFT JOIN users ON project_files.uploaded_by = users.id
+            LEFT JOIN project_folders ON project_files.folder_id = project_folders.id
+            WHERE project_files.project_id = %s
+            ORDER BY project_files.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
+        conn2.close()
+        for f in file_rows:
+            if f.get("folder_key") not in allowed_keys:
+                continue
+            ext = file_ext(f.get("original_filename") or "")
+            if ext in ALLOWED_VIDEOS:
+                kind = "video"
+            elif ext in ALLOWED_PHOTOS:
+                kind = "photo"
+            else:
+                continue
+            label = folder_labels.get(f.get("folder_key"), "Files")
+            if f.get("subfolder_name"):
+                label += " / " + f["subfolder_name"]
+            add("Files: " + label, {
+                "photo": f["storage_path"],
+                "kind": kind,
+                "comment": f.get("description") or f.get("original_filename") or "",
+                "by": f.get("user_name") or "Unknown",
+                "date": f.get("created_at") or "",
+                "context": "Project Files",
+            })
+    except Exception as e:
+        print("Gallery files section skipped:", e)
+
+    ordered = []
+    seen = set()
+    for r in rooms:
+        if r["name"] in groups:
+            ordered.append((r["name"], groups[r["name"]]))
+            seen.add(r["name"])
+    for name, items in groups.items():
+        if name not in seen:
+            ordered.append((name, items))
+
+    total = sum(len(items) for _, items in ordered)
+    return render_template("gallery.html", project=project, groups=ordered, total=total)
+
+
+# ---------------------------------------------------------------- project progress + trade templates
+PHASE_TEMPLATES = {
+    "low_voltage": {
+        "label": "Low Voltage / AV",
+        "phases": ["Design & Engineering", "Material Procurement", "Pre-Wire / Rough-In", "Rack & Equipment Install",
+                   "Device Trim-Out", "Programming & Integration", "Testing & Commissioning", "Client Training & Handover"],
+        "scope": ["Network Infrastructure", "Wi-Fi Access Points", "Surveillance Cameras", "Audio / Video",
+                  "Lighting Control", "Access Control", "Intercom / Door Station", "Equipment Rack"],
+    },
+    "electrical": {
+        "label": "Electrical",
+        "phases": ["Design & Permits", "Material Procurement", "Temporary Power", "Underground & Slab Rough",
+                   "Wall Rough-In", "Service & Panel", "Devices & Trim", "Testing & Inspection"],
+        "scope": ["Service Entrance", "Panels & Breakers", "Branch Circuits", "Lighting",
+                  "Receptacles & Devices", "Grounding & Bonding", "Low-Voltage Coordination", "Final Inspection"],
+    },
+    "general": {
+        "label": "General Construction",
+        "phases": ["Site Prep & Permits", "Foundation", "Framing", "MEP Rough-In",
+                   "Insulation & Drywall", "Interior Finishes", "Exterior & Site Work", "Punch List & Handover"],
+        "scope": ["Permits & Approvals", "Structural", "Roofing", "MEP Systems",
+                  "Finishes", "Fixtures", "Site Work", "Final Inspection"],
+    },
+}
+
+
+def task_phase_id_or_none(conn, project_id, raw_value):
+    phase_id = optional_int(raw_value)
+    if not phase_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM project_phases WHERE id = %s AND project_id = %s",
+            (phase_id, project_id)
+        ).fetchone()
+        return phase_id if row else None
+    except Exception:
+        conn.rollback()
+        return None
+
+
+def company_trades():
+    raw = get_app_setting("company_trades", "")
+    keys = [k for k in raw.split(",") if k in PHASE_TEMPLATES]
+    return keys or ["low_voltage"]
+
+
+def seed_project_template(conn, project_id, template_key):
+    template = PHASE_TEMPLATES.get(template_key)
+    if not template:
+        return
+    now = utc_now_iso()
+    existing = conn.execute("SELECT COUNT(*) AS n FROM project_phases WHERE project_id = %s", (project_id,)).fetchone()
+    if int(existing["n"] or 0) == 0:
+        for i, name in enumerate(template["phases"]):
+            conn.execute(
+                "INSERT INTO project_phases (project_id, name, position, mode, manual_pct, created_at) VALUES (%s, %s, %s, 'auto', 0, %s)",
+                (project_id, name, i, now)
+            )
+    existing_scope = conn.execute("SELECT COUNT(*) AS n FROM project_scope_items WHERE project_id = %s", (project_id,)).fetchone()
+    if int(existing_scope["n"] or 0) == 0:
+        for i, label in enumerate(template["scope"]):
+            conn.execute(
+                "INSERT INTO project_scope_items (project_id, label, done, position, created_at) VALUES (%s, %s, FALSE, %s, %s)",
+                (project_id, label, i, now)
+            )
+
+
+def compute_project_progress(conn, project):
+    """Phase percentages: manual value, or auto from tagged tasks; the Material
+    Procurement style phases fall back to inventory status when untagged."""
+    project_id = project["id"]
+    phases = conn.execute(
+        "SELECT * FROM project_phases WHERE project_id = %s ORDER BY position, id",
+        (project_id,)
+    ).fetchall()
+    task_counts = {row["phase_id"]: row for row in conn.execute(
+        """
+        SELECT phase_id, COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status = 'completed') AS done
+        FROM tasks WHERE project_id = %s AND phase_id IS NOT NULL GROUP BY phase_id
+        """,
+        (project_id,)
+    ).fetchall()}
+    material_row = conn.execute(
+        """
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE status NOT IN ('needs_purchase', 'purchased_waiting_arrival', 'backordered', 'unavailable')) AS ready
+        FROM inventory_items WHERE project_id = %s
+        """,
+        (project_id,)
+    ).fetchone()
+    for phase in phases:
+        counts = task_counts.get(phase["id"])
+        if phase.get("mode") == "manual":
+            pct = float(phase.get("manual_pct") or 0)
+            source = "manual"
+        elif counts and counts["total"]:
+            pct = 100.0 * counts["done"] / counts["total"]
+            source = f'{counts["done"]} of {counts["total"]} tasks done'
+        elif ("procurement" in phase["name"].lower() or "material" in phase["name"].lower()) and material_row and material_row["total"]:
+            pct = 100.0 * material_row["ready"] / material_row["total"]
+            source = f'{material_row["ready"]} of {material_row["total"]} materials in'
+        else:
+            pct = 0.0
+            source = "no tasks tagged yet"
+        phase["pct"] = max(0, min(100, round(pct)))
+        phase["source"] = source
+        phase["task_total"] = counts["total"] if counts else 0
+    overall = round(sum(p["pct"] for p in phases) / len(phases)) if phases else 0
+    return phases, overall
+
+
+@app.route("/project/<int:project_id>/progress")
+@login_required
+def project_progress(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if not (is_main_admin() or has_perm("view_project_progress")):
+        conn.close()
+        flash("You do not have permission to view the project progress page.")
+        return redirect(url_for("mobile_project" if is_mobile_request() else "project", project_id=project_id))
+    phases, overall = compute_project_progress(conn, project)
+    scope_items = conn.execute(
+        "SELECT * FROM project_scope_items WHERE project_id = %s ORDER BY position, id",
+        (project_id,)
+    ).fetchall()
+    focus_task = conn.execute(
+        "SELECT title FROM tasks WHERE project_id = %s AND status = 'in_progress' ORDER BY id DESC LIMIT 1",
+        (project_id,)
+    ).fetchone()
+    upcoming_task = conn.execute(
+        """
+        SELECT title, task_start_date FROM tasks
+        WHERE project_id = %s AND status NOT IN ('completed')
+          AND COALESCE(task_start_date, task_date) >= %s
+        ORDER BY COALESCE(task_start_date, task_date), COALESCE(task_start_time, '23:59') LIMIT 1
+        """,
+        (project_id, local_now().date().isoformat())
+    ).fetchone()
+    open_bits = []
+    waiting_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM tasks WHERE project_id = %s AND status IN ('waiting_material', 'waiting_rfi')",
+        (project_id,)
+    ).fetchone()
+    if waiting_row and waiting_row["n"]:
+        open_bits.append(f'{waiting_row["n"]} task(s) waiting on material or RFI')
+    try:
+        po_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM purchase_orders WHERE project_id = %s AND status IN ('draft', 'ordered', 'purchased')",
+            (project_id,)
+        ).fetchone()
+        if po_row and po_row["n"]:
+            open_bits.append(f'{po_row["n"]} open purchase order(s)')
+    except Exception:
+        conn.rollback()
+    conn.close()
+    auto_focus = focus_task["title"] if focus_task else "No task in progress right now"
+    auto_upcoming = (f'{upcoming_task["title"]} ({format_date(upcoming_task["task_start_date"])})'
+                     if upcoming_task else "Nothing scheduled ahead")
+    auto_open = "; ".join(open_bits) if open_bits else "No open items"
+    return render_template(
+        "project_progress.html",
+        project=project,
+        phases=phases,
+        overall=overall,
+        scope_items=scope_items,
+        focus_text=(project.get("progress_focus") or "").strip() or auto_focus,
+        upcoming_text=(project.get("progress_upcoming") or "").strip() or auto_upcoming,
+        open_text=(project.get("progress_open") or "").strip() or auto_open,
+        phase_templates=PHASE_TEMPLATES,
+        manager_name=get_app_setting("company_contact_name", "") or session.get("name") or "",
+        today_label=format_date(local_now().date().isoformat()),
+    )
+
+
+@app.route("/project/<int:project_id>/progress/apply-template", methods=["POST"])
+@admin_required
+def apply_progress_template(project_id):
+    key = request.form.get("template_key", "")
+    conn = db()
+    if key in PHASE_TEMPLATES:
+        seed_project_template(conn, project_id, key)
+        conn.commit()
+        flash(f'{PHASE_TEMPLATES[key]["label"]} template applied.')
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/phase/add", methods=["POST"])
+@admin_required
+def add_project_phase(project_id):
+    name = request.form.get("name", "").strip()[:80]
+    if name:
+        conn = db()
+        pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM project_phases WHERE project_id = %s", (project_id,)).fetchone()["p"]
+        conn.execute(
+            "INSERT INTO project_phases (project_id, name, position, mode, manual_pct, created_at) VALUES (%s, %s, %s, 'auto', 0, %s)",
+            (project_id, name, pos, utc_now_iso())
+        )
+        conn.commit()
+        conn.close()
+        flash(f'Phase "{name}" added.')
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/phase/<int:phase_id>/update", methods=["POST"])
+@admin_required
+def update_project_phase(project_id, phase_id):
+    action = request.form.get("action", "save")
+    conn = db()
+    if action == "delete":
+        conn.execute("DELETE FROM project_phases WHERE id = %s AND project_id = %s", (phase_id, project_id))
+        flash("Phase removed.")
+    else:
+        mode = request.form.get("mode", "auto")
+        if mode not in ("auto", "manual"):
+            mode = "auto"
+        try:
+            manual_pct = max(0.0, min(100.0, float(request.form.get("manual_pct") or 0)))
+        except Exception:
+            manual_pct = 0.0
+        conn.execute(
+            "UPDATE project_phases SET mode = %s, manual_pct = %s WHERE id = %s AND project_id = %s",
+            (mode, manual_pct, phase_id, project_id)
+        )
+        flash("Phase updated.")
+    conn.commit()
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/scope/add", methods=["POST"])
+@admin_required
+def add_scope_item(project_id):
+    label = request.form.get("label", "").strip()[:80]
+    if label:
+        conn = db()
+        pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM project_scope_items WHERE project_id = %s", (project_id,)).fetchone()["p"]
+        conn.execute(
+            "INSERT INTO project_scope_items (project_id, label, done, position, created_at) VALUES (%s, %s, FALSE, %s, %s)",
+            (project_id, label, pos, utc_now_iso())
+        )
+        conn.commit()
+        conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/scope/<int:item_id>/update", methods=["POST"])
+@admin_required
+def update_scope_item(project_id, item_id):
+    conn = db()
+    if request.form.get("action") == "delete":
+        conn.execute("DELETE FROM project_scope_items WHERE id = %s AND project_id = %s", (item_id, project_id))
+    else:
+        conn.execute(
+            "UPDATE project_scope_items SET done = NOT done WHERE id = %s AND project_id = %s",
+            (item_id, project_id)
+        )
+    conn.commit()
+    conn.close()
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/progress/focus", methods=["POST"])
+@admin_required
+def save_progress_focus(project_id):
+    conn = db()
+    conn.execute(
+        "UPDATE projects SET progress_focus = %s, progress_upcoming = %s, progress_open = %s WHERE id = %s",
+        (request.form.get("progress_focus", "").strip(), request.form.get("progress_upcoming", "").strip(),
+         request.form.get("progress_open", "").strip(), project_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Progress summary saved. Leave a box blank to go back to automatic text.")
+    return redirect(url_for("project_progress", project_id=project_id))
+
+
+@app.route("/project/<int:project_id>/blueprint")
+@login_required
+def project_blueprint(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+
+    ensure_project_blueprints(conn, project)
+    blueprints = conn.execute(
+        "SELECT * FROM project_blueprints WHERE project_id = %s ORDER BY id",
+        (project_id,)
+    ).fetchall()
+    selected_id = request.args.get("blueprint_id", type=int)
+    active_blueprint = None
+    if selected_id:
+        active_blueprint = conn.execute(
+            "SELECT * FROM project_blueprints WHERE project_id = %s AND id = %s",
+            (project_id, selected_id)
+        ).fetchone()
+    if not active_blueprint and blueprints:
+        active_blueprint = blueprints[0]
+    if active_blueprint:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+            (project_id, active_blueprint["id"])
+        ).fetchall()
+    else:
+        rooms = conn.execute(
+            "SELECT * FROM rooms WHERE project_id = %s ORDER BY id",
+            (project_id,)
+        ).fetchall()
+    conn.close()
+    return render_template(
+        "project_blueprint.html",
+        project=project,
+        rooms=rooms,
+        blueprints=blueprints,
+        active_blueprint=active_blueprint,
+    )
+
+
+def custom_file_folder_rows(conn):
+    try:
+        return conn.execute(
+            "SELECT folder_key, label FROM custom_file_folders ORDER BY LOWER(label)"
+        ).fetchall()
+    except Exception:
+        return []
+
+
+def all_project_file_folders(conn):
+    """Built-in top-level folders plus any custom ones the admin has added."""
+    folders = [{"key": f["key"], "label": f["label"]} for f in PROJECT_FILE_FOLDERS]
+    for row in custom_file_folder_rows(conn):
+        folders.append({"key": row["folder_key"], "label": row["label"]})
+    return folders
+
+
+def custom_folder_keys(conn):
+    return {row["folder_key"] for row in custom_file_folder_rows(conn)}
+
+
+def valid_project_folder_keys(conn):
+    keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+    keys |= custom_folder_keys(conn)
+    return keys
 
 
 def load_project_folder(conn, project_id, folder_id):
@@ -8799,18 +11183,22 @@ def project_files(project_id):
         return redirect(url_for("project", project_id=project_id))
 
     if request.method == "POST":
-        if not is_main_admin():
-            conn.close()
-            flash("Only the main admin can upload project files.")
-            return redirect(url_for("project_files", project_id=project_id))
+        # Mobile capture lets a non-admin worker add a picture / audio / attachment
+        # straight into a folder they can access. Desktop uploads stay admin-only.
+        is_mobile_capture = request.form.get("mobile_capture") == "1"
         now = utc_now_iso()
         uploaded_count = 0
         skipped_files = []
         target_folder_key = request.form.get("folder_key", "").strip()
-        if target_folder_key not in valid_project_folder_keys():
+        if target_folder_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("File folder not found.")
             return redirect(url_for("project_files", project_id=project_id))
+        if not is_main_admin():
+            if not (is_mobile_capture and target_folder_key in allowed_folder_keys):
+                conn.close()
+                flash("Only the main admin can upload project files.")
+                return redirect(url_for("project_files", project_id=project_id))
         target_dir_id = request.form.get("dir", type=int)
         target_dir = load_project_folder(conn, project_id, target_dir_id)
         if target_dir_id and (not target_dir or target_dir.get("folder_key") != target_folder_key):
@@ -8818,13 +11206,18 @@ def project_files(project_id):
             flash("Subfolder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key))
 
+        description = request.form.get("capture_note", "").strip() or None
         uploads = request.files.getlist("project_files")
         if not uploads:
             uploads = request.files.getlist(f"{target_folder_key}_files")
+        if not uploads:
+            uploads = request.files.getlist("capture_files")
+        # Captures include photos, videos, and audio recordings, which aren't plain documents.
+        allowed_here = ALLOWED_PROJECT_FILES | ALLOWED_PHOTOS | ALLOWED_VIDEOS | ALLOWED_AUDIO
         for uploaded in uploads:
             if not uploaded or not uploaded.filename:
                 continue
-            if not allowed_project_file(uploaded.filename):
+            if file_ext(uploaded.filename) not in allowed_here:
                 skipped_files.append(uploaded.filename)
                 continue
             raw = uploaded.read()
@@ -8838,26 +11231,29 @@ def project_files(project_id):
             conn.execute(
                 """
                 INSERT INTO project_files
-                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, description, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (project_id, target_folder_key, target_dir_id or None, storage_path, uploaded.filename, len(raw), session.get("user_id"), now)
+                (project_id, target_folder_key, target_dir_id or None, storage_path, uploaded.filename, len(raw), session.get("user_id"), description, now)
             )
             uploaded_count += 1
         conn.commit()
         conn.close()
-        message = "Project files updated."
-        if uploaded_count:
-            message += f" {uploaded_count} file(s) uploaded."
-        elif not skipped_files:
-            message += " Choose at least one file to upload."
+        if is_mobile_capture:
+            message = "Added to folder." if uploaded_count else "Nothing was captured â€” take a picture, record audio, or attach a file first."
+        else:
+            message = "Project files updated."
+            if uploaded_count:
+                message += f" {uploaded_count} file(s) uploaded."
+            elif not skipped_files:
+                message += " Choose at least one file to upload."
         if skipped_files:
             message += " Unsupported file(s) skipped: " + ", ".join(skipped_files[:5])
         flash(message)
         return redirect(url_for("project_files", project_id=project_id, folder=target_folder_key, dir=target_dir_id or None))
 
     visible_folders = [
-        folder for folder in PROJECT_FILE_FOLDERS
+        folder for folder in all_project_file_folders(conn)
         if folder["key"] in allowed_folder_keys
     ]
     selected_folder_key = request.args.get("folder", "").strip()
@@ -8922,6 +11318,24 @@ def project_files(project_id):
             """,
             tuple(file_params)
         ).fetchall()
+    custom_keys = sorted(custom_folder_keys(conn))
+    project_workers = [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "can_login": bool(row.get("pin_hash")) and bool((row.get("email") or "").strip()),
+        }
+        for row in conn.execute(
+            """
+            SELECT users.id, users.name, users.email, users.pin_hash
+            FROM users
+            JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
+            WHERE users.role <> 'admin'
+            ORDER BY users.name
+            """,
+            (project_id,)
+        ).fetchall()
+    ]
     conn.close()
     return render_template(
         "project_files.html",
@@ -8934,7 +11348,9 @@ def project_files(project_id):
         current_dir_id=(current_dir["id"] if current_dir else None),
         breadcrumb=breadcrumb,
         current_files=current_files,
-        folders_json=folders_json
+        folders_json=folders_json,
+        custom_folder_keys=custom_keys,
+        project_workers=project_workers
     )
 
 
@@ -8947,7 +11363,7 @@ def create_project_folder(project_id):
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
     folder_key = request.form.get("folder_key", "").strip()
-    if folder_key not in valid_project_folder_keys():
+    if folder_key not in valid_project_folder_keys(conn):
         conn.close()
         flash("File folder not found.")
         return redirect(url_for("project_files", project_id=project_id))
@@ -8985,6 +11401,89 @@ def create_project_folder(project_id):
     conn.close()
     flash(f'Folder "{name}" created.')
     return redirect(url_for("project_files", project_id=project_id, folder=folder_key, dir=parent_id or None))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/create", methods=["POST"])
+@admin_required
+def create_top_file_folder(project_id):
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    label = (request.form.get("label", "") or "").strip()[:60]
+    if not label:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id))
+    existing = valid_project_folder_keys(conn)
+    base = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "folder"
+    key = base
+    suffix = 2
+    while key in existing:
+        key = f"{base}_{suffix}"
+        suffix += 1
+    now = utc_now_iso()
+    conn.execute(
+        "INSERT INTO custom_file_folders (folder_key, label, created_by, created_at) VALUES (%s, %s, %s, %s)",
+        (key, label, session.get("user_id"), now)
+    )
+    # Make the new folder visible to everyone who can already access each project,
+    # the same way the built-in folders are shared.
+    conn.execute(
+        """
+        INSERT INTO project_file_permissions (project_id, user_id, folder_key, can_view, created_at, updated_at)
+        SELECT project_id, user_id, %s, TRUE, %s, %s FROM project_permissions
+        ON CONFLICT (project_id, user_id, folder_key) DO NOTHING
+        """,
+        (key, now, now)
+    )
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{label}" added. It is now available in every project.')
+    return redirect(url_for("project_files", project_id=project_id, folder=key))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/<folder_key>/rename", methods=["POST"])
+@admin_required
+def rename_top_file_folder(project_id, folder_key):
+    conn = db()
+    row = conn.execute("SELECT * FROM custom_file_folders WHERE folder_key = %s", (folder_key,)).fetchone()
+    if not row:
+        conn.close()
+        flash("That folder can't be renamed.")
+        return redirect(url_for("project_files", project_id=project_id))
+    label = (request.form.get("name", "") or "").strip()[:60]
+    if not label:
+        conn.close()
+        flash("Enter a folder name.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+    conn.execute("UPDATE custom_file_folders SET label = %s WHERE folder_key = %s", (label, folder_key))
+    conn.commit()
+    conn.close()
+    flash("Folder renamed.")
+    return redirect(url_for("project_files", project_id=project_id, folder=folder_key))
+
+
+@app.route("/project/<int:project_id>/files/top-folder/<folder_key>/delete", methods=["POST"])
+@admin_required
+def delete_top_file_folder(project_id, folder_key):
+    conn = db()
+    row = conn.execute("SELECT * FROM custom_file_folders WHERE folder_key = %s", (folder_key,)).fetchone()
+    if not row:
+        conn.close()
+        flash("That folder can't be deleted.")
+        return redirect(url_for("project_files", project_id=project_id))
+    # Custom top-level folders are shared across every project, so deleting one
+    # removes its subfolders, files, and access rows everywhere.
+    conn.execute("DELETE FROM project_files WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM project_folders WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM project_file_permissions WHERE folder_key = %s", (folder_key,))
+    conn.execute("DELETE FROM custom_file_folders WHERE folder_key = %s", (folder_key,))
+    conn.commit()
+    conn.close()
+    flash(f'Folder "{row["label"]}" was deleted from all projects.')
+    return redirect(url_for("project_files", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/files/folder/<int:folder_id>/rename", methods=["POST"])
@@ -9072,7 +11571,7 @@ def move_project_folder(project_id, folder_id):
     dest_kind = request.form.get("dest_kind", "")
     if dest_kind == "root":
         new_key = request.form.get("dest_key", "").strip()
-        if new_key not in valid_project_folder_keys():
+        if new_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("Destination folder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=folder["folder_key"]))
@@ -9152,7 +11651,7 @@ def move_project_file(project_id, file_id):
     dest_kind = request.form.get("dest_kind", "")
     if dest_kind == "root":
         new_key = request.form.get("dest_key", "").strip()
-        if new_key not in valid_project_folder_keys():
+        if new_key not in valid_project_folder_keys(conn):
             conn.close()
             flash("Destination folder not found.")
             return redirect(url_for("project_files", project_id=project_id, folder=file_row.get("folder_key")))
@@ -9178,6 +11677,113 @@ def move_project_file(project_id, file_id):
     conn.close()
     flash("File moved.")
     return redirect(url_for("project_files", project_id=project_id, folder=new_key, dir=new_folder_id or None))
+
+
+@app.route("/project/<int:project_id>/files/<int:file_id>/open")
+def open_project_file(project_id, file_id):
+    """Direct link to one project file (used by Send To emails). Requires login;
+    workers land on the mobile login and come straight back to the file."""
+    if "user_id" not in session:
+        return redirect(url_for("mobile_login", next=request.full_path))
+    conn = db()
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not file_row:
+        conn.close()
+        flash("That file is no longer in ProjectONus.")
+        return redirect(url_for("index"))
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        flash("You do not have access to this project.")
+        return redirect(url_for("index"))
+    if file_row.get("folder_key") not in project_file_access_keys(conn, project_id):
+        conn.close()
+        flash("You do not have permission to view this file folder.")
+        return redirect(url_for("index"))
+    conn.close()
+    return redirect(url_for("storage_file", storage_path=file_row["storage_path"]))
+
+
+@app.route("/project/<int:project_id>/files/<int:file_id>/send", methods=["POST"])
+@admin_required
+def send_project_file(project_id, file_id):
+    next_url = request.form.get("next") or url_for("project_files", project_id=project_id)
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    file_row = conn.execute(
+        "SELECT * FROM project_files WHERE id = %s AND project_id = %s",
+        (file_id, project_id)
+    ).fetchone()
+    if not project or not file_row:
+        conn.close()
+        flash("Project file not found.")
+        return redirect(next_url)
+    user_ids = []
+    for value in request.form.getlist("user_ids"):
+        try:
+            user_ids.append(int(value))
+        except Exception:
+            pass
+    if not user_ids:
+        conn.close()
+        flash("Choose at least one worker to send the file to.")
+        return redirect(next_url)
+    recipients = conn.execute(
+        """
+        SELECT users.*
+        FROM users
+        JOIN project_permissions ON project_permissions.user_id = users.id AND project_permissions.project_id = %s
+        WHERE users.id = ANY(%s) AND users.role <> 'admin'
+        """,
+        (project_id, user_ids)
+    ).fetchall()
+    filename = file_row.get("original_filename") or "Project file"
+    link = external_url("open_project_file", project_id=project_id, file_id=file_id)
+    now = utc_now_iso()
+    sent_names, skipped_names = [], []
+    for user in recipients:
+        if not (user.get("email") or "").strip() or not user.get("pin_hash"):
+            skipped_names.append(user.get("name") or "worker")
+            continue
+        # Make sure the emailed link will actually open: grant view access to this folder.
+        conn.execute(
+            """
+            INSERT INTO project_file_permissions (project_id, user_id, folder_key, can_view, created_at, updated_at)
+            VALUES (%s, %s, %s, TRUE, %s, %s)
+            ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET can_view = TRUE, updated_at = EXCLUDED.updated_at
+            """,
+            (project_id, user["id"], file_row.get("folder_key"), now, now)
+        )
+        body = (
+            f"Hi {user.get('name') or ''},\n\n"
+            f"{session.get('name') or 'The office'} shared a file with you from project {project.get('name')}:\n\n"
+            f"    {filename}\n\n"
+            f"Open it here (log in with your email and PIN):\n{link}\n\n"
+            f"The file opens right after you log in."
+        )
+        if send_email(user["email"], f"File shared with you: {filename} - {project.get('name')}", body):
+            sent_names.append(user.get("name") or user["email"])
+            try:
+                add_notification(
+                    conn, user["id"], user.get("name") or "", user.get("email") or "", user.get("role") or "",
+                    "task_updated", project_id, None,
+                    f"File shared with you: {filename} ({project.get('name')})"
+                )
+            except Exception as e:
+                print("File share notification failed:", e)
+        else:
+            skipped_names.append(user.get("name") or user["email"])
+    conn.commit()
+    conn.close()
+    message = ""
+    if sent_names:
+        message = f'"{filename}" was emailed to: ' + ", ".join(sent_names) + "."
+    if skipped_names:
+        message += (" " if message else "") + "Could not send to: " + ", ".join(skipped_names) + " (missing email, no active login, or email failed)."
+    flash(message or "Nothing was sent.")
+    return redirect(next_url)
 
 
 
@@ -10547,6 +13153,14 @@ def create_global_task():
             for draft in task_drafts:
                 draft["task_start_date"] = draft.get("task_start_date") or datetime.now().date().isoformat()
                 draft["task_end_date"] = draft.get("task_end_date") or draft["task_start_date"]
+        task_phase_id = optional_int(request.form.get("phase_id"))
+        if task_phase_id:
+            phase_ok = conn.execute(
+                "SELECT 1 FROM project_phases WHERE id = %s AND project_id = %s",
+                (task_phase_id, project_id)
+            ).fetchone()
+            if not phase_ok:
+                task_phase_id = None
         created_tasks = []
         assignment_group_id = uuid.uuid4().hex
 
@@ -10561,8 +13175,8 @@ def create_global_task():
                 task = conn.execute(
                     """
                     INSERT INTO tasks
-                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (task_number, project_id, room_id, assigned_user_id, created_by, task_date, task_start_date, task_start_time, task_end_date, title, instructions, task_photo_file, task_audio_file, supplier_id, supplier_inventory_item_id, phase_id, require_picture, allow_picture_upload, allow_comment, allow_audio, status, assignment_group_id, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING *
                     """,
                     (
@@ -10581,6 +13195,7 @@ def create_global_task():
                         None,
                         supplier["id"] if supplier else None,
                         supplier_inventory_items[0]["id"] if supplier_inventory_items else None,
+                        task_phase_id,
                         assigned_require_picture,
                         assigned_allow_picture,
                         bool(assigned_permissions.get("write_comments")),
@@ -10607,6 +13222,13 @@ def create_global_task():
                 )
                 created_tasks.append((task, assigned))
 
+        if not supplier_mode and created_tasks:
+            material_error = create_task_materials_from_form(conn, created_tasks[0][0], project_id)
+            if material_error:
+                conn.rollback()
+                conn.close()
+                flash(material_error + " No tasks were created - fix the material and try again.")
+                return redirect(url_for("create_global_task"))
         conn.commit()
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
@@ -10627,6 +13249,12 @@ def create_global_task():
     users = conn.execute("SELECT id, name, email, phone_number, sms_enabled, role FROM users WHERE role <> 'admin' ORDER BY name").fetchall()
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
+    phases_by_project = {}
+    try:
+        for row in conn.execute("SELECT id, name, project_id FROM project_phases ORDER BY project_id, position, id").fetchall():
+            phases_by_project.setdefault(str(row["project_id"]), []).append({"id": row["id"], "name": row["name"]})
+    except Exception:
+        conn.rollback()
     conn.close()
     return render_template(
         "create_task.html",
@@ -10639,7 +13267,8 @@ def create_global_task():
         selected_project_id=selected_project_id,
         selected_room_id=selected_room_id,
         selected_supplier_id=selected_supplier_id,
-        pickup_prefill=pickup_prefill
+        pickup_prefill=pickup_prefill,
+        phases_by_project=phases_by_project
     )
 
 
@@ -10713,6 +13342,7 @@ def edit_task(task_id):
                 task_end_date = %s,
                 title = %s,
                 instructions = %s,
+                phase_id = %s,
                 require_picture = %s,
                 allow_picture_upload = %s,
                 allow_comment = %s,
@@ -10731,6 +13361,7 @@ def edit_task(task_id):
                 end_date,
                 title,
                 request.form.get("instructions", "").strip(),
+                task_phase_id_or_none(conn, task["project_id"], request.form.get("phase_id")),
                 assigned_require_picture,
                 assigned_allow_picture,
                 bool(assigned_permissions.get("write_comments")),
@@ -10770,7 +13401,19 @@ def edit_task(task_id):
 
     task = load_task_details(conn, [task])[0]
     conn.close()
-    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url, task_status_options=TASK_STATUS_LABELS)
+    try:
+        project_phases = conn2 = None
+        conn2 = db()
+        project_phases = conn2.execute(
+            "SELECT id, name FROM project_phases WHERE project_id = %s ORDER BY position, id",
+            (task["project_id"],)
+        ).fetchall()
+        conn2.close()
+    except Exception:
+        project_phases = []
+        if conn2:
+            conn2.close()
+    return render_template("edit_task.html", task=task, users=users, rooms=rooms, next_url=next_url, task_status_options=TASK_STATUS_LABELS, project_phases=project_phases)
 
 
 @app.route("/tasks/<int:task_id>/room-status/<int:room_id>", methods=["POST"])
@@ -10870,6 +13513,62 @@ def notify_supplier_task_saved(conn, task, message):
     )
 
 
+def sync_supplier_task_status(conn, task):
+    """Reflect supplier material progress onto the task's own status.
+
+    All materials picked up (or used) -> completed; anything unavailable,
+    backordered, or waiting arrival -> waiting on material; some picked up
+    -> in progress. A task already marked completed is never downgraded.
+    """
+    task_id = task.get("id")
+    rows = conn.execute(
+        """
+        SELECT inventory_items.status
+        FROM inventory_items
+        WHERE EXISTS (
+                SELECT 1 FROM task_supplier_items
+                WHERE task_supplier_items.task_id = %s
+                  AND task_supplier_items.inventory_item_id = inventory_items.id
+              )
+           OR inventory_items.id = (
+                SELECT supplier_inventory_item_id FROM tasks
+                WHERE tasks.id = %s AND supplier_inventory_item_id IS NOT NULL
+              )
+        """,
+        (task_id, task_id)
+    ).fetchall()
+    statuses = [str(row.get("status") or "") for row in rows]
+    if not statuses:
+        return
+    if all(s in ("picked_up", "used") for s in statuses):
+        new_status = "completed"
+    elif any(s in ("unavailable", "backordered", "purchased_waiting_arrival") for s in statuses):
+        new_status = "waiting_material"
+    elif any(s in ("picked_up", "used") for s in statuses):
+        new_status = "in_progress"
+    else:
+        return
+    current = normalize_task_status(task.get("status"))
+    if current == new_status or current == "completed":
+        return
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = %s,
+            completed_at = CASE WHEN %s THEN COALESCE(completed_at, %s) ELSE completed_at END
+        WHERE id = %s
+        """,
+        (new_status, new_status == "completed", utc_now_iso(), task_id)
+    )
+    task["status"] = new_status
+    if new_status == "completed":
+        # Pickup done -> flip waiting install-task materials to ready and notify.
+        try:
+            mark_task_materials_ready(conn, pickup_task_id=task_id, place_text="- on the truck")
+        except Exception as e:
+            print("Material ready sync skipped:", e)
+
+
 @app.route("/tasks/<int:task_id>/supplier-items/add", methods=["POST"])
 @login_required
 def add_task_supplier_item(task_id):
@@ -10899,7 +13598,7 @@ def add_task_supplier_item(task_id):
     item_model = request.form.get("item_model", "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     item = conn.execute(
         """
         INSERT INTO inventory_items
@@ -10932,6 +13631,7 @@ def add_task_supplier_item(task_id):
     link_supplier_items_to_task(conn, task_id, [item])
     if not task.get("supplier_inventory_item_id"):
         conn.execute("UPDATE tasks SET supplier_inventory_item_id = %s WHERE id = %s", (item["id"], task_id))
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(conn, task, f"Supplier material added: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
@@ -10968,7 +13668,7 @@ def update_task_supplier_item(task_id, item_id):
     item_model = request.form.get("item_model", "").strip()
     brand = request.form.get("brand", "").strip()
     used_note = request.form.get("used_note", "").strip()
-    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part")
+    part_catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, used_note, item_type="part", unit_measure=clean_unit_measure(request.form.get("unit_measure")))
     conn.execute(
         """
         UPDATE inventory_items
@@ -10981,6 +13681,7 @@ def update_task_supplier_item(task_id, item_id):
             supplier_pickup_time = %s,
             status = %s,
             supplier_picked_up = %s,
+            location_type = CASE WHEN %s THEN 'truck' ELSE location_type END,
             purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
             purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
             used_note = %s,
@@ -10998,6 +13699,7 @@ def update_task_supplier_item(task_id, item_id):
             status,
             status == "picked_up",
             status == "picked_up",
+            status == "picked_up",
             session.get("user_id"),
             status == "picked_up",
             now,
@@ -11007,6 +13709,7 @@ def update_task_supplier_item(task_id, item_id):
         )
     )
     item_name = item_name or "Material"
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(conn, task, f"Supplier material updated: {item_name} - {task_display_name(task)}")
     conn.commit()
     conn.close()
@@ -11073,12 +13776,14 @@ def pickup_task_supplier_item(task_id, item_id):
         return redirect(next_url)
     picked_up = supplier_status == "picked_up"
     now = utc_now_iso()
+    # Picked up -> the material is in stock on the worker's truck; the project
+    # inventory shows it there until it is moved or used.
     conn.execute(
         """
         UPDATE inventory_items
         SET supplier_picked_up = %s,
             status = %s,
-            location_type = 'job_site',
+            location_type = CASE WHEN %s THEN 'truck' ELSE location_type END,
             purchased_by = CASE WHEN %s THEN COALESCE(purchased_by, %s) ELSE NULL END,
             purchased_at = CASE WHEN %s THEN COALESCE(purchased_at, %s) ELSE NULL END,
             updated_at = %s
@@ -11087,6 +13792,7 @@ def pickup_task_supplier_item(task_id, item_id):
         (
             picked_up,
             supplier_status,
+            picked_up,
             picked_up,
             session.get("user_id"),
             picked_up,
@@ -11097,12 +13803,13 @@ def pickup_task_supplier_item(task_id, item_id):
     )
     if supplier_uploads:
         insert_task_attachments(conn, task_id, supplier_uploads)
+    sync_supplier_task_status(conn, task)
     notify_supplier_task_saved(
         conn,
         task,
         f"Supplier task status saved: {inventory_status_label(supplier_status)} - {item.get('item_name') or 'Material'} - {task_display_name(task)}"
     )
-    flash("Task status saved, project inventory updated, and admin notified.")
+    flash(f"Task status saved ({task_status_label(task)}), project inventory updated, and admin notified.")
     conn.commit()
     conn.close()
     return redirect(next_url)
@@ -11461,7 +14168,7 @@ def complete_task(task_id):
             """
             UPDATE inventory_items
             SET status = 'picked_up',
-                location_type = 'job_site',
+                location_type = 'truck',
                 purchased_by = COALESCE(purchased_by, %s),
                 purchased_at = COALESCE(purchased_at, %s),
                 updated_at = %s
@@ -11475,6 +14182,29 @@ def complete_task(task_id):
             """,
             (session.get("user_id"), now, now, task_id, task_id)
         )
+    if mark_entire_task_done:
+        # Materials allocated from stock are consumed when the task is done.
+        try:
+            used_now = utc_now_iso()
+            for m in conn.execute(
+                "SELECT * FROM task_materials WHERE task_id = %s AND source = 'stock' AND status IN ('allocated', 'ready')",
+                (task_id,)
+            ).fetchall():
+                if m.get("inventory_item_id"):
+                    conn.execute(
+                        """
+                        UPDATE inventory_items
+                        SET quantity = GREATEST(COALESCE(quantity, 0) - %s, 0),
+                            status = CASE WHEN COALESCE(quantity, 0) - %s <= 0.001 THEN 'used' ELSE status END,
+                            updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (m["quantity"], m["quantity"], used_now, m["inventory_item_id"])
+                    )
+                conn.execute("UPDATE task_materials SET status = 'used' WHERE id = %s", (m["id"],))
+        except Exception as e:
+            conn.rollback()
+            print("Task material consumption skipped:", e)
     conn.commit()
     notification_ok = True
     try:
@@ -11717,26 +14447,24 @@ def worker_assignment_task_rows(conn, source_task):
 def today_tasks():
     if is_main_admin():
         return redirect(url_for("my_tasks", mode="search"))
-    conn = db()
-    task_day = local_now().date()
-    target_project_id = None
     calendar_task_id = request.args.get("calendar_task", type=int)
     notification_task_id = request.args.get("notification_task", type=int)
     context_task_id = calendar_task_id or notification_task_id
     if context_task_id:
-        context_task = conn.execute(
-            "SELECT project_id, task_start_date, task_date FROM tasks WHERE id = %s AND assigned_user_id = %s",
-            (context_task_id, session.get("user_id"))
-        ).fetchone()
-        task_day = task_scheduled_date_value(context_task) or task_day
-        target_project_id = context_task.get("project_id") if context_task else None
-    task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+        # A task link (notification, SMS, calendar) opens that exact task -
+        # not a project-filtered list where other tasks can hide it.
+        extra = {"calendar_task": calendar_task_id} if calendar_task_id else {}
+        return redirect(url_for("open_task_workspace", task_id=context_task_id, **extra))
+    conn = db()
+    task_day = local_now().date()
+    task_rows = worker_today_task_rows(conn, target_date=task_day)
     received_any = False
     for task_row in task_rows:
         if not task_row.get("accepted_at"):
             received_any = mark_task_assignment_received(conn, task_row) or received_any
     if received_any:
-        task_rows = worker_today_task_rows(conn, target_date=task_day, target_project_id=target_project_id)
+        conn.commit()
+        task_rows = worker_today_task_rows(conn, target_date=task_day)
     tasks = load_task_details(conn, task_rows)
     catalog = part_catalog_options(conn)
     conn.close()
@@ -11783,16 +14511,12 @@ def assignment_tasks(task_id):
         conn.close()
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
-    tasks = load_task_details(conn, worker_assignment_task_rows(conn, source_task))
-    catalog = part_catalog_options(conn)
     conn.close()
-    return render_template(
-        "today_tasks.html",
-        tasks=tasks,
-        task_status_options=TASK_STATUS_LABELS,
-        part_catalog=catalog,
-        today=(task_scheduled_date_value(source_task) or local_now().date()).isoformat()
-    )
+    # Open the exact task the worker was sent - never a merged project view.
+    extra = {}
+    if request.args.get("calendar_task", type=int):
+        extra["calendar_task"] = request.args.get("calendar_task", type=int)
+    return redirect(url_for("open_task_workspace", task_id=task_id, **extra))
 
 
 @app.route("/tasks/<int:task_id>/work")
@@ -11827,6 +14551,13 @@ def open_task_workspace(task_id):
         conn.close()
         flash("This task is assigned to another user.")
         return redirect(url_for("today_tasks"))
+    if task.get("assigned_user_id") == session.get("user_id") and not task.get("accepted_at"):
+        if mark_task_assignment_received(conn, task):
+            conn.commit()
+            refreshed = conn.execute("SELECT accepted_at, status FROM tasks WHERE id = %s", (task_id,)).fetchone()
+            if refreshed:
+                task["accepted_at"] = refreshed.get("accepted_at")
+                task["status"] = refreshed.get("status")
     task = load_task_details(conn, [task], task.get("room_id"))[0]
     catalog = part_catalog_options(conn)
     conn.close()
@@ -13324,9 +16055,13 @@ def attendance_report():
     selected_date = request.args.get("date") or local_now().date().isoformat()
     selected_user_id = request.args.get("user_id", type=int)
     selected_project_id = request.args.get("project_id", type=int)
+    back_to = request.args.get("back_to") or ""
+    if not back_to.startswith("/") or back_to.startswith("//"):
+        back_to = ""
     report = attendance_report_data(period, selected_date, selected_user_id, selected_project_id)
     return render_template(
         "attendance_report.html",
+        back_to=back_to,
         users=report["users"],
         projects=report["projects"],
         pairs=report["pairs"],
@@ -13893,6 +16628,19 @@ def confirm_delete_attendance_line():
     )
 
 
+SETTINGS_TABS = [
+    ("company_logo", "Company Logo"),
+    ("contact_card", "Contact Card"),
+    ("email_notifications", "Admin Email Notifications"),
+    ("invoice_settings", "Invoice Settings"),
+    ("dtools", "D-Tools Cloud Integration"),
+    ("permissions", "User Permissions"),
+    ("project_access", "Project Access"),
+    ("account_info", "Account Info"),
+    ("onedrive", "OneDrive Backup"),
+]
+
+
 @app.route("/settings", methods=["GET", "POST"])
 @admin_required
 def settings():
@@ -13924,6 +16672,8 @@ def settings():
             redirect_tab = "account_info"
             for key in ["company_name", "company_street_address", "company_city", "company_state", "company_zip_code", "company_contact_name", "company_phone", "company_email"]:
                 set_app_setting(key, request.form.get(key, "").strip())
+            trades = [t for t in request.form.getlist("company_trades") if t in PHASE_TEMPLATES]
+            set_app_setting("company_trades", ",".join(trades))
             set_app_setting(
                 "company_address",
                 format_company_address(
@@ -13979,7 +16729,7 @@ def settings():
                 (user_id,)
             ).fetchall()
             accessible_project_ids = {row["project_id"] for row in accessible_project_rows}
-            valid_folder_keys = {folder["key"] for folder in PROJECT_FILE_FOLDERS}
+            valid_folder_keys = valid_project_folder_keys(conn)
             selected_file_access = []
             if user and user.get("role") != "admin":
                 for project_id in accessible_project_ids:
@@ -14058,13 +16808,22 @@ def settings():
                     conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
                 conn.commit()
                 flash("Project access updated.")
-        if redirect_tab:
-            return redirect(url_for("settings", tab=redirect_tab))
-        return redirect(url_for("settings"))
+        action_tabs = {
+            "account_info": "account_info",
+            "logo": "company_logo",
+            "contact_card": "contact_card",
+            "email_notifications": "email_notifications",
+            "invoice_settings": "invoice_settings",
+            "dtools_cloud": "dtools",
+            "onedrive_settings": "onedrive",
+            "permissions": "permissions",
+            "project_access": "project_access",
+        }
+        return redirect(url_for("settings", tab=redirect_tab or action_tabs.get(action, "company_logo")))
 
-    active_tab = request.args.get("tab", "permissions")
-    if active_tab not in ["permissions", "project_access", "account_info"]:
-        active_tab = "permissions"
+    active_tab = request.args.get("tab", "company_logo")
+    if active_tab not in {key for key, _ in SETTINGS_TABS}:
+        active_tab = "company_logo"
     users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
     projects = conn.execute("SELECT id, name, customer_name, customer_address FROM projects ORDER BY name").fetchall()
     permissions = conn.execute("SELECT * FROM user_permissions").fetchall()
@@ -14076,6 +16835,7 @@ def settings():
         WHERE COALESCE(can_view, TRUE) = TRUE
         """
     ).fetchall()
+    settings_file_folders = all_project_file_folders(conn)
     conn.close()
     perm_map = {p["user_id"]: p for p in permissions}
     effective_perms = {}
@@ -14109,8 +16869,9 @@ def settings():
         project_access_map=project_access_map,
         project_file_access_map=project_file_access_map,
         file_project_map=file_project_map,
-        project_file_folders=PROJECT_FILE_FOLDERS,
+        project_file_folders=settings_file_folders,
         active_tab=active_tab,
+        settings_tabs=SETTINGS_TABS,
         permission_keys=PERMISSION_KEYS,
         onedrive_configured=onedrive_configured(),
         onedrive_connected=onedrive_connected(),
@@ -14638,7 +17399,7 @@ def onedrive_upload(parent_id, filename, data, content_type="application/octet-s
 def onedrive_connect():
     if not onedrive_configured():
         flash("Add the OneDrive Client ID and Secret in Render environment variables first.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     state = secrets.token_urlsafe(24)
     session["onedrive_state"] = state
     return redirect(onedrive_authorize_url(state))
@@ -14650,14 +17411,14 @@ def onedrive_callback():
     error = request.args.get("error_description") or request.args.get("error")
     if error:
         flash(f"OneDrive connection cancelled: {error}")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     if request.args.get("state") != session.pop("onedrive_state", None):
         flash("OneDrive connection failed a security check. Please try again.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     code = request.args.get("code", "")
     if not code:
         flash("OneDrive did not return an authorization code.")
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", tab="onedrive"))
     try:
         tok = onedrive_token_request({"grant_type": "authorization_code", "code": code})
         onedrive_save_tokens(tok)
@@ -14671,7 +17432,7 @@ def onedrive_callback():
         flash(f"OneDrive connected. The '{onedrive_root_folder()}' folder is ready.")
     except Exception as e:
         flash(f"Could not connect OneDrive: {e}")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="onedrive"))
 
 
 @app.route("/settings/onedrive/disconnect", methods=["POST"])
@@ -14683,7 +17444,7 @@ def onedrive_disconnect():
     _ONEDRIVE_TOKEN_CACHE["access_token"] = ""
     _ONEDRIVE_TOKEN_CACHE["expires_at"] = 0
     flash("OneDrive disconnected.")
-    return redirect(url_for("settings"))
+    return redirect(url_for("settings", tab="onedrive"))
 
 
 def onedrive_collect_project_assets(conn, project_id):
@@ -14821,7 +17582,7 @@ def onedrive_backup_project(project_id):
             export = {"project": project["name"], "generated_at": utc_now_iso(), "comments": comments}
             onedrive_upload(folder_id, "comments.json", json.dumps(export, indent=2, default=str).encode("utf-8"), "application/json")
             readable = "\n\n".join(
-                f"[{c['date']}] {c['room'] or 'Project'} — {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
+                f"[{c['date']}] {c['room'] or 'Project'} â€” {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
             ) or "No comments yet."
             onedrive_upload(folder_id, "comments.txt", readable.encode("utf-8"), "text/plain")
         except Exception:

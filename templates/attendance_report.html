@@ -2,8 +2,12 @@
 {% block content %}
 {% set report_url = url_for('attendance_report', user_id=selected_user_id or '', project_id=selected_project_id or '', period=period, date=selected_date) %}
 <div class="card noPrint">
+    {% if back_to %}
+        <a class="btn-link" href="{{ back_to }}" style="margin-bottom:10px">&larr; Back to Paystub</a>
+    {% endif %}
     <h2>{% if my_report %}My Time Report{% else %}Time Report{% endif %}</h2>
     <form method="get">
+        {% if back_to %}<input type="hidden" name="back_to" value="{{ back_to }}">{% endif %}
         <div class="grid">
             {% if not my_report %}
             <div>

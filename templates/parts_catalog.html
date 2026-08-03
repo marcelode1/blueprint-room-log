@@ -31,6 +31,13 @@
             <div><label>Category</label><input name="category" value="{{ edit_part.category or '' }}"></div>
             <div><label>Unit Price</label><input name="unit_price" class="catalogCurrencyInput" type="text" inputmode="text" value="{{ format_invoice_money(edit_part.unit_price) if edit_part.unit_price is not none else '' }}" placeholder="$0.00"></div>
             <div><label>Unit Cost</label><input name="unit_cost" class="catalogCurrencyInput" type="text" inputmode="text" value="{{ format_invoice_money(edit_part.unit_cost) if edit_part.unit_cost is not none else '' }}" placeholder="$0.00"></div>
+            <div>
+                <label>Sold As</label>
+                <select name="unit_measure">
+                    <option value="UN" {% if (edit_part.unit_measure or 'UN') != 'PR' %}selected{% endif %}>UN &mdash; Unit</option>
+                    <option value="PR" {% if edit_part.unit_measure == 'PR' %}selected{% endif %}>PR &mdash; Pair</option>
+                </select>
+            </div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if edit_part.taxable %}checked{% endif %}> Taxable</label>
         <label>Description</label>
@@ -58,6 +65,13 @@
             <div><label>Category</label><input name="category" placeholder="Audio, network, labor, camera"></div>
             <div><label>Unit Price</label><input name="unit_price" class="catalogCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
             <div><label>Unit Cost</label><input name="unit_cost" class="catalogCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
+            <div>
+                <label>Sold As</label>
+                <select name="unit_measure">
+                    <option value="UN" selected>UN &mdash; Unit</option>
+                    <option value="PR">PR &mdash; Pair</option>
+                </select>
+            </div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
         <label>Description</label>
@@ -101,7 +115,10 @@
                         {% if part.description %}<span class="catalogDescription">{{ part.description }}</span>{% endif %}
                         {% if part.part_number %}<span class="catalogSmall">Part #: {{ part.part_number }}</span>{% endif %}
                     </td>
-                    <td><span class="catalogType {{ 'catalogLabor' if part.item_type == 'service' else 'catalogMaterial' }}">{{ 'Labor' if part.item_type == 'service' else 'Material' }}</span></td>
+                    <td>
+                        <span class="catalogType {{ 'catalogLabor' if part.item_type == 'service' else 'catalogMaterial' }}">{{ 'Labor' if part.item_type == 'service' else 'Material' }}</span>
+                        {% if part.item_type != 'service' %}<span class="catalogSmall">{{ 'PR — Pair' if part.unit_measure == 'PR' else 'UN — Unit' }}</span>{% endif %}
+                    </td>
                     <td>
                         <span>{{ part.brand or '-' }}</span>
                         {% if part.item_model %}<span class="catalogSmall">{{ part.item_model }}</span>{% endif %}

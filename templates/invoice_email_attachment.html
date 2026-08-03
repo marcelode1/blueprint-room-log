@@ -28,10 +28,20 @@
         .invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}
         .invoiceGrandTotal{border-top:1px solid #d7dee9;padding-top:10px;font-size:13px}
         .invoiceNotes{border-top:2px solid #172033;padding-top:10px;min-height:1px}
+        .invoicePaper{position:relative}
+        .paidStamp{position:absolute;top:96px;left:50%;transform:translateX(-50%) rotate(-12deg);display:flex;flex-direction:column;align-items:center;color:#1f2937;opacity:.82;z-index:5;font-family:"Arial Black",Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        .paidStampWord{font-size:64px;font-weight:900;letter-spacing:8px;line-height:.9;text-transform:uppercase}
+        .paidStampDate{font-size:22px;font-weight:900;letter-spacing:3px;margin-top:2px}
     </style>
 </head>
 <body>
     <div class="invoicePaper">
+        {% if paid_stamp_date %}
+        <div class="paidStamp">
+            <span class="paidStampWord">PAID</span>
+            <span class="paidStampDate">{{ paid_stamp_date }}</span>
+        </div>
+        {% endif %}
         <div class="invoiceHeader">
             <div class="invoiceCompanyBox">
                 {% if invoice_logo_src %}<img class="invoiceLogo" src="{{ invoice_logo_src }}" alt="Company Logo">{% endif %}
