@@ -126,7 +126,11 @@
                             <td>
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
                                 <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
-                                <select name="line_part_catalog_id" class="lineItemSelect" required>
+                                <div class="lineCombo">
+                                    <input type="text" class="lineItemSearch" value="{{ line.item_name }}" placeholder="Type item name" autocomplete="off" spellcheck="false">
+                                    <div class="lineSuggest" hidden></div>
+                                </div>
+                                <select name="line_part_catalog_id" class="lineItemSelect" tabindex="-1">
                                     <option value="{{ line.part_catalog_id if line.part_catalog_id else 'saved_' ~ loop.index0 }}"
                                         data-name="{{ line.item_name }}"
                                         data-description="{{ line.description or '' }}"
@@ -152,7 +156,12 @@
                                     {% endfor %}
                                 </select>
                             </td>
-                            <td><textarea name="line_description" class="lineDescription" rows="1">{{ line.description or '' }}</textarea></td>
+                            <td>
+                                <div class="lineCombo">
+                                    <textarea name="line_description" class="lineDescription" rows="1">{{ line.description or '' }}</textarea>
+                                    <div class="lineSuggest" hidden></div>
+                                </div>
+                            </td>
                             <td>
                                 {% set location_match = namespace(found=false) %}
                                 <select name="line_location" class="lineLocation">
@@ -198,7 +207,11 @@
                 <td>
                     <input type="hidden" name="line_item_name" class="lineItemName">
                     <input type="hidden" name="line_item_type" class="lineItemType" value="part">
-                    <select name="line_part_catalog_id" class="lineItemSelect" required>
+                    <div class="lineCombo">
+                        <input type="text" class="lineItemSearch" placeholder="Type item name" autocomplete="off" spellcheck="false">
+                        <div class="lineSuggest" hidden></div>
+                    </div>
+                    <select name="line_part_catalog_id" class="lineItemSelect" tabindex="-1">
                         <option value="__new__">NEW ITEM</option>
                         <option value="" selected hidden>Choose item</option>
                         {% for item in part_catalog %}
@@ -213,7 +226,12 @@
                         {% endfor %}
                     </select>
                 </td>
-                <td><textarea name="line_description" class="lineDescription" rows="1"></textarea></td>
+                <td>
+                    <div class="lineCombo">
+                        <textarea name="line_description" class="lineDescription" rows="1"></textarea>
+                        <div class="lineSuggest" hidden></div>
+                    </div>
+                </td>
                 <td>
                     <select name="line_location" class="lineLocation">
                         <option value="">Choose location</option>
@@ -584,6 +602,8 @@ function applySelectedItem(select){
     if(description)description.value=option.dataset.description||"";
     if(price)price.value=money(option.dataset.price||0);
     if(taxable)taxable.checked=option.dataset.taxable==="1";
+    const search=line.querySelector(".lineItemSearch");
+    if(search)search.value=option.dataset.name||option.textContent.trim();
     lockSelectedItem(select);
     markCatalogBaseline(line);
     updateLineAmount(line);
@@ -637,11 +657,17 @@ function updateCatalogOptionEverywhere(item){
         });
     }
 }
-function openNewItemModal(select){
+function openNewItemModal(select,prefillName){
     pendingItemSelect=select;
     newItemForm.reset();
     document.getElementById("newItemError").textContent="";
+    if(prefillName){
+        const nameField=newItemForm.querySelector('[name="item_name"]');
+        if(nameField)nameField.value=prefillName;
+    }
     newItemModal.hidden=false;
+    const focusField=newItemForm.querySelector(prefillName?'[name="brand"]':'[name="item_name"]');
+    if(focusField)requestAnimationFrame(()=>focusField.focus());
 }
 function addInvoiceLine(data={}, afterLine=null){
     lockAllSelectedItems();
@@ -665,7 +691,7 @@ function addInvoiceLine(data={}, afterLine=null){
         const gridWrap=document.querySelector(".invoiceGridWrap");
         if(gridWrap&&!afterLine)gridWrap.scrollTop=gridWrap.scrollHeight;
         line.scrollIntoView({block:"nearest",inline:"nearest"});
-        const firstInput=line.querySelector(".lineItemSelect");
+        const firstInput=line.querySelector(".lineItemSearch");
         if(firstInput)firstInput.focus({preventScroll:true});
     });
     markInvoiceDirty();
@@ -922,6 +948,172 @@ lineRows().forEach(markCatalogBaseline);
 refreshLineIndexes();
 updateInvoiceLiveTotals();
 invoiceDirty=false;
+
+/* ===== Item & Description type-ahead =====
+   Click = clean field, nothing opens. Typing shows matches that start with
+   the typed letters. Enter with no existing match opens the New Item window. */
+let combo=null; // {input, box, matches, index, kind}
+function comboBoxFor(input){
+    const wrap=input.closest(".lineCombo");
+    return wrap?wrap.querySelector(".lineSuggest"):null;
+}
+function hideCombo(){
+    if(combo&&combo.box){combo.box.hidden=true;combo.box.innerHTML="";}
+    combo=null;
+}
+function comboHighlight(){
+    if(!combo)return;
+    [...combo.box.children].forEach((el,i)=>el.classList.toggle("hl",i===combo.index));
+    if(combo.index>=0&&combo.box.children[combo.index])combo.box.children[combo.index].scrollIntoView({block:"nearest"});
+}
+function renderCombo(input,matches,kind){
+    const box=comboBoxFor(input);
+    if(!box)return;
+    box.innerHTML="";
+    if(!matches.length){box.hidden=true;combo=null;return;}
+    matches.forEach((m,i)=>{
+        const b=document.createElement("button");
+        b.type="button";
+        b.className="lineSuggestOpt";
+        b.dataset.idx=i;
+        b.textContent=m.label;
+        box.appendChild(b);
+    });
+    box.hidden=false;
+    combo={input,box,matches,index:-1,kind};
+}
+function catalogOptionsOf(select){
+    return [...select.options].filter(o=>o.value&&o.value!=="__new__");
+}
+function itemMatches(select,q){
+    q=q.toLowerCase();
+    const starts=[],contains=[];
+    catalogOptionsOf(select).forEach(o=>{
+        const name=(o.dataset.name||o.textContent).trim();
+        const label=o.textContent.trim();
+        if(!name)return;
+        if(name.toLowerCase().startsWith(q))starts.push({value:o.value,name,label});
+        else if(label.toLowerCase().includes(q))contains.push({value:o.value,name,label});
+    });
+    return starts.concat(contains).slice(0,12);
+}
+function descriptionMatches(select,q){
+    q=q.toLowerCase();
+    const seen=new Set(),starts=[],contains=[];
+    catalogOptionsOf(select).forEach(o=>{
+        const text=(o.dataset.description||"").trim();
+        if(!text)return;
+        const key=text.toLowerCase();
+        if(seen.has(key))return;
+        seen.add(key);
+        const label=text.length>90?text.slice(0,90)+"…":text;
+        if(key.startsWith(q))starts.push({text,label});
+        else if(key.includes(q))contains.push({text,label});
+    });
+    return starts.concat(contains).slice(0,10);
+}
+function pickComboOption(idx){
+    if(!combo||!combo.matches[idx])return;
+    const m=combo.matches[idx];
+    const input=combo.input;
+    const line=input.closest(".invoiceLine");
+    hideCombo();
+    if(!line)return;
+    if(input.matches(".lineItemSearch")){
+        const select=line.querySelector(".lineItemSelect");
+        if(select){
+            select.value=String(m.value);
+            applySelectedItem(select);
+        }
+        markInvoiceDirty();
+        line.querySelector(".lineDescription")?.focus();
+    }else{
+        input.value=m.text;
+        markInvoiceDirty();
+        input.focus();
+    }
+}
+invoiceLines.addEventListener("input",event=>{
+    if(event.target.matches(".lineItemSearch")){
+        const input=event.target;
+        const line=input.closest(".invoiceLine");
+        const select=line?.querySelector(".lineItemSelect");
+        const typed=input.value.trim();
+        const nameField=line?.querySelector(".lineItemName");
+        if(nameField)nameField.value=typed;
+        if(select){
+            const current=select.options[select.selectedIndex];
+            const currentName=current?(current.dataset.name||"").trim():"";
+            if(!typed||typed.toLowerCase()!==currentName.toLowerCase())select.value="";
+        }
+        if(!typed){hideCombo();return;}
+        renderCombo(input,itemMatches(select,typed),"item");
+        return;
+    }
+    if(event.target.matches(".lineDescription")){
+        const input=event.target;
+        const line=input.closest(".invoiceLine");
+        const select=line?.querySelector(".lineItemSelect");
+        const typed=input.value.trim();
+        if(!typed||!select){hideCombo();return;}
+        renderCombo(input,descriptionMatches(select,typed),"description");
+    }
+});
+invoiceLines.addEventListener("keydown",event=>{
+    const comboOpen=combo&&combo.input===event.target&&!combo.box.hidden;
+    if(comboOpen&&(event.key==="ArrowDown"||event.key==="ArrowUp")){
+        event.preventDefault();
+        event.stopPropagation();
+        const step=event.key==="ArrowDown"?1:-1;
+        combo.index=(combo.index+step+combo.matches.length)%combo.matches.length;
+        comboHighlight();
+        return;
+    }
+    if(comboOpen&&event.key==="Escape"){
+        event.stopPropagation();
+        hideCombo();
+        return;
+    }
+    if(event.key!=="Enter")return;
+    if(event.target.matches(".lineItemSearch")){
+        event.preventDefault();
+        event.stopPropagation();
+        const input=event.target;
+        const line=input.closest(".invoiceLine");
+        const select=line?.querySelector(".lineItemSelect");
+        const typed=input.value.trim();
+        if(comboOpen&&combo.index>=0){pickComboOption(combo.index);return;}
+        if(!typed){hideCombo();return;}
+        const exact=select?catalogOptionsOf(select).find(o=>(o.dataset.name||"").trim().toLowerCase()===typed.toLowerCase()):null;
+        hideCombo();
+        if(exact&&select){
+            select.value=exact.value;
+            applySelectedItem(select);
+            markInvoiceDirty();
+            line.querySelector(".lineDescription")?.focus();
+        }else if(select){
+            openNewItemModal(select,typed);
+        }
+        return;
+    }
+    if(event.target.matches(".lineDescription")&&comboOpen&&combo.index>=0){
+        event.preventDefault();
+        event.stopPropagation();
+        pickComboOption(combo.index);
+    }
+},true);
+invoiceLines.addEventListener("mousedown",event=>{
+    const optionBtn=event.target.closest(".lineSuggestOpt");
+    if(!optionBtn)return;
+    event.preventDefault();
+    pickComboOption(Number(optionBtn.dataset.idx));
+});
+invoiceLines.addEventListener("focusout",event=>{
+    if(event.target.matches(".lineItemSearch,.lineDescription")){
+        const input=event.target;
+        setTimeout(()=>{if(combo&&combo.input===input)hideCombo();},160);
+    }
+});
 </script>
 
 <style>
@@ -934,5 +1126,13 @@ invoiceDirty=false;
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog,.newRoomDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
 @media(min-width:901px){main:has(#invoiceForm){max-width:none;padding:10px 12px 18px}body.proTestTheme main:has(#invoiceForm){padding:10px 12px 18px}.invoiceHeaderActions{margin-bottom:2px}.invoiceTopTextFields{gap:8px;margin:4px 0 6px}.invoiceTopTextFields textarea{min-height:58px}.invoiceLinePanel{margin:8px 0}.invoiceLineToolbar{padding:4px 8px}.invoiceLineToolbar button{min-height:26px;padding:4px 9px;margin:0}.invoiceGridWrap{height:calc(100vh - 188px);min-height:660px;max-height:none}.invoiceGridTable{min-width:1380px}.invoiceGridTable th,.invoiceGridTable td{padding:2px 3px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:24px;padding:2px 5px;font-size:12px}.invoiceGridTable textarea{min-height:24px;line-height:1.15}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:310px}.invoiceGridTable th:nth-child(4),.invoiceGridTable td:nth-child(4){width:390px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:210px;min-width:180px}.invoiceGridTable .lineLocation{min-width:180px;max-width:360px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:130px}.invoiceGridTable .removeInvoiceLine,.invoiceGridTable .insertInvoiceLine{min-height:20px!important;padding:2px 4px!important;font-size:10px!important}.invoiceLiveTotals{margin:6px 10px 6px auto;padding:7px 10px;font-size:13px}.invoiceLiveTotals p{margin:2px 0}.invoiceLiveBalance{padding-top:5px;font-size:18px}}
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceTopTextFields{grid-template-columns:1fr}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
+.lineItemSelect{display:none!important}
+.lineCombo{position:relative}
+.lineCombo .lineItemSearch{width:100%}
+.lineSuggest{position:absolute;top:100%;left:0;min-width:100%;max-width:360px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);z-index:40;max-height:240px;overflow-y:auto;margin-top:2px}
+.lineSuggest[hidden]{display:none}
+.lineSuggestOpt{display:block!important;width:100%!important;text-align:left!important;background:#fff!important;border:none!important;border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:7px 10px!important;margin:0!important;min-height:0!important;font-size:12.5px!important;font-weight:600!important;color:#0f172a!important;cursor:pointer;white-space:normal!important;line-height:1.3!important}
+.lineSuggestOpt:last-child{border-bottom:none!important}
+.lineSuggestOpt:hover,.lineSuggestOpt.hl{background:#e0ecff!important}
 </style>
 {% endblock %}
