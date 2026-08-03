@@ -6,11 +6,10 @@
 {% set media_comment_label = media_comment_label|default('Comment') %}
 {% set media_comment_placeholder = media_comment_placeholder|default('Comment about this picture or audio') %}
 {% set media_save_label = media_save_label|default('Attach') %}
-{% set media_upload_accept = media_upload_accept|default('image/*,.heic,.heif') %}
 <div class="mobileMediaPicker" data-media-picker>
     <div class="mobileMediaNativeInputs">
         {% if media_upload_name %}
-            <input id="{{ media_id }}_upload" name="{{ media_upload_name }}" type="file" accept="{{ media_upload_accept }}" data-media-input="attach">
+            <input id="{{ media_id }}_upload" name="{{ media_upload_name }}" type="file" accept="image/*,.heic,.heif" data-media-input="attach">
         {% endif %}
         {% if media_audio_name %}
             <input id="{{ media_id }}_audio" name="{{ media_audio_name }}" type="file" accept="audio/*" capture data-media-input="audio" data-generated-prefix="AUD">

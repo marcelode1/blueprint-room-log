@@ -16,13 +16,7 @@
             </div>
             <div>
                 <label>Quantity</label>
-                <div class="qtyUnitBox">
-                    <input type="number" name="quantity" step="0.01" min="0" required>
-                    <select name="unit_measure" id="invUnitMeasure" class="qtyUnitSelect" aria-label="Unit or pair" title="UN = Unit, PR = Pair">
-                        <option value="UN" selected>UN</option>
-                        <option value="PR">PR</option>
-                    </select>
-                </div>
+                <input type="number" name="quantity" step="0.01" min="0" required>
             </div>
             <div class="invAcField">
                 <label>Item</label>
@@ -268,7 +262,7 @@
 .inventory-picked_up .statusBadge{background:#2563eb}
 .inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}
 .inventory-unavailable .statusBadge{background:#64748b}
-.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}
+.inventory-backordered .statusBadge{background:#d97706}
 .inventory-used .statusBadge{background:#dc2626}
 .inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:25px;border-radius:8px;border:1px solid var(--border)}

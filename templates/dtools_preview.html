@@ -3,7 +3,7 @@
 <div class="card">
     <h2>D-Tools Preview</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
-    <p class="muted">Review what ProjectONus found before importing. Parts become inventory and catalog records. Services/labor become Parts / Services records only. Items D-Tools marks as Client Supplied import with the status <strong>Client Supplied</strong> instead of Needs Purchase.</p>
+    <p class="muted">Review what ProjectONus found before importing. Parts become inventory and catalog records. Services/labor become Parts / Services records only.</p>
     <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Back to Project Inventory</a>
 </div>
 
@@ -39,7 +39,7 @@
             <tbody>
             {% for item in items %}
                 <tr class="dtoolsRow dtools-{{ item.item_type }}">
-                    <td><span class="typePill">{{ item.item_type|title }}</span>{% if item.client_supplied %}<br><span class="typePill csPill">Client Supplied</span>{% endif %}</td>
+                    <td><span class="typePill">{{ item.item_type|title }}</span></td>
                     <td><strong>{{ item.item_name }}</strong>{% if item.description %}<br><span class="muted">{{ item.description }}</span>{% endif %}</td>
                     <td>{{ item.brand or '-' }}</td>
                     <td>{{ item.model or '-' }}</td>
@@ -58,6 +58,6 @@
 </div>
 
 <style>
-.dtoolsPreviewWrap{overflow-x:auto}.dtoolsPreviewTable{width:100%;min-width:1050px;border-collapse:collapse}.dtoolsPreviewTable th,.dtoolsPreviewTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:top}.dtoolsPreviewTable th{background:#eef2f7}.dtools-service{background:#f5f3ff}.dtools-part{background:#f8fafc}.typePill{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}.csPill{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe;margin-top:4px;white-space:nowrap}
+.dtoolsPreviewWrap{overflow-x:auto}.dtoolsPreviewTable{width:100%;min-width:1050px;border-collapse:collapse}.dtoolsPreviewTable th,.dtoolsPreviewTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:top}.dtoolsPreviewTable th{background:#eef2f7}.dtools-service{background:#f5f3ff}.dtools-part{background:#f8fafc}.typePill{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
 </style>
 {% endblock %}
