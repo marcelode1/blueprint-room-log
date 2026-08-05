@@ -139,6 +139,15 @@
         <div id="taskMaterialsPanel" class="taskMaterialsPanel">
             <h3>Materials for This Task</h3>
             <p class="muted" style="margin-top:0">Pick a material from the catalog. The app checks the project inventory: in stock it allocates it, otherwise you can create a PO or a pickup task.</p>
+            {% if material_prefill_list %}
+            <div class="taskCartNotice">
+                <span>{{ material_prefill_list|length }} material{{ '' if material_prefill_list|length == 1 else 's' }} added from your Task Cart.</span>
+                <form method="post" action="{{ url_for('clear_task_cart') }}" style="margin:0">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-secondary taskCartNoticeBtn">Clear Cart</button>
+                </form>
+            </div>
+            {% endif %}
             <div class="grid">
                 <div>
                     <label>Quantity</label>
@@ -1263,13 +1272,16 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
 .matChoice{display:flex;gap:10px;align-items:flex-start;margin:0;font-weight:400;cursor:pointer}
 .matChoice input{width:auto;min-height:0;margin:4px 0 0}
 .matChoiceFields{margin:10px 0 2px 26px}
+.taskCartNotice{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+    background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:8px;padding:8px 12px;margin:0 0 12px;font-weight:700;font-size:13.5px}
+.taskCartNoticeBtn{width:auto!important;min-height:30px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
 </style>
 <script>
 (function(){
     var panel=document.getElementById("taskMaterialsPanel");
     if(!panel)return;
     var materials=[];
-    var materialPrefill={{ material_prefill|default(none)|tojson }};
+    var materialPrefillList={{ material_prefill_list|default([])|tojson }};
     var jsonInput=document.getElementById("taskMaterialsJson");
     var listEl=document.getElementById("matList");
     var overlay=document.getElementById("matOverlay");
@@ -1298,7 +1310,7 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
             listEl.appendChild(row);
         });
     }
-    if(materialPrefill){materials.push(materialPrefill);renderMaterials();}
+    if(materialPrefillList&&materialPrefillList.length){materials=materials.concat(materialPrefillList);renderMaterials();}
     function openOverlay(){overlay.hidden=false;document.body.style.overflow="hidden";}
     function closeOverlay(){overlay.hidden=true;document.body.style.overflow="";pending=null;}
     function setAction(value){

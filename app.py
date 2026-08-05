@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V8"
+APP_BUILD = "2026-08-05 V9"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8339,6 +8339,92 @@ def inventory_reserved_quantity(conn, item_id):
     return float(row["reserved"] or 0)
 
 
+def get_task_cart():
+    """A small, per-browser-session holding area for 'materials I'm about to
+    put on a task' so an admin can browse Project Inventory, add a few
+    materials with notes, and only then jump to Create Task with all of them
+    already there - instead of starting over for every single material."""
+    cart = session.get("task_material_cart")
+    return cart if isinstance(cart, list) else []
+
+
+def set_task_cart(cart):
+    session["task_material_cart"] = cart
+
+
+def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment=""):
+    """Add (or update, if already present) one inventory item in the task
+    cart. Returns the item's display name on success, or None if the item
+    doesn't exist or the current user can't access it."""
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (inventory_item_id,)).fetchone()
+    if not item or not inventory_item_access_allowed(conn, item):
+        return None
+    available = float(item.get("quantity") or 0) - inventory_reserved_quantity(conn, item["id"])
+    if quantity is None:
+        quantity = max(available, 0.01) if available > 0 else max(float(item.get("quantity") or 1), 0.01)
+    else:
+        quantity = max(float(quantity), 0.01)
+    place = inventory_location_label(item.get("location_type"))
+    if item.get("location_detail"):
+        place += f' ({item["location_detail"]})'
+    scope = "Project inventory" if item.get("project_id") else "General inventory"
+    catalog_unit = None
+    if item.get("part_catalog_id"):
+        catalog_row = conn.execute("SELECT unit_measure FROM part_catalog WHERE id = %s", (item["part_catalog_id"],)).fetchone()
+        catalog_unit = catalog_row.get("unit_measure") if catalog_row else None
+
+    cart = get_task_cart()
+    entry = {
+        "inventory_item_id": item["id"],
+        "item_name": item.get("item_name") or "",
+        "item_model": item.get("item_model") or "",
+        "brand": item.get("brand") or "",
+        "unit_measure": clean_unit_measure(catalog_unit) or "UN",
+        "quantity": quantity,
+        "comment": (comment or "").strip(),
+        "place": f"{place} — {scope}",
+    }
+    cart = [row for row in cart if row.get("inventory_item_id") != item["id"]]
+    cart.append(entry)
+    set_task_cart(cart)
+    return entry["item_name"]
+
+
+@app.route("/tasks/cart/add", methods=["POST"])
+@admin_required
+def add_to_task_cart():
+    conn = db()
+    inventory_item_id = request.form.get("inventory_item_id", type=int)
+    quantity = request.form.get("quantity", type=float)
+    comment = request.form.get("comment", "")
+    name = add_item_to_task_cart(conn, inventory_item_id, quantity, comment) if inventory_item_id else None
+    conn.close()
+    if name:
+        cart_count = len(get_task_cart())
+        flash(f"{name} added to Task Cart ({cart_count} item{'s' if cart_count != 1 else ''}).")
+    else:
+        flash("That material could not be added to the Task Cart.")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/tasks/cart/remove", methods=["POST"])
+@admin_required
+def remove_from_task_cart():
+    inventory_item_id = request.form.get("inventory_item_id", type=int)
+    cart = [row for row in get_task_cart() if row.get("inventory_item_id") != inventory_item_id]
+    set_task_cart(cart)
+    flash("Removed from Task Cart.")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/tasks/cart/clear", methods=["POST"])
+@admin_required
+def clear_task_cart():
+    set_task_cart([])
+    flash("Task Cart cleared.")
+    return redirect(safe_next_url("index"))
+
+
 def mark_task_materials_ready(conn, po_id=None, pickup_task_id=None, place_text=""):
     """Flip waiting task materials to ready and tell the install task's worker."""
     if not po_id and not pickup_task_id:
@@ -10096,7 +10182,8 @@ def project_materials(project_id):
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
-        condition_options=INVENTORY_CONDITION_LABELS
+        condition_options=INVENTORY_CONDITION_LABELS,
+        task_cart=get_task_cart()
     )
 
 
@@ -13283,35 +13370,38 @@ def create_global_task():
             }
 
     prefill_material_id = request.args.get("prefill_material_id", type=int)
-    material_prefill = None
-    if prefill_material_id:
-        mat_item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (prefill_material_id,)).fetchone()
-        if mat_item and inventory_item_access_allowed(conn, mat_item):
-            selected_project_id = mat_item.get("project_id") or selected_project_id
-            selected_room_id = mat_item.get("room_id") or selected_room_id
+    if prefill_material_id and request.method == "GET":
+        # Direct single-item link (e.g. an older bookmark): fold it into the
+        # cart so it goes through the same multi-item flow as everything else.
+        add_item_to_task_cart(conn, prefill_material_id, quantity=None, comment="")
+
+    task_cart = get_task_cart()
+    material_prefill_list = []
+    if task_cart:
+        kept_cart = []
+        for entry in task_cart:
+            mat_item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (entry.get("inventory_item_id"),)).fetchone()
+            if not mat_item or not inventory_item_access_allowed(conn, mat_item):
+                continue
+            kept_cart.append(entry)
+            if not selected_project_id:
+                selected_project_id = mat_item.get("project_id") or selected_project_id
+            if not selected_room_id:
+                selected_room_id = mat_item.get("room_id") or selected_room_id
             available = float(mat_item.get("quantity") or 0) - inventory_reserved_quantity(conn, mat_item["id"])
-            place = inventory_location_label(mat_item.get("location_type"))
-            if mat_item.get("location_detail"):
-                place += f' ({mat_item["location_detail"]})'
-            scope = "Project inventory" if mat_item.get("project_id") else "General inventory"
-            catalog_unit = None
-            if mat_item.get("part_catalog_id"):
-                catalog_row = conn.execute(
-                    "SELECT unit_measure FROM part_catalog WHERE id = %s",
-                    (mat_item["part_catalog_id"],)
-                ).fetchone()
-                catalog_unit = catalog_row.get("unit_measure") if catalog_row else None
-            material_prefill = {
+            material_prefill_list.append({
                 "action": "stock",
                 "inventory_item_id": mat_item["id"],
                 "item_name": mat_item.get("item_name") or "",
                 "item_model": mat_item.get("item_model") or "",
                 "brand": mat_item.get("brand") or "",
-                "unit_measure": clean_unit_measure(catalog_unit) or "UN",
-                "quantity": max(available, 0.01) if available > 0 else max(float(mat_item.get("quantity") or 1), 0.01),
-                "comment": "",
-                "place": f"{place} — {scope}",
-            }
+                "unit_measure": entry.get("unit_measure") or "UN",
+                "quantity": min(float(entry.get("quantity") or 1), max(available, 0.01)) if available > 0 else max(float(entry.get("quantity") or 1), 0.01),
+                "comment": entry.get("comment") or "",
+                "place": entry.get("place") or "",
+            })
+        if len(kept_cart) != len(task_cart):
+            set_task_cart(kept_cart)
 
     if selected_room_id and not selected_project_id:
         selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
@@ -13511,6 +13601,10 @@ def create_global_task():
                 flash(material_error + " No tasks were created - fix the material and try again.")
                 return redirect(url_for("create_global_task"))
         conn.commit()
+        if not supplier_mode and created_tasks:
+            # Those materials are now attached to the new task - don't let them
+            # linger in the cart and accidentally show up on the next task.
+            set_task_cart([])
         for task, assigned in created_tasks:
             send_task_assignment_email(task, assigned, project)
             send_task_assignment_sms(task, assigned, project)
@@ -13549,7 +13643,7 @@ def create_global_task():
         selected_room_id=selected_room_id,
         selected_supplier_id=selected_supplier_id,
         pickup_prefill=pickup_prefill,
-        material_prefill=material_prefill,
+        material_prefill_list=material_prefill_list,
         phases_by_project=phases_by_project
     )
 

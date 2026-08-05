@@ -7,6 +7,34 @@
     <a class="btn-link" href="{{ url_for('inventory', project_id=project.id) }}">Open Main Inventory</a>
 </div>
 
+{% if can_edit_inventory() and task_cart %}
+<div class="card taskCartCard">
+    <h3>Task Cart <span class="taskCartCount">{{ task_cart|length }} item{{ '' if task_cart|length == 1 else 's' }}</span></h3>
+    <p class="muted" style="margin-top:0">Pick materials as you browse — they wait here until you're ready to create the task.</p>
+    {% for c in task_cart %}
+        <div class="taskCartRow">
+            <div>
+                <strong>{{ c.item_name }}</strong> — {{ c.quantity }} {{ c.unit_measure }}
+                {% if c.brand %} | {{ c.brand }}{% endif %}{% if c.item_model %} | {{ c.item_model }}{% endif %}
+                {% if c.comment %}<p class="muted taskCartComment">{{ c.comment }}</p>{% endif %}
+            </div>
+            <form method="post" action="{{ url_for('remove_from_task_cart') }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <input type="hidden" name="inventory_item_id" value="{{ c.inventory_item_id }}">
+                <button type="submit" class="btn-danger taskCartRemoveBtn">Remove</button>
+            </form>
+        </div>
+    {% endfor %}
+    <div class="taskCartActions">
+        <a class="btn-link" href="{{ url_for('create_global_task', project_id=project.id) }}">Create Task from Cart ({{ task_cart|length }})</a>
+        <form method="post" action="{{ url_for('clear_task_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="btn-secondary">Clear Cart</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {% if can_edit_inventory() %}
 <div class="card">
     <h3>Add Item to This Project</h3>
@@ -129,7 +157,7 @@
                             <input type="hidden" name="project_id" value="{{ project.id }}">
                             <select name="status" class="inventoryActionSelect" data-current-status="{{ m.status }}"
                                     data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, supplier_id=m.supplier_id, pickup_item_id=m.id) }}"
-                                    data-task-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, prefill_material_id=m.id) }}">
+                                    data-item-id="{{ m.id }}" data-item-name="{{ m.item_name }}">
                                 {% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
                                 <option value="__create_pickup_task__">Create a pickup task</option>
                                 <option value="__create_task_with_material__">Create a Task with this Material</option>
@@ -154,7 +182,38 @@
     </div>
 </div>
 
+{% if can_edit_inventory() %}
+<div class="cartAddOverlay" id="cartAddOverlay" hidden>
+    <div class="cartAddModal">
+        <h3 style="margin-top:0" id="cartAddTitle">Add to Task Cart</h3>
+        <form method="post" action="{{ url_for('add_to_task_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="inventory_item_id" id="cartAddItemId">
+            <label>Quantity</label>
+            <input type="number" name="quantity" id="cartAddQty" step="0.01" min="0.01" value="1">
+            <label>What needs to be done with this material</label>
+            <textarea name="comment" id="cartAddComment" rows="2" placeholder="e.g. Mount on the north wall"></textarea>
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button type="submit" style="flex:1;margin:0">Add to Task Cart</button>
+                <button type="button" class="btn-secondary" id="cartAddCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <style>
+.taskCartCard{border:2px solid #2563eb}
+.taskCartCount{font-size:13px;font-weight:800;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:middle}
+.taskCartRow{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.taskCartRow form{margin:0}
+.taskCartComment{margin:2px 0 0;font-size:12.5px}
+.taskCartRemoveBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
+.taskCartActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.taskCartActions form{margin:0}
+.cartAddOverlay{position:fixed;inset:0;z-index:2100;background:rgba(15,23,42,.58);display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
+.cartAddOverlay[hidden]{display:none!important}
+.cartAddModal{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:460px;width:100%;padding:18px;margin-top:40px}
 .inventoryWrap{overflow-x:auto}.inventoryTable{width:100%;min-width:1050px;border-collapse:collapse}
 .inventoryTable th,.inventoryTable td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}.inventoryTable th{background:#eef2f7}
 .inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}.inventory-picked_up{background:#dbeafe}.inventory-purchased_waiting_arrival{background:#e0f2fe}.inventory-unavailable{background:#f1f5f9}.inventory-backordered{background:#fef3c7}
@@ -165,6 +224,13 @@
 .locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
 </style>
 <script>
+const cartAddOverlay = document.getElementById("cartAddOverlay");
+const cartAddItemId = document.getElementById("cartAddItemId");
+const cartAddTitle = document.getElementById("cartAddTitle");
+const cartAddQty = document.getElementById("cartAddQty");
+const cartAddComment = document.getElementById("cartAddComment");
+const cartAddCancelBtn = document.getElementById("cartAddCancelBtn");
+
 document.querySelectorAll(".inventoryActionSelect").forEach(select => {
     select.addEventListener("change", () => {
         if (select.value === "__create_pickup_task__") {
@@ -173,13 +239,36 @@ document.querySelectorAll(".inventoryActionSelect").forEach(select => {
             return;
         }
         if (select.value === "__create_task_with_material__") {
-            window.location.href = select.dataset.taskUrl;
+            if (cartAddOverlay) {
+                cartAddItemId.value = select.dataset.itemId || "";
+                cartAddTitle.textContent = "Add " + (select.dataset.itemName || "material") + " to Task Cart";
+                cartAddQty.value = "1";
+                cartAddComment.value = "";
+                cartAddOverlay.hidden = false;
+                document.body.style.overflow = "hidden";
+                cartAddComment.focus();
+            }
             select.value = select.dataset.currentStatus || "";
             return;
         }
         select.form.submit();
     });
 });
+
+if (cartAddCancelBtn) {
+    cartAddCancelBtn.addEventListener("click", () => {
+        cartAddOverlay.hidden = true;
+        document.body.style.overflow = "";
+    });
+}
+if (cartAddOverlay) {
+    cartAddOverlay.addEventListener("click", e => {
+        if (e.target === cartAddOverlay) {
+            cartAddOverlay.hidden = true;
+            document.body.style.overflow = "";
+        }
+    });
+}
 </script>
 {% include "_part_catalog_autocomplete.html" %}
 {% endblock %}
