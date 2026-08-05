@@ -1,7 +1,13 @@
 {% if work_room_id is not defined %}{% set work_room_id = t.room_id %}{% endif %}
 {% if work_room_name is not defined %}{% set work_room_name = t.room_name or 'Project general' %}{% endif %}
 {% set show_worker_task_actions = show_worker_task_actions|default(true) %}
-{% set address = task_project_address(t) %}
+{# Supplier pickups route to the supplier's address, not the project's. #}
+{% set route_supplier = t.get('_supplier') if t.supplier_id else None %}
+{% if route_supplier and (route_supplier.address or route_supplier.street) %}
+    {% set address = route_supplier.address or route_supplier.street %}
+{% else %}
+    {% set address = task_project_address(t) %}
+{% endif %}
 {% set room_state = namespace(done=false) %}
 {% if work_room_id %}
     {% for status in t.get('_room_statuses', []) %}
