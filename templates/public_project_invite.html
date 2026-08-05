@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:440px;margin:auto;">
+    <h2>Join {{ invite.project_name }}</h2>
+    <p class="muted">You've been invited to join this project on ProjectONus as a <strong>{{ invite.invite_role|title }}</strong>. Enter your name and phone number to get started, then you'll set a 4-digit PIN to log in.</p>
+    <form method="post">
+        <label>Your Name</label>
+        <input name="name" required autofocus>
+        <label>Your Cellphone Number</label>
+        <input name="phone_number" type="tel" inputmode="tel" placeholder="(555) 123-4567" required>
+        <button type="submit">Continue</button>
+    </form>
+</div>
+{% endblock %}

@@ -2,7 +2,7 @@
 {% block content %}
 <div class="card" style="max-width:420px;margin:auto;">
     <h2>Create Mobile PIN</h2>
-    <p class="muted">{{ user.email }}</p>
+    <p class="muted">{{ user.name }}</p>
     <form method="post">
         <label>4-digit PIN</label>
         <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" autocomplete="new-password" required>

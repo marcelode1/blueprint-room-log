@@ -34,6 +34,7 @@
     {% endif %}
     <a class="btn-link" href="{{ url_for('my_tasks', mode='search', project_id=project.id, open_only=1) }}">Open Tasks</a>
     {% if is_main_admin() %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_invite_manage', project_id=project.id) }}">Invite</a>
         <form method="post" action="{{ url_for('delete_project', project_id=project.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
             <button type="submit" class="btn-danger">Delete Project</button>
         </form>
