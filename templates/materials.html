@@ -127,9 +127,12 @@
                         <form method="post" action="{{ url_for('update_inventory_status', item_id=m.id) }}">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <input type="hidden" name="project_id" value="{{ project.id }}">
-                            <select name="status" class="inventoryActionSelect" data-current-status="{{ m.status }}" data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, supplier_id=m.supplier_id, pickup_item_id=m.id) }}">
+                            <select name="status" class="inventoryActionSelect" data-current-status="{{ m.status }}"
+                                    data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, supplier_id=m.supplier_id, pickup_item_id=m.id) }}"
+                                    data-task-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, prefill_material_id=m.id) }}">
                                 {% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
                                 <option value="__create_pickup_task__">Create a pickup task</option>
+                                <option value="__create_task_with_material__">Create a Task with this Material</option>
                             </select>
                         </form>
                     </td>
@@ -166,6 +169,11 @@ document.querySelectorAll(".inventoryActionSelect").forEach(select => {
     select.addEventListener("change", () => {
         if (select.value === "__create_pickup_task__") {
             window.location.href = select.dataset.pickupUrl;
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
+        if (select.value === "__create_task_with_material__") {
+            window.location.href = select.dataset.taskUrl;
             select.value = select.dataset.currentStatus || "";
             return;
         }

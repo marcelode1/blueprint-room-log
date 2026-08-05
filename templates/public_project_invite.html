@@ -8,7 +8,19 @@
         <input name="name" required autofocus>
         <label>Your Cellphone Number</label>
         <input name="phone_number" type="tel" inputmode="tel" placeholder="(555) 123-4567" required>
+        <label class="smsConsentCheck">
+            <input type="checkbox" name="sms_consent" required>
+            <span>By submitting my phone number, I agree to receive SMS text messages from
+                {{ get_app_setting("company_name", "ProjectONus") }} related to my project and account,
+                such as account setup links and technician dispatch/arrival updates. Message and data
+                rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help.
+                See our <a href="{{ url_for('privacy') }}#sms" target="_blank" rel="noopener">Privacy Policy</a>.</span>
+        </label>
         <button type="submit">Continue</button>
     </form>
 </div>
+<style>
+.smsConsentCheck{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;line-height:1.5;color:var(--muted,#64748b);margin:6px 0 14px}
+.smsConsentCheck input{width:auto;min-height:auto;margin-top:2px}
+</style>
 {% endblock %}

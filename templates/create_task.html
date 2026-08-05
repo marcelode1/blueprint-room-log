@@ -1269,6 +1269,7 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
     var panel=document.getElementById("taskMaterialsPanel");
     if(!panel)return;
     var materials=[];
+    var materialPrefill={{ material_prefill|default(none)|tojson }};
     var jsonInput=document.getElementById("taskMaterialsJson");
     var listEl=document.getElementById("matList");
     var overlay=document.getElementById("matOverlay");
@@ -1297,6 +1298,7 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
             listEl.appendChild(row);
         });
     }
+    if(materialPrefill){materials.push(materialPrefill);renderMaterials();}
     function openOverlay(){overlay.hidden=false;document.body.style.overflow="hidden";}
     function closeOverlay(){overlay.hidden=true;document.body.style.overflow="";pending=null;}
     function setAction(value){

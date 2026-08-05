@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V6"
+APP_BUILD = "2026-08-05 V8"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -10722,6 +10722,10 @@ def public_project_invite(token):
             conn.close()
             flash("Enter a valid phone number.")
             return redirect(url_for("public_project_invite", token=token))
+        if request.form.get("sms_consent") != "on":
+            conn.close()
+            flash("Please check the box agreeing to receive text messages to continue.")
+            return redirect(url_for("public_project_invite", token=token))
 
         # Re-check the link is still unused in case someone already finished PIN setup.
         fresh = conn.execute("SELECT * FROM project_invite_links WHERE id = %s", (invite["id"],)).fetchone()
@@ -13277,6 +13281,38 @@ def create_global_task():
                 "room_id": pickup_item.get("room_id") or "",
                 "room_name": pickup_item.get("room_name") or "Project general",
             }
+
+    prefill_material_id = request.args.get("prefill_material_id", type=int)
+    material_prefill = None
+    if prefill_material_id:
+        mat_item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (prefill_material_id,)).fetchone()
+        if mat_item and inventory_item_access_allowed(conn, mat_item):
+            selected_project_id = mat_item.get("project_id") or selected_project_id
+            selected_room_id = mat_item.get("room_id") or selected_room_id
+            available = float(mat_item.get("quantity") or 0) - inventory_reserved_quantity(conn, mat_item["id"])
+            place = inventory_location_label(mat_item.get("location_type"))
+            if mat_item.get("location_detail"):
+                place += f' ({mat_item["location_detail"]})'
+            scope = "Project inventory" if mat_item.get("project_id") else "General inventory"
+            catalog_unit = None
+            if mat_item.get("part_catalog_id"):
+                catalog_row = conn.execute(
+                    "SELECT unit_measure FROM part_catalog WHERE id = %s",
+                    (mat_item["part_catalog_id"],)
+                ).fetchone()
+                catalog_unit = catalog_row.get("unit_measure") if catalog_row else None
+            material_prefill = {
+                "action": "stock",
+                "inventory_item_id": mat_item["id"],
+                "item_name": mat_item.get("item_name") or "",
+                "item_model": mat_item.get("item_model") or "",
+                "brand": mat_item.get("brand") or "",
+                "unit_measure": clean_unit_measure(catalog_unit) or "UN",
+                "quantity": max(available, 0.01) if available > 0 else max(float(mat_item.get("quantity") or 1), 0.01),
+                "comment": "",
+                "place": f"{place} — {scope}",
+            }
+
     if selected_room_id and not selected_project_id:
         selected_room = conn.execute("SELECT project_id FROM rooms WHERE id = %s", (selected_room_id,)).fetchone()
         if selected_room:
@@ -13513,6 +13549,7 @@ def create_global_task():
         selected_room_id=selected_room_id,
         selected_supplier_id=selected_supplier_id,
         pickup_prefill=pickup_prefill,
+        material_prefill=material_prefill,
         phases_by_project=phases_by_project
     )
 

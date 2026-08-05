@@ -66,6 +66,33 @@
     <h2>Security</h2>
     <p>We take reasonable measures to protect user information and project data.</p>
 
+    <h2 id="sms">SMS / Text Messaging</h2>
+    <p>
+        {{ get_app_setting("company_name", "ProjectONus") }} uses SMS text messaging to communicate with
+        workers, subcontractors, and customers about active projects. A phone number is added to our system
+        in one of two ways:
+    </p>
+    <ul>
+        <li>A worker or customer taps a project invite link, and submits their own name and phone number to create their account.</li>
+        <li>An administrator manually adds a team member's phone number when setting up their account.</li>
+    </ul>
+    <p><strong>Opt-in language shown at the point of collection:</strong></p>
+    <p style="border-left:3px solid #cbd5e1;padding-left:12px;font-style:italic;">
+        "By submitting my phone number, I agree to receive SMS text messages from
+        {{ get_app_setting("company_name", "ProjectONus") }} related to my project and account,
+        such as account setup links and technician dispatch/arrival updates. Message and data rates may apply.
+        Message frequency varies. Reply STOP to opt out at any time, or HELP for help."
+    </p>
+    <p><strong>Types of messages sent:</strong></p>
+    <ul>
+        <li>Account setup / login links when someone is invited to a project</li>
+        <li>Technician dispatch and arrival-time updates for a scheduled visit</li>
+        <li>Other project-related updates from an administrator or team member</li>
+    </ul>
+    <p>We do not send marketing messages, and we do not sell or share phone numbers with third parties.
+    Message and data rates may apply. Message frequency varies based on project activity.
+    Reply <strong>STOP</strong> to a message at any time to opt out, or <strong>HELP</strong> for help.</p>
+
     <h2>Contact</h2>
     <p>
         For questions regarding this Privacy Policy:
