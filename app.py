@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V4"
+APP_BUILD = "2026-08-05 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1113,6 +1113,8 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate_unit TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_frequency TEXT",
         "CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, doc_type TEXT NOT NULL, file_path TEXT NOT NULL, original_name TEXT, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_invite_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, invite_role TEXT NOT NULL, token TEXT UNIQUE NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, pending_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "ALTER TABLE project_invite_links ADD COLUMN IF NOT EXISTS pending_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
         "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS audio_file TEXT",
         "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate REAL, pay_rate_unit TEXT, pay_frequency TEXT, base_pay REAL NOT NULL DEFAULT 0, expenses_total REAL NOT NULL DEFAULT 0, total_pay REAL NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
@@ -1925,6 +1927,49 @@ def has_perm(permission):
     if session.get("role") == "admin":
         return True
     return bool(get_user_permissions().get(permission))
+
+
+def upsert_user_permissions(conn, user_id, values):
+    """Insert or replace a user's full permission row. `values` only needs to
+    contain the keys that differ from False - any PERMISSION_KEYS left out
+    are saved as False."""
+    columns = ", ".join(PERMISSION_KEYS)
+    placeholders = ", ".join(["%s"] * len(PERMISSION_KEYS))
+    updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in PERMISSION_KEYS)
+    conn.execute(
+        f"""
+        INSERT INTO user_permissions (user_id, {columns})
+        VALUES (%s, {placeholders})
+        ON CONFLICT (user_id) DO UPDATE SET {updates}
+        """,
+        (user_id, *[bool(values.get(k, False)) for k in PERMISSION_KEYS])
+    )
+
+
+# Permission set automatically granted to users who sign up through a project
+# Invite link. Only the keys the admin asked for are True; everything else
+# (editing/deleting, inventory, notes, progress, etc.) stays off.
+INVITE_ROLE_PERMISSIONS = {
+    "worker": {
+        # view_contact_info stays False on purpose: the project's customer
+        # name and address always show with no permission needed, but phone
+        # and email are gated behind view_contact_info - leaving it off is
+        # what makes an invited worker see name/address only.
+        "see_comments": True,
+        "write_comments": True,
+        "see_pictures": True,
+        "add_pictures": True,
+    },
+    "customer": {
+        "view_contact_info": True,
+        "see_comments": True,
+        "see_pictures": True,
+    },
+}
+
+
+def invite_permission_values(invite_role):
+    return dict(INVITE_ROLE_PERMISSIONS.get(invite_role, {}))
 
 
 def project_file_access_keys(conn, project_id, user_id=None):
@@ -6659,6 +6704,14 @@ def mobile_create_pin(token):
                 """,
                 (generate_password_hash(pin), user["id"])
             )
+            # If this account came from a project Invite link, the link is only
+            # locked out now that a PIN was actually set - not when the name/
+            # phone form was submitted, so it can be reopened and re-filled by
+            # someone else until then.
+            conn.execute(
+                "UPDATE project_invite_links SET used_at = %s, used_by = %s WHERE pending_user_id = %s AND used_at IS NULL",
+                (utc_now_iso(), user["id"], user["id"])
+            )
             conn.commit()
             conn.close()
             session.permanent = stay_logged_in
@@ -10556,6 +10609,176 @@ def delete_material(project_id, material_id):
     flash("Inventory item deleted." if deleted else "Inventory item not found.")
     return redirect(url_for("project_materials", project_id=project_id))
 
+
+
+def invite_link_status(row):
+    if row.get("used_at"):
+        return "used"
+    expires_at = parse_iso_datetime(row.get("expires_at"))
+    if expires_at and expires_at < datetime.now(timezone.utc):
+        return "expired"
+    return "pending"
+
+
+@app.route("/projects/<int:project_id>/invite", methods=["GET", "POST"])
+@admin_required
+def project_invite_manage(project_id):
+    conn = db()
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        invite_role = request.form.get("invite_role", "")
+        if invite_role not in ("worker", "customer"):
+            flash("Choose Worker or Customer.")
+        else:
+            token = new_token()
+            conn.execute(
+                """
+                INSERT INTO project_invite_links
+                (project_id, invite_role, token, created_by, expires_at, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (project_id, invite_role, token, session.get("user_id"), utc_future_iso(60 * 24 * 30), utc_now_iso())
+            )
+            conn.commit()
+            flash(f"{invite_role.title()} invite link created. Copy it below and text it to them.")
+
+    links = conn.execute(
+        """
+        SELECT project_invite_links.*, users.name AS used_by_name
+        FROM project_invite_links
+        LEFT JOIN users ON project_invite_links.used_by = users.id
+        WHERE project_invite_links.project_id = %s
+        ORDER BY project_invite_links.created_at DESC
+        """,
+        (project_id,)
+    ).fetchall()
+    conn.close()
+    for row in links:
+        row["status"] = invite_link_status(row)
+        row["invite_url"] = external_url("public_project_invite", token=row["token"]) if row["status"] == "pending" else ""
+    return render_template(
+        "project_invite.html",
+        project=project,
+        links=links,
+        format_datetime=format_datetime,
+    )
+
+
+@app.route("/projects/<int:project_id>/invite/<int:invite_id>/revoke", methods=["POST"])
+@admin_required
+def project_invite_revoke(invite_id, project_id):
+    conn = db()
+    invite = conn.execute(
+        "SELECT * FROM project_invite_links WHERE id = %s AND project_id = %s AND used_at IS NULL",
+        (invite_id, project_id)
+    ).fetchone()
+    if invite:
+        # Clean up an unfinished signup (name/phone entered, PIN never set)
+        # so revoking doesn't leave an orphaned, unusable account behind.
+        if invite.get("pending_user_id"):
+            conn.execute(
+                "DELETE FROM users WHERE id = %s AND pin_hash IS NULL",
+                (invite["pending_user_id"],)
+            )
+        conn.execute("DELETE FROM project_invite_links WHERE id = %s", (invite_id,))
+        conn.commit()
+        flash("Invite link revoked.")
+    else:
+        flash("Invite link not found or already used.")
+    conn.close()
+    return redirect(url_for("project_invite_manage", project_id=project_id))
+
+
+@app.route("/invite/<token>", methods=["GET", "POST"])
+def public_project_invite(token):
+    """Public, no-login page an invited worker/customer opens from a text
+    message link. They enter their name and phone number, ProjectONus
+    creates their account with the right permissions and project access,
+    then hands them straight to the existing PIN-setup flow to log in."""
+    conn = db()
+    invite = conn.execute(
+        "SELECT project_invite_links.*, projects.name AS project_name FROM project_invite_links JOIN projects ON project_invite_links.project_id = projects.id WHERE project_invite_links.token = %s",
+        (token,)
+    ).fetchone()
+    if not invite or invite_link_status(invite) != "pending":
+        conn.close()
+        flash("This invite link is invalid, expired, or already used. Ask for a new one.")
+        return redirect(url_for("mobile_login"))
+
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        phone_raw = request.form.get("phone_number", "").strip()
+        phone_number = tel_phone_number(phone_raw)
+        if not name:
+            conn.close()
+            flash("Enter your name.")
+            return redirect(url_for("public_project_invite", token=token))
+        if len(re.sub(r"\D", "", phone_number)) < 10:
+            conn.close()
+            flash("Enter a valid phone number.")
+            return redirect(url_for("public_project_invite", token=token))
+
+        # Re-check the link is still unused in case someone already finished PIN setup.
+        fresh = conn.execute("SELECT * FROM project_invite_links WHERE id = %s", (invite["id"],)).fetchone()
+        if not fresh or invite_link_status(fresh) != "pending":
+            conn.close()
+            flash("This invite link was already used. Ask for a new one.")
+            return redirect(url_for("mobile_login"))
+
+        invite_role = invite["invite_role"]
+        user_role = "customer" if invite_role == "customer" else "worker"
+        pin_setup_token = new_token()
+
+        # The link can be opened and filled out more than once (it may get
+        # forwarded to someone else) as long as nobody has finished PIN setup
+        # yet. Reuse the same not-yet-confirmed account instead of creating a
+        # new one every time someone re-opens the link.
+        pending_user = None
+        if fresh.get("pending_user_id"):
+            pending_user = conn.execute(
+                "SELECT * FROM users WHERE id = %s AND pin_hash IS NULL",
+                (fresh["pending_user_id"],)
+            ).fetchone()
+
+        if pending_user:
+            new_user_id = pending_user["id"]
+            conn.execute(
+                "UPDATE users SET name = %s, phone_number = %s, invite_token = %s, invite_sent_at = %s WHERE id = %s",
+                (name, phone_number, pin_setup_token, utc_now_iso(), new_user_id)
+            )
+        else:
+            placeholder_email = f"invite-{token[:24]}@projectonus.invite"
+            new_user = conn.execute(
+                """
+                INSERT INTO users
+                (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at, role, worker_class, created_at)
+                VALUES (%s, %s, %s, TRUE, %s, NULL, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    name, placeholder_email, phone_number, unusable_password_hash(),
+                    pin_setup_token, utc_now_iso(), user_role, invite_role, utc_now_iso()
+                )
+            ).fetchone()
+            new_user_id = new_user["id"]
+            grant_project_access(conn, new_user_id, invite["project_id"], role=user_role)
+            upsert_user_permissions(conn, new_user_id, invite_permission_values(invite_role))
+            conn.execute(
+                "UPDATE project_invite_links SET pending_user_id = %s WHERE id = %s",
+                (new_user_id, invite["id"])
+            )
+        conn.commit()
+        conn.close()
+        flash(f"Welcome, {name}! Set a 4-digit PIN to finish.")
+        return redirect(url_for("mobile_create_pin", token=pin_setup_token))
+
+    conn.close()
+    return render_template("public_project_invite.html", invite=invite)
 
 
 @app.route("/project/<int:project_id>")
@@ -16761,18 +16984,7 @@ def settings():
             values = {k: (k in request.form) for k in PERMISSION_KEYS}
             if "view_project_files" in values:
                 values["view_project_files"] = bool(selected_file_access)
-            # Build the upsert dynamically from PERMISSION_KEYS so new permissions need no SQL changes.
-            columns = ", ".join(PERMISSION_KEYS)
-            placeholders = ", ".join(["%s"] * len(PERMISSION_KEYS))
-            updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in PERMISSION_KEYS)
-            conn.execute(
-                f"""
-                INSERT INTO user_permissions (user_id, {columns})
-                VALUES (%s, {placeholders})
-                ON CONFLICT (user_id) DO UPDATE SET {updates}
-                """,
-                (user_id, *[values[k] for k in PERMISSION_KEYS])
-            )
+            upsert_user_permissions(conn, user_id, values)
             conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
             now = utc_now_iso()
             for project_id, folder_key in selected_file_access:

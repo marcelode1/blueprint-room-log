@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
+    <h2>Invite to {{ project.name }}</h2>
+    <p class="muted">Create a link, then copy it and text it to the person yourself (text messaging is not set up on the server yet). They tap the link, type their name and phone number, and set their own login PIN. The link can be opened and re-filled as many times as needed - it only stops working once someone actually finishes setting up their PIN.</p>
+    <div class="inviteCreateRow">
+        <form method="post">
+            <input type="hidden" name="invite_role" value="worker">
+            <button type="submit">+ Invite Worker</button>
+        </form>
+        <form method="post">
+            <input type="hidden" name="invite_role" value="customer">
+            <button type="submit" class="btn-secondary">+ Invite Customer</button>
+        </form>
+    </div>
+    <p class="muted inviteGrantNote">
+        <strong>Worker links automatically grant:</strong> view name &amp; address (no phone/email), see pictures, see comments, write comments, add pictures.<br>
+        <strong>Customer links automatically grant:</strong> full contact information, see pictures, see comments.
+    </p>
+</div>
+
+<div class="card">
+    <h3>Invite Links</h3>
+    {% if links %}
+        {% for l in links %}
+        <div class="inviteLinkRow inviteStatus-{{ l.status }}">
+            <div class="inviteLinkMain">
+                <span class="inviteRoleBadge inviteRole-{{ l.invite_role }}">{{ l.invite_role|title }}</span>
+                {% if l.status == 'pending' %}
+                    <span class="inviteStatusPill pendingPill">Pending</span>
+                {% elif l.status == 'used' %}
+                    <span class="inviteStatusPill usedPill">Used by {{ l.used_by_name or 'someone' }} &middot; {{ format_datetime(l.used_at) }}</span>
+                {% else %}
+                    <span class="inviteStatusPill expiredPill">Expired</span>
+                {% endif %}
+                <span class="muted inviteCreatedNote">Created {{ format_datetime(l.created_at) }}</span>
+            </div>
+            {% if l.status == 'pending' %}
+                <div class="inviteLinkCopyRow">
+                    <input type="text" class="inviteLinkInput" value="{{ l.invite_url }}" readonly onclick="this.select()">
+                    <button type="button" class="btn-secondary inviteCopyBtn" data-copy="{{ l.invite_url }}">Copy Link</button>
+                    <button type="button" class="btn-secondary inviteCopyBtn" data-copy="You're invited to join {{ project.name }} on ProjectONus. Tap this link to get started: {{ l.invite_url }}">Copy Message</button>
+                    <form method="post" action="{{ url_for('project_invite_revoke', project_id=project.id, invite_id=l.id) }}" onsubmit="return confirm('Revoke this invite link?');">
+                        <button type="submit" class="btn-danger">Revoke</button>
+                    </form>
+                </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">No invite links created yet.</p>
+    {% endif %}
+</div>
+
+<style>
+.inviteCreateRow{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.inviteCreateRow form{margin:0}
+.inviteGrantNote{font-size:13px;line-height:1.6;border-top:1px solid var(--border,#e2e8f0);padding-top:10px;margin-top:10px}
+.inviteLinkRow{border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.inviteLinkMain{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.inviteRoleBadge{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:3px 10px;border-radius:999px}
+.inviteRole-worker{background:#dbeafe;color:#1d4ed8}
+.inviteRole-customer{background:#dcfce7;color:#15803d}
+.inviteStatusPill{font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px}
+.pendingPill{background:#fef3c7;color:#b45309}
+.usedPill{background:#e2e8f0;color:#334155}
+.expiredPill{background:#fee2e2;color:#b91c1c}
+.inviteCreatedNote{font-size:12px}
+.inviteLinkCopyRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.inviteLinkCopyRow form{margin:0}
+.inviteLinkInput{flex:1;min-width:220px;font-size:12.5px;background:#f8fafc}
+.inviteCopyBtn{width:auto!important;min-height:36px!important;padding:8px 12px!important;margin:0!important;font-size:13px!important}
+</style>
+<script>
+document.querySelectorAll(".inviteCopyBtn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+        const text = btn.dataset.copy || "";
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (e) {
+            const box = document.createElement("textarea");
+            box.value = text;
+            document.body.appendChild(box);
+            box.select();
+            document.execCommand("copy");
+            document.body.removeChild(box);
+        }
+        const original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+});
+</script>
+{% endblock %}
