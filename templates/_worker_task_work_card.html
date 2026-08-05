@@ -90,7 +90,7 @@
         {% if address %}
             <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
         {% endif %}
-        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, next=request.full_path) }}">Clock In / Clock Out</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('mobile_time_clock', project_id=t.project_id, supplier_id=t.supplier_id or '', next=request.full_path) }}">Clock In / Clock Out</a>
     {% endif %}
 
     {% include "_supplier_task_info.html" %}

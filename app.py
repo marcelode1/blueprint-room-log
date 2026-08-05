@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V2"
+APP_BUILD = "2026-08-05 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6218,20 +6218,24 @@ def mobile_time_clock(project_id):
         return redirect(url_for("mobile_home"))
 
     next_url = mobile_time_clock_return_url(project_id)
+    supplier = None
+    supplier_id = request.values.get("supplier_id", type=int)
+    if supplier_id:
+        supplier = conn.execute("SELECT * FROM suppliers WHERE id = %s", (supplier_id,)).fetchone()
 
     if request.method == "POST":
         event_type = request.form.get("event_type")
         if event_type not in ["check_in", "check_out"]:
             conn.close()
             flash("Choose clock in or clock out.")
-            return redirect(url_for("mobile_time_clock", project_id=project_id, next=next_url))
+            return redirect(url_for("mobile_time_clock", project_id=project_id, supplier_id=supplier_id or "", next=next_url))
         try:
             latitude = float(request.form.get("latitude", ""))
             longitude = float(request.form.get("longitude", ""))
         except Exception:
             conn.close()
             flash("GPS location is required. Turn on Location Services/GPS and try again.")
-            return redirect(url_for("mobile_time_clock", project_id=project_id, next=next_url))
+            return redirect(url_for("mobile_time_clock", project_id=project_id, supplier_id=supplier_id or "", next=next_url))
         address = request.form.get("address", "").strip() or f"{latitude:.6f}, {longitude:.6f}"
         event_timezone = timezone_from_location(
             latitude,
@@ -6260,7 +6264,7 @@ def mobile_time_clock(project_id):
         (session.get("user_id"), project_id)
     ).fetchall()
     conn.close()
-    return render_template("mobile_time_clock.html", project=project, events=events, next_url=next_url)
+    return render_template("mobile_time_clock.html", project=project, events=events, next_url=next_url, supplier=supplier)
 
 
 @app.route("/mobile/location/status")

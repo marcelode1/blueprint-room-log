@@ -2,7 +2,11 @@
 {% block content %}
 <div class="card">
     <h2>Clock In / Clock Out</h2>
-    <p><strong>Project:</strong> {{ project.name }}</p>
+    {% if supplier %}
+        <p><strong>Supplier:</strong> {{ supplier.name }}</p>
+    {% else %}
+        <p><strong>Project:</strong> {{ project.name }}</p>
+    {% endif %}
     <p class="muted">Get your GPS location, confirm it on the map, then record the time.</p>
     <div class="grid">
         <button type="button" id="checkInBtn">Clock In</button>
@@ -31,7 +35,7 @@
     {% for e in events %}
         <div class="card">
             <strong>{% if e.event_type == 'check_in' %}Clock In{% else %}Clock Out{% endif %}</strong>
-            <p class="muted">{{ e.project_name or project.name }}</p>
+            {% if not supplier %}<p class="muted">{{ e.project_name or project.name }}</p>{% endif %}
             <p>{{ format_event_date(e) }} {{ format_event_time(e) }}</p>
             <p class="muted">{{ event_timezone_name(e) }}</p>
             <p>{{ e.address or '-' }}</p>
