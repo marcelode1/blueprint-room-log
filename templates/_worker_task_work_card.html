@@ -11,15 +11,33 @@
     {% endfor %}
 {% endif %}
 <div id="task-{{ t.id }}" class="card workerTaskCard {% if task_is_completed(t) or room_state.done %}taskDone{% endif %}">
+    {# Supplier tasks show a compact header to workers: task type, supplier
+       name, and Be There time. Project/room/received/to-be-done stay saved on
+       the task but only admins see them. #}
+    {% set compact_supplier = t.supplier_id and not is_main_admin() %}
     <div class="workerTaskInfo">
-        <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
-        <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
-        <p><strong>Room Name:</strong> {{ work_room_name }}</p>
-        <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
-        <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
-        {% include "_task_schedule_contact_info.html" %}
-        <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
-        <p><strong>{{ 'Task Status' if t.supplier_id else 'Room Task Status' }}:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
+        {% if compact_supplier %}
+            <p><strong>Task Type:</strong> Supplier</p>
+            {% set head_supplier = t.get('_supplier') %}
+            <p class="supplierHeadName">{{ head_supplier.name if head_supplier else (t.title or 'Supplier') }}</p>
+            {% set be_there_time = format_task_time(t.task_start_time) %}
+            {% if not be_there_time and t.get('_supplier_inventory_item') %}
+                {% set be_there_time = format_task_time(t._supplier_inventory_item.supplier_pickup_time) %}
+            {% endif %}
+            <p><strong>Be There Time:</strong> {{ format_date(t.task_start_date or t.task_date) }}{% if be_there_time %} at {{ be_there_time }}{% endif %}</p>
+            <style>
+            .supplierHeadName{font-size:26px;line-height:1.15;font-weight:900;color:#0f172a;margin:6px 0 8px}
+            </style>
+        {% else %}
+            <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
+            <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
+            <p><strong>Room Name:</strong> {{ work_room_name }}</p>
+            <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
+            <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+            {% include "_task_schedule_contact_info.html" %}
+            <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
+            <p><strong>{{ 'Task Status' if t.supplier_id else 'Room Task Status' }}:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
+        {% endif %}
     </div>
 
     {% set task_materials = t.get('_task_materials', []) %}
