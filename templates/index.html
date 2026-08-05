@@ -29,10 +29,15 @@
 </div>
 
 <div class="card" id="projects">
-    <h2>Projects</h2>
-    <div class="grid">
+    <div class="projectsHeadRow">
+        <h2>{{ 'Search Results' if q else 'Projects' }}</h2>
+        {% if not q and projects|length > 5 %}
+            <span class="muted projectsRecentNote">Showing your 5 most recent &middot; {{ projects|length }} total</span>
+        {% endif %}
+    </div>
+    <div class="grid" id="projectsGrid">
     {% for p in projects %}
-        <div class="card">
+        <div class="card{% if not q and loop.index > 5 %} projectCardExtra{% endif %}" {% if not q and loop.index > 5 %}hidden{% endif %}>
             <h3>{{ p.name }}</h3>
             <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
             <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
@@ -56,5 +61,24 @@
         <p>No projects found.</p>
     {% endfor %}
     </div>
+    {% if not q and projects|length > 5 %}
+        <button type="button" class="btn-secondary" id="showAllProjectsBtn">Show All {{ projects|length }} Projects</button>
+    {% endif %}
 </div>
+
+<style>
+.projectsHeadRow{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+.projectsHeadRow h2{margin:0}
+.projectsRecentNote{font-size:13px}
+#showAllProjectsBtn{margin-top:10px}
+</style>
+<script>
+const showAllProjectsBtn=document.getElementById("showAllProjectsBtn");
+if(showAllProjectsBtn){
+    showAllProjectsBtn.addEventListener("click",()=>{
+        document.querySelectorAll(".projectCardExtra").forEach(card=>card.hidden=false);
+        showAllProjectsBtn.style.display="none";
+    });
+}
+</script>
 {% endblock %}
