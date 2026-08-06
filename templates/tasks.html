@@ -163,6 +163,7 @@
                                 <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
                                 <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if room_state.done or task_is_completed(t) %}done{% endif %}">{{ 'Completed' if room_state.done or task_is_completed(t) else task_status_label(t) }}</span></p>
                             {% endif %}
+                            {% include "_task_materials_box.html" %}
                             {% include "_supplier_task_info.html" %}
                             {% set admin_room_id = r.id %}
                             {% include "_task_admin_attachments.html" %}
@@ -193,7 +194,8 @@
                             <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
                             <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
                         {% endif %}
-                        {% include "_supplier_task_info.html" %}
+                        {% include "_task_materials_box.html" %}
+                            {% include "_supplier_task_info.html" %}
                         {% set admin_room_id = none %}
                         {% include "_task_admin_attachments.html" %}
                         {% if not t.supplier_id and (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
@@ -310,7 +312,8 @@
                 <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% if task_info %}<br>{{ task_info }}{% endif %}</p>
                 <p><strong>Room Task Status:</strong> <span class="taskRoomState {% if task_is_completed(t) %}done{% endif %}">{{ task_status_label(t) }}</span></p>
             {% endif %}
-            {% include "_supplier_task_info.html" %}
+            {% include "_task_materials_box.html" %}
+                            {% include "_supplier_task_info.html" %}
             {% set admin_room_id = t.room_id %}
             {% include "_task_admin_attachments.html" %}
             {% if not t.supplier_id and (t.accepted_at or notification_task_list or task_is_completed(t) or is_main_admin()) and (is_main_admin() or t.assigned_user_id == session.get("user_id")) %}
