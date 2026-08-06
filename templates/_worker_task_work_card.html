@@ -97,7 +97,8 @@
                 <select name="inventory_item_id" class="matInvSelect">
                     <option value="">Not listed - I'll type it below</option>
                     {% for inv in project_inventory %}
-                        <option value="{{ inv.id }}">{{ inv.item_name }}{% if inv.brand %} - {{ inv.brand }}{% endif %}{% if inv.item_model %} / {{ inv.item_model }}{% endif %} ({{ '%g'|format(inv.quantity or 0) }} available{% if inv.room_name %}, {{ inv.room_name }}{% endif %})</option>
+                        {% set inv_free = inv.available_quantity if inv.available_quantity is defined and inv.available_quantity is not none else inv.quantity %}
+                        <option value="{{ inv.id }}">{{ inv.item_name }}{% if inv.brand %} - {{ inv.brand }}{% endif %}{% if inv.item_model %} / {{ inv.item_model }}{% endif %} ({{ '%g'|format(inv_free or 0) }} free of {{ '%g'|format(inv.quantity or 0) }}{% if inv.room_name %}, {{ inv.room_name }}{% endif %})</option>
                     {% endfor %}
                 </select>
                 <div class="matManualFields">

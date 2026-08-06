@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V17"
+APP_BUILD = "2026-08-05 V18"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8435,6 +8435,54 @@ def clear_task_cart():
     return redirect(safe_next_url("index"))
 
 
+def inventory_reservation_detail(conn, item_id):
+    """Which open tasks are holding this inventory item, so a 'not enough
+    available' message can say where the missing quantity went."""
+    return conn.execute(
+        """
+        SELECT task_materials.quantity, tasks.task_number, tasks.id AS task_id, tasks.title
+        FROM task_materials
+        JOIN tasks ON task_materials.task_id = tasks.id
+        WHERE task_materials.inventory_item_id = %s
+          AND task_materials.source = 'stock'
+          AND task_materials.status IN ('allocated', 'waiting', 'ready')
+        ORDER BY tasks.id
+        """,
+        (item_id,)
+    ).fetchall()
+
+
+def validate_task_materials_stock(conn, rows):
+    """Check every 'use from inventory' material BEFORE any task is created,
+    so a shortage can never leave tasks saved without their materials."""
+    for m in rows or []:
+        if str(m.get("action") or "note").strip() != "stock":
+            continue
+        name = str(m.get("item_name") or "").strip() or "material"
+        item_id = optional_int(m.get("inventory_item_id"))
+        item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone() if item_id else None
+        if not item:
+            return f"The inventory item for {name} was not found."
+        try:
+            qty = max(float(m.get("quantity") or 1), 0.01)
+        except Exception:
+            qty = 1.0
+        on_hand = float(item.get("quantity") or 0)
+        reserved = inventory_reserved_quantity(conn, item_id)
+        available = on_hand - reserved
+        if qty > available + 0.001:
+            message = f"{name}: you asked for {qty:g} but only {max(available, 0):g} can be used ({on_hand:g} in inventory"
+            if reserved > 0:
+                holders = inventory_reservation_detail(conn, item_id)
+                labels = [f"{h.get('task_number') or h.get('task_id')}" for h in holders][:3]
+                message += f", {reserved:g} already reserved"
+                if labels:
+                    message += f" on task {', '.join(labels)}"
+            message += ")."
+            return message
+    return ""
+
+
 def mark_task_materials_ready(conn, po_id=None, pickup_task_id=None, place_text=""):
     """Flip waiting task materials to ready and tell the install task's worker."""
     if not po_id and not pickup_task_id:
@@ -8541,7 +8589,8 @@ def create_task_materials_from_form(conn, primary_task, project_id, task_by_inde
         return "The materials list could not be read. Add the materials again."
     if not rows:
         return ""
-    ensure_orders_tables(conn)
+    # NOTE: ensure_orders_tables() is intentionally NOT called here - it commits,
+    # which would break the task+material transaction. The caller runs it first.
     now = utc_now_iso()
     today = local_now().date().isoformat()
     for material_index, m in enumerate(rows):
@@ -13569,6 +13618,19 @@ def create_global_task():
             conn.close()
             flash("The materials list could not be read. Add the materials again.")
             return redirect(url_for("create_global_task"))
+
+        # Create the materials tables and check stock BEFORE any task is
+        # inserted. ensure_orders_tables() commits, so running it mid-way would
+        # save the tasks and make a later rollback useless - which used to
+        # leave tasks created with none of their materials attached.
+        if material_rows and not supplier_mode:
+            ensure_orders_tables(conn)
+            stock_error = validate_task_materials_stock(conn, material_rows)
+            if stock_error:
+                conn.rollback()
+                conn.close()
+                flash(stock_error + " Nothing was created - fix the material and try again.")
+                return redirect(url_for("create_global_task"))
         material_draft_index = {}
         if split_materials and not supplier_mode and material_rows:
             base = task_drafts[0] if task_drafts else {}
@@ -15250,7 +15312,13 @@ def open_task_workspace(task_id):
                 """
                 SELECT inventory_items.id, inventory_items.item_name, inventory_items.item_model,
                        inventory_items.brand, inventory_items.quantity, inventory_items.status,
-                       rooms.name AS room_name
+                       rooms.name AS room_name,
+                       COALESCE(inventory_items.quantity, 0) - COALESCE((
+                           SELECT SUM(task_materials.quantity) FROM task_materials
+                           WHERE task_materials.inventory_item_id = inventory_items.id
+                             AND task_materials.source = 'stock'
+                             AND task_materials.status IN ('allocated', 'waiting', 'ready')
+                       ), 0) AS available_quantity
                 FROM inventory_items
                 LEFT JOIN rooms ON inventory_items.room_id = rooms.id
                 WHERE inventory_items.project_id = %s
