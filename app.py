@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V9"
+APP_BUILD = "2026-08-05 V10"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8352,7 +8352,7 @@ def set_task_cart(cart):
     session["task_material_cart"] = cart
 
 
-def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment=""):
+def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment="", room_id=None):
     """Add (or update, if already present) one inventory item in the task
     cart. Returns the item's display name on success, or None if the item
     doesn't exist or the current user can't access it."""
@@ -8373,6 +8373,13 @@ def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment=""):
         catalog_row = conn.execute("SELECT unit_measure FROM part_catalog WHERE id = %s", (item["part_catalog_id"],)).fetchone()
         catalog_unit = catalog_row.get("unit_measure") if catalog_row else None
 
+    room_name = ""
+    if room_id:
+        room_row = conn.execute("SELECT name FROM rooms WHERE id = %s", (room_id,)).fetchone()
+        room_name = room_row.get("name") if room_row else ""
+        if not room_name:
+            room_id = None
+
     cart = get_task_cart()
     entry = {
         "inventory_item_id": item["id"],
@@ -8383,6 +8390,8 @@ def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment=""):
         "quantity": quantity,
         "comment": (comment or "").strip(),
         "place": f"{place} — {scope}",
+        "room_id": room_id,
+        "room_name": room_name,
     }
     cart = [row for row in cart if row.get("inventory_item_id") != item["id"]]
     cart.append(entry)
@@ -8397,7 +8406,8 @@ def add_to_task_cart():
     inventory_item_id = request.form.get("inventory_item_id", type=int)
     quantity = request.form.get("quantity", type=float)
     comment = request.form.get("comment", "")
-    name = add_item_to_task_cart(conn, inventory_item_id, quantity, comment) if inventory_item_id else None
+    room_id = request.form.get("room_id", type=int)
+    name = add_item_to_task_cart(conn, inventory_item_id, quantity, comment, room_id) if inventory_item_id else None
     conn.close()
     if name:
         cart_count = len(get_task_cart())
@@ -13387,7 +13397,9 @@ def create_global_task():
             if not selected_project_id:
                 selected_project_id = mat_item.get("project_id") or selected_project_id
             if not selected_room_id:
-                selected_room_id = mat_item.get("room_id") or selected_room_id
+                # Prefer the room chosen in the "Add to Task Cart" popup (where
+                # the material will be used) over the room it's stored in.
+                selected_room_id = entry.get("room_id") or mat_item.get("room_id") or selected_room_id
             available = float(mat_item.get("quantity") or 0) - inventory_reserved_quantity(conn, mat_item["id"])
             material_prefill_list.append({
                 "action": "stock",
