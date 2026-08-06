@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V11"
+APP_BUILD = "2026-08-05 V12"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -10181,6 +10181,14 @@ def project_materials(project_id):
     rooms = fetch_inventory_rooms(conn, project_id)
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
+    pickup_tasks_by_item = {}
+    material_ids = [m["id"] for m in materials]
+    if material_ids:
+        for row in conn.execute(
+            "SELECT id, task_number, supplier_inventory_item_id FROM tasks WHERE supplier_inventory_item_id = ANY(%s)",
+            (material_ids,)
+        ).fetchall():
+            pickup_tasks_by_item[row["supplier_inventory_item_id"]] = row
     conn.close()
     return render_template(
         "materials.html",
@@ -10189,6 +10197,7 @@ def project_materials(project_id):
         rooms=rooms,
         suppliers=suppliers,
         part_catalog=catalog,
+        pickup_tasks_by_item=pickup_tasks_by_item,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
