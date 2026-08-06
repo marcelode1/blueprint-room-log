@@ -1,0 +1,149 @@
+{# Catalog type-ahead - the same visible suggestion list used on the invoice
+   item field, reusable anywhere. Mark an input with
+   data-catalog-field="item" | "brand" | "model". Choosing an item fills the
+   brand, model and unit fields that live in the same form. #}
+<script>
+window.partCatalogData = window.partCatalogData || {{ (part_catalog|default([]))|tojson }};
+if (!window.catalogTypeaheadReady) {
+    window.catalogTypeaheadReady = true;
+    (function () {
+        var box = document.createElement("div");
+        box.className = "catalogSuggest";
+        box.hidden = true;
+        document.body.appendChild(box);
+        var current = null;
+
+        function rows() { return window.partCatalogData || []; }
+        function norm(v) { return (v === null || v === undefined ? "" : String(v)).trim().toLowerCase(); }
+
+        function matchesFor(kind, q) {
+            var query = norm(q);
+            if (!query) return [];
+            var starts = [], contains = [], seen = {};
+            rows().forEach(function (p) {
+                var value = kind === "item" ? p.item_name : (kind === "brand" ? p.brand : p.item_model);
+                if (!value) return;
+                var key = norm(value);
+                if (kind !== "item") {
+                    if (seen[key]) return;
+                    seen[key] = 1;
+                }
+                var label = kind === "item"
+                    ? [p.item_name, p.brand, p.item_model].filter(Boolean).join(" - ")
+                    : value;
+                var entry = { value: value, label: label, part: p };
+                if (key.indexOf(query) === 0) starts.push(entry);
+                else if (norm(label).indexOf(query) >= 0) contains.push(entry);
+            });
+            return starts.concat(contains).slice(0, 10);
+        }
+
+        function place(input) {
+            var r = input.getBoundingClientRect();
+            box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 250)) + "px";
+            box.style.minWidth = Math.max(r.width, 220) + "px";
+            var below = window.innerHeight - r.bottom;
+            if (below < 220 && r.top > 240) {
+                box.style.top = "";
+                box.style.bottom = (window.innerHeight - r.top + 2) + "px";
+            } else {
+                box.style.bottom = "";
+                box.style.top = (r.bottom + 2) + "px";
+            }
+        }
+
+        function hide() { box.hidden = true; box.innerHTML = ""; current = null; }
+
+        function show(input, kind) {
+            var m = matchesFor(kind, input.value);
+            if (!m.length) { hide(); return; }
+            box.innerHTML = "";
+            m.forEach(function (entry, i) {
+                var b = document.createElement("button");
+                b.type = "button";
+                b.className = "catalogSuggestOpt";
+                b.setAttribute("data-idx", i);
+                b.textContent = entry.label;
+                box.appendChild(b);
+            });
+            place(input);
+            box.hidden = false;
+            current = { input: input, matches: m, index: -1, kind: kind };
+        }
+
+        function highlight() {
+            if (!current) return;
+            Array.prototype.forEach.call(box.children, function (el, i) {
+                el.classList.toggle("hl", i === current.index);
+            });
+            if (current.index >= 0 && box.children[current.index]) {
+                box.children[current.index].scrollIntoView({ block: "nearest" });
+            }
+        }
+
+        function pick(i) {
+            if (!current || !current.matches[i]) return;
+            var entry = current.matches[i], input = current.input, kind = current.kind;
+            var form = input.closest("form") || document;
+            hide();
+            input.value = entry.value;
+            if (kind === "item") {
+                var p = entry.part;
+                var brand = form.querySelector('[data-catalog-field="brand"]');
+                var model = form.querySelector('[data-catalog-field="model"]');
+                var unit = form.querySelector(".js-part-unit");
+                if (brand) brand.value = p.brand || "";
+                if (model) model.value = p.item_model || "";
+                if (unit && p.unit_measure) unit.value = p.unit_measure;
+            }
+            input.focus();
+        }
+
+        document.addEventListener("input", function (e) {
+            var t = e.target;
+            if (t && t.getAttribute && t.getAttribute("data-catalog-field")) {
+                show(t, t.getAttribute("data-catalog-field"));
+            }
+        });
+        document.addEventListener("keydown", function (e) {
+            if (!current || e.target !== current.input) return;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                var step = e.key === "ArrowDown" ? 1 : -1;
+                current.index = (current.index + step + current.matches.length) % current.matches.length;
+                highlight();
+            } else if (e.key === "Enter") {
+                if (current.index >= 0) { e.preventDefault(); pick(current.index); }
+                else hide();
+            } else if (e.key === "Escape") {
+                hide();
+            }
+        });
+        box.addEventListener("mousedown", function (e) {
+            var opt = e.target.closest(".catalogSuggestOpt");
+            if (!opt) return;
+            e.preventDefault();
+            pick(Number(opt.getAttribute("data-idx")));
+        });
+        document.addEventListener("focusout", function (e) {
+            if (current && e.target === current.input) {
+                var input = e.target;
+                setTimeout(function () { if (current && current.input === input) hide(); }, 160);
+            }
+        });
+        document.addEventListener("scroll", function () { if (current) place(current.input); }, true);
+        window.addEventListener("resize", function () { if (current) place(current.input); });
+    })();
+}
+</script>
+<style>
+.catalogSuggest{position:fixed;z-index:9999;background:#fff;border:1px solid #cbd5e1;border-radius:8px;
+    box-shadow:0 14px 34px rgba(15,23,42,.22);max-height:240px;overflow-y:auto;max-width:340px}
+.catalogSuggest[hidden]{display:none}
+.catalogSuggestOpt{display:block!important;width:100%!important;text-align:left!important;background:#fff!important;
+    border:none!important;border-bottom:1px solid #eef2f7!important;border-radius:0!important;
+    padding:11px 12px!important;margin:0!important;min-height:0!important;font-size:13px!important;
+    font-weight:600!important;color:#0f172a!important;cursor:pointer;white-space:normal!important;line-height:1.3!important}
+.catalogSuggestOpt:last-child{border-bottom:none!important}
+.catalogSuggestOpt:hover,.catalogSuggestOpt.hl{background:#e0ecff!important}
+</style>

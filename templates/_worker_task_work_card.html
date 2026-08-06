@@ -102,11 +102,11 @@
                 </select>
                 <div class="matManualFields">
                     <label>Item</label>
-                    <input name="item_name" class="js-part-item" list="partCatalogNameList"
-                           placeholder="Start typing to match the catalog" autocomplete="off">
+                    <input name="item_name" data-catalog-field="item"
+                           placeholder="Start typing to match the catalog" autocomplete="off" spellcheck="false">
                     <div class="matAddGrid">
-                        <div><label>Brand</label><input name="brand" class="js-part-brand" list="partCatalogBrandList" autocomplete="off"></div>
-                        <div><label>Model #</label><input name="item_model" class="js-part-model" list="partCatalogModelList" autocomplete="off"></div>
+                        <div><label>Brand</label><input name="brand" data-catalog-field="brand" autocomplete="off" spellcheck="false"></div>
+                        <div><label>Model #</label><input name="item_model" data-catalog-field="model" autocomplete="off" spellcheck="false"></div>
                     </div>
                     <p class="muted matCatalogHint">Pick an existing catalog item to fill the brand and model automatically, or type a new one to add it to the catalog.</p>
                 </div>
