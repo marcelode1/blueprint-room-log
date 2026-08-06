@@ -47,39 +47,115 @@
     </div>
 
     {% set task_materials = t.get('_task_materials', []) %}
-    {% if task_materials %}
-    <div class="taskMaterialsBox">
-        <h4>Materials for This Task</h4>
-        {% for m in task_materials %}
-        <div class="taskMaterialRow {% if m.status in ['ready', 'allocated'] %}matReady{% elif m.status == 'waiting' %}matWaiting{% endif %}">
-            <p class="taskMaterialName"><strong>{{ m.item_name }}</strong> &mdash; {{ '%g'|format(m.quantity or 1) }} {{ 'PR' if m.unit_measure == 'PR' else 'UN' }}{% if m.brand %} &middot; {{ m.brand }}{% endif %}{% if m.item_model %} &middot; {{ m.item_model }}{% endif %}</p>
-            {% if m.comment %}<p class="taskMaterialComment">{{ m.comment }}</p>{% endif %}
-            <p class="taskMaterialState">
-                {% if m.status == 'used' %}
-                    Used on this task
-                {% elif m.source == 'stock' %}
-                    In stock &mdash; {{ inventory_location_label(m.inv_location) }}{% if m.inv_location_detail %} ({{ m.inv_location_detail }}){% endif %}
-                {% elif m.source == 'po' %}
-                    {{ m.po_number }} &mdash; {{ po_status_label(m.po_status) }}{% if m.po_expected %} &middot; expected {{ format_date(m.po_expected) }}{% endif %}{% if m.status == 'ready' %} &middot; ARRIVED{% endif %}
-                {% elif m.source == 'pickup' %}
-                    Pickup task {{ m.pickup_task_number or m.pickup_task_id }}{% if m.pickup_user_name %} ({{ m.pickup_user_name }}){% endif %} &mdash; {{ 'Picked up - on the truck' if m.status == 'ready' else task_status_label(m.pickup_status) }}
-                {% else %}
-                    Noted on task
+    {% set can_edit_materials = (is_main_admin() or t.assigned_user_id == session.get("user_id")) and project_inventory is defined %}
+    {% if task_materials or can_edit_materials %}
+    <div class="taskMaterialsBox" id="taskMaterialsBox{{ t.id }}">
+        <h4>Materials</h4>
+        {% if task_materials %}
+            {% for m in task_materials %}
+            <div class="taskMaterialRow {% if m.status in ['ready', 'allocated'] %}matReady{% elif m.status == 'waiting' %}matWaiting{% endif %}">
+                <p class="taskMaterialName"><strong>{{ m.item_name }}</strong> &mdash; {{ '%g'|format(m.quantity or 1) }} {{ 'PR' if m.unit_measure == 'PR' else 'UN' }}{% if m.brand %} &middot; {{ m.brand }}{% endif %}{% if m.item_model %} &middot; {{ m.item_model }}{% endif %}</p>
+                {% if m.comment %}<p class="taskMaterialComment">{{ m.comment }}</p>{% endif %}
+                <p class="taskMaterialState">
+                    {% if m.status == 'used' %}
+                        Used on this task
+                    {% elif m.source == 'stock' %}
+                        In stock &mdash; {{ inventory_location_label(m.inv_location) }}{% if m.inv_location_detail %} ({{ m.inv_location_detail }}){% endif %}
+                    {% elif m.source == 'po' %}
+                        {{ m.po_number }} &mdash; {{ po_status_label(m.po_status) }}{% if m.po_expected %} &middot; expected {{ format_date(m.po_expected) }}{% endif %}{% if m.status == 'ready' %} &middot; ARRIVED{% endif %}
+                    {% elif m.source == 'pickup' %}
+                        Pickup task {{ m.pickup_task_number or m.pickup_task_id }}{% if m.pickup_user_name %} ({{ m.pickup_user_name }}){% endif %} &mdash; {{ 'Picked up - on the truck' if m.status == 'ready' else task_status_label(m.pickup_status) }}
+                    {% else %}
+                        Noted on task
+                    {% endif %}
+                </p>
+                {% if can_edit_materials and m.status != 'used' and not m.po_id and not m.pickup_task_id %}
+                <form method="post" action="{{ url_for('remove_task_material', task_id=t.id, material_id=m.id) }}"
+                      onsubmit="return confirm('Remove {{ m.item_name }} from this task?');" class="matRemoveForm">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button type="submit" class="btn-danger matRemoveBtn">Remove</button>
+                </form>
                 {% endif %}
-            </p>
-        </div>
-        {% endfor %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="muted" style="margin:0 0 8px">No materials recorded for this task yet.</p>
+        {% endif %}
+
+        {% if can_edit_materials %}
+        <details class="matAddBox">
+            <summary>+ Add a Material</summary>
+            <form method="post" action="{{ url_for('add_task_material', task_id=t.id) }}" class="matAddForm">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <label>From Project Inventory</label>
+                <select name="inventory_item_id" class="matInvSelect">
+                    <option value="">Not listed - I'll type it below</option>
+                    {% for inv in project_inventory %}
+                        <option value="{{ inv.id }}">{{ inv.item_name }}{% if inv.brand %} - {{ inv.brand }}{% endif %}{% if inv.item_model %} / {{ inv.item_model }}{% endif %} ({{ '%g'|format(inv.quantity or 0) }} available{% if inv.room_name %}, {{ inv.room_name }}{% endif %})</option>
+                    {% endfor %}
+                </select>
+                <div class="matManualFields">
+                    <label>Material Name</label>
+                    <input name="item_name" placeholder="Type the material name">
+                    <div class="matAddGrid">
+                        <div><label>Brand</label><input name="brand"></div>
+                        <div><label>Model #</label><input name="item_model"></div>
+                    </div>
+                </div>
+                <div class="matAddGrid">
+                    <div>
+                        <label>Quantity Used</label>
+                        <input name="quantity" type="number" step="0.01" min="0.01" value="1" required>
+                    </div>
+                    <div>
+                        <label>Unit</label>
+                        <select name="unit_measure">
+                            <option value="UN">UN (Unit)</option>
+                            <option value="PR">PR (Pair)</option>
+                        </select>
+                    </div>
+                </div>
+                <label>Note (optional)</label>
+                <input name="comment" placeholder="Where or how it was used">
+                <button type="submit">Add Material</button>
+            </form>
+        </details>
+        {% endif %}
     </div>
     <style>
     .taskMaterialsBox{border:1px solid var(--border);border-radius:8px;padding:10px;margin:12px 0;background:rgba(37,99,235,.06)}
     .taskMaterialsBox h4{margin:0 0 8px}
     .taskMaterialRow{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin:8px 0;background:rgba(255,255,255,.35)}
     .taskMaterialRow p{margin:2px 0}
-    .taskMaterialComment{white-space:pre-wrap}
+    .taskMaterialComment{white-space:pre-wrap;word-break:break-word}
     .taskMaterialState{font-weight:800;font-size:13px}
     .matReady .taskMaterialState{color:#15803d}
     .matWaiting .taskMaterialState{color:#b45309}
+    .matRemoveForm{margin:8px 0 0}
+    .matRemoveBtn{width:auto!important;min-height:34px!important;padding:6px 12px!important;margin:0!important;font-size:12.5px!important}
+    .matAddBox{border:1px dashed var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.45);margin-top:10px}
+    .matAddBox summary{cursor:pointer;font-weight:800;font-size:14.5px;padding:4px 0}
+    .matAddForm{margin-top:10px}
+    .matAddGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media(max-width:520px){.matAddGrid{grid-template-columns:1fr}}
     </style>
+    <script>
+    (function(){
+        var box=document.getElementById("taskMaterialsBox{{ t.id }}");
+        if(!box)return;
+        var sel=box.querySelector(".matInvSelect");
+        var manual=box.querySelector(".matManualFields");
+        var nameInput=manual?manual.querySelector('[name="item_name"]'):null;
+        if(!sel||!manual)return;
+        function sync(){
+            var usingInventory=Boolean(sel.value);
+            manual.style.display=usingInventory?"none":"block";
+            if(nameInput)nameInput.required=!usingInventory;
+        }
+        sel.addEventListener("change",sync);
+        sync();
+    })();
+    </script>
     {% endif %}
 
     {% if is_main_admin() %}
@@ -107,13 +183,30 @@
             {% endif %}
             <label>Task Status</label>
             {% set current_status = normalize_task_status(t.status) %}
-            <select name="completion_task_status">
+            <div class="statusBtnGroup">
                 {% for value, label in task_status_options.items() %}
                     {% if value not in ["sent_to_worker", "received"] %}
-                        <option value="{{ value }}" {% if current_status == value or (current_status in ["sent_to_worker", "received"] and value == "in_progress") %}selected{% endif %}>{{ label }}</option>
+                        <label class="statusBtn statusBtn-{{ value }}">
+                            <input type="radio" name="completion_task_status" value="{{ value }}"
+                                {% if current_status == value or (current_status in ["sent_to_worker", "received"] and value == "in_progress") %}checked{% endif %}>
+                            <span>{{ label }}</span>
+                        </label>
                     {% endif %}
                 {% endfor %}
-            </select>
+            </div>
+            <style>
+            .statusBtnGroup{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:6px 0 14px}
+            .statusBtn{margin:0;position:relative}
+            .statusBtn input{position:absolute;opacity:0;width:0;height:0}
+            .statusBtn span{display:flex;align-items:center;justify-content:center;text-align:center;min-height:48px;
+                padding:8px 10px;border:2px solid var(--border,#cbd5e1);border-radius:10px;background:var(--card,#fff);
+                font-weight:800;font-size:14px;cursor:pointer;word-break:break-word;line-height:1.2}
+            .statusBtn input:checked + span{border-color:var(--primary,#2563eb);background:rgba(37,99,235,.12);color:#1d4ed8}
+            .statusBtn-completed input:checked + span{border-color:#16a34a;background:rgba(22,163,74,.14);color:#15803d}
+            .statusBtn-waiting_rfi input:checked + span,
+            .statusBtn-waiting_material input:checked + span{border-color:#d97706;background:rgba(217,119,6,.14);color:#b45309}
+            .statusBtn input:focus-visible + span{outline:3px solid rgba(37,99,235,.45);outline-offset:2px}
+            </style>
             {% if not t.supplier_id and (has_perm("add_pictures") or has_perm("add_audio") or has_perm("write_comments")) %}
                 <div class="completionBlocks">
                     <div class="completionBlock">

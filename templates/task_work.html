@@ -2,6 +2,44 @@
 {% block content %}
 {% set work_room_id = t.room_id %}
 {% set work_room_name = t.room_name or 'Project general' %}
+
+{% if group_nav %}
+<div class="taskNavBar">
+    {% if group_nav.prev_id %}
+        <a class="taskNavBtn" href="{{ url_for('open_task_workspace', task_id=group_nav.prev_id, gk=group_nav.kind, gid=group_nav.id) }}">&larr; Back</a>
+    {% else %}
+        <span class="taskNavBtn taskNavDisabled">&larr; Back</span>
+    {% endif %}
+
+    <a class="taskNavBtn taskNavHome" href="{{ url_for('worker_task_group', kind=group_nav.kind, gid=group_nav.id) }}">
+        Back to {{ 'Supplier' if group_nav.kind == 'supplier' else 'Project' }} Tasks
+    </a>
+
+    {% if group_nav.next_id %}
+        <a class="taskNavBtn" href="{{ url_for('open_task_workspace', task_id=group_nav.next_id, gk=group_nav.kind, gid=group_nav.id) }}">Next &rarr;</a>
+    {% else %}
+        <span class="taskNavBtn taskNavDisabled">Next &rarr;</span>
+    {% endif %}
+</div>
+<p class="taskNavCount">Task {{ group_nav.position }} of {{ group_nav.total }}</p>
+{% endif %}
+
 {% include "_worker_task_work_card.html" %}
 {% include "_worker_task_work_assets.html" %}
+
+<style>
+.taskNavBar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:0 0 6px}
+.taskNavBtn{display:flex;align-items:center;justify-content:center;text-align:center;min-height:46px;padding:8px 14px;
+    border-radius:10px;font-weight:800;font-size:14px;text-decoration:none;
+    background:var(--primary,#2563eb);color:#fff;border:1px solid var(--primary,#2563eb)}
+.taskNavBtn:active{opacity:.85}
+.taskNavHome{background:#475569;border-color:#475569;font-size:13px}
+.taskNavDisabled{background:#e2e8f0;color:#94a3b8;border-color:#e2e8f0;cursor:default}
+.taskNavCount{margin:0 0 12px;text-align:center;font-weight:800;font-size:12.5px;color:var(--muted,#64748b)}
+@media(max-width:520px){
+    .taskNavBar{grid-template-columns:1fr 1fr}
+    .taskNavHome{grid-column:1/-1;order:3}
+    .taskNavBtn{font-size:13.5px;padding:8px 10px}
+}
+</style>
 {% endblock %}

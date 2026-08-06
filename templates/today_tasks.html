@@ -3,39 +3,34 @@
 <div class="todayList">
     <div class="todayListHead">
         <h2>Today's Tasks</h2>
-        <p class="muted">{{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} scheduled &middot; tap a line to open that task</p>
+        <p class="muted">{{ groups|length }} place{{ '' if groups|length == 1 else 's' }} to go &middot;
+            {{ tasks|length }} task{{ '' if tasks|length == 1 else 's' }} scheduled</p>
     </div>
 
-    {% if tasks %}
-    <div class="taskTable" role="table" aria-label="Today's tasks">
-        <div class="taskRow taskRowHead" role="row">
-            <span class="colNum" role="columnheader">#</span>
-            <span class="colWho" role="columnheader">Customer / Supplier</span>
-            <span class="colTime" role="columnheader">Be There @</span>
-            <span class="colStatus" role="columnheader">Task Status</span>
-        </div>
-        {% for t in tasks %}
-            {% set be_there = format_task_time(t.task_start_time) %}
-            {% if not be_there and t._supplier_inventory_item %}
-                {% set be_there = format_task_time(t._supplier_inventory_item.supplier_pickup_time) %}
-            {% endif %}
-            {% set who = (t._supplier.name if t._supplier else (t.customer_name or t.project_name)) or 'Task' %}
-            {% set is_supplier = t._supplier is not none %}
-            <a class="taskRow{% if task_is_completed(t) %} taskRowDone{% endif %}" role="row"
-               href="{{ url_for('open_task_workspace', task_id=t.id) }}">
-                <span class="colNum" role="cell">{{ loop.index }}</span>
-                <span class="colWho" role="cell">
-                    <span class="whoName">{{ who }}</span>
-                    <span class="whoSub">
-                        {% if is_supplier %}<span class="whoTag whoTagSupplier">Supplier</span>{% endif %}
-                        {{ t.title or t.project_name or '' }}
-                    </span>
-                </span>
-                <span class="colTime" role="cell">{{ (be_there or '—')|lower }}</span>
-                <span class="colStatus" role="cell">
-                    <span class="statusPill status-{{ normalize_task_status(t.status) }}">{{ task_status_label(t) }}</span>
-                </span>
-            </a>
+    {% if groups %}
+    <div class="groupList">
+        {% for g in groups %}
+        <a class="groupCard{% if g.done_count == g.task_count %} groupCardDone{% endif %}"
+           href="{{ url_for('worker_task_group', kind=g.kind, gid=g.id) }}">
+            <div class="groupCardTop">
+                <div class="groupCardMain">
+                    {% if g.kind == 'supplier' %}<span class="whoTag whoTagSupplier">Supplier</span>{% endif %}
+                    <span class="groupName">{{ g.title }}</span>
+                    {% if g.subtitle and g.subtitle != g.title %}
+                        <span class="groupSub">{{ g.subtitle }}</span>
+                    {% endif %}
+                    {% if g.address %}<span class="groupSub">{{ g.address }}</span>{% endif %}
+                </div>
+                {% if g.be_there %}<span class="groupTime">{{ g.be_there|lower }}</span>{% endif %}
+            </div>
+            <div class="groupCardBottom">
+                <span class="groupCount">{{ g.task_count }} task{{ '' if g.task_count == 1 else 's' }}</span>
+                {% if g.done_count %}
+                    <span class="groupDone">{{ g.done_count }} of {{ g.task_count }} completed</span>
+                {% endif %}
+                <span class="groupOpen">Open &rsaquo;</span>
+            </div>
+        </a>
         {% endfor %}
     </div>
     {% else %}
@@ -50,38 +45,26 @@
 
 <style>
 .todayList{max-width:760px;margin:0 auto}
-.todayListHead{margin-bottom:10px}
+.todayListHead{margin-bottom:12px}
 .todayListHead h2{margin:0 0 2px}
-.taskTable{background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:12px;overflow:hidden}
-.taskRow{display:grid;grid-template-columns:2.2rem 1fr auto auto;gap:10px;align-items:center;
-    padding:12px 14px;border-bottom:1px solid var(--border,#e2e8f0);text-decoration:none;color:inherit}
-.taskRow:last-child{border-bottom:0}
-a.taskRow:active{background:rgba(37,99,235,.10)}
-a.taskRow:hover{background:rgba(37,99,235,.05)}
-.taskRowHead{background:rgba(15,23,42,.04);font-size:12px;font-weight:800;text-transform:uppercase;
-    letter-spacing:.03em;color:var(--muted,#64748b)}
-.taskRowHead .colTime,.taskRowHead .colStatus{text-align:right}
-.colNum{font-weight:800;color:var(--muted,#64748b);text-align:center}
-.colWho{min-width:0;display:flex;flex-direction:column;gap:2px}
-.whoName{font-weight:700;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.whoSub{font-size:11.5px;color:var(--muted,#64748b);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.groupList{display:grid;gap:12px}
+.groupCard{display:block;background:var(--card,#fff);border:1px solid var(--border,#e2e8f0);border-radius:14px;
+    padding:14px 16px;text-decoration:none;color:inherit;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.groupCard:active{background:rgba(37,99,235,.08)}
+.groupCardTop{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.groupCardMain{min-width:0;display:flex;flex-direction:column;gap:3px}
+.groupName{font-weight:800;font-size:18px;line-height:1.25;word-break:break-word}
+.groupSub{font-size:13px;color:var(--muted,#64748b);word-break:break-word}
+.groupTime{font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:15px}
+.groupCardBottom{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;
+    border-top:1px solid var(--border,#e2e8f0)}
+.groupCount{font-weight:800;font-size:13px;background:rgba(37,99,235,.12);color:#1d4ed8;border-radius:999px;padding:3px 10px}
+.groupDone{font-size:12.5px;font-weight:700;color:#15803d}
+.groupOpen{margin-left:auto;font-weight:800;color:var(--primary,#2563eb)}
+.groupCardDone .groupName{opacity:.72}
 .whoTag{display:inline-block;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
-    padding:1px 6px;border-radius:999px;margin-right:4px}
+    padding:2px 8px;border-radius:999px;width:max-content}
 .whoTagSupplier{background:rgba(245,158,11,.18);color:#b45309}
-.colTime{font-weight:800;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
-.colStatus{text-align:right}
-.statusPill{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:999px;
-    background:rgba(37,99,235,.12);color:#1d4ed8;white-space:nowrap}
-.status-completed{background:rgba(22,163,74,.14);color:#15803d}
-.status-in_progress{background:rgba(234,88,12,.14);color:#c2410c}
-.status-waiting_rfi,.status-waiting_material{background:rgba(217,119,6,.14);color:#b45309}
-.taskRowDone .whoName{opacity:.75}
-.todaySearchBtn{display:inline-block;margin-top:14px}
-@media(max-width:520px){
-    .taskRow{grid-template-columns:1.7rem 1fr auto;gap:8px;padding:11px 12px}
-    .taskRowHead .colStatus,.taskRow .colStatus{grid-column:2 / 4;text-align:left;margin-top:-2px}
-    .taskRowHead .colStatus{display:none}
-    .colTime{align-self:start}
-}
+.todaySearchBtn{display:inline-block;margin-top:16px}
 </style>
 {% endblock %}

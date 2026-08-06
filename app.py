@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V13"
+APP_BUILD = "2026-08-05 V14"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -14630,6 +14630,113 @@ def complete_task(task_id):
     return redirect(url_for("my_tasks"))
 
 
+def worker_can_edit_task(conn, task):
+    if is_main_admin():
+        return True
+    return bool(task) and task.get("assigned_user_id") == session.get("user_id")
+
+
+@app.route("/tasks/<int:task_id>/materials/add", methods=["POST"])
+@login_required
+def add_task_material(task_id):
+    """Let the worker on the job add a material they actually used - either
+    picked from the project inventory or typed in if it isn't listed."""
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task or not user_can_access_project(conn, task.get("project_id")):
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("today_tasks"))
+    if not worker_can_edit_task(conn, task):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("today_tasks"))
+
+    ensure_orders_tables(conn)
+    inventory_item_id = request.form.get("inventory_item_id", type=int)
+    try:
+        quantity = max(float(request.form.get("quantity") or 1), 0.01)
+    except Exception:
+        quantity = 1.0
+    comment = (request.form.get("comment") or "").strip()
+    name = (request.form.get("item_name") or "").strip()
+    model = (request.form.get("item_model") or "").strip()
+    brand = (request.form.get("brand") or "").strip()
+    unit = clean_unit_measure(request.form.get("unit_measure")) or "UN"
+
+    source = "note"
+    status = "ready"
+    if inventory_item_id:
+        item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (inventory_item_id,)).fetchone()
+        if not item or item.get("project_id") != task.get("project_id"):
+            conn.close()
+            flash("Choose a material from this project's inventory.")
+            return redirect(safe_next_url("today_tasks"))
+        name = name or item.get("item_name") or ""
+        model = model or item.get("item_model") or ""
+        brand = brand or item.get("brand") or ""
+        source = "stock"
+        status = "allocated"
+    if not name:
+        conn.close()
+        flash("Enter the material name.")
+        return redirect(safe_next_url("today_tasks"))
+
+    try:
+        part_catalog_id = upsert_part_catalog(conn, name, model, brand, "", item_type="part", unit_measure=unit)
+    except Exception:
+        conn.rollback()
+        part_catalog_id = None
+    conn.execute(
+        """
+        INSERT INTO task_materials
+        (task_id, part_catalog_id, inventory_item_id, item_name, item_model, brand, unit_measure, quantity, comment, source, status, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (task_id, part_catalog_id, inventory_item_id or None, name, model, brand, unit, quantity, comment, source, status, utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash(f"{name} added to this task.")
+    return redirect(safe_next_url("today_tasks"))
+
+
+@app.route("/tasks/<int:task_id>/materials/<int:material_id>/remove", methods=["POST"])
+@login_required
+def remove_task_material(task_id, material_id):
+    conn = db()
+    task = conn.execute("SELECT * FROM tasks WHERE id = %s", (task_id,)).fetchone()
+    if not task or not user_can_access_project(conn, task.get("project_id")):
+        conn.close()
+        flash("Task not found.")
+        return redirect(url_for("today_tasks"))
+    if not worker_can_edit_task(conn, task):
+        conn.close()
+        flash("This task is assigned to another user.")
+        return redirect(url_for("today_tasks"))
+    material = conn.execute(
+        "SELECT * FROM task_materials WHERE id = %s AND task_id = %s",
+        (material_id, task_id)
+    ).fetchone()
+    if not material:
+        conn.close()
+        flash("Material not found on this task.")
+        return redirect(safe_next_url("today_tasks"))
+    if material.get("status") == "used":
+        conn.close()
+        flash("That material was already used and cannot be removed.")
+        return redirect(safe_next_url("today_tasks"))
+    if material.get("po_id") or material.get("pickup_task_id"):
+        conn.close()
+        flash("That material is tied to a purchase order or pickup task. Ask the admin to change it.")
+        return redirect(safe_next_url("today_tasks"))
+    conn.execute("DELETE FROM task_materials WHERE id = %s", (material_id,))
+    conn.commit()
+    conn.close()
+    flash("Material removed from this task.")
+    return redirect(safe_next_url("today_tasks"))
+
+
 @app.route("/tasks/<int:task_id>/received", methods=["POST"])
 @login_required
 def receive_task(task_id):
@@ -14830,6 +14937,103 @@ def worker_assignment_task_rows(conn, source_task):
     return sorted(rows, key=task_active_sort_key)
 
 
+def worker_day_group_key(task):
+    """Today's work is grouped by supplier (pickup runs) or by project
+    (everything else), so a worker sees one card per place they have to go
+    instead of one card per individual task."""
+    if task.get("supplier_id"):
+        return ("supplier", task["supplier_id"])
+    return ("project", task.get("project_id") or 0)
+
+
+def worker_day_groups(tasks):
+    """Turn a flat list of a worker's tasks for one day into ordered groups."""
+    groups = {}
+    for task in tasks:
+        kind, gid = worker_day_group_key(task)
+        key = f"{kind}:{gid}"
+        group = groups.get(key)
+        if not group:
+            supplier = task.get("_supplier") if kind == "supplier" else None
+            if kind == "supplier":
+                title = (supplier or {}).get("name") or "Supplier"
+                address = (supplier or {}).get("address") or (supplier or {}).get("street") or ""
+                subtitle = "Material pickup"
+                phone = (supplier or {}).get("phone") or ""
+                contact_name = (supplier or {}).get("contact_name") or ""
+            else:
+                title = task.get("customer_name") or task.get("project_name") or "Project"
+                address = task.get("customer_address") or task.get("project_address") or ""
+                subtitle = task.get("project_name") or ""
+                phone = task.get("customer_phone") or ""
+                contact_name = task.get("point_of_contact_name") or ""
+            group = {
+                "kind": kind,
+                "id": gid,
+                "key": key,
+                "title": title,
+                "subtitle": subtitle,
+                "address": address,
+                "phone": phone,
+                "contact_name": contact_name,
+                "point_of_contact_phone": task.get("point_of_contact_phone") or "",
+                "project_id": task.get("project_id"),
+                "project_name": task.get("project_name") or "",
+                "customer_name": task.get("customer_name") or "",
+                "tasks": [],
+            }
+            groups[key] = group
+        group["tasks"].append(task)
+
+    ordered = list(groups.values())
+    for group in ordered:
+        group["task_count"] = len(group["tasks"])
+        group["done_count"] = sum(1 for t in group["tasks"] if task_is_completed(t))
+        first = group["tasks"][0]
+        start_time = format_task_time(first.get("task_start_time"))
+        if not start_time and first.get("_supplier_inventory_item"):
+            start_time = format_task_time(first["_supplier_inventory_item"].get("supplier_pickup_time"))
+        group["be_there"] = start_time or ""
+        group["first_task_id"] = first["id"]
+    ordered.sort(key=lambda g: (g["be_there"] or "~", g["title"].lower()))
+    return ordered
+
+
+def worker_group_tasks_for_day(conn, kind, gid, task_day=None):
+    """Every task the logged-in worker has for one project/supplier on one day,
+    in the order they'll step through them with Back / Next."""
+    task_day = task_day or local_now().date()
+    rows = worker_today_task_rows(conn, target_date=task_day)
+    rows = load_task_details(conn, rows)
+    return [t for t in rows if worker_day_group_key(t) == (kind, gid)]
+
+
+@app.route("/tasks/today/<kind>/<int:gid>")
+@login_required
+def worker_task_group(kind, gid):
+    """The main page for one project or supplier: where to go, when, and the
+    What to Do button that steps into the individual tasks."""
+    if kind not in ("project", "supplier"):
+        flash("That work group was not found.")
+        return redirect(url_for("today_tasks"))
+    if is_main_admin():
+        return redirect(url_for("my_tasks", mode="search"))
+    conn = db()
+    task_day = local_now().date()
+    tasks = worker_group_tasks_for_day(conn, kind, gid, task_day)
+    conn.close()
+    if not tasks:
+        flash("No tasks scheduled there today.")
+        return redirect(url_for("today_tasks"))
+    group = worker_day_groups(tasks)[0]
+    return render_template(
+        "worker_task_group.html",
+        group=group,
+        tasks=tasks,
+        today=task_day.isoformat(),
+    )
+
+
 @app.route("/tasks/today")
 @login_required
 def today_tasks():
@@ -14859,6 +15063,7 @@ def today_tasks():
     return render_template(
         "today_tasks.html",
         tasks=tasks,
+        groups=worker_day_groups(tasks),
         task_status_options=TASK_STATUS_LABELS,
         part_catalog=catalog,
         today=task_day.isoformat()
@@ -14948,12 +15153,66 @@ def open_task_workspace(task_id):
                 task["status"] = refreshed.get("status")
     task = load_task_details(conn, [task], task.get("room_id"))[0]
     catalog = part_catalog_options(conn)
+
+    # Back / Next stepping through the other tasks this worker has for the same
+    # project or supplier on the same day. Only ever siblings - never another
+    # project, supplier, day, or user's work.
+    group_nav = None
+    if not is_main_admin():
+        task_day = task_scheduled_date_value(task)
+        if task_day:
+            kind, gid = worker_day_group_key(task)
+            try:
+                siblings = worker_group_tasks_for_day(conn, kind, gid, task_day)
+            except Exception as e:
+                print("Task group navigation failed:", e)
+                siblings = []
+            ids = [t["id"] for t in siblings]
+            if task["id"] in ids and len(ids) > 1:
+                pos = ids.index(task["id"])
+                group_nav = {
+                    "kind": kind,
+                    "id": gid,
+                    "position": pos + 1,
+                    "total": len(ids),
+                    "prev_id": ids[pos - 1] if pos > 0 else None,
+                    "next_id": ids[pos + 1] if pos < len(ids) - 1 else None,
+                }
+            elif task["id"] in ids:
+                group_nav = {
+                    "kind": kind, "id": gid, "position": 1, "total": 1,
+                    "prev_id": None, "next_id": None,
+                }
+
+    project_inventory = []
+    if task.get("project_id"):
+        try:
+            project_inventory = conn.execute(
+                """
+                SELECT inventory_items.id, inventory_items.item_name, inventory_items.item_model,
+                       inventory_items.brand, inventory_items.quantity, inventory_items.status,
+                       rooms.name AS room_name
+                FROM inventory_items
+                LEFT JOIN rooms ON inventory_items.room_id = rooms.id
+                WHERE inventory_items.project_id = %s
+                  AND inventory_items.status IN ('available', 'picked_up', 'client_supplied')
+                  AND COALESCE(inventory_items.quantity, 0) > 0
+                ORDER BY inventory_items.item_name
+                """,
+                (task["project_id"],)
+            ).fetchall()
+        except Exception as e:
+            conn.rollback()
+            print("Project inventory lookup failed:", e)
+            project_inventory = []
     conn.close()
     return render_template(
         "task_work.html",
         t=task,
         task_status_options=TASK_STATUS_LABELS,
         part_catalog=catalog,
+        group_nav=group_nav,
+        project_inventory=project_inventory,
         today=local_now().date().isoformat()
     )
 

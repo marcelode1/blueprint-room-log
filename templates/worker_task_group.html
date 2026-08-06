@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="wtg">
+    <a class="btn-link btn-secondary wtgBack" href="{{ url_for('today_tasks') }}">&larr; Today's Tasks</a>
+
+    <div class="card wtgHead">
+        {% if group.kind == 'supplier' %}<span class="wtgTag wtgTagSupplier">Supplier Pickup</span>{% endif %}
+        <h2>{{ group.title }}</h2>
+        {% if group.kind == 'project' and group.project_name and group.project_name != group.title %}
+            <p class="wtgLine"><strong>Project:</strong> {{ group.project_name }}</p>
+        {% endif %}
+        {% if group.address %}
+            <p class="wtgLine"><strong>Address:</strong> {{ group.address }}</p>
+        {% endif %}
+        <p class="wtgLine"><strong>Date:</strong> {{ format_date(today) }}</p>
+        {% if group.be_there %}
+            <p class="wtgLine"><strong>Be There:</strong> {{ group.be_there }}</p>
+        {% endif %}
+        {% if is_main_admin() or has_perm("view_contact_info") %}
+            {% if group.contact_name %}<p class="wtgLine"><strong>Contact:</strong> {{ group.contact_name }}</p>{% endif %}
+            {% set contact_phone = group.point_of_contact_phone or group.phone %}
+            {% if contact_phone %}
+                <p class="wtgLine"><strong>Phone:</strong> {{ format_us_phone(contact_phone) }}</p>
+            {% endif %}
+        {% endif %}
+        <p class="wtgCount">{{ group.task_count }} task{{ '' if group.task_count == 1 else 's' }} today
+            {% if group.done_count %}&middot; {{ group.done_count }} completed{% endif %}</p>
+    </div>
+
+    <div class="wtgActions">
+        {% if group.address %}
+            <a class="btn-link btn-secondary wtgActionBtn" target="_blank" rel="noopener" href="{{ maps_directions_url(group.address) }}">Route</a>
+        {% endif %}
+        {% if group.project_id %}
+            <a class="btn-link btn-secondary wtgActionBtn" href="{{ url_for('mobile_time_clock', project_id=group.project_id, supplier_id=group.id if group.kind == 'supplier' else '', next=request.full_path) }}">Clock In</a>
+        {% endif %}
+        <a class="btn-link wtgActionBtn wtgPrimaryBtn" href="{{ url_for('open_task_workspace', task_id=group.first_task_id, gk=group.kind, gid=group.id) }}">What to Do</a>
+    </div>
+
+    <div class="card">
+        <h3>Tasks Here Today</h3>
+        {% for t in tasks %}
+            {% set be_there = format_task_time(t.task_start_time) %}
+            <a class="wtgTaskRow{% if task_is_completed(t) %} wtgTaskDone{% endif %}"
+               href="{{ url_for('open_task_workspace', task_id=t.id, gk=group.kind, gid=group.id) }}">
+                <span class="wtgTaskNum">{{ loop.index }}</span>
+                <span class="wtgTaskMain">
+                    <span class="wtgTaskTitle">{{ t.title or 'Task' }}</span>
+                    <span class="wtgTaskSub">{{ t.room_name or 'Project general' }}{% if be_there %} &middot; {{ be_there }}{% endif %}</span>
+                </span>
+                <span class="statusPill status-{{ normalize_task_status(t.status) }}">{{ task_status_label(t) }}</span>
+            </a>
+        {% endfor %}
+    </div>
+</div>
+
+<style>
+.wtg{max-width:760px;margin:0 auto}
+.wtgBack{width:auto!important;margin:0 0 10px!important;padding:8px 14px!important;min-height:40px!important}
+.wtgHead h2{margin:0 0 8px;font-size:24px;line-height:1.2;word-break:break-word}
+.wtgLine{margin:4px 0;word-break:break-word}
+.wtgCount{margin:10px 0 0;font-weight:800;color:var(--muted,#64748b);font-size:13px}
+.wtgTag{display:inline-block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+    padding:3px 10px;border-radius:999px;margin-bottom:8px}
+.wtgTagSupplier{background:rgba(245,158,11,.18);color:#b45309}
+.wtgActions{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0 0 16px}
+.wtgActionBtn{margin:0!important;min-height:52px!important;display:flex!important;align-items:center;justify-content:center;
+    font-size:16px!important;font-weight:800!important;text-align:center}
+.wtgPrimaryBtn{grid-column:1/-1}
+.wtgTaskRow{display:grid;grid-template-columns:2rem minmax(0,1fr) auto;gap:10px;align-items:center;
+    padding:14px 12px;border-bottom:1px solid var(--border,#e2e8f0);text-decoration:none;color:inherit}
+.wtgTaskRow:last-child{border-bottom:0}
+.wtgTaskRow:active{background:rgba(37,99,235,.10)}
+.wtgTaskNum{font-weight:800;color:var(--muted,#64748b);text-align:center}
+.wtgTaskMain{min-width:0;display:flex;flex-direction:column;gap:2px}
+.wtgTaskTitle{font-weight:700;line-height:1.25;word-break:break-word}
+.wtgTaskSub{font-size:12px;color:var(--muted,#64748b);word-break:break-word}
+.wtgTaskDone .wtgTaskTitle{opacity:.7}
+.statusPill{display:inline-block;font-size:11px;font-weight:800;padding:4px 9px;border-radius:999px;
+    background:rgba(37,99,235,.12);color:#1d4ed8;white-space:nowrap}
+.status-completed{background:rgba(22,163,74,.14);color:#15803d}
+.status-in_progress{background:rgba(234,88,12,.14);color:#c2410c}
+.status-waiting_rfi,.status-waiting_material{background:rgba(217,119,6,.14);color:#b45309}
+@media(max-width:520px){
+    .wtgTaskRow{grid-template-columns:1.7rem minmax(0,1fr);row-gap:6px}
+    .wtgTaskRow .statusPill{grid-column:2/3}
+}
+</style>
+{% endblock %}
