@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V16"
+APP_BUILD = "2026-08-05 V17"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8517,23 +8517,37 @@ def task_material_check():
     return jsonify({"stock": stock, "suppliers": suppliers})
 
 
-def create_task_materials_from_form(conn, primary_task, project_id):
-    """Turn the Create Task materials list into allocations, POs, and pickup tasks."""
+def parse_task_materials_json():
+    """The Create Task materials list, as posted by the form."""
     raw = request.form.get("task_materials_json", "").strip()
     if not raw:
-        return ""
+        return []
     try:
         rows = json.loads(raw)
     except Exception:
-        return "The materials list could not be read. Add the materials again."
+        return None
     if not isinstance(rows, list):
+        return []
+    return [m for m in rows if isinstance(m, dict) and str(m.get("item_name") or "").strip()]
+
+
+def create_task_materials_from_form(conn, primary_task, project_id, task_by_index=None):
+    """Turn the Create Task materials list into allocations, POs, and pickup tasks.
+
+    task_by_index lets each material land on its own task (one task per
+    material) instead of piling every material onto the first task."""
+    rows = parse_task_materials_json()
+    if rows is None:
+        return "The materials list could not be read. Add the materials again."
+    if not rows:
         return ""
     ensure_orders_tables(conn)
     now = utc_now_iso()
     today = local_now().date().isoformat()
-    for m in rows:
+    for material_index, m in enumerate(rows):
         if not isinstance(m, dict):
             continue
+        target_task = (task_by_index or {}).get(material_index) or primary_task
         name = str(m.get("item_name") or "").strip()
         if not name:
             continue
@@ -8572,7 +8586,7 @@ def create_task_materials_from_form(conn, primary_task, project_id):
                 RETURNING id
                 """,
                 (po_number, supplier_id, project_id, str(m.get("expected_date") or "").strip(),
-                 f"Created from task {primary_task.get('task_number') or primary_task.get('id')}",
+                 f"Created from task {target_task.get('task_number') or target_task.get('id')}",
                  session.get("user_id"), now, now)
             ).fetchone()
             po_id = po_row["id"]
@@ -8650,7 +8664,7 @@ def create_task_materials_from_form(conn, primary_task, project_id):
             (task_id, part_catalog_id, inventory_item_id, po_id, pickup_task_id, item_name, item_model, brand, unit_measure, quantity, comment, source, status, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (primary_task["id"], part_catalog_id, inventory_item_id, po_id, pickup_task_id,
+            (target_task["id"], part_catalog_id, inventory_item_id, po_id, pickup_task_id,
              name, model, brand, unit, qty, comment, action, status, now)
         )
     return ""
@@ -13411,6 +13425,7 @@ def create_global_task():
                 "quantity": min(float(entry.get("quantity") or 1), max(available, 0.01)) if available > 0 else max(float(entry.get("quantity") or 1), 0.01),
                 "comment": entry.get("comment") or "",
                 "place": entry.get("place") or "",
+                "room_id": entry.get("room_id") or "",
             })
         if len(kept_cart) != len(task_cart):
             set_task_cart(kept_cart)
@@ -13544,10 +13559,47 @@ def create_global_task():
             ).fetchone()
             if not phase_ok:
                 task_phase_id = None
+
+        # "One task per material" - each material becomes its own task so the
+        # installer can finish, photograph and comment on them one at a time,
+        # and anything not done that day stays open on its own task.
+        split_materials = request.form.get("split_materials") == "1"
+        material_rows = parse_task_materials_json()
+        if material_rows is None:
+            conn.close()
+            flash("The materials list could not be read. Add the materials again.")
+            return redirect(url_for("create_global_task"))
+        material_draft_index = {}
+        if split_materials and not supplier_mode and material_rows:
+            base = task_drafts[0] if task_drafts else {}
+            base_title = str(base.get("title") or "").strip()
+            split_drafts = []
+            for material_index, m in enumerate(material_rows):
+                item_name = str(m.get("item_name") or "").strip()
+                note = str(m.get("comment") or "").strip()
+                material_room_id = project_room_id_or_none(conn, project_id, m.get("room_id") or "")
+                if note:
+                    draft_title = note if len(note) <= 120 else (note[:117] + "...")
+                elif base_title:
+                    draft_title = f"{base_title} - {item_name}"
+                else:
+                    draft_title = f"Install {item_name}"
+                material_draft_index[len(split_drafts)] = material_index
+                split_drafts.append({
+                    "room_id": material_room_id or base.get("room_id") or room_id,
+                    "task_start_date": base.get("task_start_date") or "",
+                    "task_start_time": base.get("task_start_time") or "",
+                    "task_end_date": base.get("task_end_date") or "",
+                    "title": draft_title,
+                    "instructions": note or str(base.get("instructions") or "").strip(),
+                })
+            task_drafts = split_drafts
+
         created_tasks = []
+        material_task_by_index = {}
         assignment_group_id = uuid.uuid4().hex
 
-        for draft in task_drafts:
+        for draft_position, draft in enumerate(task_drafts):
             for assigned in selected_users:
                 assigned_permissions = permissions_for_user_record(conn, assigned)
                 assigned_require_picture = False
@@ -13604,9 +13656,16 @@ def create_global_task():
                     f"New task assigned: {task_display_name(task)}. Be there {task_schedule_text(task)}. Project access granted."
                 )
                 created_tasks.append((task, assigned))
+                if draft_position in material_draft_index:
+                    material_index = material_draft_index[draft_position]
+                    # If several workers share the task, the material rides on
+                    # the first one so it is never counted twice.
+                    material_task_by_index.setdefault(material_index, task)
 
         if not supplier_mode and created_tasks:
-            material_error = create_task_materials_from_form(conn, created_tasks[0][0], project_id)
+            material_error = create_task_materials_from_form(
+                conn, created_tasks[0][0], project_id, task_by_index=material_task_by_index
+            )
             if material_error:
                 conn.rollback()
                 conn.close()

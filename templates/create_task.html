@@ -165,6 +165,20 @@
             <button type="button" class="btn-secondary" id="matCheckBtn">Check Inventory &amp; Add Material</button>
             <div id="matList" class="supplierItemList"></div>
             <input type="hidden" name="task_materials_json" id="taskMaterialsJson">
+
+            <div class="matSplitBox" id="matSplitBox" hidden>
+                <label class="matSplitOption">
+                    <input type="radio" name="split_materials" value="1" checked>
+                    <span><strong>A separate task for each material</strong><br>
+                        <small>Each material gets its own task, so the installer can finish them one at a time and
+                        anything left undone stays open on its own task.</small></span>
+                </label>
+                <label class="matSplitOption">
+                    <input type="radio" name="split_materials" value="0">
+                    <span><strong>One task with all materials</strong><br>
+                        <small>All materials listed together on a single task.</small></span>
+                </label>
+            </div>
         </div>
 
         {% set attachment_project_select_id = "taskProjectSelect" %}
@@ -1267,6 +1281,12 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
 </script>
 <style>
 .taskMaterialsPanel{border:1px solid var(--border);border-radius:8px;padding:14px;margin:10px 0 16px;background:rgba(37,99,235,.06)}
+.matSplitBox{display:grid;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.matSplitBox[hidden]{display:none!important}
+.matSplitOption{display:flex;gap:10px;align-items:flex-start;margin:0;font-weight:400;cursor:pointer;
+    border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.5)}
+.matSplitOption input{width:auto;min-height:0;margin:3px 0 0}
+.matSplitOption small{color:var(--muted,#64748b);line-height:1.4;display:block;margin-top:2px}
 .taskMaterialsPanel h3{margin-top:0}
 .matOverlay{position:fixed;inset:0;z-index:2100;background:rgba(15,23,42,.58);display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
 .matOverlay[hidden]{display:none!important}
@@ -1294,6 +1314,8 @@ window.PROJECT_PHASES = {{ phases_by_project|default({})|tojson }};
     function localToday(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
     function renderMaterials(){
         jsonInput.value=JSON.stringify(materials);
+        var splitBox=document.getElementById("matSplitBox");
+        if(splitBox)splitBox.hidden=materials.length<2;
         listEl.innerHTML="";
         materials.forEach(function(m,index){
             var row=document.createElement("div");
