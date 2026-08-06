@@ -142,10 +142,7 @@
             {% if material_prefill_list %}
             <div class="taskCartNotice">
                 <span>{{ material_prefill_list|length }} material{{ '' if material_prefill_list|length == 1 else 's' }} added from your Task Cart.</span>
-                <form method="post" action="{{ url_for('clear_task_cart') }}" style="margin:0">
-                    <input type="hidden" name="next" value="{{ request.full_path }}">
-                    <button type="submit" class="btn-secondary taskCartNoticeBtn">Clear Cart</button>
-                </form>
+                <button type="submit" form="clearTaskCartForm" class="btn-secondary taskCartNoticeBtn">Clear Cart</button>
             </div>
             {% endif %}
             <div class="grid">
@@ -176,6 +173,12 @@
         <button type="submit">Save and Send</button>
     </form>
 </div>
+
+{% if material_prefill_list %}
+<form method="post" action="{{ url_for('clear_task_cart') }}" id="clearTaskCartForm" style="display:none">
+    <input type="hidden" name="next" value="{{ request.full_path }}">
+</form>
+{% endif %}
 
 <div id="newSupplierModal" class="newSupplierModal" aria-hidden="true">
     <div class="newSupplierDialog">
