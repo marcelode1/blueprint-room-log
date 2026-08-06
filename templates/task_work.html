@@ -2,6 +2,10 @@
 {% block content %}
 {% set work_room_id = t.room_id %}
 {% set work_room_name = t.room_name or 'Project general' %}
+{# Project name, schedule, Route and Clock In live on the project/supplier
+   main page - the individual task page stays focused on the work itself. #}
+{% set slim_task_header = true %}
+{% set show_worker_task_actions = false %}
 
 {% if group_nav %}
 <div class="taskNavBar">
@@ -26,6 +30,7 @@
 
 {% include "_worker_task_work_card.html" %}
 {% include "_worker_task_work_assets.html" %}
+{% include "_part_catalog_autocomplete.html" %}
 
 <style>
 .taskNavBar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:0 0 6px}

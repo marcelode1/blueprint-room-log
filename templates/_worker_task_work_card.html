@@ -35,12 +35,18 @@
             .supplierHeadName{font-size:26px;line-height:1.15;font-weight:900;color:#0f172a;margin:6px 0 8px}
             </style>
         {% else %}
+            {# On the worker's task page the project, schedule and route/clock
+               buttons already live on the project/supplier main page, so they
+               are not repeated here. #}
+            {% set slim_task_header = slim_task_header|default(false) %}
             <p><strong>Task Type:</strong> {{ 'Supplier' if t.supplier_id else 'Project' }}</p>
-            <p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>
+            {% if not slim_task_header %}<p><strong>Project Name:</strong> {{ t.project_name or '-' }}</p>{% endif %}
             <p><strong>Room Name:</strong> {{ work_room_name }}</p>
             <p><strong>Task Number:</strong> {{ t.task_number or t.id }}</p>
-            <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
-            {% include "_task_schedule_contact_info.html" %}
+            {% if not slim_task_header %}
+                <p><strong>Task Received On:</strong> {{ format_datetime(t.accepted_at) if t.accepted_at else '-' }}</p>
+                {% include "_task_schedule_contact_info.html" %}
+            {% endif %}
             <p><strong>Task Information:</strong><br><strong>{{ t.title }}</strong>{% set task_info = task_instruction_text(t) %}{% if task_info %}<br>{{ task_info }}{% endif %}</p>
             <p><strong>{{ 'Task Status' if t.supplier_id else 'Room Task Status' }}:</strong> <span class="taskRoomState {% if task_is_completed(t) or room_state.done %}done{% endif %}">{{ 'Completed' if task_is_completed(t) or room_state.done else task_status_label(t) }}</span></p>
         {% endif %}
@@ -95,12 +101,14 @@
                     {% endfor %}
                 </select>
                 <div class="matManualFields">
-                    <label>Material Name</label>
-                    <input name="item_name" placeholder="Type the material name">
+                    <label>Item</label>
+                    <input name="item_name" class="js-part-item" list="partCatalogNameList"
+                           placeholder="Start typing to match the catalog" autocomplete="off">
                     <div class="matAddGrid">
-                        <div><label>Brand</label><input name="brand"></div>
-                        <div><label>Model #</label><input name="item_model"></div>
+                        <div><label>Brand</label><input name="brand" class="js-part-brand" list="partCatalogBrandList" autocomplete="off"></div>
+                        <div><label>Model #</label><input name="item_model" class="js-part-model" list="partCatalogModelList" autocomplete="off"></div>
                     </div>
+                    <p class="muted matCatalogHint">Pick an existing catalog item to fill the brand and model automatically, or type a new one to add it to the catalog.</p>
                 </div>
                 <div class="matAddGrid">
                     <div>
@@ -109,7 +117,7 @@
                     </div>
                     <div>
                         <label>Unit</label>
-                        <select name="unit_measure">
+                        <select name="unit_measure" class="js-part-unit">
                             <option value="UN">UN (Unit)</option>
                             <option value="PR">PR (Pair)</option>
                         </select>
@@ -137,6 +145,7 @@
     .matAddBox summary{cursor:pointer;font-weight:800;font-size:14.5px;padding:4px 0}
     .matAddForm{margin-top:10px}
     .matAddGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .matCatalogHint{font-size:12px;margin:6px 0 0;line-height:1.4}
     @media(max-width:520px){.matAddGrid{grid-template-columns:1fr}}
     </style>
     <script>
@@ -183,30 +192,13 @@
             {% endif %}
             <label>Task Status</label>
             {% set current_status = normalize_task_status(t.status) %}
-            <div class="statusBtnGroup">
+            <select name="completion_task_status">
                 {% for value, label in task_status_options.items() %}
                     {% if value not in ["sent_to_worker", "received"] %}
-                        <label class="statusBtn statusBtn-{{ value }}">
-                            <input type="radio" name="completion_task_status" value="{{ value }}"
-                                {% if current_status == value or (current_status in ["sent_to_worker", "received"] and value == "in_progress") %}checked{% endif %}>
-                            <span>{{ label }}</span>
-                        </label>
+                        <option value="{{ value }}" {% if current_status == value or (current_status in ["sent_to_worker", "received"] and value == "in_progress") %}selected{% endif %}>{{ label }}</option>
                     {% endif %}
                 {% endfor %}
-            </div>
-            <style>
-            .statusBtnGroup{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:6px 0 14px}
-            .statusBtn{margin:0;position:relative}
-            .statusBtn input{position:absolute;opacity:0;width:0;height:0}
-            .statusBtn span{display:flex;align-items:center;justify-content:center;text-align:center;min-height:48px;
-                padding:8px 10px;border:2px solid var(--border,#cbd5e1);border-radius:10px;background:var(--card,#fff);
-                font-weight:800;font-size:14px;cursor:pointer;word-break:break-word;line-height:1.2}
-            .statusBtn input:checked + span{border-color:var(--primary,#2563eb);background:rgba(37,99,235,.12);color:#1d4ed8}
-            .statusBtn-completed input:checked + span{border-color:#16a34a;background:rgba(22,163,74,.14);color:#15803d}
-            .statusBtn-waiting_rfi input:checked + span,
-            .statusBtn-waiting_material input:checked + span{border-color:#d97706;background:rgba(217,119,6,.14);color:#b45309}
-            .statusBtn input:focus-visible + span{outline:3px solid rgba(37,99,235,.45);outline-offset:2px}
-            </style>
+            </select>
             {% if not t.supplier_id and (has_perm("add_pictures") or has_perm("add_audio") or has_perm("write_comments")) %}
                 <div class="completionBlocks">
                     <div class="completionBlock">
