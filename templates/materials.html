@@ -7,6 +7,61 @@
     <a class="btn-link" href="{{ url_for('inventory', project_id=project.id) }}">Open Main Inventory</a>
 </div>
 
+{% if can_edit_inventory() and po_cart %}
+<div class="card orderCartCard">
+    <h3>Order Cart <span class="orderCartCount">{{ po_cart|length }} item{{ '' if po_cart|length == 1 else 's' }}</span></h3>
+    <p class="muted" style="margin-top:0">Keep adding materials as you go down the list. When you're done, create one purchase order per supplier.</p>
+
+    {% set ns = namespace(missing=false) %}
+    {% for c in po_cart %}
+        {% if not c.supplier_id %}{% set ns.missing = true %}{% endif %}
+        <div class="orderCartRow{% if not c.supplier_id %} orderCartNoSupplier{% endif %}">
+            <div>
+                <strong>{{ c.item_name }}</strong> &mdash; {{ '%g'|format(c.quantity or 1) }} {{ c.unit_measure }}
+                {% if c.brand %} | {{ c.brand }}{% endif %}{% if c.item_model %} | {{ c.item_model }}{% endif %}
+                <br><span class="{% if c.supplier_id %}muted{% else %}orderCartWarn{% endif %}">Supplier: {{ c.supplier_name }}</span>
+                {% if c.free_stock %}
+                    <div class="freeStockFlag">
+                        <strong>Already in general inventory &mdash; you may not need to buy this.</strong>
+                        {% for s in c.free_stock %}
+                            <div class="freeStockRow">
+                                <span>{{ '%g'|format(s.quantity or 0) }} available{% if s.location_detail %} at {{ inventory_location_label(s.location_type) }} ({{ s.location_detail }}){% else %} at {{ inventory_location_label(s.location_type) }}{% endif %}</span>
+                                <form method="post" action="{{ url_for('allocate_unassigned_stock') }}">
+                                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                                    <input type="hidden" name="stock_item_id" value="{{ s.id }}">
+                                    <input type="hidden" name="project_id" value="{{ project.id }}">
+                                    <input type="hidden" name="inventory_item_id" value="{{ c.inventory_item_id }}">
+                                    <button type="submit" class="btn-secondary allocateBtn">Allocate to {{ project.name }}</button>
+                                </form>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+            <form method="post" action="{{ url_for('remove_from_po_cart') }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <input type="hidden" name="inventory_item_id" value="{{ c.inventory_item_id }}">
+                <button type="submit" class="btn-danger orderCartRemoveBtn">Remove</button>
+            </form>
+        </div>
+    {% endfor %}
+
+    {% if ns.missing %}
+        <p class="orderCartWarn">Set a supplier on the inventory row for the items marked above, then add them to the cart again.</p>
+    {% endif %}
+    <div class="orderCartActions">
+        <form method="post" action="{{ url_for('create_orders_from_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" {% if ns.missing %}disabled{% endif %}>Create a Purchase Order</button>
+        </form>
+        <form method="post" action="{{ url_for('clear_po_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button type="submit" class="btn-secondary">Clear Cart</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {% if can_edit_inventory() and task_cart %}
 <div class="card taskCartCard">
     <h3>Task Cart <span class="taskCartCount">{{ task_cart|length }} item{{ '' if task_cart|length == 1 else 's' }}</span></h3>
@@ -107,6 +162,7 @@
             </thead>
             <tbody>
             {% set cart_item_ids = task_cart|map(attribute='inventory_item_id')|list %}
+            {% set po_cart_item_ids = po_cart|default([])|map(attribute='inventory_item_id')|list %}
             {% for m in materials %}
                 <tr class="inventoryStatus inventory-{{ m.status }}">
                     <td>{{ m.item_date }}</td>
@@ -159,14 +215,25 @@
                             <input type="hidden" name="project_id" value="{{ project.id }}">
                             <select name="status" class="inventoryActionSelect" data-current-status="{{ m.status }}"
                                     data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=m.room_id, supplier_id=m.supplier_id, pickup_item_id=m.id) }}"
-                                    data-item-id="{{ m.id }}" data-item-name="{{ m.item_name }}" data-item-room-id="{{ m.room_id or '' }}">
+                                    data-item-id="{{ m.id }}" data-item-name="{{ m.item_name }}" data-item-room-id="{{ m.room_id or '' }}"
+                                    data-item-qty="{{ m.quantity or 1 }}" data-supplier-id="{{ m.supplier_id or '' }}"
+                                    data-supplier-name="{{ m.supplier_name or '' }}">
                                 {% for value, label in status_options.items() %}<option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
-                                {% if m.id not in cart_item_ids %}
+                                {% if m.id not in pickup_tasks_by_item %}
                                 <option value="__create_pickup_task__">Create a pickup task</option>
+                                {% endif %}
+                                {% if m.id not in cart_item_ids %}
                                 <option value="__create_task_with_material__">Create a Task with this Material</option>
+                                {% endif %}
+                                {% if m.id not in po_cart_item_ids %}
+                                <option value="__create_an_order__">Create an Order</option>
                                 {% endif %}
                             </select>
                             {% if m.id in cart_item_ids %}<span class="inTaskCartNote">In Task Cart</span>{% endif %}
+                            {% if m.id in po_cart_item_ids %}<span class="inTaskCartNote inOrderCartNote">In Order Cart</span>{% endif %}
+                            {% if m.id in pickup_tasks_by_item %}
+                                <a class="inTaskCartNote pickupTaskNote" href="{{ url_for('open_task_workspace', task_id=pickup_tasks_by_item[m.id].id) }}">Pickup task {{ pickup_tasks_by_item[m.id].task_number or pickup_tasks_by_item[m.id].id }} created</a>
+                            {% endif %}
                         </form>
                     </td>
                     {% endif %}
@@ -188,6 +255,29 @@
 </div>
 
 {% if can_edit_inventory() %}
+<div class="cartAddOverlay" id="orderAddOverlay" hidden>
+    <div class="cartAddModal">
+        <h3 style="margin-top:0" id="orderAddTitle">Add to Order Cart</h3>
+        <form method="post" action="{{ url_for('add_to_po_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="inventory_item_id" id="orderAddItemId">
+            <label>Supplier</label>
+            <select name="supplier_id" id="orderAddSupplier" required>
+                <option value="">Choose the supplier to order from</option>
+                {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+            </select>
+            <label>Quantity to Order</label>
+            <input type="number" name="quantity" id="orderAddQty" step="0.01" min="0.01" value="1" required>
+            <label>Note for the supplier (optional)</label>
+            <input name="comment" id="orderAddComment" placeholder="Colour, spec, urgency...">
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button type="submit" style="flex:1;margin:0">Add to Order Cart</button>
+                <button type="button" class="btn-secondary" id="orderAddCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="cartAddOverlay" id="cartAddOverlay" hidden>
     <div class="cartAddModal">
         <h3 style="margin-top:0" id="cartAddTitle">Add to Task Cart</h3>
@@ -213,6 +303,21 @@
 {% endif %}
 
 <style>
+.orderCartCard{border:2px solid #d97706}
+.orderCartCount{font-size:13px;font-weight:800;background:#fef3c7;color:#b45309;border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:middle}
+.orderCartRow{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.orderCartRow form{margin:0}
+.orderCartNoSupplier{border-color:#dc2626;background:#fef2f2}
+.orderCartWarn{color:#b91c1c;font-weight:800}
+.orderCartRemoveBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
+.orderCartActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.orderCartActions form{margin:0}
+.orderCartActions button{margin:0}
+.freeStockFlag{border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:13px}
+.freeStockRow{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.freeStockRow form{margin:0}
+.allocateBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
+.inOrderCartNote{background:#fef3c7;color:#b45309}
 .taskCartCard{border:2px solid #2563eb}
 .taskCartCount{font-size:13px;font-weight:800;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:middle}
 .taskCartRow{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px}
@@ -250,6 +355,23 @@ document.querySelectorAll(".inventoryActionSelect").forEach(select => {
             select.value = select.dataset.currentStatus || "";
             return;
         }
+        if (select.value === "__create_an_order__") {
+            const ov = document.getElementById("orderAddOverlay");
+            if (ov) {
+                document.getElementById("orderAddItemId").value = select.dataset.itemId || "";
+                document.getElementById("orderAddTitle").textContent =
+                    "Order " + (select.dataset.itemName || "material");
+                document.getElementById("orderAddQty").value = select.dataset.itemQty || "1";
+                document.getElementById("orderAddComment").value = "";
+                const supSel = document.getElementById("orderAddSupplier");
+                if (supSel) supSel.value = select.dataset.supplierId || "";
+                ov.hidden = false;
+                document.body.style.overflow = "hidden";
+                if (supSel && !supSel.value) supSel.focus();
+            }
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
         if (select.value === "__create_task_with_material__") {
             if (cartAddOverlay) {
                 cartAddItemId.value = select.dataset.itemId || "";
@@ -267,6 +389,18 @@ document.querySelectorAll(".inventoryActionSelect").forEach(select => {
         select.form.submit();
     });
 });
+
+const orderAddOverlay = document.getElementById("orderAddOverlay");
+const orderAddCancelBtn = document.getElementById("orderAddCancelBtn");
+function closeOrderAdd() {
+    if (!orderAddOverlay) return;
+    orderAddOverlay.hidden = true;
+    document.body.style.overflow = "";
+}
+if (orderAddCancelBtn) orderAddCancelBtn.addEventListener("click", closeOrderAdd);
+if (orderAddOverlay) {
+    orderAddOverlay.addEventListener("click", e => { if (e.target === orderAddOverlay) closeOrderAdd(); });
+}
 
 if (cartAddCancelBtn) {
     cartAddCancelBtn.addEventListener("click", () => {

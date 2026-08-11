@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Purchase Order {{ po.po_number }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('order_view', po_id=po.id) }}">Back to Order</a>
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+</div>
+
+<div class="card poPaper">
+    <div class="poHeader">
+        <div class="poCompanyBox">
+            {% set logo = get_app_setting("company_logo") %}
+            {% if logo %}<img class="poLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
+            <p class="poCompanyName">{{ company.company_name }}</p>
+            {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ format_us_phone(company.company_phone) or company.company_phone }}</p>{% endif %}
+            {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+        </div>
+        <div class="poMeta">
+            <h1>Purchase Order</h1>
+            <div class="poMetaGrid">
+                <span>PO #</span><strong>{{ po.po_number }}</strong>
+                <span>Date</span><strong>{{ format_date(po.created_at) }}</strong>
+                {% if po.expected_date %}<span>Needed By</span><strong>{{ format_date(po.expected_date) }}</strong>{% endif %}
+                <span>Status</span><strong>{{ po_status_label(po.status) }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="poParties">
+        <div>
+            <h3>Supplier</h3>
+            <p><strong>{{ po.supplier_name or 'No supplier' }}</strong></p>
+            {% if po.supplier_contact %}<p>{{ po.supplier_contact }}</p>{% endif %}
+            {% if po.supplier_address %}<p>{{ po.supplier_address }}</p>{% endif %}
+            {% if po.supplier_phone %}<p>{{ format_us_phone(po.supplier_phone) or po.supplier_phone }}</p>{% endif %}
+            {% if po.supplier_email %}<p>{{ po.supplier_email }}</p>{% endif %}
+        </div>
+        <div>
+            <h3>Deliver / Project</h3>
+            <p><strong>{{ po.project_name or 'General inventory' }}</strong></p>
+            {% if po.project_address %}<p>{{ po.project_address }}</p>{% endif %}
+        </div>
+    </div>
+
+    <table class="poTable">
+        <thead>
+            <tr><th>#</th><th>Item</th><th>Brand</th><th>Model #</th><th>Qty</th><th>Unit</th><th>Note</th></tr>
+        </thead>
+        <tbody>
+            {% for line in lines %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ line.item_name }}</strong></td>
+                <td>{{ line.brand or '-' }}</td>
+                <td>{{ line.item_model or '-' }}</td>
+                <td>{{ '%g'|format(line.quantity or 0) }}</td>
+                <td>{{ line.unit_measure or 'UN' }}</td>
+                <td>{{ line.comment or '' }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No items on this purchase order.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if po.notes %}
+        <h3 class="poSectionTitle">Notes</h3>
+        <p class="poNotes">{{ po.notes }}</p>
+    {% endif %}
+
+    <p class="poFooterNote">Please confirm availability and pricing, and reference {{ po.po_number }} on the invoice.</p>
+</div>
+
+<style>
+.poPaper{max-width:780px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}
+.poHeader{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:30px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}
+.poCompanyBox p{margin:3px 0}
+.poCompanyName{font-size:20px;font-weight:900;color:#0f172a;margin:0 0 4px!important}
+.poLogo{max-width:280px;max-height:150px;object-fit:contain;margin-bottom:10px}
+.poMeta{text-align:right}
+.poMeta h1{font-size:28px;text-transform:uppercase;margin:0 0 12px}
+.poMetaGrid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:5px 12px;font-size:13px}
+.poMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}
+.poParties{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin:22px 0}
+.poParties h3{margin:0 0 6px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
+.poParties p{margin:3px 0}
+.poTable{width:100%;border-collapse:collapse;margin-top:8px}
+.poTable th,.poTable td{border-bottom:1px solid #d7dee9;padding:9px;text-align:left;font-size:13.5px;vertical-align:top}
+.poTable th{color:#475569;text-transform:uppercase;font-size:11px;letter-spacing:.03em;background:#f1f5f9}
+.poSectionTitle{margin:22px 0 6px;font-size:12px;text-transform:uppercase;color:#475569;letter-spacing:.04em}
+.poNotes{white-space:pre-wrap;margin:0}
+.poFooterNote{margin-top:22px;font-weight:700;color:#475569}
+@media(max-width:700px){.poHeader,.poParties{grid-template-columns:1fr}.poMeta{text-align:left}}
+@media print{
+    @page{size:letter;margin:.5in}
+    header,.bottom-nav,.backButton,.noPrint,.flash{display:none!important}
+    body{background:white!important;color:#111!important}
+    main{max-width:none!important;padding:0!important;margin:0!important}
+    .card{box-shadow:none!important;border:0!important}
+    .poPaper{max-width:none!important;margin:0!important;padding:10px!important}
+}
+</style>
+{% endblock %}

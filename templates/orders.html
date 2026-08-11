@@ -5,6 +5,38 @@
     <p class="muted">Every purchase order lives here. Open one to email it to the supplier, or mark that you ordered it online or by phone, and track its status until the material arrives.</p>
 </div>
 
+{% if just_created %}
+<div class="card justCreatedCard">
+    <h3>{{ just_created|length }} Purchase Order{{ '' if just_created|length == 1 else 's' }} Created</h3>
+    <p class="muted" style="margin-top:0">One order per supplier. For each one, email it to the supplier or save it as a PDF.</p>
+    {% for o in orders %}
+        {% if o.id in just_created %}
+        <div class="justCreatedRow">
+            <div>
+                <strong>{{ o.po_number }}</strong> &mdash; {{ o.supplier_name or 'No supplier' }}
+                <span class="muted">({{ o.line_count }} item{{ '' if o.line_count == 1 else 's' }})</span>
+            </div>
+            <div class="justCreatedActions">
+                <a class="btn-link btn-secondary jcBtn" href="{{ url_for('order_view', po_id=o.id) }}">Open</a>
+                <a class="btn-link btn-secondary jcBtn" href="{{ url_for('order_print', po_id=o.id) }}">Save as PDF</a>
+                <form method="post" action="{{ url_for('update_order', po_id=o.id) }}" style="margin:0">
+                    <input type="hidden" name="action" value="email">
+                    <button type="submit" class="jcBtn" {% if not o.supplier_email %}disabled title="This supplier has no email on file"{% endif %}>Email Supplier</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    {% endfor %}
+</div>
+<style>
+.justCreatedCard{border:2px solid #16a34a}
+.justCreatedRow{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;
+    border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.justCreatedActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.jcBtn{width:auto!important;min-height:36px!important;padding:7px 12px!important;margin:0!important;font-size:13px!important}
+</style>
+{% endif %}
+
 <div class="card">
     <h3>Create a Purchase Order</h3>
     <form method="post" action="{{ url_for('new_order') }}">

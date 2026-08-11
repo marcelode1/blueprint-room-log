@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-05 V19"
+APP_BUILD = "2026-08-11 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8399,6 +8399,198 @@ def add_item_to_task_cart(conn, inventory_item_id, quantity=None, comment="", ro
     return entry["item_name"]
 
 
+def get_po_cart():
+    """Per-session shopping cart of materials to buy. The admin walks the
+    Project Inventory list adding items, then turns the whole cart into one
+    purchase order per supplier."""
+    cart = session.get("po_cart")
+    return cart if isinstance(cart, list) else []
+
+
+def set_po_cart(cart):
+    session["po_cart"] = cart
+
+
+def find_unassigned_stock(conn, name, model="", brand="", exclude_item_id=None):
+    """Stock of the same material sitting in general inventory with no project
+    on it. If we find some, there is no reason to buy it again - the admin is
+    offered the option to allocate it to this project instead."""
+    if not (name or "").strip():
+        return []
+    rows = conn.execute(
+        """
+        SELECT inventory_items.id, inventory_items.item_name, inventory_items.item_model,
+               inventory_items.brand, inventory_items.quantity, inventory_items.status,
+               inventory_items.location_type, inventory_items.location_detail
+        FROM inventory_items
+        WHERE inventory_items.project_id IS NULL
+          AND lower(inventory_items.item_name) = lower(%s)
+          AND (%s = '' OR lower(COALESCE(inventory_items.item_model, '')) = lower(%s))
+          AND (%s = '' OR lower(COALESCE(inventory_items.brand, '')) = lower(%s))
+          AND inventory_items.status IN ('available', 'picked_up', 'client_supplied')
+          AND COALESCE(inventory_items.quantity, 0) > 0
+          AND (%s IS NULL OR inventory_items.id <> %s)
+        ORDER BY inventory_items.id
+        """,
+        (name, model or "", model or "", brand or "", brand or "", exclude_item_id, exclude_item_id)
+    ).fetchall()
+    return rows
+
+
+@app.route("/orders/cart/add", methods=["POST"])
+@admin_required
+def add_to_po_cart():
+    conn = db()
+    item_id = request.form.get("inventory_item_id", type=int)
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone() if item_id else None
+    if not item or not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("That material could not be added to the order cart.")
+        return redirect(safe_next_url("index"))
+    supplier_id = request.form.get("supplier_id", type=int) or item.get("supplier_id")
+    supplier_name = ""
+    if supplier_id:
+        row = conn.execute("SELECT name FROM suppliers WHERE id = %s", (supplier_id,)).fetchone()
+        supplier_name = row.get("name") if row else ""
+        if not supplier_name:
+            supplier_id = None
+    try:
+        quantity = max(float(request.form.get("quantity") or item.get("quantity") or 1), 0.01)
+    except Exception:
+        quantity = 1.0
+    catalog_unit = None
+    if item.get("part_catalog_id"):
+        crow = conn.execute("SELECT unit_measure FROM part_catalog WHERE id = %s", (item["part_catalog_id"],)).fetchone()
+        catalog_unit = crow.get("unit_measure") if crow else None
+    conn.close()
+
+    cart = [row for row in get_po_cart() if row.get("inventory_item_id") != item["id"]]
+    cart.append({
+        "inventory_item_id": item["id"],
+        "project_id": item.get("project_id"),
+        "item_name": item.get("item_name") or "",
+        "item_model": item.get("item_model") or "",
+        "brand": item.get("brand") or "",
+        "unit_measure": clean_unit_measure(catalog_unit) or "UN",
+        "quantity": quantity,
+        "supplier_id": supplier_id,
+        "supplier_name": supplier_name or "No supplier chosen",
+        "comment": (request.form.get("comment") or "").strip(),
+    })
+    set_po_cart(cart)
+    flash(f"{item.get('item_name')} added to the Order Cart ({len(cart)} item{'s' if len(cart) != 1 else ''}).")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/orders/cart/remove", methods=["POST"])
+@admin_required
+def remove_from_po_cart():
+    item_id = request.form.get("inventory_item_id", type=int)
+    set_po_cart([row for row in get_po_cart() if row.get("inventory_item_id") != item_id])
+    flash("Removed from the Order Cart.")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/orders/cart/clear", methods=["POST"])
+@admin_required
+def clear_po_cart():
+    set_po_cart([])
+    flash("Order Cart cleared.")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/orders/cart/allocate", methods=["POST"])
+@admin_required
+def allocate_unassigned_stock():
+    """Use stock already sitting in general inventory instead of buying it:
+    move it onto this project and drop it from the order cart."""
+    conn = db()
+    stock_id = request.form.get("stock_item_id", type=int)
+    project_id = request.form.get("project_id", type=int)
+    cart_item_id = request.form.get("inventory_item_id", type=int)
+    stock = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (stock_id,)).fetchone() if stock_id else None
+    project = conn.execute("SELECT id, name FROM projects WHERE id = %s", (project_id,)).fetchone() if project_id else None
+    if not stock or not project or stock.get("project_id"):
+        conn.close()
+        flash("That stock item is no longer free to allocate.")
+        return redirect(safe_next_url("index"))
+    conn.execute(
+        "UPDATE inventory_items SET project_id = %s, updated_at = %s WHERE id = %s",
+        (project_id, utc_now_iso(), stock_id)
+    )
+    conn.commit()
+    conn.close()
+    set_po_cart([row for row in get_po_cart() if row.get("inventory_item_id") != cart_item_id])
+    flash(f"{stock.get('item_name')} was allocated to {project['name']} from general inventory and removed from the Order Cart.")
+    return redirect(safe_next_url("index"))
+
+
+@app.route("/orders/cart/create", methods=["POST"])
+@admin_required
+def create_orders_from_cart():
+    """Turn the cart into one purchase order per supplier."""
+    cart = get_po_cart()
+    if not cart:
+        flash("The Order Cart is empty.")
+        return redirect(safe_next_url("index"))
+    missing = [row for row in cart if not row.get("supplier_id")]
+    if missing:
+        names = ", ".join(row.get("item_name") or "material" for row in missing[:3])
+        flash(f"Choose a supplier for every item first ({names}). Set the supplier on the inventory row, then add it again.")
+        return redirect(safe_next_url("index"))
+
+    conn = db()
+    ensure_orders_tables(conn)
+    now = utc_now_iso()
+    by_supplier = {}
+    for row in cart:
+        by_supplier.setdefault(row["supplier_id"], []).append(row)
+
+    created = []
+    for supplier_id, rows in by_supplier.items():
+        project_id = next((r.get("project_id") for r in rows if r.get("project_id")), None)
+        po_number = next_po_number(conn)
+        po = conn.execute(
+            """
+            INSERT INTO purchase_orders (po_number, supplier_id, project_id, status, order_method, expected_date, notes, created_by, created_at, updated_at)
+            VALUES (%s, %s, %s, 'draft', '', '', %s, %s, %s, %s)
+            RETURNING id, po_number
+            """,
+            (po_number, supplier_id, project_id, "Created from the inventory Order Cart",
+             session.get("user_id"), now, now)
+        ).fetchone()
+        for r in rows:
+            part_catalog_id = None
+            try:
+                part_catalog_id = upsert_part_catalog(
+                    conn, r.get("item_name") or "", r.get("item_model") or "", r.get("brand") or "",
+                    "", item_type="part", unit_measure=r.get("unit_measure") or "UN"
+                )
+            except Exception:
+                conn.rollback()
+            conn.execute(
+                """
+                INSERT INTO purchase_order_lines (po_id, part_catalog_id, item_name, item_model, brand, unit_measure, quantity, unit_cost, comment, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, %s, %s)
+                """,
+                (po["id"], part_catalog_id, r.get("item_name") or "", r.get("item_model") or "",
+                 r.get("brand") or "", r.get("unit_measure") or "UN", r.get("quantity") or 1,
+                 r.get("comment") or "", now)
+            )
+            # Tie the inventory row to this PO so receiving it updates the stock.
+            conn.execute(
+                "UPDATE inventory_items SET po_id = %s, supplier_id = COALESCE(supplier_id, %s), updated_at = %s WHERE id = %s",
+                (po["id"], supplier_id, now, r.get("inventory_item_id"))
+            )
+        created.append(po["id"])
+    conn.commit()
+    conn.close()
+    set_po_cart([])
+    session["po_cart_created"] = created
+    flash(f"{len(created)} purchase order(s) created. Choose Email or Save as PDF for each one.")
+    return redirect(url_for("orders", created="1"))
+
+
 @app.route("/tasks/cart/add", methods=["POST"])
 @admin_required
 def add_to_task_cart():
@@ -8729,7 +8921,8 @@ def orders():
     params = (status,) if where else ()
     rows = conn.execute(
         f"""
-        SELECT purchase_orders.*, suppliers.name AS supplier_name, projects.name AS project_name,
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
+               projects.name AS project_name,
                (SELECT COUNT(*) FROM purchase_order_lines WHERE purchase_order_lines.po_id = purchase_orders.id) AS line_count
         FROM purchase_orders
         LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
@@ -8742,8 +8935,39 @@ def orders():
     suppliers = fetch_suppliers(conn)
     projects = conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()
     conn.close()
+    just_created = session.pop("po_cart_created", []) if request.args.get("created") == "1" else []
     return render_template("orders.html", orders=rows, status=status, po_status_labels=PO_STATUS_LABELS,
-                           suppliers=suppliers, projects=projects)
+                           suppliers=suppliers, projects=projects, just_created=just_created)
+
+
+@app.route("/orders/<int:po_id>/print")
+@admin_required
+def order_print(po_id):
+    """Printable purchase order - use the browser's Print / Save as PDF."""
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        """
+        SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
+               suppliers.phone AS supplier_phone, suppliers.address AS supplier_address,
+               suppliers.contact_name AS supplier_contact, projects.name AS project_name,
+               projects.customer_address AS project_address
+        FROM purchase_orders
+        LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
+        LEFT JOIN projects ON purchase_orders.project_id = projects.id
+        WHERE purchase_orders.id = %s
+        """,
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    lines = conn.execute(
+        "SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)
+    ).fetchall()
+    conn.close()
+    return render_template("order_print.html", po=po, lines=lines, company=account_info())
 
 
 @app.route("/orders/new", methods=["POST"])
@@ -10244,6 +10468,34 @@ def project_materials(project_id):
     rooms = fetch_inventory_rooms(conn, project_id)
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
+
+    # Items that already have a pickup task, so that option can be hidden.
+    pickup_tasks_by_item = {}
+    material_ids = [m["id"] for m in materials]
+    if material_ids:
+        try:
+            for row in conn.execute(
+                "SELECT id, task_number, supplier_inventory_item_id FROM tasks WHERE supplier_inventory_item_id = ANY(%s)",
+                (material_ids,)
+            ).fetchall():
+                pickup_tasks_by_item[row["supplier_inventory_item_id"]] = row
+        except Exception as e:
+            conn.rollback()
+            print("Pickup task lookup failed:", e)
+
+    # Order cart: flag anything already sitting unassigned in general inventory
+    # so the admin can allocate it instead of buying the same thing twice.
+    po_cart = get_po_cart()
+    for entry in po_cart:
+        try:
+            entry["free_stock"] = find_unassigned_stock(
+                conn, entry.get("item_name"), entry.get("item_model"), entry.get("brand"),
+                exclude_item_id=entry.get("inventory_item_id")
+            )
+        except Exception as e:
+            conn.rollback()
+            print("Unassigned stock lookup failed:", e)
+            entry["free_stock"] = []
     conn.close()
     return render_template(
         "materials.html",
@@ -10256,7 +10508,9 @@ def project_materials(project_id):
         status_options=INVENTORY_STATUS_LABELS,
         location_options=INVENTORY_LOCATION_LABELS,
         condition_options=INVENTORY_CONDITION_LABELS,
-        task_cart=get_task_cart()
+        task_cart=get_task_cart(),
+        po_cart=po_cart,
+        pickup_tasks_by_item=pickup_tasks_by_item
     )
 
 

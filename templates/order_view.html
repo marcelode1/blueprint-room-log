@@ -108,6 +108,10 @@
             <button type="submit" {% if not po.supplier_email %}disabled title="Add an email to this supplier first"{% endif %}>Email PO to Supplier</button>
             <span class="muted">Sends the item list to {{ po.supplier_email or 'the supplier (no email on file)' }} and marks it Ordered.</span>
         </form>
+        <div class="poActionForm">
+            <a class="btn-link btn-secondary" style="margin:0;width:auto" href="{{ url_for('order_print', po_id=po.id) }}">Save as PDF / Print</a>
+            <span class="muted">Opens a printable purchase order - use your browser's Save as PDF.</span>
+        </div>
         <form method="post" action="{{ url_for('update_order', po_id=po.id) }}" class="poActionForm">
             <input type="hidden" name="action" value="ordered">
             <select name="order_method" style="margin:0;width:auto">
