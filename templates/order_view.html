@@ -186,6 +186,14 @@
         </form>
     </div>
     {% endif %}
+
+    <div class="poDangerZone">
+        <form method="post" action="{{ url_for('request_order_delete', po_id=po.id) }}" class="poActionForm"
+              onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
+            <button type="submit" class="btn-danger" style="margin:0">Delete This Purchase Order</button>
+            <span class="muted">A 6-digit PIN is emailed to you to confirm. The materials stay in inventory.</span>
+        </form>
+    </div>
 </div>
 
 <style>
@@ -213,6 +221,7 @@
     border-radius:8px;padding:9px 10px;background:var(--card);cursor:pointer}
 .shipToOption input{width:auto;min-height:0;margin:0}
 .shipToPreview{margin:4px 0 0;font-size:13px}
+.poDangerZone{border-top:1px solid var(--border);margin-top:16px;padding-top:14px}
 </style>
 <script>
 (function(){

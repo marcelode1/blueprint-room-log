@@ -225,10 +225,14 @@
                                 {% if m.id not in cart_item_ids %}
                                 <option value="__create_task_with_material__">Create a Task with this Material</option>
                                 {% endif %}
-                                {% if m.id not in po_cart_item_ids %}
+                                {% if m.id not in po_cart_item_ids and m.id not in active_po_by_item %}
                                 <option value="__create_an_order__">Create an Order</option>
                                 {% endif %}
                             </select>
+                            {% if m.id in active_po_by_item %}
+                                {% set apo = active_po_by_item[m.id] %}
+                                <a class="inTaskCartNote onOrderNote" href="{{ url_for('order_view', po_id=apo.po_id) }}">{{ apo.po_number }} &middot; {{ po_status_label(apo.status) }}</a>
+                            {% endif %}
                             {% if m.id in cart_item_ids %}<span class="inTaskCartNote">In Task Cart</span>{% endif %}
                             {% if m.id in po_cart_item_ids %}<span class="inTaskCartNote inOrderCartNote">In Order Cart</span>{% endif %}
                             {% if m.id in pickup_tasks_by_item %}
@@ -318,6 +322,8 @@
 .freeStockRow form{margin:0}
 .allocateBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
 .inOrderCartNote{background:#fef3c7;color:#b45309}
+.onOrderNote{background:#dbeafe;color:#1d4ed8;text-decoration:none;margin-left:6px}
+.onOrderNote:hover{text-decoration:underline}
 .taskCartCard{border:2px solid #2563eb}
 .taskCartCount{font-size:13px;font-weight:800;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:3px 10px;margin-left:8px;vertical-align:middle}
 .taskCartRow{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px}

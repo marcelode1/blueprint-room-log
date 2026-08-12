@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:620px;margin:auto">
+    <h2>Delete Purchase Order {{ po.po_number }}</h2>
+    <p><strong>{{ po.supplier_name or 'No supplier' }}</strong>
+       {% if po.project_name %}&middot; {{ po.project_name }}{% endif %}
+       &middot; <span class="poStatus po-{{ po.status }}">{{ po_status_label(po.status) }}</span></p>
+
+    {% if lines %}
+        <p class="muted">This order has {{ lines|length }} item{{ '' if lines|length == 1 else 's' }}:</p>
+        <ul class="poDeleteList">
+            {% for line in lines %}
+                <li>{{ '%g'|format(line.quantity or 1) }} {{ line.unit_measure or 'UN' }} &times; {{ line.item_name }}{% if line.brand %} ({{ line.brand }}{% if line.item_model %} {{ line.item_model }}{% endif %}){% endif %}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="muted">This order has no items on it.</p>
+    {% endif %}
+
+    <p class="muted">The materials themselves stay in inventory and on their tasks &mdash; they simply stop pointing at this purchase order. This cannot be undone.</p>
+    <p class="muted">A 6-digit PIN was sent to your admin email. Enter it below to permanently delete this purchase order.</p>
+
+    <form method="post" action="{{ url_for('confirm_order_delete', po_id=po.id) }}">
+        <label>Delete PIN</label>
+        <input name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" minlength="6" required autofocus>
+        <button type="submit" class="btn-danger">Delete Purchase Order</button>
+        <a class="btn-link btn-secondary" href="{{ url_for('order_view', po_id=po.id) }}">Cancel</a>
+    </form>
+</div>
+<style>
+.poDeleteList{margin:6px 0 12px 20px}
+.poDeleteList li{margin:3px 0}
+.poStatus{display:inline-flex;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:800;border:1px solid var(--border)}
+.po-draft{background:rgba(100,116,139,.14);color:#475569}
+.po-ordered{background:rgba(37,99,235,.12);color:#1d4ed8}
+.po-purchased{background:rgba(245,158,11,.16);color:#b45309}
+.po-received{background:rgba(22,163,74,.14);color:#15803d}
+.po-canceled{background:rgba(148,163,184,.16);color:var(--muted);text-decoration:line-through}
+</style>
+{% endblock %}

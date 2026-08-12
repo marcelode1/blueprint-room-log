@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-11 V2"
+APP_BUILD = "2026-08-11 V4"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1122,6 +1122,7 @@ def init_db():
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS expense_delete_codes (id SERIAL PRIMARY KEY, expense_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS paystub_delete_codes (id SERIAL PRIMARY KEY, paystub_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS po_delete_codes (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS tasks_assignment_group_id_idx ON tasks(assignment_group_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS inventory_items_legacy_material_id_idx ON inventory_items(legacy_material_id)",
         """
@@ -8321,6 +8322,16 @@ def po_ship_to(po, company=None, project_address=""):
     return "Ship To (Our Office)", "\n".join(p for p in parts if p).strip()
 
 
+def mark_po_inventory_ordered(conn, po_id, now=None):
+    """Once a PO is actually ordered, its materials stop being 'needs purchase'
+    and show as on order, so nobody orders the same thing twice."""
+    conn.execute(
+        "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s "
+        "WHERE po_id = %s AND status = 'needs_purchase'",
+        (now or utc_now_iso(), po_id)
+    )
+
+
 def po_status_label(value):
     return PO_STATUS_LABELS.get(str(value or "").strip(), "Draft")
 
@@ -9105,6 +9116,115 @@ def add_order_line(po_id):
     return redirect(url_for("order_view", po_id=po_id))
 
 
+@app.route("/orders/<int:po_id>/delete-request", methods=["POST"])
+@admin_required
+def request_order_delete(po_id):
+    """Deleting a purchase order needs a 6-digit PIN emailed to the admin,
+    the same as clock records, expenses and paystubs."""
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        "SELECT purchase_orders.*, suppliers.name AS supplier_name FROM purchase_orders "
+        "LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id WHERE purchase_orders.id = %s",
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    admin = conn.execute(
+        "SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)
+    ).fetchone()
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("order_view", po_id=po_id))
+    line_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM purchase_order_lines WHERE po_id = %s", (po_id,)
+    ).fetchone()["n"]
+    pin = f"{secrets.randbelow(1000000):06d}"
+    conn.execute("DELETE FROM po_delete_codes WHERE admin_id = %s AND po_id = %s", (admin["id"], po_id))
+    conn.execute(
+        "INSERT INTO po_delete_codes (po_id, admin_id, pin_hash, expires_at, created_at) VALUES (%s, %s, %s, %s, %s)",
+        (po_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    sent = send_email(
+        admin["email"],
+        "ProjectONus delete purchase order PIN",
+        "\n".join([
+            "Your 6-digit PIN to delete this purchase order is:",
+            "",
+            pin,
+            "",
+            f"Purchase order: {po.get('po_number')}",
+            f"Supplier: {po.get('supplier_name') or 'No supplier'}",
+            f"Items on the order: {line_count}",
+            f"Status: {po_status_label(po.get('status'))}",
+            "This PIN expires in 10 minutes.",
+            "If you did not request this, ignore this email."
+        ])
+    )
+    if not sent:
+        conn.execute("DELETE FROM po_delete_codes WHERE admin_id = %s AND po_id = %s", (admin["id"], po_id))
+        conn.commit()
+        conn.close()
+        flash("Delete PIN could not be sent. Check SMTP email settings first.")
+        return redirect(url_for("order_view", po_id=po_id))
+    conn.close()
+    flash("A 6-digit delete PIN was sent to your admin email.")
+    return redirect(url_for("confirm_order_delete", po_id=po_id))
+
+
+@app.route("/orders/<int:po_id>/delete-confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_order_delete(po_id):
+    conn = db()
+    ensure_orders_tables(conn)
+    po = conn.execute(
+        "SELECT purchase_orders.*, suppliers.name AS supplier_name, projects.name AS project_name "
+        "FROM purchase_orders LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id "
+        "LEFT JOIN projects ON purchase_orders.project_id = projects.id WHERE purchase_orders.id = %s",
+        (po_id,)
+    ).fetchone()
+    if not po:
+        conn.close()
+        flash("Purchase order not found.")
+        return redirect(url_for("orders"))
+    lines = conn.execute(
+        "SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)
+    ).fetchall()
+
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            "SELECT * FROM po_delete_codes WHERE admin_id = %s AND po_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session.get("user_id"), po_id)
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("order_view", po_id=po_id))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_order_delete", po_id=po_id))
+        conn.execute("DELETE FROM po_delete_codes WHERE admin_id = %s AND po_id = %s", (session.get("user_id"), po_id))
+        # Materials keep existing - they just stop pointing at this order.
+        conn.execute("UPDATE inventory_items SET po_id = NULL, updated_at = %s WHERE po_id = %s", (utc_now_iso(), po_id))
+        conn.execute("UPDATE task_materials SET po_id = NULL WHERE po_id = %s", (po_id,))
+        conn.execute("DELETE FROM purchase_order_lines WHERE po_id = %s", (po_id,))
+        conn.execute("DELETE FROM purchase_orders WHERE id = %s", (po_id,))
+        conn.commit()
+        conn.close()
+        flash(f"Purchase order {po.get('po_number')} deleted.")
+        return redirect(url_for("orders"))
+
+    conn.close()
+    return render_template("order_delete_confirm.html", po=po, lines=lines)
+
+
 @app.route("/orders/lines/<int:line_id>/update", methods=["POST"])
 @admin_required
 def update_order_line(line_id):
@@ -9256,7 +9376,8 @@ def update_order(po_id):
                 "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
                 (now, append_note(f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"), now, po_id)
             )
-            flash(f"Purchase order emailed to {po['supplier_email']} and marked Ordered.")
+            mark_po_inventory_ordered(conn, po_id, now)
+            flash(f"Purchase order emailed to {po['supplier_email']} and marked Ordered. The inventory now shows the material on order.")
         else:
             flash("The email could not be sent. Check SMTP settings.")
     elif action == "ordered":
@@ -9267,7 +9388,8 @@ def update_order(po_id):
             "UPDATE purchase_orders SET status = 'ordered', order_method = %s, ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
             (method, now, append_note(note or f"Ordered by {method}"), now, po_id)
         )
-        flash("Purchase order marked Ordered.")
+        mark_po_inventory_ordered(conn, po_id, now)
+        flash("Purchase order marked Ordered. The inventory now shows the material on order.")
     elif action == "purchased":
         conn.execute(
             "UPDATE purchase_orders SET status = 'purchased', purchased_at = COALESCE(purchased_at, %s), notes = %s, updated_at = %s WHERE id = %s",
@@ -9294,7 +9416,13 @@ def update_order(po_id):
             "UPDATE purchase_orders SET status = 'canceled', notes = %s, updated_at = %s WHERE id = %s",
             (append_note(note or "Canceled"), now, po_id)
         )
-        flash("Purchase order canceled.")
+        # Put the material back to Needs purchase so it can be ordered again.
+        conn.execute(
+            "UPDATE inventory_items SET status = 'needs_purchase', updated_at = %s "
+            "WHERE po_id = %s AND status = 'purchased_waiting_arrival'",
+            (now, po_id)
+        )
+        flash("Purchase order canceled. The material is back to Needs purchase and can be ordered again.")
     conn.commit()
     conn.close()
     return redirect(url_for("order_view", po_id=po_id))
@@ -10595,6 +10723,26 @@ def project_materials(project_id):
             conn.rollback()
             print("Pickup task lookup failed:", e)
 
+    # Materials already sitting on a live purchase order - the Create an Order
+    # option is hidden for these until that PO is canceled or deleted.
+    active_po_by_item = {}
+    if material_ids:
+        try:
+            for row in conn.execute(
+                """
+                SELECT inventory_items.id AS item_id, purchase_orders.id AS po_id,
+                       purchase_orders.po_number, purchase_orders.status
+                FROM inventory_items
+                JOIN purchase_orders ON inventory_items.po_id = purchase_orders.id
+                WHERE inventory_items.id = ANY(%s) AND purchase_orders.status <> 'canceled'
+                """,
+                (material_ids,)
+            ).fetchall():
+                active_po_by_item[row["item_id"]] = row
+        except Exception as e:
+            conn.rollback()
+            print("Active PO lookup failed:", e)
+
     # Order cart: flag anything already sitting unassigned in general inventory
     # so the admin can allocate it instead of buying the same thing twice.
     po_cart = get_po_cart()
@@ -10622,7 +10770,8 @@ def project_materials(project_id):
         condition_options=INVENTORY_CONDITION_LABELS,
         task_cart=get_task_cart(),
         po_cart=po_cart,
-        pickup_tasks_by_item=pickup_tasks_by_item
+        pickup_tasks_by_item=pickup_tasks_by_item,
+        active_po_by_item=active_po_by_item
     )
 
 
