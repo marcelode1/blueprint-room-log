@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-12 V2"
+APP_BUILD = "2026-08-12 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1730,8 +1730,9 @@ def load_task_details(conn, tasks, room_id=None):
                 """,
                 (task["id"],)
             ).fetchall()
-        except Exception:
+        except Exception as e:
             conn.rollback()
+            print(f"Task materials lookup failed for task {task.get('id')}:", e)
             task["_task_materials"] = []
         detailed.append(task)
     return detailed
@@ -8868,7 +8869,10 @@ def create_task_materials_from_form(conn, primary_task, project_id, task_by_inde
     for material_index, m in enumerate(rows):
         if not isinstance(m, dict):
             continue
-        target_task = (task_by_index or {}).get(material_index) or primary_task
+        target_tasks = (task_by_index or {}).get(material_index) or [primary_task]
+        if not isinstance(target_tasks, list):
+            target_tasks = [target_tasks]
+        target_task = target_tasks[0]
         name = str(m.get("item_name") or "").strip()
         if not name:
             continue
@@ -8988,6 +8992,17 @@ def create_task_materials_from_form(conn, primary_task, project_id, task_by_inde
             (target_task["id"], part_catalog_id, inventory_item_id, po_id, pickup_task_id,
              name, model, brand, unit, qty, comment, action, status, now)
         )
+        # Same task given to more than one worker: each of them sees the
+        # material, but only the row above holds the stock reservation.
+        for extra_task in target_tasks[1:]:
+            conn.execute(
+                """
+                INSERT INTO task_materials
+                (task_id, part_catalog_id, inventory_item_id, po_id, pickup_task_id, item_name, item_model, brand, unit_measure, quantity, comment, source, status, created_at)
+                VALUES (%s, %s, NULL, NULL, NULL, %s, %s, %s, %s, %s, %s, 'note', 'ready', %s)
+                """,
+                (extra_task["id"], part_catalog_id, name, model, brand, unit, qty, comment, now)
+            )
     return ""
 
 
@@ -14289,9 +14304,10 @@ def create_global_task():
                 created_tasks.append((task, assigned))
                 if draft_position in material_draft_index:
                     material_index = material_draft_index[draft_position]
-                    # If several workers share the task, the material rides on
-                    # the first one so it is never counted twice.
-                    material_task_by_index.setdefault(material_index, task)
+                    # Every worker assigned this task sees the material. Only
+                    # the first copy reserves the stock, so inventory is never
+                    # counted twice for the same physical item.
+                    material_task_by_index.setdefault(material_index, []).append(task)
 
         if not supplier_mode and created_tasks:
             material_error = create_task_materials_from_form(
