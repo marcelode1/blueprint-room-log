@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-11 V4"
+APP_BUILD = "2026-08-11 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -3698,6 +3698,7 @@ def can_view_project_notes(project_id=None):
 INVENTORY_STATUS_LABELS = {
     "available": "Available",
     "picked_up": "Picked up",
+    "ordered": "Ordered",
     "purchased_waiting_arrival": "Purchased Waiting Arrival",
     "unavailable": "Unavailable",
     "backordered": "Backordered",
@@ -4462,7 +4463,8 @@ def inventory_select_query(where_sql):
                  ORDER BY CASE inventory_items.status
                     WHEN 'available' THEN 0
                     WHEN 'picked_up' THEN 1
-                    WHEN 'purchased_waiting_arrival' THEN 2
+                    WHEN 'ordered' THEN 2
+                    WHEN 'purchased_waiting_arrival' THEN 3
                     WHEN 'backordered' THEN 3
                     WHEN 'unavailable' THEN 4
                     WHEN 'needs_purchase' THEN 5
@@ -8326,7 +8328,7 @@ def mark_po_inventory_ordered(conn, po_id, now=None):
     """Once a PO is actually ordered, its materials stop being 'needs purchase'
     and show as on order, so nobody orders the same thing twice."""
     conn.execute(
-        "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s "
+        "UPDATE inventory_items SET status = 'ordered', updated_at = %s "
         "WHERE po_id = %s AND status = 'needs_purchase'",
         (now or utc_now_iso(), po_id)
     )
@@ -9396,7 +9398,7 @@ def update_order(po_id):
             (now, append_note(note or "Purchased"), now, po_id)
         )
         conn.execute(
-            "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s WHERE po_id = %s AND status = 'needs_purchase'",
+            "UPDATE inventory_items SET status = 'purchased_waiting_arrival', updated_at = %s WHERE po_id = %s AND status IN ('needs_purchase', 'ordered')",
             (now, po_id)
         )
         flash("Purchase order marked Purchased. Inventory shows the material as waiting arrival.")
@@ -9406,7 +9408,7 @@ def update_order(po_id):
             (now, append_note(note or "Received"), now, po_id)
         )
         conn.execute(
-            "UPDATE inventory_items SET status = 'available', location_type = 'warehouse', updated_at = %s WHERE po_id = %s AND status IN ('needs_purchase', 'purchased_waiting_arrival')",
+            "UPDATE inventory_items SET status = 'available', location_type = 'warehouse', updated_at = %s WHERE po_id = %s AND status IN ('needs_purchase', 'ordered', 'purchased_waiting_arrival')",
             (now, po_id)
         )
         mark_task_materials_ready(conn, po_id=po_id, place_text="- arrived at the warehouse")
@@ -9419,7 +9421,7 @@ def update_order(po_id):
         # Put the material back to Needs purchase so it can be ordered again.
         conn.execute(
             "UPDATE inventory_items SET status = 'needs_purchase', updated_at = %s "
-            "WHERE po_id = %s AND status = 'purchased_waiting_arrival'",
+            "WHERE po_id = %s AND status IN ('ordered', 'purchased_waiting_arrival')",
             (now, po_id)
         )
         flash("Purchase order canceled. The material is back to Needs purchase and can be ordered again.")
@@ -10502,7 +10504,7 @@ def update_inventory_status(item_id):
     used_at = now if new_status == "used" else None
     purchased_by = item.get("purchased_by")
     purchased_at = item.get("purchased_at")
-    if new_status in ["available", "purchased_waiting_arrival", "used"] and item.get("status") == "needs_purchase" and not purchased_at:
+    if new_status in ["available", "ordered", "purchased_waiting_arrival", "used"] and item.get("status") == "needs_purchase" and not purchased_at:
         purchased_by = session.get("user_id")
         purchased_at = now
     conn.execute(
@@ -11749,7 +11751,7 @@ def compute_project_progress(conn, project):
     material_row = conn.execute(
         """
         SELECT COUNT(*) AS total,
-               COUNT(*) FILTER (WHERE status NOT IN ('needs_purchase', 'purchased_waiting_arrival', 'backordered', 'unavailable')) AS ready
+               COUNT(*) FILTER (WHERE status NOT IN ('needs_purchase', 'ordered', 'purchased_waiting_arrival', 'backordered', 'unavailable')) AS ready
         FROM inventory_items WHERE project_id = %s
         """,
         (project_id,)
@@ -14566,7 +14568,7 @@ def sync_supplier_task_status(conn, task):
         return
     if all(s in ("picked_up", "used") for s in statuses):
         new_status = "completed"
-    elif any(s in ("unavailable", "backordered", "purchased_waiting_arrival") for s in statuses):
+    elif any(s in ("unavailable", "backordered", "ordered", "purchased_waiting_arrival") for s in statuses):
         new_status = "waiting_material"
     elif any(s in ("picked_up", "used") for s in statuses):
         new_status = "in_progress"
