@@ -37,9 +37,13 @@
             {% if po.supplier_email %}<p>{{ po.supplier_email }}</p>{% endif %}
         </div>
         <div>
-            <h3>Deliver / Project</h3>
-            <p><strong>{{ po.project_name or 'General inventory' }}</strong></p>
-            {% if po.project_address %}<p>{{ po.project_address }}</p>{% endif %}
+            <h3>{{ ship_label or 'Ship To' }}</h3>
+            {% if ship_address %}
+                {% for line in ship_address.split('\n') %}<p>{{ line }}</p>{% endfor %}
+            {% else %}
+                <p><strong>{{ po.project_name or 'General inventory' }}</strong></p>
+            {% endif %}
+            {% if po.project_name %}<p class="poForProject">For project: {{ po.project_name }}</p>{% endif %}
         </div>
     </div>
 
@@ -91,6 +95,7 @@
 .poSectionTitle{margin:22px 0 6px;font-size:12px;text-transform:uppercase;color:#475569;letter-spacing:.04em}
 .poNotes{white-space:pre-wrap;margin:0}
 .poFooterNote{margin-top:22px;font-weight:700;color:#475569}
+.poForProject{margin-top:8px!important;color:#64748b;font-size:12.5px}
 @media(max-width:700px){.poHeader,.poParties{grid-template-columns:1fr}.poMeta{text-align:left}}
 @media print{
     @page{size:letter;margin:.5in}

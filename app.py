@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-11 V1"
+APP_BUILD = "2026-08-11 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8298,6 +8298,29 @@ PO_STATUS_LABELS = {
 }
 
 
+PO_SHIP_TO_MODES = {
+    "office": "Our office / warehouse",
+    "project": "The project address",
+    "custom": "Another address",
+}
+
+
+def po_ship_to(po, company=None, project_address=""):
+    """Where the supplier should deliver: our office, the job site, or a
+    one-off address typed on the order. Returns (label, address)."""
+    company = company or account_info()
+    mode = (po or {}).get("ship_to_mode") or ("project" if (po or {}).get("project_id") else "office")
+    if mode == "custom":
+        return "Ship To", ((po or {}).get("ship_to_address") or "").strip()
+    if mode == "project":
+        address = (project_address or (po or {}).get("project_address") or "").strip()
+        if address:
+            return "Ship To (Job Site)", address
+        mode = "office"
+    parts = [company.get("company_name") or "", company.get("company_address") or ""]
+    return "Ship To (Our Office)", "\n".join(p for p in parts if p).strip()
+
+
 def po_status_label(value):
     return PO_STATUS_LABELS.get(str(value or "").strip(), "Draft")
 
@@ -8308,6 +8331,8 @@ def ensure_orders_tables(conn):
         "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_mode TEXT",
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_address TEXT",
     ]
     for statement in statements:
         try:
@@ -8967,7 +8992,10 @@ def order_print(po_id):
         "SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)
     ).fetchall()
     conn.close()
-    return render_template("order_print.html", po=po, lines=lines, company=account_info())
+    company = account_info()
+    ship_label, ship_address = po_ship_to(po, company, po.get("project_address") or "")
+    return render_template("order_print.html", po=po, lines=lines, company=company,
+                           ship_label=ship_label, ship_address=ship_address)
 
 
 @app.route("/orders/new", methods=["POST"])
@@ -9025,10 +9053,20 @@ def order_view(po_id):
     ).fetchall()
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
+    projects = conn.execute("SELECT id, name, customer_address FROM projects ORDER BY name").fetchall()
+    project_address = ""
+    if po.get("project_id"):
+        match = next((p for p in projects if p["id"] == po["project_id"]), None)
+        project_address = (match or {}).get("customer_address") or ""
     conn.close()
+    company = account_info()
+    ship_label, ship_address = po_ship_to(po, company, project_address)
     return render_template("order_view.html", po=po, lines=lines, suppliers=suppliers,
                            linked_tasks=linked_tasks, part_catalog=catalog,
-                           po_status_labels=PO_STATUS_LABELS)
+                           po_status_labels=PO_STATUS_LABELS, projects=projects,
+                           company=company, project_address=project_address,
+                           ship_to_modes=PO_SHIP_TO_MODES,
+                           ship_label=ship_label, ship_address=ship_address)
 
 
 @app.route("/orders/<int:po_id>/line/add", methods=["POST"])
@@ -9064,6 +9102,54 @@ def add_order_line(po_id):
     conn.commit()
     conn.close()
     flash("Item added to the purchase order.")
+    return redirect(url_for("order_view", po_id=po_id))
+
+
+@app.route("/orders/lines/<int:line_id>/update", methods=["POST"])
+@admin_required
+def update_order_line(line_id):
+    """Edit an item already on the purchase order before it is sent."""
+    conn = db()
+    ensure_orders_tables(conn)
+    line = conn.execute("SELECT * FROM purchase_order_lines WHERE id = %s", (line_id,)).fetchone()
+    if not line:
+        conn.close()
+        flash("That order item was not found.")
+        return redirect(url_for("orders"))
+    po_id = line["po_id"]
+    name = (request.form.get("item_name") or "").strip()
+    if not name:
+        conn.close()
+        flash("The item name cannot be empty.")
+        return redirect(url_for("order_view", po_id=po_id))
+    try:
+        quantity = max(float(request.form.get("quantity") or 1), 0.01)
+    except Exception:
+        quantity = float(line.get("quantity") or 1)
+    raw_cost = (request.form.get("unit_cost") or "").strip()
+    unit_cost = parse_money_value(raw_cost) if raw_cost else None
+    conn.execute(
+        """
+        UPDATE purchase_order_lines
+        SET item_name = %s, item_model = %s, brand = %s, unit_measure = %s,
+            quantity = %s, unit_cost = %s, comment = %s
+        WHERE id = %s
+        """,
+        (
+            name,
+            (request.form.get("item_model") or "").strip(),
+            (request.form.get("brand") or "").strip(),
+            clean_unit_measure(request.form.get("unit_measure")) or "UN",
+            quantity,
+            unit_cost,
+            (request.form.get("comment") or "").strip(),
+            line_id,
+        )
+    )
+    conn.execute("UPDATE purchase_orders SET updated_at = %s WHERE id = %s", (utc_now_iso(), po_id))
+    conn.commit()
+    conn.close()
+    flash(f"{name} updated on this order.")
     return redirect(url_for("order_view", po_id=po_id))
 
 
@@ -9109,10 +9195,26 @@ def update_order(po_id):
         return (existing + "\n" + stamp).strip()
 
     if action == "save":
+        ship_mode = (request.form.get("ship_to_mode") or "").strip()
+        if ship_mode not in PO_SHIP_TO_MODES:
+            ship_mode = "project" if po.get("project_id") else "office"
+        ship_address = (request.form.get("ship_to_address") or "").strip()
+        if ship_mode == "custom" and not ship_address:
+            conn.close()
+            flash("Type the delivery address, or choose the office or project instead.")
+            return redirect(url_for("order_view", po_id=po_id))
         conn.execute(
-            "UPDATE purchase_orders SET supplier_id = %s, expected_date = %s, notes = %s, updated_at = %s WHERE id = %s",
-            (optional_int(request.form.get("supplier_id")), request.form.get("expected_date", "").strip(),
-             request.form.get("notes", "").strip(), now, po_id)
+            """
+            UPDATE purchase_orders
+            SET supplier_id = %s, project_id = %s, expected_date = %s, notes = %s,
+                ship_to_mode = %s, ship_to_address = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (optional_int(request.form.get("supplier_id")),
+             optional_int(request.form.get("project_id")) if request.form.get("project_id") is not None else po.get("project_id"),
+             request.form.get("expected_date", "").strip(),
+             request.form.get("notes", "").strip(),
+             ship_mode, ship_address, now, po_id)
         )
         flash("Purchase order saved.")
     elif action == "email":
@@ -9136,6 +9238,16 @@ def update_order(po_id):
         if po.get("expected_date"):
             body_lines.append("")
             body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
+        project_address_row = conn.execute(
+            "SELECT customer_address FROM projects WHERE id = %s", (po.get("project_id"),)
+        ).fetchone() if po.get("project_id") else None
+        ship_label, ship_address = po_ship_to(
+            po, company, (project_address_row or {}).get("customer_address") or ""
+        )
+        if ship_address:
+            body_lines.append("")
+            body_lines.append(f"{ship_label}:")
+            body_lines.extend(ship_address.split("\n"))
         body_lines.append("")
         body_lines.append(f"Please confirm availability and pricing. Reference {po['po_number']} on the invoice.")
         sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}", "\n".join(body_lines))

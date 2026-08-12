@@ -33,7 +33,33 @@
         <table class="poLinesTable">
             <thead><tr><th>Qty</th><th>Item</th><th>Brand</th><th>Model #</th><th>Unit Cost</th><th>Comment</th><th></th></tr></thead>
             <tbody>
+            {% set can_edit_po = po.status in ['draft', 'ordered'] %}
             {% for line in lines %}
+                {% if can_edit_po %}
+                <tr class="poLineEditRow">
+                    <td>
+                        <div class="qtyUnitBox">
+                            <input form="poLine{{ line.id }}" type="number" name="quantity" step="0.01" min="0.01" value="{{ '%g'|format(line.quantity or 1) }}" required>
+                            <select form="poLine{{ line.id }}" name="unit_measure" class="qtyUnitSelect" title="UN = Unit, PR = Pair">
+                                <option value="UN" {% if line.unit_measure != 'PR' %}selected{% endif %}>UN</option>
+                                <option value="PR" {% if line.unit_measure == 'PR' %}selected{% endif %}>PR</option>
+                            </select>
+                        </div>
+                    </td>
+                    <td><input form="poLine{{ line.id }}" name="item_name" value="{{ line.item_name }}" data-catalog-field="item" autocomplete="off" required></td>
+                    <td><input form="poLine{{ line.id }}" name="brand" value="{{ line.brand or '' }}" data-catalog-field="brand" autocomplete="off"></td>
+                    <td><input form="poLine{{ line.id }}" name="item_model" value="{{ line.item_model or '' }}" data-catalog-field="model" autocomplete="off"></td>
+                    <td><input form="poLine{{ line.id }}" name="unit_cost" value="{{ format_invoice_money(line.unit_cost) if line.unit_cost is not none else '' }}" placeholder="$0.00"></td>
+                    <td><input form="poLine{{ line.id }}" name="comment" value="{{ line.comment or '' }}"></td>
+                    <td class="poLineActions">
+                        <form method="post" action="{{ url_for('update_order_line', line_id=line.id) }}" id="poLine{{ line.id }}" style="margin:0"></form>
+                        <button type="submit" form="poLine{{ line.id }}" class="poLineBtn">Save</button>
+                        <form method="post" action="{{ url_for('delete_order_line', line_id=line.id) }}" style="margin:0" onsubmit="return confirm('Remove this item from the PO?');">
+                            <button type="submit" class="btn-danger poLineBtn">Remove</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
                 <tr>
                     <td>{{ '%g'|format(line.quantity or 1) }} {{ 'PR' if line.unit_measure == 'PR' else 'UN' }}</td>
                     <td><strong>{{ line.item_name }}</strong></td>
@@ -41,14 +67,9 @@
                     <td>{{ line.item_model or '-' }}</td>
                     <td>{{ format_invoice_money(line.unit_cost) if line.unit_cost is not none else '-' }}</td>
                     <td>{{ line.comment or '' }}</td>
-                    <td>
-                        {% if po.status == 'draft' %}
-                        <form method="post" action="{{ url_for('delete_order_line', line_id=line.id) }}" style="margin:0" onsubmit="return confirm('Remove this item from the PO?');">
-                            <button type="submit" class="btn-danger" style="margin:0;min-height:30px;padding:4px 10px;font-size:12px">Remove</button>
-                        </form>
-                        {% endif %}
-                    </td>
+                    <td></td>
                 </tr>
+                {% endif %}
             {% else %}
                 <tr><td colspan="7" class="muted">No items yet. Add the first one below.</td></tr>
             {% endfor %}
@@ -93,8 +114,35 @@
                     {% for s in suppliers %}<option value="{{ s.id }}" {% if po.supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
                 </select>
             </div>
+            <div>
+                <label>Project</label>
+                <select name="project_id">
+                    <option value="">No project (general)</option>
+                    {% for p in projects %}<option value="{{ p.id }}" {% if po.project_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+                </select>
+            </div>
             <div><label>Needed By</label><input type="date" name="expected_date" value="{{ po.expected_date or '' }}"></div>
         </div>
+
+        {% set current_ship_mode = po.ship_to_mode or ('project' if po.project_id else 'office') %}
+        <div class="shipToBox">
+            <label>Ship To</label>
+            <div class="shipToOptions">
+                {% for value, label in ship_to_modes.items() %}
+                    <label class="shipToOption">
+                        <input type="radio" name="ship_to_mode" value="{{ value }}" {% if current_ship_mode == value %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                {% endfor %}
+            </div>
+            <p class="muted shipToPreview" id="shipToOfficePreview">{{ company.company_name }}{% if company.company_address %} &middot; {{ company.company_address }}{% endif %}</p>
+            <p class="muted shipToPreview" id="shipToProjectPreview">{{ project_address or 'This order has no project address - pick the office or type an address.' }}</p>
+            <div id="shipToCustomWrap">
+                <label>Delivery Address</label>
+                <textarea name="ship_to_address" id="shipToAddress" rows="3" placeholder="Street, city, state, ZIP">{{ po.ship_to_address or '' }}</textarea>
+            </div>
+        </div>
+
         <label>Notes / History</label>
         <textarea name="notes" rows="4">{{ po.notes or '' }}</textarea>
         <button type="submit" class="btn-secondary">Save Details</button>
@@ -154,6 +202,37 @@
 .poActions{border-top:1px solid var(--border);margin-top:16px;padding-top:14px}
 .poActionForm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
 .poActionForm button{margin:0}
+.poLineEditRow input,.poLineEditRow select{margin:0;min-height:34px;padding:5px 7px;font-size:13px}
+.poLineEditRow td{vertical-align:middle}
+.poLineActions{white-space:nowrap;display:flex;gap:6px;align-items:center}
+.poLineActions form{margin:0}
+.poLineBtn{width:auto!important;min-height:32px!important;padding:5px 10px!important;margin:0!important;font-size:12px!important}
+.shipToBox{border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0;background:rgba(148,163,184,.06)}
+.shipToOptions{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin:6px 0}
+.shipToOption{display:flex;gap:8px;align-items:center;margin:0;font-weight:700;border:1px solid var(--border);
+    border-radius:8px;padding:9px 10px;background:var(--card);cursor:pointer}
+.shipToOption input{width:auto;min-height:0;margin:0}
+.shipToPreview{margin:4px 0 0;font-size:13px}
 </style>
+<script>
+(function(){
+    var radios=document.querySelectorAll('input[name="ship_to_mode"]');
+    var custom=document.getElementById("shipToCustomWrap");
+    var officeP=document.getElementById("shipToOfficePreview");
+    var projectP=document.getElementById("shipToProjectPreview");
+    var address=document.getElementById("shipToAddress");
+    if(!radios.length||!custom)return;
+    function sync(){
+        var mode=(document.querySelector('input[name="ship_to_mode"]:checked')||{}).value||"office";
+        custom.style.display=mode==="custom"?"block":"none";
+        if(officeP)officeP.style.display=mode==="office"?"block":"none";
+        if(projectP)projectP.style.display=mode==="project"?"block":"none";
+        if(address)address.required=mode==="custom";
+    }
+    radios.forEach(function(r){r.addEventListener("change",sync);});
+    sync();
+})();
+</script>
+{% include "_catalog_typeahead.html" %}
 {% include "_part_catalog_autocomplete.html" %}
 {% endblock %}
