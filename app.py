@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-12 V1"
+APP_BUILD = "2026-08-12 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -3702,7 +3702,7 @@ INVENTORY_STATUS_LABELS = {
     "purchased_waiting_arrival": "Purchased Waiting Arrival",
     "unavailable": "Unavailable",
     "backordered": "Backordered",
-    "used": "Used",
+    "used": "Installed",
     "needs_purchase": "Needs purchase",
     "client_supplied": "Client Supplied"
 }

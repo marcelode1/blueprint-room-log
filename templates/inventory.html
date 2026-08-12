@@ -220,7 +220,7 @@
                             {{ item.project_name or 'Unallocated' }}{% if item.room_name %}<br><span class="muted">{{ item.room_name }}</span>{% endif %}
                         {% endif %}
                     </td>
-                    <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.purchased_by_name %}<br><span class="muted">Purchased by {{ item.purchased_by_name }}</span>{% endif %}{% if item.used_by_name %}<br><span class="muted">Used by {{ item.used_by_name }}</span>{% endif %}</td>
+                    <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.purchased_by_name %}<br><span class="muted">Purchased by {{ item.purchased_by_name }}</span>{% endif %}{% if item.used_by_name %}<br><span class="muted">Installed by {{ item.used_by_name }}</span>{% endif %}</td>
                     <td>{% if item.picture_file %}<img class="inventoryPic" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% else %}-{% endif %}</td>
                     {% if can_edit_inventory() %}
                     <td>

@@ -12,7 +12,7 @@
                 {% if m.comment %}<p class="taskMaterialComment">{{ m.comment }}</p>{% endif %}
                 <p class="taskMaterialState">
                     {% if m.status == 'used' %}
-                        Used on this task
+                        Installed on this task
                     {% elif m.source == 'stock' %}
                         In stock &mdash; {{ inventory_location_label(m.inv_location) }}{% if m.inv_location_detail %} ({{ m.inv_location_detail }}){% endif %}
                     {% elif m.source == 'po' %}
