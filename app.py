@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-11 V5"
+APP_BUILD = "2026-08-12 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6422,6 +6422,11 @@ def mobile_project_materials(project_id):
         conn.commit()
         flash("Inventory item added.")
 
+    try:
+        sync_po_inventory_statuses(conn)
+    except Exception as e:
+        conn.rollback()
+        print("Inventory status sync failed:", e)
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
     catalog = part_catalog_options(conn)
@@ -8324,6 +8329,42 @@ def po_ship_to(po, company=None, project_address=""):
     return "Ship To (Our Office)", "\n".join(p for p in parts if p).strip()
 
 
+def sync_po_inventory_statuses(conn):
+    """Make every material's status agree with the purchase order it sits on.
+    Runs cheaply whenever inventory or orders are viewed, so orders placed
+    before this sync existed are repaired automatically."""
+    statements = [
+        """
+        UPDATE inventory_items SET status = 'ordered'
+        WHERE status = 'needs_purchase'
+          AND po_id IN (SELECT id FROM purchase_orders WHERE status = 'ordered')
+        """,
+        """
+        UPDATE inventory_items SET status = 'purchased_waiting_arrival'
+        WHERE status IN ('needs_purchase', 'ordered')
+          AND po_id IN (SELECT id FROM purchase_orders WHERE status = 'purchased')
+        """,
+        """
+        UPDATE inventory_items SET status = 'needs_purchase'
+        WHERE status IN ('ordered', 'purchased_waiting_arrival')
+          AND po_id IN (SELECT id FROM purchase_orders WHERE status = 'canceled')
+        """,
+    ]
+    changed = False
+    for statement in statements:
+        try:
+            cur = conn.execute(statement)
+            if getattr(cur, "rowcount", 0):
+                changed = True
+        except Exception as e:
+            conn.rollback()
+            print("Inventory/PO status sync skipped:", e)
+            return False
+    if changed:
+        conn.commit()
+    return changed
+
+
 def mark_po_inventory_ordered(conn, po_id, now=None):
     """Once a PO is actually ordered, its materials stop being 'needs purchase'
     and show as on order, so nobody orders the same thing twice."""
@@ -8354,6 +8395,7 @@ def ensure_orders_tables(conn):
         except Exception as e:
             conn.rollback()
             print("Orders migration skipped:", e)
+    sync_po_inventory_statuses(conn)
 
 
 def next_po_number(conn):
@@ -10442,6 +10484,11 @@ def inventory():
     if selected_status not in INVENTORY_STATUS_LABELS:
         selected_status = ""
     q = request.args.get("q", "").strip()
+    try:
+        sync_po_inventory_statuses(conn)
+    except Exception as e:
+        conn.rollback()
+        print("Inventory status sync failed:", e)
     items = fetch_inventory_items(conn, {
         "q": q,
         "status": selected_status,
@@ -10706,6 +10753,11 @@ def project_materials(project_id):
         conn.commit()
         flash("Inventory item added.")
 
+    try:
+        sync_po_inventory_statuses(conn)
+    except Exception as e:
+        conn.rollback()
+        print("Inventory status sync failed:", e)
     materials = fetch_inventory_items(conn, {"project_id": project_id})
     rooms = fetch_inventory_rooms(conn, project_id)
     suppliers = fetch_suppliers(conn)
