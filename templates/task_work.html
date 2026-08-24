@@ -7,6 +7,12 @@
 {% set slim_task_header = true %}
 {% set show_worker_task_actions = false %}
 
+{% if t.project_id %}
+    {% set project_home = url_for('mobile_project', project_id=t.project_id) if is_mobile_request() and not is_main_admin() else url_for('project', project_id=t.project_id) %}
+    <a class="btn-link btn-secondary backToProjectBtn" href="{{ project_home }}"
+       title="{{ t.project_name or 'Project' }}">&larr; Back to Project</a>
+{% endif %}
+
 {% if group_nav %}
 <div class="taskNavBar">
     {% if group_nav.prev_id %}
@@ -33,6 +39,9 @@
 {% include "_catalog_typeahead.html" %}
 
 <style>
+.backToProjectBtn{display:inline-flex!important;align-items:center;width:auto!important;max-width:100%!important;
+    box-sizing:border-box;margin:0 0 10px!important;padding:9px 16px!important;min-height:44px!important;
+    font-weight:800;white-space:nowrap}
 .taskNavBar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:stretch;margin:0 0 6px}
 .taskNavBtn{display:flex;align-items:center;justify-content:center;text-align:center;min-height:46px;padding:8px 14px;
     border-radius:10px;font-weight:800;font-size:14px;text-decoration:none;
