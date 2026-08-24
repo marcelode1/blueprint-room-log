@@ -7,8 +7,10 @@
 {% set slim_task_header = true %}
 {% set show_worker_task_actions = false %}
 
-{% if t.project_id %}
-    {% set project_home = url_for('mobile_project', project_id=t.project_id) if is_mobile_request() and not is_main_admin() else url_for('project', project_id=t.project_id) %}
+{# The middle button goes to the main project page, not the day's task list. #}
+{% set project_home = url_for('mobile_project', project_id=t.project_id) if is_mobile_request() and not is_main_admin() else url_for('project', project_id=t.project_id) if t.project_id else '' %}
+
+{% if not group_nav and project_home %}
     <a class="btn-link btn-secondary backToProjectBtn" href="{{ project_home }}"
        title="{{ t.project_name or 'Project' }}">&larr; Back to Project</a>
 {% endif %}
@@ -21,9 +23,11 @@
         <span class="taskNavBtn taskNavDisabled">&larr; Back</span>
     {% endif %}
 
-    <a class="taskNavBtn taskNavHome" href="{{ url_for('worker_task_group', kind=group_nav.kind, gid=group_nav.id) }}">
-        Back to {{ 'Supplier' if group_nav.kind == 'supplier' else 'Project' }} Tasks
-    </a>
+    {% if project_home %}
+        <a class="taskNavBtn taskNavHome" href="{{ project_home }}" title="{{ t.project_name or 'Project' }}">Back to Project</a>
+    {% else %}
+        <span class="taskNavBtn taskNavDisabled">Back to Project</span>
+    {% endif %}
 
     {% if group_nav.next_id %}
         <a class="taskNavBtn" href="{{ url_for('open_task_workspace', task_id=group_nav.next_id, gk=group_nav.kind, gid=group_nav.id) }}">Next &rarr;</a>
