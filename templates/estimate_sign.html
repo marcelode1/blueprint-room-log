@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estimate {{ estimate.estimate_number }}{% if company.company_name %} - {{ company.company_name }}{% endif %}</title>
+<style>
+:root{--ink:#172033;--muted:#64748b;--border:#d7dee9;--accent:#2563eb;--good:#16a34a;--bad:#dc2626}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:#eef2f7;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.45}
+.wrap{max-width:920px;margin:0 auto;padding:18px 14px 60px}
+.paper{background:#fff;border-radius:14px;padding:26px;box-shadow:0 10px 30px rgba(15,23,42,.10);margin-bottom:18px}
+h1{font-size:30px;text-transform:uppercase;margin:0 0 10px}
+h2{font-size:19px;margin:0 0 10px}
+h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}
+p{margin:3px 0}
+.banner{border-radius:12px;padding:14px 16px;margin-bottom:16px;font-weight:700}
+.banner.info{background:#e0ecff;color:#1d4ed8;border:1px solid #bfd6ff}
+.banner.good{background:rgba(22,163,74,.12);color:#15803d;border:1px solid rgba(22,163,74,.35)}
+.banner.warn{background:rgba(245,158,11,.15);color:#b45309;border:1px solid rgba(245,158,11,.4)}
+.estHeader{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:28px;align-items:start;border-bottom:2px solid var(--ink);padding-bottom:20px}
+.estLogo{max-width:300px;max-height:170px;object-fit:contain;margin-bottom:12px}
+.estMeta{text-align:right}
+.estMetaGrid{display:grid;grid-template-columns:96px minmax(0,1fr);gap:5px 12px;font-size:13px}
+.estMetaGrid span{color:var(--muted);text-transform:uppercase;font-size:11px}
+.estMetaGrid strong{overflow-wrap:anywhere}
+.estBillTo{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin:30px 0 20px}
+table.lines{width:100%;border-collapse:collapse}
+table.lines th,table.lines td{border-bottom:1px solid var(--border);padding:9px;text-align:left;vertical-align:top;font-size:13.5px}
+table.lines th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}
+.linesWrap{overflow-x:auto}
+.summary{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:28px;margin-top:18px;align-items:start}
+.totals{border-top:2px solid var(--ink);padding-top:10px;font-size:13.5px}
+.totals p{display:flex;justify-content:space-between;gap:20px;margin:8px 0}
+.grand{border-top:1px solid var(--border);padding-top:10px;font-size:17px;font-weight:800}
+.notes{border-top:2px solid var(--ink);padding-top:10px;white-space:pre-line}
+label{display:block;font-weight:700;font-size:13px;margin:14px 0 5px}
+input[type=text],input[type=email],textarea{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:9px;font-size:16px;font-family:inherit;background:#fff;color:var(--ink)}
+.sigPadWrap{position:relative;margin-top:6px}
+canvas#sigPad{width:100%;height:190px;border:2px dashed #9fb0c6;border-radius:12px;background:#fff;touch-action:none;display:block;cursor:crosshair}
+.sigHint{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;color:#9aa8bb;font-size:14px;pointer-events:none}
+.sigHint.hidden{display:none}
+.sigTools{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
+button{font-family:inherit;font-size:15px;font-weight:800;padding:13px 20px;border-radius:10px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer;min-height:48px}
+button.ghost{background:#fff;color:var(--ink);border-color:var(--border)}
+button.danger{background:#fff;color:var(--bad);border-color:rgba(220,38,38,.4)}
+button.accept{background:var(--good);border-color:var(--good);font-size:17px;width:100%;margin-top:16px}
+button[disabled]{opacity:.55;cursor:not-allowed}
+.consent{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-size:13.5px}
+.consent input{width:20px;height:20px;margin-top:2px;flex:0 0 auto}
+.locBox{margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:#f8fafc;font-size:13px}
+.locState{font-weight:700}
+.muted{color:var(--muted)}
+.signed{border-top:2px solid var(--ink);margin-top:26px;padding-top:16px}
+.signedGrid{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:start}
+.signedImg{max-width:300px;max-height:120px;object-fit:contain;border-bottom:1px solid var(--ink);display:block}
+.facts p{display:flex;justify-content:space-between;gap:16px;border-bottom:1px dotted var(--border);padding-bottom:5px;font-size:13px}
+.facts span{color:var(--muted);text-transform:uppercase;font-size:11px;flex:0 0 auto}
+.facts strong{text-align:right;overflow-wrap:anywhere}
+.declineRow{margin-top:22px;border-top:1px solid var(--border);padding-top:16px}
+.declineRow summary{cursor:pointer;font-weight:700;color:var(--muted);font-size:14px}
+.foot{text-align:center;color:var(--muted);font-size:12px;margin-top:22px}
+@media(max-width:720px){
+    .wrap{padding:12px 10px 50px}
+    .paper{padding:18px;border-radius:12px}
+    .estHeader,.estBillTo,.summary,.signedGrid{grid-template-columns:1fr}
+    .estMeta{text-align:left}
+    h1{font-size:25px}
+    canvas#sigPad{height:170px}
+}
+@media print{
+    body{background:#fff}
+    .paper{box-shadow:none;padding:0}
+    .noPrint{display:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+{% if message %}
+    <div class="banner {{ 'good' if 'Thank you' in message else 'info' }}">{{ message }}</div>
+{% endif %}
+
+{% if estimate.signed_at %}
+    <div class="banner good">
+        Accepted by {{ estimate.signer_name or estimate.customer_name }} on
+        {{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}.
+    </div>
+{% elif estimate.declined_at %}
+    <div class="banner warn">This estimate was declined on {{ format_date(estimate.declined_at) }}.</div>
+{% elif expired %}
+    <div class="banner warn">
+        This estimate expired on {{ format_date(estimate.valid_until) }}. You can still sign it, but please
+        contact us to confirm the pricing is still current.
+    </div>
+{% endif %}
+
+<div class="paper">
+    <div class="estHeader">
+        <div>
+            {% if logo_path %}<img class="estLogo" src="{{ url_for('storage_file', storage_path=logo_path) }}" alt="{{ company.company_name or 'Company' }}">{% endif %}
+            {% if company.company_name %}<p><strong>{{ company.company_name }}</strong></p>{% endif %}
+            {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
+            {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+        </div>
+        <div class="estMeta">
+            <h1>Estimate</h1>
+            <div class="estMetaGrid">
+                <span>Date</span><strong>{{ format_date(estimate.estimate_date) }}</strong>
+                <span>Estimate #</span><strong>{{ estimate.estimate_number }}</strong>
+                {% if estimate.valid_until %}<span>Valid Until</span><strong>{{ format_date(estimate.valid_until) }}</strong>{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="estBillTo">
+        <div>
+            <h3>Prepared For</h3>
+            <p><strong>{{ estimate.customer_name or '-' }}</strong></p>
+            {% if estimate.billing_address %}<p>{{ estimate.billing_address }}</p>{% endif %}
+            {% if estimate.customer_email %}<p>{{ estimate.customer_email }}</p>{% endif %}
+            {% if estimate.customer_phone %}<p>{{ estimate.customer_phone }}</p>{% endif %}
+        </div>
+        <div>
+            <h3>Job</h3>
+            <p><strong>{{ estimate.project_name or estimate.customer_name or '-' }}</strong></p>
+        </div>
+    </div>
+
+    <div class="linesWrap">
+        <table class="lines">
+            <thead>
+                <tr><th>#</th><th>Qty</th><th>Item</th><th>Description</th><th>Location</th><th>Unit Price</th><th>Total</th></tr>
+            </thead>
+            <tbody>
+            {% for line in lines %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ line.quantity }}</td>
+                    <td>{{ line.item_name }}</td>
+                    <td>{{ line.description or '' }}</td>
+                    <td>{{ line.location or '' }}</td>
+                    <td>{{ format_invoice_money(line.unit_price) }}</td>
+                    <td>{{ format_invoice_money(line.line_total) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="summary">
+        <div class="notes">
+            {% if estimate.notes %}<h3>Notes</h3><p>{{ estimate.notes }}</p>{% endif %}
+            {% if estimate.terms %}<h3>Terms</h3><p>{{ estimate.terms }}</p>{% endif %}
+        </div>
+        <div class="totals">
+            <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
+            <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
+            <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
+            <p class="grand"><span>Estimate Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+        </div>
+    </div>
+
+    {% if estimate.signed_at %}
+    <div class="signed">
+        <h3>Accepted and Signed</h3>
+        <div class="signedGrid">
+            <div>
+                {% if estimate.signature_image %}<img class="signedImg" src="{{ estimate.signature_image }}" alt="Signature">{% endif %}
+                <p><strong>{{ estimate.signer_name }}</strong></p>
+                <p class="muted">{{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}</p>
+            </div>
+            <div class="facts">
+                <p><span>Recorded IP</span><strong>{{ estimate.signed_ip or '-' }}</strong></p>
+                <p><span>Approximate location</span><strong>{{ estimate.signed_location or 'Not shared' }}</strong></p>
+                {% if map_url %}<p class="noPrint"><span>Map</span><strong><a href="{{ map_url }}" target="_blank" rel="noopener">View</a></strong></p>{% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if not estimate.signed_at %}
+<div class="paper noPrint">
+    <h2>Accept and Sign This Estimate</h2>
+    <p class="muted">Sign below to approve the work and the total shown above.</p>
+
+    <form method="post" action="{{ url_for('estimate_sign_submit', token=estimate.public_token) }}" id="signForm">
+        <label for="signerName">Your Full Name</label>
+        <input type="text" id="signerName" name="signer_name" value="{{ estimate.customer_name or '' }}" required autocomplete="name">
+
+        <label for="signerEmail">Your Email (we will send you a copy)</label>
+        <input type="email" id="signerEmail" name="signer_email" value="{{ estimate.customer_email or '' }}" autocomplete="email">
+
+        <label>Your Signature</label>
+        <div class="sigPadWrap">
+            <canvas id="sigPad"></canvas>
+            <div class="sigHint" id="sigHint">Sign here with your finger or mouse</div>
+        </div>
+        <div class="sigTools">
+            <button type="button" class="ghost" id="clearSig">Clear Signature</button>
+            <span class="muted" id="sigStatus">Not signed yet</span>
+        </div>
+
+        <div class="locBox">
+            <div class="locState" id="locState">Location: not shared</div>
+            <p class="muted" id="locDetail">Sharing your location adds a rough GPS position to the signature record. It is optional.</p>
+            <div class="sigTools">
+                <button type="button" class="ghost" id="shareLoc">Share My Location</button>
+            </div>
+        </div>
+
+        <label class="consent">
+            <input type="checkbox" id="consent" required>
+            <span>I agree that typing my name and drawing my signature above is my electronic signature, and that
+            the date, time, IP address{% if true %} and approximate location{% endif %} of this acceptance will be recorded.</span>
+        </label>
+
+        <input type="hidden" name="signature_image" id="signatureImage">
+        <input type="hidden" name="latitude" id="latitude">
+        <input type="hidden" name="longitude" id="longitude">
+        <input type="hidden" name="accuracy" id="accuracy">
+        <input type="hidden" name="location_label" id="locationLabel">
+
+        <button type="submit" class="accept" id="acceptButton">Accept Estimate {{ format_invoice_money(estimate.total) }}</button>
+    </form>
+
+    <details class="declineRow">
+        <summary>I do not want to accept this estimate</summary>
+        <form method="post" action="{{ url_for('estimate_sign_decline', token=estimate.public_token) }}">
+            <label for="declineReason">Let us know why (optional)</label>
+            <textarea id="declineReason" name="decline_reason" rows="3" placeholder="Price, timing, changed my mind..."></textarea>
+            <button type="submit" class="danger" style="margin-top:12px">Decline Estimate</button>
+        </form>
+    </details>
+</div>
+{% endif %}
+
+<p class="foot">{{ company.company_name or 'ProjectONus' }}{% if company.company_phone %} &middot; {{ company.company_phone }}{% endif %}</p>
+</div>
+
+<script>
+(function(){
+    const canvas=document.getElementById("sigPad");
+    if(!canvas)return;
+    const hint=document.getElementById("sigHint");
+    const status=document.getElementById("sigStatus");
+    const clearBtn=document.getElementById("clearSig");
+    const form=document.getElementById("signForm");
+    const imageField=document.getElementById("signatureImage");
+    const ctx=canvas.getContext("2d");
+    let drawing=false,hasInk=false,lastX=0,lastY=0;
+
+    // The canvas is sized in CSS pixels but drawn at device resolution so the
+    // saved signature is not blurry on phones.
+    function sizeCanvas(){
+        const ratio=window.devicePixelRatio||1;
+        const rect=canvas.getBoundingClientRect();
+        const snapshot=hasInk?canvas.toDataURL("image/png"):null;
+        canvas.width=Math.round(rect.width*ratio);
+        canvas.height=Math.round(rect.height*ratio);
+        ctx.setTransform(ratio,0,0,ratio,0,0);
+        ctx.lineWidth=2.4;
+        ctx.lineCap="round";
+        ctx.lineJoin="round";
+        ctx.strokeStyle="#101828";
+        if(snapshot){
+            const img=new Image();
+            img.onload=()=>ctx.drawImage(img,0,0,rect.width,rect.height);
+            img.src=snapshot;
+        }
+    }
+    sizeCanvas();
+    let resizeTimer=null;
+    window.addEventListener("resize",()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(sizeCanvas,180);});
+
+    function pointFrom(event){
+        const rect=canvas.getBoundingClientRect();
+        const source=event.touches&&event.touches.length?event.touches[0]:event;
+        return [source.clientX-rect.left, source.clientY-rect.top];
+    }
+    function start(event){
+        event.preventDefault();
+        drawing=true;
+        [lastX,lastY]=pointFrom(event);
+    }
+    function move(event){
+        if(!drawing)return;
+        event.preventDefault();
+        const [x,y]=pointFrom(event);
+        ctx.beginPath();
+        ctx.moveTo(lastX,lastY);
+        ctx.lineTo(x,y);
+        ctx.stroke();
+        lastX=x;lastY=y;
+        if(!hasInk){
+            hasInk=true;
+            hint.classList.add("hidden");
+            status.textContent="Signature captured";
+        }
+    }
+    function end(){drawing=false;}
+
+    canvas.addEventListener("mousedown",start);
+    canvas.addEventListener("mousemove",move);
+    window.addEventListener("mouseup",end);
+    canvas.addEventListener("touchstart",start,{passive:false});
+    canvas.addEventListener("touchmove",move,{passive:false});
+    canvas.addEventListener("touchend",end);
+
+    clearBtn.addEventListener("click",()=>{
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        hasInk=false;
+        hint.classList.remove("hidden");
+        status.textContent="Not signed yet";
+    });
+
+    // Optional rough position. Nothing is sent unless the person taps the button
+    // and their browser grants permission.
+    const shareLoc=document.getElementById("shareLoc");
+    const locState=document.getElementById("locState");
+    const locDetail=document.getElementById("locDetail");
+    shareLoc.addEventListener("click",()=>{
+        if(!navigator.geolocation){
+            locState.textContent="Location: not supported by this browser";
+            return;
+        }
+        locState.textContent="Location: asking your browser...";
+        navigator.geolocation.getCurrentPosition(position=>{
+            const lat=position.coords.latitude, lon=position.coords.longitude;
+            const acc=position.coords.accuracy;
+            document.getElementById("latitude").value=lat;
+            document.getElementById("longitude").value=lon;
+            document.getElementById("accuracy").value=acc||"";
+            document.getElementById("locationLabel").value="Near "+lat.toFixed(4)+", "+lon.toFixed(4);
+            locState.textContent="Location: shared";
+            locDetail.textContent="About "+Math.round(acc||0)+" meters accuracy. This is a rough position, not an exact address.";
+            shareLoc.textContent="Location Shared";
+            shareLoc.disabled=true;
+        },error=>{
+            locState.textContent="Location: not shared";
+            locDetail.textContent="Your browser did not give a position ("+(error&&error.message?error.message:"permission denied")+"). You can still sign.";
+        },{enableHighAccuracy:true,timeout:12000,maximumAge:60000});
+    });
+
+    form.addEventListener("submit",event=>{
+        if(!hasInk){
+            event.preventDefault();
+            status.textContent="Please draw your signature first";
+            canvas.scrollIntoView({behavior:"smooth",block:"center"});
+            return;
+        }
+        imageField.value=canvas.toDataURL("image/png");
+        const button=document.getElementById("acceptButton");
+        button.disabled=true;
+        button.textContent="Recording your acceptance...";
+    });
+})();
+</script>
+</body>
+</html>

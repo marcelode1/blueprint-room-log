@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-25 V2"
+APP_BUILD = "2026-08-25 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2525,7 +2525,7 @@ def invoice_breakdown_with_payments(invoice, lines, paid_total=0.0):
     return totals
 
 
-def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0):
+def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due"):
     try:
         from playwright.sync_api import sync_playwright
     except Exception as e:
@@ -2549,6 +2549,8 @@ def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0):
     credit_val = totals.get("credit") or 0
     html = render_template(
         "invoice_email_attachment.html",
+        doc_label=doc_label.title(),
+        total_label=total_label,
         invoice=invoice,
         lines=formatted_lines,
         company=company,
@@ -2605,7 +2607,7 @@ def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0):
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
+def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due"):
     if fitz is None:
         return None, "PDF support is not available on this server."
     doc = fitz.open()
@@ -2695,11 +2697,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
             text(left, company_y, value, 9.3)
             company_y += 13
 
-    text(404, 50, "INVOICE", 20, bold=True)
+    text(404, 50, doc_label, 20, bold=True)
     meta_y = 74
     for label, value in [
         ("DATE", format_date(invoice.get("invoice_date"))),
-        ("INVOICE #", invoice.get("invoice_number") or "PREVIEW"),
+        (f"{doc_label} #", invoice.get("invoice_number") or "PREVIEW"),
         ("TERMS", invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms") or "")),
     ]:
         if not value:
@@ -2803,7 +2805,7 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
         box_text(500, totals_y, 76, value, 8.4, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
         totals_y += 15
     page.draw_line((346, totals_y - 8), (right, totals_y - 8), color=grid_color, width=0.6)
-    text(358, totals_y + 6, "Balance Due", 8.8)
+    text(358, totals_y + 6, total_label, 8.8)
     box_text(500, totals_y + 6, 76, format_invoice_money(totals["balance_due"]), 8.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
 
     page_count = doc.page_count
@@ -2850,11 +2852,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def invoice_pdf_attachment(invoice, lines, company, paid_total=0.0):
-    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company, paid_total)
+def invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due"):
+    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label)
     if attachment:
         return attachment, ""
-    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company, paid_total)
+    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label)
     if fallback_attachment:
         return fallback_attachment, ""
     return None, error or fallback_error or "Invoice PDF could not be created."
@@ -6064,6 +6066,7 @@ def utility_processor():
         format_datetime=format_datetime,
         format_invoice_money=format_invoice_money,
         invoice_terms_for_due_date=invoice_terms_for_due_date,
+        estimate_status_label=estimate_status_label,
         invoice_paid_stamp_date=invoice_paid_stamp_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
@@ -10070,6 +10073,1114 @@ def confirm_delete_invoice(invoice_id):
 
     conn.close()
     return render_template("delete_invoice_confirm.html", invoice=invoice)
+
+
+# ---------------------------------------------------------------------------
+# Estimates
+#
+# An estimate is the invoice's twin: same line items, same catalog, same PDF,
+# but the customer signs it online instead of paying it. The signing page is
+# public (token in the URL, no login) and records who signed, from what IP,
+# roughly where (browser GPS, only if they allow it) and exactly when. Once
+# signed, the office is notified and the estimate can be turned into an invoice
+# with one button.
+# ---------------------------------------------------------------------------
+
+DEFAULT_ESTIMATE_TERMS = (
+    "This estimate is valid for 30 days from the date above. "
+    "Prices are subject to change after that date. "
+    "Work will be scheduled after this estimate is accepted."
+)
+
+ESTIMATE_STATUS_LABELS = {
+    "draft": "Draft",
+    "sent": "Sent",
+    "accepted": "Accepted",
+    "declined": "Declined",
+    "expired": "Expired",
+    "converted": "Converted to Invoice",
+}
+
+
+def estimate_status_label(value):
+    key = (value or "draft").strip().lower()
+    return ESTIMATE_STATUS_LABELS.get(key, key.replace("_", " ").title())
+
+
+def ensure_estimate_tables(conn):
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS estimate_number_counters (
+            year_key TEXT PRIMARY KEY,
+            next_sequence INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS estimates (
+            id SERIAL PRIMARY KEY,
+            estimate_number TEXT UNIQUE NOT NULL,
+            project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+            customer_name TEXT,
+            customer_email TEXT,
+            customer_phone TEXT,
+            billing_address TEXT,
+            estimate_date TEXT NOT NULL,
+            valid_until TEXT,
+            status TEXT NOT NULL DEFAULT 'draft',
+            subtotal REAL NOT NULL DEFAULT 0,
+            tax_rate REAL NOT NULL DEFAULT 0,
+            tax_total REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            terms TEXT,
+            public_token TEXT UNIQUE,
+            signer_name TEXT,
+            signer_email TEXT,
+            signature_image TEXT,
+            signed_at TEXT,
+            signed_ip TEXT,
+            signed_user_agent TEXT,
+            signed_latitude REAL,
+            signed_longitude REAL,
+            signed_accuracy REAL,
+            signed_location TEXT,
+            declined_at TEXT,
+            decline_reason TEXT,
+            converted_invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+            converted_at TEXT,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT,
+            sent_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS estimate_lines (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+            part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL,
+            item_name TEXT NOT NULL,
+            description TEXT,
+            location TEXT,
+            quantity REAL NOT NULL DEFAULT 0,
+            unit_price REAL NOT NULL DEFAULT 0,
+            taxable BOOLEAN NOT NULL DEFAULT FALSE,
+            line_total REAL NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL DEFAULT 0
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS estimate_email_logs (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+            sent_to TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            success BOOLEAN NOT NULL DEFAULT FALSE,
+            error TEXT,
+            sent_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS estimate_signature_events (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            signer_name TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            latitude REAL,
+            longitude REAL,
+            accuracy REAL,
+            location_label TEXT,
+            note TEXT,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS estimate_delete_codes (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+            admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            pin_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS estimate_lines_estimate_idx ON estimate_lines(estimate_id)",
+        "CREATE INDEX IF NOT EXISTS estimate_signature_events_estimate_idx ON estimate_signature_events(estimate_id)",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+        except Exception as e:
+            conn.rollback()
+            print("Estimate migration skipped:", e)
+    conn.commit()
+
+
+def next_estimate_number(conn, reference_value=None):
+    year_key = invoice_number_year_key(reference_value)
+    row = conn.execute(
+        """
+        INSERT INTO estimate_number_counters (year_key, next_sequence, updated_at)
+        VALUES (%s, 1, %s)
+        ON CONFLICT (year_key) DO UPDATE SET
+            next_sequence = estimate_number_counters.next_sequence + 1,
+            updated_at = EXCLUDED.updated_at
+        RETURNING next_sequence AS sequence_number
+        """,
+        (year_key, utc_now_iso())
+    ).fetchone()
+    return f"EST-{year_key}-{int(row['sequence_number']):04d}"
+
+
+def new_estimate_token():
+    return secrets.token_urlsafe(24)
+
+
+def load_estimate(conn, estimate_id):
+    estimate = conn.execute(
+        """
+        SELECT estimates.*, projects.name AS project_name
+        FROM estimates
+        LEFT JOIN projects ON estimates.project_id = projects.id
+        WHERE estimates.id = %s
+        """,
+        (estimate_id,)
+    ).fetchone()
+    if not estimate:
+        return None, []
+    lines = conn.execute(
+        """
+        SELECT estimate_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type
+        FROM estimate_lines
+        LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
+        WHERE estimate_id = %s
+        ORDER BY position, estimate_lines.id
+        """,
+        (estimate_id,)
+    ).fetchall()
+    return estimate, lines
+
+
+def estimate_as_document(estimate):
+    """The PDF/print helpers were written for invoices. Give them an invoice-shaped
+    view of the estimate so one set of layout code serves both."""
+    if not estimate:
+        return {}
+    doc = dict(estimate)
+    doc["invoice_number"] = estimate.get("estimate_number")
+    doc["invoice_date"] = estimate.get("estimate_date")
+    doc["due_date"] = estimate.get("valid_until")
+    return doc
+
+
+def estimate_totals_breakdown(estimate, lines):
+    return invoice_totals_breakdown(estimate_as_document(estimate), lines)
+
+
+def estimate_public_url(estimate):
+    token = (estimate or {}).get("public_token")
+    if not token:
+        return ""
+    return external_url("estimate_sign", token=token)
+
+
+def request_client_ip():
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")
+    for candidate in forwarded:
+        candidate = candidate.strip()
+        if candidate:
+            return candidate
+    return request.headers.get("X-Real-IP") or request.remote_addr or ""
+
+
+def estimate_signed_map_url(estimate):
+    lat = (estimate or {}).get("signed_latitude")
+    lon = (estimate or {}).get("signed_longitude")
+    if lat in [None, ""] or lon in [None, ""]:
+        return ""
+    return f"https://www.google.com/maps?q={lat},{lon}"
+
+
+def estimate_values_from_form():
+    """Estimates post the same field names as invoices so the shared form's
+    JavaScript stays in one place."""
+    return {
+        "estimate_date": request.form.get("invoice_date") or local_now().date().isoformat(),
+        "valid_until": request.form.get("due_date", "").strip(),
+        "project_id": request.form.get("project_id", type=int),
+        "customer_name": request.form.get("customer_name", "").strip(),
+        "customer_email": request.form.get("customer_email", "").strip(),
+        "customer_phone": format_us_phone(request.form.get("customer_phone")),
+        "billing_address": request.form.get("billing_address", "").strip(),
+        "notes": request.form.get("notes", "").strip(),
+        "terms": request.form.get("terms", "").strip() or DEFAULT_ESTIMATE_TERMS,
+        "status": (request.form.get("status") or "draft").strip(),
+    }
+
+
+def replace_estimate_lines(conn, estimate_id, lines):
+    conn.execute("DELETE FROM estimate_lines WHERE estimate_id = %s", (estimate_id,))
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO estimate_lines
+            (estimate_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                estimate_id,
+                line.get("part_catalog_id"),
+                line.get("item_name") or "",
+                line.get("description") or "",
+                line.get("location") or "",
+                line.get("quantity") or 0,
+                line.get("unit_price") or 0,
+                bool(line.get("taxable")),
+                line.get("line_total") or 0,
+                line.get("position") or 0,
+            )
+        )
+
+
+def create_estimate_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total):
+    values = estimate_values_from_form()
+    save_invoice_items(conn, lines)
+    estimate_number = next_estimate_number(conn, values["estimate_date"])
+    row = conn.execute(
+        """
+        INSERT INTO estimates
+        (estimate_number, project_id, customer_name, customer_email, customer_phone, billing_address,
+         estimate_date, valid_until, status, subtotal, tax_rate, tax_total, total, notes, terms,
+         public_token, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            estimate_number,
+            values["project_id"],
+            values["customer_name"],
+            values["customer_email"],
+            values["customer_phone"],
+            values["billing_address"],
+            values["estimate_date"],
+            values["valid_until"],
+            values["status"] or "draft",
+            subtotal,
+            tax_rate,
+            tax_total,
+            total,
+            values["notes"],
+            values["terms"],
+            new_estimate_token(),
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    estimate_id = row["id"]
+    replace_estimate_lines(conn, estimate_id, lines)
+    return estimate_id
+
+
+def update_estimate_record_from_form(conn, estimate_id, lines, subtotal, tax_rate, tax_total, total):
+    values = estimate_values_from_form()
+    save_invoice_items(conn, lines)
+    conn.execute(
+        """
+        UPDATE estimates SET
+            project_id = %s, customer_name = %s, customer_email = %s, customer_phone = %s,
+            billing_address = %s, estimate_date = %s, valid_until = %s, status = %s,
+            subtotal = %s, tax_rate = %s, tax_total = %s, total = %s, notes = %s, terms = %s,
+            public_token = COALESCE(public_token, %s), updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            values["project_id"],
+            values["customer_name"],
+            values["customer_email"],
+            values["customer_phone"],
+            values["billing_address"],
+            values["estimate_date"],
+            values["valid_until"],
+            values["status"] or "draft",
+            subtotal,
+            tax_rate,
+            tax_total,
+            total,
+            values["notes"],
+            values["terms"],
+            new_estimate_token(),
+            utc_now_iso(),
+            estimate_id,
+        )
+    )
+    replace_estimate_lines(conn, estimate_id, lines)
+
+
+def estimate_pdf_attachment(estimate, lines, company):
+    attachment, error = invoice_pdf_attachment(
+        estimate_as_document(estimate), lines, company, 0.0,
+        doc_label="ESTIMATE", total_label="Estimate Total"
+    )
+    if error:
+        return None, error.replace("Invoice", "Estimate")
+    return attachment, ""
+
+
+def estimate_email_body(estimate, company):
+    company_name = company.get("company_name") or "ProjectONus"
+    lines = [
+        f"Hello {estimate.get('customer_name') or 'Customer'},",
+        "",
+        f"Please find estimate {estimate.get('estimate_number')} from {company_name}.",
+        f"Estimate Total: {format_invoice_money(estimate.get('total'))}",
+    ]
+    if estimate.get("valid_until"):
+        lines.append(f"Valid Until: {format_date(estimate.get('valid_until'))}")
+    sign_url = estimate_public_url(estimate)
+    if sign_url:
+        lines.extend([
+            "",
+            "To accept this estimate, open the link below, review it and sign it online:",
+            sign_url,
+        ])
+    lines.extend(["", "Thank you.", company_name])
+    return "\n".join(lines)
+
+
+def email_estimate_record(conn, estimate, lines, to_email=None):
+    to_email = (to_email or "").strip() or estimate.get("customer_email")
+    if not to_email:
+        return False, "Add a customer email before sending this estimate."
+    company = account_info()
+    subject = f"Estimate {estimate.get('estimate_number')} from {company.get('company_name') or 'ProjectONus'}"
+    attachment, error = estimate_pdf_attachment(estimate, lines, company)
+    if error:
+        return False, error
+    sent = send_email(to_email, subject, estimate_email_body(estimate, company), attachments=[attachment])
+    if estimate.get("id"):
+        conn.execute(
+            """
+            INSERT INTO estimate_email_logs (estimate_id, sent_to, subject, sent_by, success, error, sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (estimate["id"], to_email, subject, session.get("user_id"), sent, "" if sent else "SMTP send failed", utc_now_iso())
+        )
+        if sent and (estimate.get("status") or "draft") in ["draft", "sent"]:
+            conn.execute(
+                "UPDATE estimates SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s",
+                (utc_now_iso(), utc_now_iso(), estimate["id"])
+            )
+    return sent, "" if sent else "Estimate could not be emailed. Check SMTP email settings."
+
+
+def record_estimate_signature_event(conn, estimate_id, event_type, signer_name="", note="",
+                                    latitude=None, longitude=None, accuracy=None, location_label=""):
+    conn.execute(
+        """
+        INSERT INTO estimate_signature_events
+        (estimate_id, event_type, signer_name, ip_address, user_agent, latitude, longitude, accuracy, location_label, note, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            estimate_id, event_type, signer_name or "", request_client_ip(),
+            (request.headers.get("User-Agent") or "")[:400],
+            latitude, longitude, accuracy, location_label or "", note or "", utc_now_iso(),
+        )
+    )
+
+
+def notify_admins_estimate_signed(conn, estimate):
+    """The office finds out the moment the customer signs: a bell notification
+    plus an email to every admin."""
+    signer = estimate.get("signer_name") or estimate.get("customer_name") or "Customer"
+    message = (
+        f"{signer} accepted and signed estimate {estimate.get('estimate_number')} "
+        f"for {format_invoice_money(estimate.get('total'))}."
+    )
+    try:
+        add_notification(
+            conn,
+            None,
+            signer,
+            estimate.get("signer_email") or estimate.get("customer_email") or "",
+            "customer",
+            "estimate_signed",
+            estimate.get("project_id"),
+            None,
+            message,
+        )
+    except Exception as e:
+        print("Estimate notification skipped:", e)
+
+    map_url = estimate_signed_map_url(estimate)
+    body_lines = [
+        "An estimate was accepted and signed online.",
+        "",
+        f"Estimate: {estimate.get('estimate_number')}",
+        f"Customer: {estimate.get('customer_name') or '-'}",
+        f"Project: {estimate.get('project_name') or '-'}",
+        f"Total: {format_invoice_money(estimate.get('total'))}",
+        "",
+        "Signature record",
+        f"Signed by: {estimate.get('signer_name') or '-'}",
+        f"Signer email: {estimate.get('signer_email') or '-'}",
+        f"Date: {format_date(estimate.get('signed_at'))}",
+        f"Time: {format_time(estimate.get('signed_at'))}",
+        f"IP address: {estimate.get('signed_ip') or '-'}",
+        f"Approximate location: {estimate.get('signed_location') or 'Not shared by the signer'}",
+    ]
+    if map_url:
+        body_lines.append(f"Map: {map_url}")
+    if estimate.get("signed_accuracy"):
+        body_lines.append(f"GPS accuracy: about {int(float(estimate['signed_accuracy']))} meters")
+    body_lines.append(f"Device: {estimate.get('signed_user_agent') or '-'}")
+    if estimate.get("id"):
+        body_lines.extend(["", f"Open the estimate: {external_url('estimate_view', estimate_id=estimate['id'])}"])
+    body = "\n".join(body_lines)
+    subject = f"Estimate {estimate.get('estimate_number')} accepted by {estimate.get('customer_name') or 'customer'}"
+    for admin in admin_email_rows(conn):
+        if admin.get("email"):
+            try:
+                send_email(admin["email"], subject, body)
+            except Exception as e:
+                print("Estimate signed email skipped:", e)
+
+
+def notify_admins_estimate_declined(conn, estimate, reason=""):
+    message = (
+        f"{estimate.get('customer_name') or 'Customer'} declined estimate "
+        f"{estimate.get('estimate_number')}."
+    )
+    try:
+        add_notification(
+            conn, None, estimate.get("customer_name") or "Customer",
+            estimate.get("customer_email") or "", "customer", "estimate_declined",
+            estimate.get("project_id"), None, message,
+        )
+    except Exception as e:
+        print("Estimate notification skipped:", e)
+    body = "\n".join([
+        message,
+        "",
+        f"Estimate: {estimate.get('estimate_number')}",
+        f"Project: {estimate.get('project_name') or '-'}",
+        f"Total: {format_invoice_money(estimate.get('total'))}",
+        f"Reason given: {reason or '-'}",
+        f"IP address: {request_client_ip()}",
+        f"Date: {format_date(utc_now_iso())} {format_time(utc_now_iso())}",
+    ])
+    for admin in admin_email_rows(conn):
+        if admin.get("email"):
+            try:
+                send_email(admin["email"], f"Estimate {estimate.get('estimate_number')} declined", body)
+            except Exception as e:
+                print("Estimate declined email skipped:", e)
+
+
+def convert_estimate_to_invoice(conn, estimate, lines):
+    """Copy an accepted estimate into a brand new invoice. The estimate stays on
+    file as the signed record; the invoice becomes the thing that gets paid."""
+    ensure_invoice_tables(conn)
+    invoice_date = local_now().date().isoformat()
+    invoice_number = next_invoice_number(conn, invoice_date)
+    notes = (estimate.get("notes") or "").strip()
+    origin_note = f"Created from estimate {estimate.get('estimate_number')}."
+    combined_notes = f"{notes}\n{origin_note}".strip() if notes else origin_note
+    row = conn.execute(
+        """
+        INSERT INTO invoices
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address,
+         invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms,
+         created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            invoice_number,
+            estimate.get("project_id"),
+            estimate.get("customer_name") or "",
+            estimate.get("customer_email") or "",
+            estimate.get("customer_phone") or "",
+            estimate.get("billing_address") or "",
+            invoice_date,
+            "",
+            estimate.get("subtotal") or 0,
+            estimate.get("tax_rate") or 0,
+            estimate.get("tax_total") or 0,
+            estimate.get("total") or 0,
+            combined_notes,
+            invoice_due_date_terms(""),
+            session.get("user_id"),
+            utc_now_iso(),
+            utc_now_iso(),
+        )
+    ).fetchone()
+    invoice_id = row["id"]
+    for line in lines:
+        conn.execute(
+            """
+            INSERT INTO invoice_lines
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                invoice_id,
+                line.get("part_catalog_id"),
+                line.get("item_name") or "",
+                line.get("description") or "",
+                line.get("location") or "",
+                line.get("quantity") or 0,
+                line.get("unit_price") or 0,
+                bool(line.get("taxable")),
+                line.get("line_total") or 0,
+                line.get("position") or 0,
+            )
+        )
+    conn.execute(
+        "UPDATE estimates SET status = 'converted', converted_invoice_id = %s, converted_at = %s, updated_at = %s WHERE id = %s",
+        (invoice_id, utc_now_iso(), utc_now_iso(), estimate["id"])
+    )
+    return invoice_id, invoice_number
+
+
+@app.route("/estimates")
+@admin_required
+def estimates():
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    q = request.args.get("q", "").strip()
+    status = request.args.get("status", "").strip()
+    project_id = request.args.get("project_id", type=int)
+    where = []
+    params = []
+    if q:
+        like = f"%{q}%"
+        where.append("(estimates.estimate_number ILIKE %s OR estimates.customer_name ILIKE %s OR estimates.customer_email ILIKE %s OR projects.name ILIKE %s)")
+        params.extend([like, like, like, like])
+    if status:
+        where.append("estimates.status = %s")
+        params.append(status)
+    selected_project = None
+    if project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+        where.append("estimates.project_id = %s")
+        params.append(project_id)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+    rows = conn.execute(
+        f"""
+        SELECT estimates.*, projects.name AS project_name
+        FROM estimates
+        LEFT JOIN projects ON estimates.project_id = projects.id
+        {where_sql}
+        ORDER BY estimates.created_at DESC, estimates.id DESC
+        """,
+        tuple(params)
+    ).fetchall()
+    conn.close()
+    return render_template("estimates.html", estimates=rows, q=q, status=status, selected_project=selected_project)
+
+
+@app.route("/estimates/new", methods=["GET", "POST"])
+@admin_required
+def new_estimate():
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    ensure_part_catalog_tables(conn)
+    if request.method == "POST":
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+        if not lines:
+            conn.close()
+            flash("Add at least one estimate item.")
+            posted_project_id = request.form.get("project_id", type=int)
+            return redirect(url_for("new_estimate", project_id=posted_project_id) if posted_project_id else url_for("new_estimate"))
+        try:
+            estimate_id = create_estimate_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            flash(f"Estimate could not be saved. {e}")
+            posted_project_id = request.form.get("project_id", type=int)
+            return redirect(url_for("new_estimate", project_id=posted_project_id) if posted_project_id else url_for("new_estimate"))
+        if request.form.get("submit_action") == "email":
+            estimate, saved_lines = load_estimate(conn, estimate_id)
+            try:
+                sent, email_error = email_estimate_record(conn, estimate, saved_lines, request.form.get("customer_email", "").strip())
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                sent, email_error = False, str(e)
+            flash("Estimate created and emailed to the customer." if sent else f"Estimate created, but email was not sent. {email_error}")
+        else:
+            flash("Estimate created.")
+        conn.close()
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    # Same rule as invoices: nothing is written until the user presses Save.
+    selected_project_id = request.args.get("project_id", type=int)
+    selected_project = None
+    invoice_rooms = []
+    if selected_project_id:
+        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        if not selected_project:
+            conn.close()
+            flash("Project not found.")
+            return redirect(url_for("estimates"))
+        invoice_rooms = invoice_room_options(conn, selected_project_id)
+    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    catalog = part_catalog_options(conn)
+    rooms_by_project = invoice_rooms_by_project(conn)
+    conn.close()
+    return render_template(
+        "invoice_form.html",
+        doc_kind="estimate",
+        invoice=None,
+        lines=[],
+        projects=projects,
+        saved_items=saved_items,
+        part_catalog=catalog,
+        invoice_rooms=invoice_rooms,
+        rooms_by_project=rooms_by_project,
+        selected_project=selected_project,
+        default_tax_rate=default_invoice_tax_rate(),
+        default_estimate_terms=DEFAULT_ESTIMATE_TERMS,
+        today=local_now().date().isoformat(),
+        form_action=url_for("new_estimate"),
+    )
+
+
+@app.route("/estimates/<int:estimate_id>")
+@admin_required
+def estimate_view(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    email_logs = conn.execute(
+        """
+        SELECT estimate_email_logs.*, users.name AS sent_by_name
+        FROM estimate_email_logs LEFT JOIN users ON estimate_email_logs.sent_by = users.id
+        WHERE estimate_id = %s ORDER BY sent_at DESC
+        """,
+        (estimate_id,)
+    ).fetchall()
+    signature_events = conn.execute(
+        "SELECT * FROM estimate_signature_events WHERE estimate_id = %s ORDER BY created_at DESC, id DESC",
+        (estimate_id,)
+    ).fetchall()
+    conn.close()
+    return render_template(
+        "estimate_view.html",
+        estimate=estimate,
+        lines=lines,
+        company=account_info(),
+        email_logs=email_logs,
+        signature_events=signature_events,
+        totals_breakdown=estimate_totals_breakdown(estimate, lines),
+        sign_url=estimate_public_url(estimate),
+        map_url=estimate_signed_map_url(estimate),
+    )
+
+
+@app.route("/estimates/<int:estimate_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_estimate(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    ensure_part_catalog_tables(conn)
+    estimate, existing_lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    if estimate.get("signed_at"):
+        conn.close()
+        flash("This estimate was already signed by the customer and can no longer be edited.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    if request.method == "POST":
+        lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
+        if not lines:
+            conn.close()
+            flash("Add at least one estimate item.")
+            return redirect(url_for("edit_estimate", estimate_id=estimate_id))
+        try:
+            update_estimate_record_from_form(conn, estimate_id, lines, subtotal, tax_rate, tax_total, total)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            flash(f"Estimate could not be saved. {e}")
+            return redirect(url_for("edit_estimate", estimate_id=estimate_id))
+        if request.form.get("submit_action") == "email":
+            estimate, saved_lines = load_estimate(conn, estimate_id)
+            try:
+                sent, email_error = email_estimate_record(conn, estimate, saved_lines, request.form.get("customer_email", "").strip())
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                sent, email_error = False, str(e)
+            flash("Estimate updated and emailed to the customer." if sent else f"Estimate updated, but email was not sent. {email_error}")
+        else:
+            flash("Estimate updated.")
+        conn.close()
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
+    catalog = part_catalog_options(conn)
+    selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (estimate["project_id"],)).fetchone() if estimate.get("project_id") else None
+    invoice_rooms = invoice_room_options(conn, estimate["project_id"]) if estimate.get("project_id") else []
+    rooms_by_project = invoice_rooms_by_project(conn)
+    conn.close()
+    return render_template(
+        "invoice_form.html",
+        doc_kind="estimate",
+        invoice=estimate_as_document(estimate),
+        lines=existing_lines,
+        projects=projects,
+        saved_items=saved_items,
+        part_catalog=catalog,
+        invoice_rooms=invoice_rooms,
+        rooms_by_project=rooms_by_project,
+        selected_project=selected_project,
+        default_tax_rate=default_invoice_tax_rate(),
+        default_estimate_terms=DEFAULT_ESTIMATE_TERMS,
+        today=local_now().date().isoformat(),
+        form_action=url_for("edit_estimate", estimate_id=estimate_id),
+    )
+
+
+@app.route("/estimates/<int:estimate_id>/send", methods=["POST"])
+@admin_required
+def send_estimate(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    try:
+        sent, email_error = email_estimate_record(conn, estimate, lines, request.form.get("customer_email", "").strip())
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        sent, email_error = False, str(e)
+    conn.close()
+    flash("Estimate emailed to the customer with the signing link." if sent else f"Estimate could not be emailed. {email_error}")
+    return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+
+@app.route("/estimates/<int:estimate_id>/convert", methods=["POST"])
+@admin_required
+def convert_estimate(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    if estimate.get("converted_invoice_id"):
+        conn.close()
+        flash("This estimate was already turned into an invoice.")
+        return redirect(url_for("invoice_view", invoice_id=estimate["converted_invoice_id"]))
+    if not lines:
+        conn.close()
+        flash("This estimate has no items to invoice.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    try:
+        invoice_id, invoice_number = convert_estimate_to_invoice(conn, estimate, lines)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"Estimate could not be turned into an invoice. {e}")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    conn.close()
+    flash(f"Invoice {invoice_number} created from estimate {estimate.get('estimate_number')}.")
+    return redirect(url_for("edit_invoice", invoice_id=invoice_id))
+
+
+@app.route("/estimates/<int:estimate_id>/delete", methods=["POST"])
+@admin_required
+def delete_estimate(estimate_id):
+    conn = db()
+    ensure_estimate_tables(conn)
+    estimate = conn.execute("SELECT id, estimate_number, customer_name, project_id FROM estimates WHERE id = %s", (estimate_id,)).fetchone()
+    admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    if not admin or not admin.get("email"):
+        conn.close()
+        flash("Your admin account needs an email before a delete PIN can be sent.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    pin = f"{secrets.randbelow(10000):04d}"
+    conn.execute("DELETE FROM estimate_delete_codes WHERE estimate_id = %s AND admin_id = %s", (estimate_id, admin["id"]))
+    conn.execute(
+        """
+        INSERT INTO estimate_delete_codes (estimate_id, admin_id, pin_hash, expires_at, created_at)
+        VALUES (%s, %s, %s, %s, %s)
+        """,
+        (estimate_id, admin["id"], generate_password_hash(pin), utc_future_iso(10), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    send_email(
+        admin["email"],
+        "ProjectONus delete estimate PIN",
+        "\n".join([
+            f"Your PIN to delete estimate {estimate.get('estimate_number')} is {pin}.",
+            "This PIN expires in 10 minutes.",
+        ])
+    )
+    flash("A delete PIN was emailed to you.")
+    return redirect(url_for("confirm_delete_estimate", estimate_id=estimate_id))
+
+
+@app.route("/estimates/<int:estimate_id>/delete/confirm", methods=["GET", "POST"])
+@admin_required
+def confirm_delete_estimate(estimate_id):
+    conn = db()
+    ensure_estimate_tables(conn)
+    estimate = conn.execute("SELECT id, estimate_number, customer_name, project_id FROM estimates WHERE id = %s", (estimate_id,)).fetchone()
+    if not estimate:
+        conn.close()
+        flash("Estimate not found.")
+        return redirect(url_for("estimates"))
+    if request.method == "POST":
+        pin = request.form.get("pin", "").strip()
+        code = conn.execute(
+            """
+            SELECT * FROM estimate_delete_codes
+            WHERE estimate_id = %s AND admin_id = %s
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (estimate_id, session.get("user_id"))
+        ).fetchone()
+        expires_at = parse_iso_datetime(code.get("expires_at")) if code else None
+        if not code or not expires_at or expires_at < datetime.now(timezone.utc):
+            conn.close()
+            flash("Delete PIN expired. Press Delete again to get a new PIN.")
+            return redirect(url_for("estimate_view", estimate_id=estimate_id))
+        if not check_password_hash(code["pin_hash"], pin):
+            conn.close()
+            flash("Invalid delete PIN.")
+            return redirect(url_for("confirm_delete_estimate", estimate_id=estimate_id))
+        project_id = estimate.get("project_id")
+        conn.execute("DELETE FROM estimate_delete_codes WHERE estimate_id = %s", (estimate_id,))
+        conn.execute("DELETE FROM estimates WHERE id = %s", (estimate_id,))
+        conn.commit()
+        conn.close()
+        flash("Estimate deleted.")
+        return redirect(url_for("estimates", project_id=project_id) if project_id else url_for("estimates"))
+    conn.close()
+    return render_template("delete_estimate_confirm.html", estimate=estimate)
+
+
+# --- Public signing pages (no login: the customer only has the token) --------
+
+def load_estimate_by_token(conn, token):
+    estimate = conn.execute(
+        """
+        SELECT estimates.*, projects.name AS project_name
+        FROM estimates
+        LEFT JOIN projects ON estimates.project_id = projects.id
+        WHERE estimates.public_token = %s
+        """,
+        (token,)
+    ).fetchone()
+    if not estimate:
+        return None, []
+    lines = conn.execute(
+        "SELECT * FROM estimate_lines WHERE estimate_id = %s ORDER BY position, id",
+        (estimate["id"],)
+    ).fetchall()
+    return estimate, lines
+
+
+def estimate_is_expired(estimate):
+    valid_until = (estimate or {}).get("valid_until")
+    if not valid_until:
+        return False
+    try:
+        return datetime.strptime(str(valid_until)[:10], "%Y-%m-%d").date() < local_now().date()
+    except Exception:
+        return False
+
+
+def render_estimate_sign_page(estimate, lines, message=""):
+    return render_template(
+        "estimate_sign.html",
+        estimate=estimate,
+        lines=lines,
+        company=account_info(),
+        totals_breakdown=estimate_totals_breakdown(estimate, lines),
+        logo_path=get_app_setting("company_logo"),
+        expired=estimate_is_expired(estimate),
+        message=message,
+        map_url=estimate_signed_map_url(estimate),
+    )
+
+
+@app.route("/e/<token>")
+def estimate_sign(token):
+    conn = db()
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate_by_token(conn, token)
+    if not estimate:
+        conn.close()
+        return render_template("estimate_sign_missing.html", company=account_info()), 404
+    try:
+        record_estimate_signature_event(conn, estimate["id"], "viewed", estimate.get("customer_name") or "")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Estimate view event skipped:", e)
+    conn.close()
+    return render_estimate_sign_page(estimate, lines)
+
+
+@app.route("/e/<token>/sign", methods=["POST"])
+def estimate_sign_submit(token):
+    conn = db()
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate_by_token(conn, token)
+    if not estimate:
+        conn.close()
+        return render_template("estimate_sign_missing.html", company=account_info()), 404
+    if estimate.get("signed_at"):
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, "This estimate was already signed.")
+
+    signer_name = (request.form.get("signer_name") or "").strip()
+    signer_email = (request.form.get("signer_email") or "").strip()
+    signature_image = (request.form.get("signature_image") or "").strip()
+    if not signer_name or not signature_image.startswith("data:image/"):
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, "Please type your name and draw your signature before accepting.")
+    if len(signature_image) > 900000:
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, "That signature image is too large. Please sign again.")
+
+    def as_float(name):
+        try:
+            raw = (request.form.get(name) or "").strip()
+            return float(raw) if raw else None
+        except Exception:
+            return None
+
+    latitude = as_float("latitude")
+    longitude = as_float("longitude")
+    accuracy = as_float("accuracy")
+    location_label = (request.form.get("location_label") or "").strip()
+    if not location_label and latitude is not None and longitude is not None:
+        location_label = f"Near {latitude:.4f}, {longitude:.4f}"
+    signed_at = utc_now_iso()
+    try:
+        conn.execute(
+            """
+            UPDATE estimates SET
+                status = 'accepted', signer_name = %s, signer_email = %s, signature_image = %s,
+                signed_at = %s, signed_ip = %s, signed_user_agent = %s,
+                signed_latitude = %s, signed_longitude = %s, signed_accuracy = %s, signed_location = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                signer_name, signer_email, signature_image, signed_at, request_client_ip(),
+                (request.headers.get("User-Agent") or "")[:400],
+                latitude, longitude, accuracy, location_label, utc_now_iso(), estimate["id"],
+            )
+        )
+        record_estimate_signature_event(
+            conn, estimate["id"], "signed", signer_name,
+            note="Estimate accepted online.",
+            latitude=latitude, longitude=longitude, accuracy=accuracy, location_label=location_label,
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, f"The signature could not be saved. {e}")
+
+    signed_estimate, signed_lines = load_estimate_by_token(conn, token)
+    try:
+        notify_admins_estimate_signed(conn, signed_estimate)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Estimate signed notification skipped:", e)
+    company = account_info()
+    if signer_email or signed_estimate.get("customer_email"):
+        try:
+            send_email(
+                signer_email or signed_estimate.get("customer_email"),
+                f"Copy of your signed estimate {signed_estimate.get('estimate_number')}",
+                "\n".join([
+                    f"Thank you {signer_name},",
+                    "",
+                    f"We received your signed acceptance of estimate {signed_estimate.get('estimate_number')} "
+                    f"for {format_invoice_money(signed_estimate.get('total'))}.",
+                    f"Signed on {format_date(signed_at)} at {format_time(signed_at)}.",
+                    "",
+                    "You can view it again here:",
+                    estimate_public_url(signed_estimate),
+                    "",
+                    company.get("company_name") or "ProjectONus",
+                ])
+            )
+        except Exception as e:
+            print("Signer receipt email skipped:", e)
+    conn.close()
+    return render_estimate_sign_page(signed_estimate, signed_lines, "Thank you. Your acceptance has been recorded.")
+
+
+@app.route("/e/<token>/decline", methods=["POST"])
+def estimate_sign_decline(token):
+    conn = db()
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate_by_token(conn, token)
+    if not estimate:
+        conn.close()
+        return render_template("estimate_sign_missing.html", company=account_info()), 404
+    if estimate.get("signed_at"):
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, "This estimate was already signed.")
+    reason = (request.form.get("decline_reason") or "").strip()
+    try:
+        conn.execute(
+            "UPDATE estimates SET status = 'declined', declined_at = %s, decline_reason = %s, updated_at = %s WHERE id = %s",
+            (utc_now_iso(), reason, utc_now_iso(), estimate["id"])
+        )
+        record_estimate_signature_event(conn, estimate["id"], "declined", estimate.get("customer_name") or "", note=reason)
+        conn.commit()
+        notify_admins_estimate_declined(conn, estimate, reason)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return render_estimate_sign_page(estimate, lines, f"Your reply could not be saved. {e}")
+    declined_estimate, declined_lines = load_estimate_by_token(conn, token)
+    conn.close()
+    return render_estimate_sign_page(declined_estimate, declined_lines, "Thank you. We have let the office know.")
 
 
 @app.route("/parts-catalog", methods=["GET", "POST"])

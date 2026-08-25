@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Estimate {{ estimate.estimate_number }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('estimates') }}">Back to Estimates</a>
+    {% if not estimate.signed_at %}
+        <a class="btn-link btn-secondary" href="{{ url_for('edit_estimate', estimate_id=estimate.id) }}">Edit</a>
+    {% endif %}
+    <button type="button" onclick="window.print()">Print / Save PDF</button>
+    <form method="post" action="{{ url_for('delete_estimate', estimate_id=estimate.id) }}" class="inlineInvoiceForm">
+        <button type="submit" class="btn-danger">Delete</button>
+    </form>
+
+    {% if estimate.converted_invoice_id %}
+        <a class="btn-link" href="{{ url_for('invoice_view', invoice_id=estimate.converted_invoice_id) }}">Open Invoice</a>
+        <p class="muted">Turned into an invoice on {{ format_date(estimate.converted_at) }}.</p>
+    {% else %}
+        <form method="post" action="{{ url_for('convert_estimate', estimate_id=estimate.id) }}" class="inlineInvoiceForm"
+              onsubmit="return confirm('Create an invoice from this estimate? The estimate stays on file as the signed record.');">
+            <button type="submit">Turn Into Invoice</button>
+        </form>
+    {% endif %}
+</div>
+
+{% if estimate.signed_at %}
+<div class="card noPrint signedBanner">
+    <div class="signedBannerHead">
+        <span class="signedTag">Accepted</span>
+        <strong>{{ estimate.signer_name or estimate.customer_name or 'Customer' }} signed this estimate</strong>
+    </div>
+    <p class="muted">{{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}</p>
+</div>
+{% elif estimate.declined_at %}
+<div class="card noPrint declinedBanner">
+    <strong>This estimate was declined by the customer on {{ format_date(estimate.declined_at) }}.</strong>
+    {% if estimate.decline_reason %}<p>Reason given: {{ estimate.decline_reason }}</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="card noPrint">
+    <h3>Signing Link</h3>
+    <p class="muted">Send this link to the customer. They can open it without a login, review the estimate and sign it online.</p>
+    <input class="signLinkBox" value="{{ sign_url }}" readonly onclick="this.select()">
+    <div class="signLinkActions">
+        <a class="btn-link btn-secondary" href="{{ sign_url }}" target="_blank" rel="noopener">Open Signing Page</a>
+        <button type="button" class="btn-secondary" id="copySignLink">Copy Link</button>
+    </div>
+    <form method="post" action="{{ url_for('send_estimate', estimate_id=estimate.id) }}" class="invoiceSendForm">
+        <label>Email Estimate To</label>
+        <input name="customer_email" type="email" value="{{ estimate.customer_email or '' }}" required>
+        <button type="submit">Email Estimate + Signing Link</button>
+    </form>
+</div>
+
+<div class="card invoicePaper">
+    <div class="invoiceHeader">
+        <div class="invoiceCompanyBox">
+            {% set logo = get_app_setting("company_logo") %}
+            {% if logo %}<img class="invoiceLogo" src="{{ url_for('storage_file', storage_path=logo) }}" alt="Company Logo">{% endif %}
+            {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
+            {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
+            {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
+        </div>
+        <div class="invoiceMeta">
+            <h1>Estimate</h1>
+            <div class="invoiceMetaGrid">
+                <span>Date</span><strong>{{ format_date(estimate.estimate_date) }}</strong>
+                <span>Estimate #</span><strong>{{ estimate.estimate_number }}</strong>
+                {% if estimate.valid_until %}<span>Valid Until</span><strong>{{ format_date(estimate.valid_until) }}</strong>{% endif %}
+                <span>Status</span><strong>{{ estimate_status_label(estimate.status) }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="invoiceBillTo">
+        <div>
+            <h3>Customer Name</h3>
+            <p><strong>{{ estimate.customer_name or '-' }}</strong></p>
+            {% if estimate.billing_address %}<p>{{ estimate.billing_address }}</p>{% endif %}
+            {% if estimate.customer_email %}<p>{{ estimate.customer_email }}</p>{% endif %}
+            {% if estimate.customer_phone %}<p>{{ estimate.customer_phone }}</p>{% endif %}
+        </div>
+        <div>
+            <h3>Job Name</h3>
+            <p><strong>{{ estimate.project_name or estimate.customer_name or '-' }}</strong></p>
+            {% if estimate.billing_address %}<p>{{ estimate.billing_address }}</p>{% endif %}
+        </div>
+    </div>
+
+    <div class="linesScroll">
+    <table class="invoiceLinesTable">
+        <thead>
+            <tr>
+                <th>Line #</th><th>Qty</th><th>Item</th><th>Description</th><th>Location</th><th>Unit Price</th><th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for line in lines %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ line.quantity }}</td>
+                <td>{{ line.item_name }}</td>
+                <td>{{ line.description or '' }}</td>
+                <td>{{ line.location or '' }}</td>
+                <td>{{ format_invoice_money(line.unit_price) }}</td>
+                <td>{{ format_invoice_money(line.line_total) }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <div class="invoiceSummary">
+        <div class="invoiceNotes">
+            {% if estimate.notes %}<h3>Notes</h3><p>{{ estimate.notes }}</p>{% endif %}
+            {% if estimate.terms %}<h3>Terms</h3><p>{{ estimate.terms }}</p>{% endif %}
+        </div>
+        <div class="invoiceTotals">
+            <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
+            <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
+            <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
+            <p class="invoiceGrandTotal"><span>Estimate Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+        </div>
+    </div>
+
+    {% if estimate.signed_at %}
+    <div class="signatureBlock">
+        <h3>Accepted and Signed</h3>
+        <div class="signatureGrid">
+            <div>
+                {% if estimate.signature_image %}
+                    <img class="signatureImage" src="{{ estimate.signature_image }}" alt="Customer signature">
+                {% endif %}
+                <p class="signatureName">{{ estimate.signer_name }}</p>
+                <p class="muted">Signed {{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}</p>
+            </div>
+            <div class="signatureFacts">
+                <p><span>Signer email</span><strong>{{ estimate.signer_email or estimate.customer_email or '-' }}</strong></p>
+                <p><span>IP address</span><strong>{{ estimate.signed_ip or '-' }}</strong></p>
+                <p><span>Approximate location</span><strong>{{ estimate.signed_location or 'Not shared by the signer' }}</strong></p>
+                {% if estimate.signed_accuracy %}
+                    <p><span>GPS accuracy</span><strong>about {{ estimate.signed_accuracy|round|int }} meters</strong></p>
+                {% endif %}
+                {% if map_url %}
+                    <p class="noPrint"><span>Map</span><strong><a href="{{ map_url }}" target="_blank" rel="noopener">Open in Google Maps</a></strong></p>
+                {% endif %}
+                <p><span>Device</span><strong class="deviceString">{{ estimate.signed_user_agent or '-' }}</strong></p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if signature_events %}
+<div class="card noPrint">
+    <h3>Signature Activity</h3>
+    <div class="payTableWrap">
+        <table class="payTable">
+            <thead><tr><th>When</th><th>What</th><th>Name</th><th>IP</th><th>Location</th><th>Note</th></tr></thead>
+            <tbody>
+            {% for ev in signature_events %}
+                <tr>
+                    <td>{{ format_date(ev.created_at) }} {{ format_time(ev.created_at) }}</td>
+                    <td>{{ ev.event_type|title }}</td>
+                    <td>{{ ev.signer_name or '-' }}</td>
+                    <td>{{ ev.ip_address or '-' }}</td>
+                    <td>
+                        {% if ev.latitude is not none and ev.longitude is not none %}
+                            <a href="https://www.google.com/maps?q={{ ev.latitude }},{{ ev.longitude }}" target="_blank" rel="noopener">{{ ev.location_label or 'Map' }}</a>
+                        {% else %}
+                            {{ ev.location_label or '-' }}
+                        {% endif %}
+                    </td>
+                    <td>{{ ev.note or '' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if email_logs %}
+<div class="card noPrint">
+    <h3>Email History</h3>
+    {% for log in email_logs %}
+        <p>{{ format_datetime(log.sent_at) }} - {{ log.sent_to }} - {{ 'Sent' if log.success else 'Failed' }}{% if log.sent_by_name %} by {{ log.sent_by_name }}{% endif %}</p>
+    {% endfor %}
+</div>
+{% endif %}
+
+<script>
+const copySignLink=document.getElementById("copySignLink");
+if(copySignLink){
+    copySignLink.addEventListener("click",()=>{
+        const box=document.querySelector(".signLinkBox");
+        if(!box)return;
+        box.select();
+        try{
+            if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(box.value);}
+            else{document.execCommand("copy");}
+            copySignLink.textContent="Copied";
+            setTimeout(()=>{copySignLink.textContent="Copy Link";},1600);
+        }catch(e){}
+    });
+}
+</script>
+
+<style>
+.inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}
+.invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px}
+.invoiceSendForm label{width:100%}
+.invoiceSendForm input{max-width:320px}
+.signLinkBox{width:100%;font-family:monospace;font-size:12.5px}
+.signLinkActions{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 0}
+.signedBanner{border-left:6px solid #16a34a}
+.signedBannerHead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.signedTag{display:inline-flex;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800;background:rgba(22,163,74,.14);color:#15803d}
+.declinedBanner{border-left:6px solid #dc2626}
+.signatureBlock{margin-top:34px;border-top:2px solid #172033;padding-top:16px}
+.signatureBlock h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
+.signatureGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:34px;align-items:start}
+.signatureImage{max-width:320px;max-height:130px;object-fit:contain;border-bottom:1px solid #172033;display:block;background:#fff}
+.signatureName{margin:8px 0 2px;font-weight:800;font-size:16px}
+.signatureFacts p{display:flex;justify-content:space-between;gap:18px;margin:6px 0;font-size:13px;border-bottom:1px dotted #d7dee9;padding-bottom:5px}
+.signatureFacts span{color:#64748b;text-transform:uppercase;font-size:11px;letter-spacing:.03em;flex:0 0 auto}
+.signatureFacts strong{text-align:right;overflow-wrap:anywhere}
+.deviceString{font-size:11px;font-weight:600}
+.payTableWrap{overflow-x:auto;margin:12px 0}
+.payTable{width:100%;border-collapse:collapse;min-width:680px;font-size:13.5px}
+.payTable th,.payTable td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left}
+.payTable th{background:rgba(148,163,184,.12);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.invoicePaper{max-width:920px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}
+.invoiceHeader{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:34px;align-items:start;border-bottom:2px solid #172033;padding-bottom:22px}
+.invoiceCompanyBox{line-height:1.35}
+.invoiceLogo{max-width:360px;max-height:216px;object-fit:contain;margin-bottom:14px}
+.invoiceHeader p,.invoiceBillTo p,.invoiceNotes p{margin:3px 0}
+.invoiceNotes p{white-space:pre-line}
+.invoiceMeta{text-align:right}
+.invoiceMeta h1{font-size:34px;text-transform:uppercase;margin:0 0 12px}
+.invoiceMetaGrid{display:grid;grid-template-columns:96px minmax(0,1fr);gap:5px 12px;font-size:13px;align-items:start}
+.invoiceMetaGrid span{color:#64748b;text-transform:uppercase;font-size:11px}
+.invoiceMetaGrid strong{overflow-wrap:anywhere}
+.invoiceBillTo{display:grid;grid-template-columns:1fr 1fr;gap:48px;margin:42px 0 24px;align-items:start}
+.invoiceBillTo h3,.invoiceNotes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
+.linesScroll{overflow-x:auto}
+.invoiceLinesTable{width:100%;border-collapse:collapse}
+.invoiceLinesTable th,.invoiceLinesTable td{border-bottom:1px solid #d7dee9;padding:10px;text-align:left;vertical-align:top}
+.invoiceLinesTable th{background:#f8fafc;text-transform:uppercase;font-size:11px;color:#475569}
+.invoiceSummary{display:grid;grid-template-columns:1fr 390px;gap:34px;margin-top:18px;align-items:start}
+.invoiceTotals{border-top:2px solid #172033;padding:10px 0 0;background:#fff;font-size:13px}
+.invoiceTotals p{display:flex;justify-content:space-between;gap:24px;margin:8px 0}
+.invoiceGrandTotal{border-top:1px solid #d7dee9;padding-top:10px;font-weight:800}
+.invoiceNotes{border-top:2px solid #172033;padding-top:10px;min-height:1px}
+@media(max-width:760px){
+    .invoiceHeader,.invoiceBillTo,.invoiceSummary,.signatureGrid{grid-template-columns:1fr}
+    .invoiceMeta{text-align:left}
+    .invoiceLogo{max-width:100%;max-height:190px}
+}
+@media print{
+    @page{size:letter;margin:.35in}
+    header,.bottom-nav,.backButton,.noPrint,.flash{display:none!important}
+    body{background:white!important;color:#111!important}
+    main{max-width:none!important;padding:0!important;margin:0!important}
+    .card{box-shadow:none!important;border:0!important}
+    .invoicePaper{width:920px!important;max-width:920px!important;margin:0 auto!important;padding:20px!important}
+    .invoiceHeader{display:grid!important;grid-template-columns:minmax(0,1fr) 300px!important}
+    .invoiceBillTo{display:grid!important;grid-template-columns:1fr 1fr!important}
+    .invoiceSummary{display:grid!important;grid-template-columns:1fr 390px!important}
+    .linesScroll{overflow:visible!important}
+    .invoiceLinesTable th,.invoiceLinesTable td{font-size:11px}
+}
+</style>
+{% endblock %}

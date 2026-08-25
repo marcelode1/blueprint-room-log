@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+{# This form is shared by invoices and estimates. The posted field names stay the
+   same for both (invoice_date, due_date, line_*) so the line-grid JS, catalog
+   type-ahead and room picker are written once; only the wording and the links
+   change. Estimates read "due_date" as the valid-until date. #}
+{% set doc_kind = doc_kind|default('invoice') %}
+{% set is_estimate = doc_kind == 'estimate' %}
+{% set doc_word = 'Estimate' if is_estimate else 'Invoice' %}
+{% set list_endpoint = 'estimates' if is_estimate else 'invoices' %}
 {% set is_edit = invoice is not none and invoice.id %}
 {% set default_customer_name = '' %}
 {% set default_customer_email = '' %}
@@ -18,18 +26,26 @@
 {% endif %}
 
 <div class="card">
-    <h2>{{ 'Edit Invoice' if is_edit else 'Create Invoice' }}</h2>
+    <h2>{{ ('Edit ' if is_edit else 'Create ') ~ doc_word }}</h2>
     {% if selected_project %}<p><strong>Project:</strong> {{ selected_project.name }}</p>{% endif %}
     <div class="invoiceHeaderActions">
         {% if selected_project %}
-            <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) }}">Invoices</a>
+            <a class="btn-link btn-secondary" href="{{ url_for(list_endpoint, project_id=selected_project.id) }}">{{ doc_word }}s</a>
         {% else %}
-            <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+            <a class="btn-link btn-secondary" href="{{ url_for(list_endpoint) }}">Back to {{ doc_word }}s</a>
         {% endif %}
-        {% if is_edit %}<a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>{% endif %}
-        <button type="submit" class="btn-secondary" form="invoiceForm" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
-        <button type="submit" class="btn-secondary" form="invoiceForm" name="submit_action" value="email">Email Invoice</button>
-        <button type="submit" form="invoiceForm">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
+        {% if is_edit %}
+            {% if is_estimate %}
+                <a class="btn-link" href="{{ url_for('estimate_view', estimate_id=invoice.id) }}">View Estimate</a>
+            {% else %}
+                <a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>
+            {% endif %}
+        {% endif %}
+        {% if not is_estimate %}
+            <button type="submit" class="btn-secondary" form="invoiceForm" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
+        {% endif %}
+        <button type="submit" class="btn-secondary" form="invoiceForm" name="submit_action" value="email">Email {{ doc_word }}</button>
+        <button type="submit" form="invoiceForm">{{ ('Save ' if is_edit else 'Create ') ~ doc_word }}</button>
     </div>
 </div>
 
@@ -39,7 +55,7 @@
         {% if invoice and invoice.invoice_number %}<input type="hidden" name="invoice_number" value="{{ invoice.invoice_number }}">{% endif %}
         <div class="grid">
             <div>
-                <label>Invoice Number</label>
+                <label>{{ doc_word }} Number</label>
                 <input value="{{ invoice.invoice_number if invoice else 'Auto generated when saved' }}" readonly>
             </div>
             {% if selected_project %}
@@ -69,13 +85,13 @@
             <div>
                 <label>Status</label>
                 <select name="status">
-                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
+                    {% for value in (['draft','sent','accepted','declined','expired','converted'] if is_estimate else ['draft','sent','paid','overdue','canceled']) %}
                         <option value="{{ value }}" {% if invoice and invoice.status == value %}selected{% endif %}>{{ value|title }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div><label>Invoice Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
-            <div><label>Due Date</label><input name="due_date" id="invoiceDueDate" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
+            <div><label>{{ doc_word }} Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
+            <div><label>{{ 'Valid Until' if is_estimate else 'Due Date' }}</label><input name="due_date" id="invoiceDueDate" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
         </div>
 
         <h3>Customer</h3>
@@ -95,13 +111,17 @@
             </div>
             <div>
                 <label>Terms</label>
-                <textarea name="terms" id="invoiceTerms" rows="3">{{ invoice_terms_for_due_date(invoice.due_date, invoice.terms) if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+                {% if is_estimate %}
+                    <textarea name="terms" id="invoiceTerms" rows="3">{{ (invoice.terms if invoice and invoice.terms else default_estimate_terms) }}</textarea>
+                {% else %}
+                    <textarea name="terms" id="invoiceTerms" rows="3">{{ invoice_terms_for_due_date(invoice.due_date, invoice.terms) if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+                {% endif %}
             </div>
         </div>
 
         <div class="invoiceLinePanel">
             <div class="invoiceLineToolbar">
-                <h3>Invoice Item Lines</h3>
+                <h3>{{ doc_word }} Item Lines</h3>
                 <button type="button" id="addInvoiceLine">Add Line</button>
             </div>
             <div class="invoiceGridWrap">
@@ -195,9 +215,13 @@
                 <p><span>Total Labor</span><strong id="liveTotalLabor">$0.00</strong></p>
                 <p><span>Total Sales Tax</span><strong id="liveTotalTax">$0.00</strong></p>
                 <p><span>Total Amount</span><strong id="liveTotalAmount">$0.00</strong></p>
+                {% if not is_estimate %}
                 <p><span>Payments</span><strong id="livePayments">$0.00</strong></p>
                 <p><span>Credit</span><strong id="liveCredit">$0.00</strong></p>
-                <p class="invoiceLiveBalance"><span>Balance Due</span><strong id="liveBalanceDue">$0.00</strong></p>
+                {% else %}
+                <span hidden id="livePayments"></span><span hidden id="liveCredit"></span>
+                {% endif %}
+                <p class="invoiceLiveBalance"><span>{{ 'Estimate Total' if is_estimate else 'Balance Due' }}</span><strong id="liveBalanceDue">$0.00</strong></p>
             </div>
         </div>
 
@@ -391,7 +415,7 @@ function isAutomaticInvoiceTerms(value){
     const text=String(value||"").trim();
     return !text || text==="Payment due upon receipt. Thank you for your business." || /^Payment due by .+\. Thank you for your business\.$/.test(text);
 }
-if(dueDateInput&&termsInput){
+if(dueDateInput&&termsInput&&!{{ 'true' if is_estimate else 'false' }}){
     dueDateInput.addEventListener("change",()=>{
         if(isAutomaticInvoiceTerms(termsInput.value)){
             termsInput.value=automaticTermsForDueDate(dueDateInput.value);

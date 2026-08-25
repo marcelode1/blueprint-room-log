@@ -50,10 +50,10 @@
                 {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
             </div>
             <div class="invoiceMeta">
-                <h1>Invoice</h1>
+                <h1>{{ doc_label|default("Invoice") }}</h1>
                 <div class="invoiceMetaGrid">
                     <span>Date</span><strong>{{ inv_date }}</strong>
-                    <span>Invoice #</span><strong>{{ inv_number }}</strong>
+                    <span>{{ doc_label|default("Invoice") }} #</span><strong>{{ inv_number }}</strong>
                     {% if inv_terms %}<span>Terms</span><strong>{{ inv_terms }}</strong>{% endif %}
                     {% if inv_due %}<span>Due</span><strong>{{ inv_due }}</strong>{% endif %}
                 </div>
@@ -114,7 +114,7 @@
                 <p><span>Total Amount</span><strong>{{ total_amount }}</strong></p>
                 <p><span>Payments</span><strong>{{ payments_total }}</strong></p>
                 <p><span>Credit</span><strong>{{ credit_total }}</strong></p>
-                <p class="invoiceGrandTotal"><span>Balance Due</span><strong>{{ balance_due }}</strong></p>
+                <p class="invoiceGrandTotal"><span>{{ total_label|default("Balance Due") }}</span><strong>{{ balance_due }}</strong></p>
             </div>
         </div>
     </div>
