@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="wtg">
-    <a class="btn-link btn-secondary wtgBack" href="{{ url_for('today_tasks') }}">&larr; Today's Tasks</a>
+    {# Goes to the main project. The browser Back button above already returns
+       to whatever the user came from. #}
+    {% if group.project_id %}
+        {% set project_home = url_for('mobile_project', project_id=group.project_id) if is_mobile_request() and not is_main_admin() else url_for('project', project_id=group.project_id) %}
+        <a class="btn-link btn-secondary wtgBack" href="{{ project_home }}"
+           title="{{ group.project_name or 'Project' }}">&larr; Back to Project</a>
+    {% else %}
+        <a class="btn-link btn-secondary wtgBack" href="{{ url_for('today_tasks') }}">&larr; Today's Tasks</a>
+    {% endif %}
 
     <div class="card wtgHead">
         {% if group.kind == 'supplier' %}<span class="wtgTag wtgTagSupplier">Supplier Pickup</span>{% endif %}
