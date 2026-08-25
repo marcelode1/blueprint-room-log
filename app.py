@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-25 V3"
+APP_BUILD = "2026-08-25 V4"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2607,7 +2607,7 @@ def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due"):
+def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due", signature=None, footer_url=""):
     if fitz is None:
         return None, "PDF support is not available on this server."
     doc = fitz.open()
@@ -2621,6 +2621,9 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     line_color = (0.08, 0.12, 0.2)
     grid_color = (0.70, 0.76, 0.84)
     fill_color = (0.95, 0.97, 0.99)
+    # A proposal is not a bill: no payments or credit lines, and its second date
+    # is how long the price holds rather than when money is owed.
+    is_proposal_doc = str(doc_label).upper() != "INVOICE"
 
     def text(x, y_pos, value, size=10, bold=False):
         font = "helv"
@@ -2702,7 +2705,8 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     for label, value in [
         ("DATE", format_date(invoice.get("invoice_date"))),
         (f"{doc_label} #", invoice.get("invoice_number") or "PREVIEW"),
-        ("TERMS", invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms") or "")),
+        ("TERMS", (invoice.get("terms") or "") if is_proposal_doc
+                  else invoice_terms_for_due_date(invoice.get("due_date"), invoice.get("terms") or "")),
     ]:
         if not value:
             continue
@@ -2718,7 +2722,7 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
             box_text(444, meta_y, 132, value, 7.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
             meta_y += 13
     if invoice.get("due_date"):
-        text(382, meta_y, "DUE", 6.4)
+        text(382, meta_y, "VALID UNTIL" if is_proposal_doc else "DUE", 6.4)
         box_text(444, meta_y, 132, format_date(invoice.get("due_date")), 7.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
         meta_y += 13
     divider_y = max(154, company_y + 16, meta_y + 10)
@@ -2741,7 +2745,7 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         text(left, customer_y, invoice.get("customer_phone"), 8.4)
         customer_y += 10
     if invoice.get("due_date"):
-        text(330, job_y, f"Due: {format_date(invoice.get('due_date'))}", 8.4)
+        text(330, job_y, ("Valid until: " if is_proposal_doc else "Due: ") + format_date(invoice.get("due_date")), 8.4)
         job_y += 10
 
     y = max(customer_y, job_y, divider_y + 104) + 18
@@ -2790,14 +2794,14 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         wrapped(left, y + 18, invoice.get("notes"), 292, 9, 11)
     page.draw_line((346, y - 12), (right, y - 12), color=line_color, width=1)
     totals_y = y + 2
-    for label, key in [
+    totals_rows = [
         ("Total Material", "material"),
         ("Total Labor", "labor"),
         ("Total Sales Tax", "sales_tax"),
-        ("Total Amount", "total_amount"),
-        ("Payments", "payments"),
-        ("Credit", "credit"),
-    ]:
+    ]
+    if not is_proposal_doc:
+        totals_rows += [("Total Amount", "total_amount"), ("Payments", "payments"), ("Credit", "credit")]
+    for label, key in totals_rows:
         value = format_invoice_money(totals[key])
         if key in ("payments", "credit") and totals[key]:
             value = "-" + value
@@ -2808,10 +2812,69 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     text(358, totals_y + 6, total_label, 8.8)
     box_text(500, totals_y + 6, 76, format_invoice_money(totals["balance_due"]), 8.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
 
+    # Signed acceptance block. Only proposals pass this; invoices leave it empty.
+    if signature and signature.get("signed_at"):
+        try:
+            sig_page = page
+            sig_y = max(totals_y + 34, y + 34)
+            if sig_y > footer_top - 176:
+                sig_page = doc.new_page(width=page_width, height=page_height)
+                sig_y = 64
+
+            def sig_text(x, y_pos, value, size=8.4, bold=False):
+                sig_page.insert_text((x, y_pos), str(value or ""), fontsize=size,
+                                     fontname="hebo" if bold else "helv", color=(0.08, 0.12, 0.2))
+
+            sig_page.draw_line((left, sig_y - 14), (right, sig_y - 14), color=line_color, width=1)
+            sig_text(left, sig_y, "ACCEPTED AND SIGNED", 9, bold=True)
+            sig_y += 16
+
+            image_bottom = sig_y
+            drawn = False
+            data_uri = signature.get("signature_image") or ""
+            if data_uri.startswith("data:image/") and "," in data_uri:
+                try:
+                    png_bytes = base64.b64decode(data_uri.split(",", 1)[1])
+                    sig_page.insert_image(fitz.Rect(left, sig_y, left + 250, sig_y + 74),
+                                          stream=png_bytes, keep_proportion=True)
+                    image_bottom = sig_y + 78
+                    drawn = True
+                except Exception as e:
+                    print("Signature image skipped:", e)
+            if not drawn:
+                # Never hand over a "signed" PDF with a blank signature line.
+                sig_text(left, sig_y + 34, "[ Signature captured electronically - on file ]", 8.6, bold=True)
+                image_bottom = sig_y + 46
+            sig_page.draw_line((left, image_bottom), (left + 250, image_bottom), color=line_color, width=0.8)
+            sig_text(left, image_bottom + 13, signature.get("signer_name") or "", 10, bold=True)
+            sig_text(left, image_bottom + 26,
+                     f"Signed {format_date(signature.get('signed_at'))} at {format_time(signature.get('signed_at'))}", 8)
+
+            facts = [
+                ("Signer email", signature.get("signer_email") or "-"),
+                ("IP address", signature.get("signed_ip") or "-"),
+                ("Approximate location", signature.get("signed_location") or "Not shared by the signer"),
+            ]
+            if signature.get("signed_accuracy"):
+                try:
+                    facts.append(("GPS accuracy", f"about {int(float(signature['signed_accuracy']))} meters"))
+                except Exception:
+                    pass
+            facts.append(("Signed on device", (signature.get("signed_user_agent") or "-")[:64]))
+            fact_y = sig_y
+            for label, value in facts:
+                sig_text(310, fact_y, label, 6.6, bold=True)
+                for chunk in wrapped_lines(value, 260, 7.6):
+                    fact_y += 9
+                    sig_text(310, fact_y, chunk, 7.6)
+                fact_y += 12
+        except Exception as e:
+            print("Signature block skipped:", e)
+
     page_count = doc.page_count
     stamp = local_now().strftime("%m/%d/%y, %I:%M %p").replace("/0", "/").lstrip("0").replace(" 0", " ")
-    invoice_url = ""
-    if invoice.get("id"):
+    invoice_url = footer_url or ""
+    if not invoice_url and invoice.get("id"):
         try:
             invoice_url = external_url("invoice_view", invoice_id=invoice["id"])
         except Exception:
@@ -2852,11 +2915,16 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     return (f"{invoice_number}.pdf", pdf_bytes, "application/pdf"), ""
 
 
-def invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due"):
-    attachment, error = invoice_browser_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label)
-    if attachment:
-        return attachment, ""
-    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label)
+def invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_label="INVOICE", total_label="Balance Due", signature=None, footer_url=""):
+    # A signed proposal must carry the signature block, and only the PyMuPDF
+    # builder draws it, so skip the browser path in that case.
+    if not signature:
+        attachment, error = invoice_browser_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label)
+        if attachment:
+            return attachment, ""
+    else:
+        error = ""
+    fallback_attachment, fallback_error = manual_invoice_pdf_attachment(invoice, lines, company, paid_total, doc_label, total_label, signature, footer_url)
     if fallback_attachment:
         return fallback_attachment, ""
     return None, error or fallback_error or "Invoice PDF could not be created."
@@ -6067,6 +6135,7 @@ def utility_processor():
         format_invoice_money=format_invoice_money,
         invoice_terms_for_due_date=invoice_terms_for_due_date,
         estimate_status_label=estimate_status_label,
+        proposal_word=PROPOSAL_WORD,
         invoice_paid_stamp_date=invoice_paid_stamp_date,
         task_schedule_text=task_schedule_text,
         task_display_name=task_display_name,
@@ -10086,10 +10155,15 @@ def confirm_delete_invoice(invoice_id):
 # with one button.
 # ---------------------------------------------------------------------------
 
+# The customer-facing word for this document. The database tables, routes and
+# function names stay on "estimate" so nothing has to be migrated; every word a
+# person actually reads comes from here.
+PROPOSAL_WORD = "Proposal"
+
 DEFAULT_ESTIMATE_TERMS = (
-    "This estimate is valid for 30 days from the date above. "
+    "This proposal is valid for 30 days from the date above. "
     "Prices are subject to change after that date. "
-    "Work will be scheduled after this estimate is accepted."
+    "Work will be scheduled after this proposal is accepted."
 )
 
 ESTIMATE_STATUS_LABELS = {
@@ -10099,6 +10173,7 @@ ESTIMATE_STATUS_LABELS = {
     "declined": "Declined",
     "expired": "Expired",
     "converted": "Converted to Invoice",
+    "revoked": "Signature Revoked",
 }
 
 
@@ -10208,7 +10283,28 @@ def ensure_estimate_tables(conn):
             created_at TEXT NOT NULL
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS estimate_signature_revocations (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+            signer_name TEXT,
+            signer_email TEXT,
+            signature_image TEXT,
+            signed_at TEXT,
+            signed_ip TEXT,
+            signed_user_agent TEXT,
+            signed_latitude REAL,
+            signed_longitude REAL,
+            signed_accuracy REAL,
+            signed_location TEXT,
+            revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            revoked_by_name TEXT,
+            revoked_reason TEXT,
+            revoked_at TEXT NOT NULL
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS estimate_lines_estimate_idx ON estimate_lines(estimate_id)",
+        "CREATE INDEX IF NOT EXISTS estimate_revocations_estimate_idx ON estimate_signature_revocations(estimate_id)",
         "CREATE INDEX IF NOT EXISTS estimate_signature_events_estimate_idx ON estimate_signature_events(estimate_id)",
     ]
     for statement in statements:
@@ -10233,7 +10329,7 @@ def next_estimate_number(conn, reference_value=None):
         """,
         (year_key, utc_now_iso())
     ).fetchone()
-    return f"EST-{year_key}-{int(row['sequence_number']):04d}"
+    return f"PRO-{year_key}-{int(row['sequence_number']):04d}"
 
 
 def new_estimate_token():
@@ -10421,13 +10517,36 @@ def update_estimate_record_from_form(conn, estimate_id, lines, subtotal, tax_rat
     replace_estimate_lines(conn, estimate_id, lines)
 
 
-def estimate_pdf_attachment(estimate, lines, company):
+def estimate_signature_payload(estimate):
+    """The signature facts the PDF builder needs, or None when unsigned."""
+    if not estimate or not estimate.get("signed_at"):
+        return None
+    return {
+        "signer_name": estimate.get("signer_name"),
+        "signer_email": estimate.get("signer_email") or estimate.get("customer_email"),
+        "signature_image": estimate.get("signature_image"),
+        "signed_at": estimate.get("signed_at"),
+        "signed_ip": estimate.get("signed_ip"),
+        "signed_location": estimate.get("signed_location"),
+        "signed_accuracy": estimate.get("signed_accuracy"),
+        "signed_user_agent": estimate.get("signed_user_agent"),
+    }
+
+
+def estimate_pdf_attachment(estimate, lines, company, include_signature=True):
+    signature = estimate_signature_payload(estimate) if include_signature else None
     attachment, error = invoice_pdf_attachment(
         estimate_as_document(estimate), lines, company, 0.0,
-        doc_label="ESTIMATE", total_label="Estimate Total"
+        doc_label=PROPOSAL_WORD.upper(), total_label=f"{PROPOSAL_WORD} Total",
+        signature=signature, footer_url=estimate_public_url(estimate),
     )
     if error:
-        return None, error.replace("Invoice", "Estimate")
+        return None, error.replace("Invoice", PROPOSAL_WORD)
+    if attachment and signature:
+        # Say plainly in the filename that this is the signed copy.
+        filename, data, mime = attachment
+        stem = filename[:-4] if filename.lower().endswith(".pdf") else filename
+        attachment = (f"{stem}-signed.pdf", data, mime)
     return attachment, ""
 
 
@@ -10436,8 +10555,8 @@ def estimate_email_body(estimate, company):
     lines = [
         f"Hello {estimate.get('customer_name') or 'Customer'},",
         "",
-        f"Please find estimate {estimate.get('estimate_number')} from {company_name}.",
-        f"Estimate Total: {format_invoice_money(estimate.get('total'))}",
+        f"Please find {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')} from {company_name}.",
+        f"{PROPOSAL_WORD} Total: {format_invoice_money(estimate.get('total'))}",
     ]
     if estimate.get("valid_until"):
         lines.append(f"Valid Until: {format_date(estimate.get('valid_until'))}")
@@ -10445,7 +10564,7 @@ def estimate_email_body(estimate, company):
     if sign_url:
         lines.extend([
             "",
-            "To accept this estimate, open the link below, review it and sign it online:",
+            f"To accept this {PROPOSAL_WORD.lower()}, open the link below, review it and sign it online:",
             sign_url,
         ])
     lines.extend(["", "Thank you.", company_name])
@@ -10455,9 +10574,9 @@ def estimate_email_body(estimate, company):
 def email_estimate_record(conn, estimate, lines, to_email=None):
     to_email = (to_email or "").strip() or estimate.get("customer_email")
     if not to_email:
-        return False, "Add a customer email before sending this estimate."
+        return False, f"Add a customer email before sending this {PROPOSAL_WORD.lower()}."
     company = account_info()
-    subject = f"Estimate {estimate.get('estimate_number')} from {company.get('company_name') or 'ProjectONus'}"
+    subject = f"{PROPOSAL_WORD} {estimate.get('estimate_number')} from {company.get('company_name') or 'ProjectONus'}"
     attachment, error = estimate_pdf_attachment(estimate, lines, company)
     if error:
         return False, error
@@ -10475,7 +10594,7 @@ def email_estimate_record(conn, estimate, lines, to_email=None):
                 "UPDATE estimates SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s",
                 (utc_now_iso(), utc_now_iso(), estimate["id"])
             )
-    return sent, "" if sent else "Estimate could not be emailed. Check SMTP email settings."
+    return sent, "" if sent else f"{PROPOSAL_WORD} could not be emailed. Check SMTP email settings."
 
 
 def record_estimate_signature_event(conn, estimate_id, event_type, signer_name="", note="",
@@ -10499,7 +10618,7 @@ def notify_admins_estimate_signed(conn, estimate):
     plus an email to every admin."""
     signer = estimate.get("signer_name") or estimate.get("customer_name") or "Customer"
     message = (
-        f"{signer} accepted and signed estimate {estimate.get('estimate_number')} "
+        f"{signer} accepted and signed {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')} "
         f"for {format_invoice_money(estimate.get('total'))}."
     )
     try:
@@ -10519,9 +10638,9 @@ def notify_admins_estimate_signed(conn, estimate):
 
     map_url = estimate_signed_map_url(estimate)
     body_lines = [
-        "An estimate was accepted and signed online.",
+        f"A {PROPOSAL_WORD.lower()} was accepted and signed online.",
         "",
-        f"Estimate: {estimate.get('estimate_number')}",
+        f"{PROPOSAL_WORD}: {estimate.get('estimate_number')}",
         f"Customer: {estimate.get('customer_name') or '-'}",
         f"Project: {estimate.get('project_name') or '-'}",
         f"Total: {format_invoice_money(estimate.get('total'))}",
@@ -10540,9 +10659,9 @@ def notify_admins_estimate_signed(conn, estimate):
         body_lines.append(f"GPS accuracy: about {int(float(estimate['signed_accuracy']))} meters")
     body_lines.append(f"Device: {estimate.get('signed_user_agent') or '-'}")
     if estimate.get("id"):
-        body_lines.extend(["", f"Open the estimate: {external_url('estimate_view', estimate_id=estimate['id'])}"])
+        body_lines.extend(["", f"Open the {PROPOSAL_WORD.lower()}: {external_url('estimate_view', estimate_id=estimate['id'])}"])
     body = "\n".join(body_lines)
-    subject = f"Estimate {estimate.get('estimate_number')} accepted by {estimate.get('customer_name') or 'customer'}"
+    subject = f"{PROPOSAL_WORD} {estimate.get('estimate_number')} accepted by {estimate.get('customer_name') or 'customer'}"
     for admin in admin_email_rows(conn):
         if admin.get("email"):
             try:
@@ -10553,7 +10672,7 @@ def notify_admins_estimate_signed(conn, estimate):
 
 def notify_admins_estimate_declined(conn, estimate, reason=""):
     message = (
-        f"{estimate.get('customer_name') or 'Customer'} declined estimate "
+        f"{estimate.get('customer_name') or 'Customer'} declined {PROPOSAL_WORD.lower()} "
         f"{estimate.get('estimate_number')}."
     )
     try:
@@ -10567,7 +10686,7 @@ def notify_admins_estimate_declined(conn, estimate, reason=""):
     body = "\n".join([
         message,
         "",
-        f"Estimate: {estimate.get('estimate_number')}",
+        f"{PROPOSAL_WORD}: {estimate.get('estimate_number')}",
         f"Project: {estimate.get('project_name') or '-'}",
         f"Total: {format_invoice_money(estimate.get('total'))}",
         f"Reason given: {reason or '-'}",
@@ -10577,7 +10696,7 @@ def notify_admins_estimate_declined(conn, estimate, reason=""):
     for admin in admin_email_rows(conn):
         if admin.get("email"):
             try:
-                send_email(admin["email"], f"Estimate {estimate.get('estimate_number')} declined", body)
+                send_email(admin["email"], f"{PROPOSAL_WORD} {estimate.get('estimate_number')} declined", body)
             except Exception as e:
                 print("Estimate declined email skipped:", e)
 
@@ -10589,7 +10708,7 @@ def convert_estimate_to_invoice(conn, estimate, lines):
     invoice_date = local_now().date().isoformat()
     invoice_number = next_invoice_number(conn, invoice_date)
     notes = (estimate.get("notes") or "").strip()
-    origin_note = f"Created from estimate {estimate.get('estimate_number')}."
+    origin_note = f"Created from {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')}."
     combined_notes = f"{notes}\n{origin_note}".strip() if notes else origin_note
     row = conn.execute(
         """
@@ -10648,7 +10767,7 @@ def convert_estimate_to_invoice(conn, estimate, lines):
     return invoice_id, invoice_number
 
 
-@app.route("/estimates")
+@app.route("/proposals")
 @admin_required
 def estimates():
     conn = db()
@@ -10686,7 +10805,7 @@ def estimates():
     return render_template("estimates.html", estimates=rows, q=q, status=status, selected_project=selected_project)
 
 
-@app.route("/estimates/new", methods=["GET", "POST"])
+@app.route("/proposals/new", methods=["GET", "POST"])
 @admin_required
 def new_estimate():
     conn = db()
@@ -10697,7 +10816,7 @@ def new_estimate():
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
         if not lines:
             conn.close()
-            flash("Add at least one estimate item.")
+            flash(f"Add at least one {PROPOSAL_WORD.lower()} item.")
             posted_project_id = request.form.get("project_id", type=int)
             return redirect(url_for("new_estimate", project_id=posted_project_id) if posted_project_id else url_for("new_estimate"))
         try:
@@ -10706,7 +10825,7 @@ def new_estimate():
         except Exception as e:
             conn.rollback()
             conn.close()
-            flash(f"Estimate could not be saved. {e}")
+            flash(f"{PROPOSAL_WORD} could not be saved. {e}")
             posted_project_id = request.form.get("project_id", type=int)
             return redirect(url_for("new_estimate", project_id=posted_project_id) if posted_project_id else url_for("new_estimate"))
         if request.form.get("submit_action") == "email":
@@ -10717,9 +10836,9 @@ def new_estimate():
             except Exception as e:
                 conn.rollback()
                 sent, email_error = False, str(e)
-            flash("Estimate created and emailed to the customer." if sent else f"Estimate created, but email was not sent. {email_error}")
+            flash(f"{PROPOSAL_WORD} created and emailed to the customer." if sent else f"{PROPOSAL_WORD} created, but email was not sent. {email_error}")
         else:
-            flash("Estimate created.")
+            flash(f"{PROPOSAL_WORD} created.")
         conn.close()
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
@@ -10757,7 +10876,7 @@ def new_estimate():
     )
 
 
-@app.route("/estimates/<int:estimate_id>")
+@app.route("/proposals/<int:estimate_id>")
 @admin_required
 def estimate_view(estimate_id):
     conn = db()
@@ -10766,7 +10885,7 @@ def estimate_view(estimate_id):
     estimate, lines = load_estimate(conn, estimate_id)
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     email_logs = conn.execute(
         """
@@ -10780,6 +10899,10 @@ def estimate_view(estimate_id):
         "SELECT * FROM estimate_signature_events WHERE estimate_id = %s ORDER BY created_at DESC, id DESC",
         (estimate_id,)
     ).fetchall()
+    revocations = conn.execute(
+        "SELECT * FROM estimate_signature_revocations WHERE estimate_id = %s ORDER BY revoked_at DESC, id DESC",
+        (estimate_id,)
+    ).fetchall()
     conn.close()
     return render_template(
         "estimate_view.html",
@@ -10788,13 +10911,14 @@ def estimate_view(estimate_id):
         company=account_info(),
         email_logs=email_logs,
         signature_events=signature_events,
+        revocations=revocations,
         totals_breakdown=estimate_totals_breakdown(estimate, lines),
         sign_url=estimate_public_url(estimate),
         map_url=estimate_signed_map_url(estimate),
     )
 
 
-@app.route("/estimates/<int:estimate_id>/edit", methods=["GET", "POST"])
+@app.route("/proposals/<int:estimate_id>/edit", methods=["GET", "POST"])
 @admin_required
 def edit_estimate(estimate_id):
     conn = db()
@@ -10804,17 +10928,17 @@ def edit_estimate(estimate_id):
     estimate, existing_lines = load_estimate(conn, estimate_id)
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     if estimate.get("signed_at"):
         conn.close()
-        flash("This estimate was already signed by the customer and can no longer be edited.")
+        flash(f"This {PROPOSAL_WORD.lower()} is signed by the customer. Revoke the signature first if you need to change it.")
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
     if request.method == "POST":
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
         if not lines:
             conn.close()
-            flash("Add at least one estimate item.")
+            flash(f"Add at least one {PROPOSAL_WORD.lower()} item.")
             return redirect(url_for("edit_estimate", estimate_id=estimate_id))
         try:
             update_estimate_record_from_form(conn, estimate_id, lines, subtotal, tax_rate, tax_total, total)
@@ -10822,7 +10946,7 @@ def edit_estimate(estimate_id):
         except Exception as e:
             conn.rollback()
             conn.close()
-            flash(f"Estimate could not be saved. {e}")
+            flash(f"{PROPOSAL_WORD} could not be saved. {e}")
             return redirect(url_for("edit_estimate", estimate_id=estimate_id))
         if request.form.get("submit_action") == "email":
             estimate, saved_lines = load_estimate(conn, estimate_id)
@@ -10832,9 +10956,9 @@ def edit_estimate(estimate_id):
             except Exception as e:
                 conn.rollback()
                 sent, email_error = False, str(e)
-            flash("Estimate updated and emailed to the customer." if sent else f"Estimate updated, but email was not sent. {email_error}")
+            flash(f"{PROPOSAL_WORD} updated and emailed to the customer." if sent else f"{PROPOSAL_WORD} updated, but email was not sent. {email_error}")
         else:
-            flash("Estimate updated.")
+            flash(f"{PROPOSAL_WORD} updated.")
         conn.close()
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
@@ -10863,7 +10987,7 @@ def edit_estimate(estimate_id):
     )
 
 
-@app.route("/estimates/<int:estimate_id>/send", methods=["POST"])
+@app.route("/proposals/<int:estimate_id>/send", methods=["POST"])
 @admin_required
 def send_estimate(estimate_id):
     conn = db()
@@ -10872,7 +10996,7 @@ def send_estimate(estimate_id):
     estimate, lines = load_estimate(conn, estimate_id)
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     try:
         sent, email_error = email_estimate_record(conn, estimate, lines, request.form.get("customer_email", "").strip())
@@ -10881,11 +11005,11 @@ def send_estimate(estimate_id):
         conn.rollback()
         sent, email_error = False, str(e)
     conn.close()
-    flash("Estimate emailed to the customer with the signing link." if sent else f"Estimate could not be emailed. {email_error}")
+    flash(f"{PROPOSAL_WORD} emailed to the customer with the signing link." if sent else f"{PROPOSAL_WORD} could not be emailed. {email_error}")
     return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
 
-@app.route("/estimates/<int:estimate_id>/convert", methods=["POST"])
+@app.route("/proposals/<int:estimate_id>/convert", methods=["POST"])
 @admin_required
 def convert_estimate(estimate_id):
     conn = db()
@@ -10894,15 +11018,15 @@ def convert_estimate(estimate_id):
     estimate, lines = load_estimate(conn, estimate_id)
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     if estimate.get("converted_invoice_id"):
         conn.close()
-        flash("This estimate was already turned into an invoice.")
+        flash(f"This {PROPOSAL_WORD.lower()} was already turned into an invoice.")
         return redirect(url_for("invoice_view", invoice_id=estimate["converted_invoice_id"]))
     if not lines:
         conn.close()
-        flash("This estimate has no items to invoice.")
+        flash(f"This {PROPOSAL_WORD.lower()} has no items to invoice.")
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
     try:
         invoice_id, invoice_number = convert_estimate_to_invoice(conn, estimate, lines)
@@ -10910,14 +11034,14 @@ def convert_estimate(estimate_id):
     except Exception as e:
         conn.rollback()
         conn.close()
-        flash(f"Estimate could not be turned into an invoice. {e}")
+        flash(f"{PROPOSAL_WORD} could not be turned into an invoice. {e}")
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
     conn.close()
-    flash(f"Invoice {invoice_number} created from estimate {estimate.get('estimate_number')}.")
+    flash(f"Invoice {invoice_number} created from {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')}.")
     return redirect(url_for("edit_invoice", invoice_id=invoice_id))
 
 
-@app.route("/estimates/<int:estimate_id>/delete", methods=["POST"])
+@app.route("/proposals/<int:estimate_id>/delete", methods=["POST"])
 @admin_required
 def delete_estimate(estimate_id):
     conn = db()
@@ -10926,7 +11050,7 @@ def delete_estimate(estimate_id):
     admin = conn.execute("SELECT id, name, email FROM users WHERE id = %s AND role = 'admin'", (session.get("user_id"),)).fetchone()
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     if not admin or not admin.get("email"):
         conn.close()
@@ -10945,9 +11069,9 @@ def delete_estimate(estimate_id):
     conn.close()
     send_email(
         admin["email"],
-        "ProjectONus delete estimate PIN",
+        f"ProjectONus delete {PROPOSAL_WORD.lower()} PIN",
         "\n".join([
-            f"Your PIN to delete estimate {estimate.get('estimate_number')} is {pin}.",
+            f"Your PIN to delete {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')} is {pin}.",
             "This PIN expires in 10 minutes.",
         ])
     )
@@ -10955,7 +11079,7 @@ def delete_estimate(estimate_id):
     return redirect(url_for("confirm_delete_estimate", estimate_id=estimate_id))
 
 
-@app.route("/estimates/<int:estimate_id>/delete/confirm", methods=["GET", "POST"])
+@app.route("/proposals/<int:estimate_id>/delete/confirm", methods=["GET", "POST"])
 @admin_required
 def confirm_delete_estimate(estimate_id):
     conn = db()
@@ -10963,7 +11087,7 @@ def confirm_delete_estimate(estimate_id):
     estimate = conn.execute("SELECT id, estimate_number, customer_name, project_id FROM estimates WHERE id = %s", (estimate_id,)).fetchone()
     if not estimate:
         conn.close()
-        flash("Estimate not found.")
+        flash(f"{PROPOSAL_WORD} not found.")
         return redirect(url_for("estimates"))
     if request.method == "POST":
         pin = request.form.get("pin", "").strip()
@@ -10989,10 +11113,149 @@ def confirm_delete_estimate(estimate_id):
         conn.execute("DELETE FROM estimates WHERE id = %s", (estimate_id,))
         conn.commit()
         conn.close()
-        flash("Estimate deleted.")
+        flash(f"{PROPOSAL_WORD} deleted.")
         return redirect(url_for("estimates", project_id=project_id) if project_id else url_for("estimates"))
     conn.close()
     return render_template("delete_estimate_confirm.html", estimate=estimate)
+
+
+def revoke_estimate_signature(conn, estimate, reason=""):
+    """Take a signed proposal back so it can be changed and sent again.
+
+    The signature is never silently thrown away: the whole record (image, IP,
+    GPS, timestamp, device) is copied into estimate_signature_revocations first,
+    so what the customer originally agreed to stays provable. The old signing
+    link is then killed and replaced, so a stale link cannot be signed again.
+    """
+    actor = conn.execute("SELECT name FROM users WHERE id = %s", (session.get("user_id"),)).fetchone() or {}
+    conn.execute(
+        """
+        INSERT INTO estimate_signature_revocations
+        (estimate_id, signer_name, signer_email, signature_image, signed_at, signed_ip,
+         signed_user_agent, signed_latitude, signed_longitude, signed_accuracy, signed_location,
+         revoked_by, revoked_by_name, revoked_reason, revoked_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            estimate["id"], estimate.get("signer_name"), estimate.get("signer_email"),
+            estimate.get("signature_image"), estimate.get("signed_at"), estimate.get("signed_ip"),
+            estimate.get("signed_user_agent"), estimate.get("signed_latitude"),
+            estimate.get("signed_longitude"), estimate.get("signed_accuracy"),
+            estimate.get("signed_location"), session.get("user_id"),
+            actor.get("name") or session.get("name") or "", reason, utc_now_iso(),
+        )
+    )
+    fresh_token = new_estimate_token()
+    conn.execute(
+        """
+        UPDATE estimates SET
+            status = 'draft', signer_name = NULL, signer_email = NULL, signature_image = NULL,
+            signed_at = NULL, signed_ip = NULL, signed_user_agent = NULL,
+            signed_latitude = NULL, signed_longitude = NULL, signed_accuracy = NULL,
+            signed_location = NULL, declined_at = NULL, decline_reason = NULL,
+            public_token = %s, sent_at = NULL, updated_at = %s
+        WHERE id = %s
+        """,
+        (fresh_token, utc_now_iso(), estimate["id"])
+    )
+    record_estimate_signature_event(
+        conn, estimate["id"], "revoked",
+        signer_name=estimate.get("signer_name") or "",
+        note=(f"Signature revoked by {actor.get('name') or 'admin'}."
+              + (f" Reason: {reason}" if reason else "")),
+    )
+    return fresh_token
+
+
+def notify_customer_estimate_revoked(estimate, reason=""):
+    to_email = (estimate.get("signer_email") or estimate.get("customer_email") or "").strip()
+    if not to_email:
+        return False
+    company = account_info()
+    body = "\n".join([
+        f"Hello {estimate.get('signer_name') or estimate.get('customer_name') or 'there'},",
+        "",
+        f"We are revising {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')}, so the copy you signed "
+        f"on {format_date(estimate.get('signed_at'))} has been withdrawn and is no longer in effect.",
+        (f"Reason: {reason}" if reason else ""),
+        "",
+        f"The previous signing link no longer works. We will send you the updated {PROPOSAL_WORD.lower()} shortly.",
+        "",
+        "Sorry for the extra step, and thank you.",
+        company.get("company_name") or "ProjectONus",
+    ])
+    try:
+        return send_email(
+            to_email,
+            f"{PROPOSAL_WORD} {estimate.get('estimate_number')} has been withdrawn for revision",
+            body,
+        )
+    except Exception as e:
+        print("Revocation email skipped:", e)
+        return False
+
+
+@app.route("/proposals/<int:estimate_id>/revoke", methods=["POST"])
+@admin_required
+def revoke_estimate(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash(f"{PROPOSAL_WORD} not found.")
+        return redirect(url_for("estimates"))
+    if not estimate.get("signed_at"):
+        conn.close()
+        flash(f"This {PROPOSAL_WORD.lower()} is not signed, so there is nothing to revoke.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    reason = (request.form.get("revoke_reason") or "").strip()
+    tell_customer = request.form.get("notify_customer") == "1"
+    try:
+        revoke_estimate_signature(conn, estimate, reason)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"The signature could not be revoked. {e}")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    conn.close()
+
+    notified = notify_customer_estimate_revoked(estimate, reason) if tell_customer else False
+    message = [
+        "Signature revoked.",
+        f"{PROPOSAL_WORD} {estimate.get('estimate_number')} is editable again and a new signing link was issued -",
+        "the old link no longer works.",
+    ]
+    if tell_customer:
+        message.append("The customer was emailed." if notified else "The customer could not be emailed.")
+    if estimate.get("converted_invoice_id"):
+        message.append("Note: an invoice was already created from this "
+                       f"{PROPOSAL_WORD.lower()} and was left untouched.")
+    flash(" ".join(message))
+    return redirect(url_for("edit_estimate", estimate_id=estimate_id))
+
+
+@app.route("/proposals/<int:estimate_id>/signed.pdf")
+@admin_required
+def estimate_signed_pdf(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    conn.close()
+    if not estimate:
+        flash(f"{PROPOSAL_WORD} not found.")
+        return redirect(url_for("estimates"))
+    attachment, error = estimate_pdf_attachment(estimate, lines, account_info())
+    if error or not attachment:
+        flash(error or "The PDF could not be created.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    filename, data, mime = attachment
+    return Response(data, mimetype=mime,
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
 # --- Public signing pages (no login: the customer only has the token) --------
@@ -11068,7 +11331,7 @@ def estimate_sign_submit(token):
         return render_template("estimate_sign_missing.html", company=account_info()), 404
     if estimate.get("signed_at"):
         conn.close()
-        return render_estimate_sign_page(estimate, lines, "This estimate was already signed.")
+        return render_estimate_sign_page(estimate, lines, f"This {PROPOSAL_WORD.lower()} was already signed.")
 
     signer_name = (request.form.get("signer_name") or "").strip()
     signer_email = (request.form.get("signer_email") or "").strip()
@@ -11112,7 +11375,7 @@ def estimate_sign_submit(token):
         )
         record_estimate_signature_event(
             conn, estimate["id"], "signed", signer_name,
-            note="Estimate accepted online.",
+            note=f"{PROPOSAL_WORD} accepted online.",
             latitude=latitude, longitude=longitude, accuracy=accuracy, location_label=location_label,
         )
         conn.commit()
@@ -11129,23 +11392,32 @@ def estimate_sign_submit(token):
         conn.rollback()
         print("Estimate signed notification skipped:", e)
     company = account_info()
-    if signer_email or signed_estimate.get("customer_email"):
+    to_signer = signer_email or signed_estimate.get("customer_email")
+    if to_signer:
         try:
+            attachment, pdf_error = estimate_pdf_attachment(signed_estimate, signed_lines, company)
+            if pdf_error:
+                print("Signed PDF skipped:", pdf_error)
+            body = "\n".join([
+                f"Thank you {signer_name},",
+                "",
+                f"We received your signed acceptance of {PROPOSAL_WORD.lower()} "
+                f"{signed_estimate.get('estimate_number')} for {format_invoice_money(signed_estimate.get('total'))}.",
+                f"Signed on {format_date(signed_at)} at {format_time(signed_at)}.",
+                "",
+                ("A signed PDF copy is attached to this email for your records."
+                 if attachment else "You can view your signed copy at the link below."),
+                "",
+                "You can view it again here:",
+                estimate_public_url(signed_estimate),
+                "",
+                company.get("company_name") or "ProjectONus",
+            ])
             send_email(
-                signer_email or signed_estimate.get("customer_email"),
-                f"Copy of your signed estimate {signed_estimate.get('estimate_number')}",
-                "\n".join([
-                    f"Thank you {signer_name},",
-                    "",
-                    f"We received your signed acceptance of estimate {signed_estimate.get('estimate_number')} "
-                    f"for {format_invoice_money(signed_estimate.get('total'))}.",
-                    f"Signed on {format_date(signed_at)} at {format_time(signed_at)}.",
-                    "",
-                    "You can view it again here:",
-                    estimate_public_url(signed_estimate),
-                    "",
-                    company.get("company_name") or "ProjectONus",
-                ])
+                to_signer,
+                f"Your signed {PROPOSAL_WORD.lower()} {signed_estimate.get('estimate_number')}",
+                body,
+                attachments=[attachment] if attachment else None,
             )
         except Exception as e:
             print("Signer receipt email skipped:", e)
@@ -11163,7 +11435,7 @@ def estimate_sign_decline(token):
         return render_template("estimate_sign_missing.html", company=account_info()), 404
     if estimate.get("signed_at"):
         conn.close()
-        return render_estimate_sign_page(estimate, lines, "This estimate was already signed.")
+        return render_estimate_sign_page(estimate, lines, f"This {PROPOSAL_WORD.lower()} was already signed.")
     reason = (request.form.get("decline_reason") or "").strip()
     try:
         conn.execute(

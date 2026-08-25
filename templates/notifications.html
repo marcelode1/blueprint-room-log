@@ -30,9 +30,9 @@
             {% elif e.event_type == 'login' %}
                 <strong>Login</strong> by {{ e.user_name or 'Unknown user' }}<br>
             {% elif e.event_type == 'estimate_signed' %}
-                <strong>Estimate accepted</strong> by {{ e.user_name or 'Customer' }}<br>
+                <strong>{{ proposal_word }} accepted</strong> by {{ e.user_name or 'Customer' }}<br>
             {% elif e.event_type == 'estimate_declined' %}
-                <strong>Estimate declined</strong> by {{ e.user_name or 'Customer' }}<br>
+                <strong>{{ proposal_word }} declined</strong> by {{ e.user_name or 'Customer' }}<br>
             {% endif %}
             {% if e.message %}<p>{{ e.message }}</p>{% endif %}
             {% if e.task_title %}

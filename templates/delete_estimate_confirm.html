@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Confirm Delete Estimate</h2>
+    <h2>Confirm Delete {{ proposal_word }}</h2>
     <p><strong>{{ estimate.estimate_number }}</strong></p>
     <p class="muted">Customer: {{ estimate.customer_name or "-" }}</p>
-    <p class="muted">A 4-digit PIN was sent to your admin email. Enter it below to permanently delete this estimate.</p>
+    <p class="muted">A 4-digit PIN was sent to your admin email. Enter it below to permanently delete this {{ proposal_word|lower }}.</p>
     <form method="post">
         <label>Delete PIN</label>
         <input name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" required>
-        <button type="submit" class="btn-danger">Delete Estimate</button>
+        <button type="submit" class="btn-danger">Delete {{ proposal_word }}</button>
         <a class="btn-link btn-secondary" href="{{ url_for('estimate_view', estimate_id=estimate.id) }}">Cancel</a>
     </form>
 </div>

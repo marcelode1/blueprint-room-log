@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card noPrint">
-    <h2>Estimate {{ estimate.estimate_number }}</h2>
-    <a class="btn-link btn-secondary" href="{{ url_for('estimates') }}">Back to Estimates</a>
+    <h2>{{ proposal_word }} {{ estimate.estimate_number }}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('estimates') }}">Back to {{ proposal_word }}s</a>
     {% if not estimate.signed_at %}
         <a class="btn-link btn-secondary" href="{{ url_for('edit_estimate', estimate_id=estimate.id) }}">Edit</a>
     {% endif %}
     <button type="button" onclick="window.print()">Print / Save PDF</button>
+    {% if estimate.signed_at %}
+        <a class="btn-link btn-secondary" href="{{ url_for('estimate_signed_pdf', estimate_id=estimate.id) }}" target="_blank" rel="noopener">Signed PDF</a>
+    {% endif %}
     <form method="post" action="{{ url_for('delete_estimate', estimate_id=estimate.id) }}" class="inlineInvoiceForm">
         <button type="submit" class="btn-danger">Delete</button>
     </form>
@@ -16,7 +19,7 @@
         <p class="muted">Turned into an invoice on {{ format_date(estimate.converted_at) }}.</p>
     {% else %}
         <form method="post" action="{{ url_for('convert_estimate', estimate_id=estimate.id) }}" class="inlineInvoiceForm"
-              onsubmit="return confirm('Create an invoice from this estimate? The estimate stays on file as the signed record.');">
+              onsubmit="return confirm('Create an invoice from this {{ proposal_word|lower }}? The {{ proposal_word|lower }} stays on file as the signed record.');">
             <button type="submit">Turn Into Invoice</button>
         </form>
     {% endif %}
@@ -26,29 +29,66 @@
 <div class="card noPrint signedBanner">
     <div class="signedBannerHead">
         <span class="signedTag">Accepted</span>
-        <strong>{{ estimate.signer_name or estimate.customer_name or 'Customer' }} signed this estimate</strong>
+        <strong>{{ estimate.signer_name or estimate.customer_name or 'Customer' }} signed this {{ proposal_word|lower }}</strong>
     </div>
     <p class="muted">{{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}</p>
+    <p class="muted">A signed PDF copy was emailed to the customer.</p>
+
+    <details class="revokeBox">
+        <summary>Need to change something? Revoke this signature</summary>
+        <p class="muted">
+            Revoking releases the {{ proposal_word|lower }} for editing and issues a brand new signing link -
+            the link the customer used stops working. The signature you are revoking is kept on file
+            as a record of what was agreed to.
+        </p>
+        <form method="post" action="{{ url_for('revoke_estimate', estimate_id=estimate.id) }}"
+              onsubmit="return confirm('Revoke this signature? The signing link the customer used will stop working.');">
+            <label>Reason for revoking (kept on the record)</label>
+            <input name="revoke_reason" placeholder="Price change, scope change, wrong item...">
+            <label class="revokeCheck">
+                <input type="checkbox" name="notify_customer" value="1" checked>
+                <span>Email the customer that the signed copy was withdrawn</span>
+            </label>
+            <button type="submit" class="btn-danger">Revoke Signature</button>
+        </form>
+    </details>
 </div>
 {% elif estimate.declined_at %}
 <div class="card noPrint declinedBanner">
-    <strong>This estimate was declined by the customer on {{ format_date(estimate.declined_at) }}.</strong>
+    <strong>This {{ proposal_word|lower }} was declined by the customer on {{ format_date(estimate.declined_at) }}.</strong>
     {% if estimate.decline_reason %}<p>Reason given: {{ estimate.decline_reason }}</p>{% endif %}
+</div>
+{% endif %}
+
+{% if revocations %}
+<div class="card noPrint revokedHistory">
+    <h3>Revoked Signatures</h3>
+    <p class="muted">Earlier signatures that were withdrawn. They are kept as a record and are no longer in effect.</p>
+    {% for rev in revocations %}
+        <div class="revokedRow">
+            {% if rev.signature_image %}<img class="revokedSig" src="{{ rev.signature_image }}" alt="Revoked signature">{% endif %}
+            <div>
+                <p><strong>{{ rev.signer_name or '-' }}</strong> signed {{ format_date(rev.signed_at) }} at {{ format_time(rev.signed_at) }}</p>
+                <p class="muted">IP {{ rev.signed_ip or '-' }} &middot; {{ rev.signed_location or 'location not shared' }}</p>
+                <p class="muted">Revoked {{ format_date(rev.revoked_at) }} by {{ rev.revoked_by_name or 'admin' }}{% if rev.revoked_reason %} - {{ rev.revoked_reason }}{% endif %}</p>
+            </div>
+        </div>
+    {% endfor %}
 </div>
 {% endif %}
 
 <div class="card noPrint">
     <h3>Signing Link</h3>
-    <p class="muted">Send this link to the customer. They can open it without a login, review the estimate and sign it online.</p>
+    <p class="muted">Send this link to the customer. They can open it without a login, review the {{ proposal_word|lower }} and sign it online.</p>
     <input class="signLinkBox" value="{{ sign_url }}" readonly onclick="this.select()">
     <div class="signLinkActions">
         <a class="btn-link btn-secondary" href="{{ sign_url }}" target="_blank" rel="noopener">Open Signing Page</a>
         <button type="button" class="btn-secondary" id="copySignLink">Copy Link</button>
     </div>
     <form method="post" action="{{ url_for('send_estimate', estimate_id=estimate.id) }}" class="invoiceSendForm">
-        <label>Email Estimate To</label>
+        <label>Email {{ proposal_word }} To</label>
         <input name="customer_email" type="email" value="{{ estimate.customer_email or '' }}" required>
-        <button type="submit">Email Estimate + Signing Link</button>
+        <button type="submit">Email {{ proposal_word }} + Signing Link</button>
     </form>
 </div>
 
@@ -62,10 +102,10 @@
             {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
         </div>
         <div class="invoiceMeta">
-            <h1>Estimate</h1>
+            <h1>{{ proposal_word }}</h1>
             <div class="invoiceMetaGrid">
                 <span>Date</span><strong>{{ format_date(estimate.estimate_date) }}</strong>
-                <span>Estimate #</span><strong>{{ estimate.estimate_number }}</strong>
+                <span>{{ proposal_word }} #</span><strong>{{ estimate.estimate_number }}</strong>
                 {% if estimate.valid_until %}<span>Valid Until</span><strong>{{ format_date(estimate.valid_until) }}</strong>{% endif %}
                 <span>Status</span><strong>{{ estimate_status_label(estimate.status) }}</strong>
             </div>
@@ -119,7 +159,7 @@
             <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
             <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
             <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
-            <p class="invoiceGrandTotal"><span>Estimate Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+            <p class="invoiceGrandTotal"><span>{{ proposal_word }} Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
         </div>
     </div>
 
@@ -217,6 +257,17 @@ if(copySignLink){
 .signedBannerHead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .signedTag{display:inline-flex;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800;background:rgba(22,163,74,.14);color:#15803d}
 .declinedBanner{border-left:6px solid #dc2626}
+.revokeBox{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}
+.revokeBox summary{cursor:pointer;font-weight:800;font-size:13.5px;color:#b91c1c}
+.revokeBox form{margin-top:10px}
+.revokeCheck{display:flex;gap:9px;align-items:center;margin:10px 0;font-weight:600;font-size:13.5px}
+.revokeCheck input{width:18px;height:18px;flex:0 0 auto}
+.revokedHistory{border-left:6px solid #94a3b8}
+.revokedRow{display:flex;gap:16px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)}
+.revokedRow:last-child{border-bottom:0}
+.revokedRow p{margin:2px 0;font-size:13.5px}
+.revokedSig{max-width:170px;max-height:64px;object-fit:contain;opacity:.55;filter:grayscale(1);border-bottom:1px solid #94a3b8;flex:0 0 auto}
+@media(max-width:600px){.revokedRow{flex-direction:column;gap:8px}}
 .signatureBlock{margin-top:34px;border-top:2px solid #172033;padding-top:16px}
 .signatureBlock h3{margin:0 0 12px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
 .signatureGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:34px;align-items:start}

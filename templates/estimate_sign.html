@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Estimate {{ estimate.estimate_number }}{% if company.company_name %} - {{ company.company_name }}{% endif %}</title>
+<title>{{ proposal_word }} {{ estimate.estimate_number }}{% if company.company_name %} - {{ company.company_name }}{% endif %}</title>
 <style>
 :root{--ink:#172033;--muted:#64748b;--border:#d7dee9;--accent:#2563eb;--good:#16a34a;--bad:#dc2626}
 *{box-sizing:border-box}
@@ -86,12 +86,13 @@ button[disabled]{opacity:.55;cursor:not-allowed}
     <div class="banner good">
         Accepted by {{ estimate.signer_name or estimate.customer_name }} on
         {{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}.
+        A signed PDF copy has been emailed to you.
     </div>
 {% elif estimate.declined_at %}
-    <div class="banner warn">This estimate was declined on {{ format_date(estimate.declined_at) }}.</div>
+    <div class="banner warn">This {{ proposal_word|lower }} was declined on {{ format_date(estimate.declined_at) }}.</div>
 {% elif expired %}
     <div class="banner warn">
-        This estimate expired on {{ format_date(estimate.valid_until) }}. You can still sign it, but please
+        This {{ proposal_word|lower }} expired on {{ format_date(estimate.valid_until) }}. You can still sign it, but please
         contact us to confirm the pricing is still current.
     </div>
 {% endif %}
@@ -106,10 +107,10 @@ button[disabled]{opacity:.55;cursor:not-allowed}
             {% if company.company_email %}<p>{{ company.company_email }}</p>{% endif %}
         </div>
         <div class="estMeta">
-            <h1>Estimate</h1>
+            <h1>{{ proposal_word }}</h1>
             <div class="estMetaGrid">
                 <span>Date</span><strong>{{ format_date(estimate.estimate_date) }}</strong>
-                <span>Estimate #</span><strong>{{ estimate.estimate_number }}</strong>
+                <span>{{ proposal_word }} #</span><strong>{{ estimate.estimate_number }}</strong>
                 {% if estimate.valid_until %}<span>Valid Until</span><strong>{{ format_date(estimate.valid_until) }}</strong>{% endif %}
             </div>
         </div>
@@ -159,7 +160,7 @@ button[disabled]{opacity:.55;cursor:not-allowed}
             <p><span>Total Material</span><strong>{{ format_invoice_money(totals_breakdown.material) }}</strong></p>
             <p><span>Total Labor</span><strong>{{ format_invoice_money(totals_breakdown.labor) }}</strong></p>
             <p><span>Total Sales Tax</span><strong>{{ format_invoice_money(totals_breakdown.sales_tax) }}</strong></p>
-            <p class="grand"><span>Estimate Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
+            <p class="grand"><span>{{ proposal_word }} Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
         </div>
     </div>
 
@@ -184,7 +185,7 @@ button[disabled]{opacity:.55;cursor:not-allowed}
 
 {% if not estimate.signed_at %}
 <div class="paper noPrint">
-    <h2>Accept and Sign This Estimate</h2>
+    <h2>Accept and Sign This {{ proposal_word }}</h2>
     <p class="muted">Sign below to approve the work and the total shown above.</p>
 
     <form method="post" action="{{ url_for('estimate_sign_submit', token=estimate.public_token) }}" id="signForm">
@@ -224,15 +225,15 @@ button[disabled]{opacity:.55;cursor:not-allowed}
         <input type="hidden" name="accuracy" id="accuracy">
         <input type="hidden" name="location_label" id="locationLabel">
 
-        <button type="submit" class="accept" id="acceptButton">Accept Estimate {{ format_invoice_money(estimate.total) }}</button>
+        <button type="submit" class="accept" id="acceptButton">Accept {{ proposal_word }} {{ format_invoice_money(estimate.total) }}</button>
     </form>
 
     <details class="declineRow">
-        <summary>I do not want to accept this estimate</summary>
+        <summary>I do not want to accept this {{ proposal_word|lower }}</summary>
         <form method="post" action="{{ url_for('estimate_sign_decline', token=estimate.public_token) }}">
             <label for="declineReason">Let us know why (optional)</label>
             <textarea id="declineReason" name="decline_reason" rows="3" placeholder="Price, timing, changed my mind..."></textarea>
-            <button type="submit" class="danger" style="margin-top:12px">Decline Estimate</button>
+            <button type="submit" class="danger" style="margin-top:12px">Decline {{ proposal_word }}</button>
         </form>
     </details>
 </div>

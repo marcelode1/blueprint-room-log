@@ -71,7 +71,7 @@
                     <div class="navDropdownButton" tabindex="0">Invoices</div>
                     <div class="navDropdownMenu">
                         <a href="{{ url_for('invoice_customers') }}">Invoices</a>
-                        <a href="{{ url_for('estimates') }}">Estimates</a>
+                        <a href="{{ url_for('estimates') }}">{{ proposal_word }}s</a>
                     </div>
                 </div>
             {% endif %}
@@ -131,7 +131,7 @@
             <a href="{{ url_for('my_tasks', mode='search') }}">Search Task</a>
         </details>
         <a href="{{ url_for('invoice_customers') }}">Invoices</a>
-        <a href="{{ url_for('estimates') }}">Estimates</a>
+        <a href="{{ url_for('estimates') }}">{{ proposal_word }}s</a>
         <a href="{{ url_for('orders') }}">Orders</a>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
         <a href="{{ url_for('parts_catalog') }}">Items & Catalog</a>

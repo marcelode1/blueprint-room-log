@@ -6,7 +6,7 @@
    change. Estimates read "due_date" as the valid-until date. #}
 {% set doc_kind = doc_kind|default('invoice') %}
 {% set is_estimate = doc_kind == 'estimate' %}
-{% set doc_word = 'Estimate' if is_estimate else 'Invoice' %}
+{% set doc_word = proposal_word if is_estimate else 'Invoice' %}
 {% set list_endpoint = 'estimates' if is_estimate else 'invoices' %}
 {% set is_edit = invoice is not none and invoice.id %}
 {% set default_customer_name = '' %}
@@ -36,7 +36,7 @@
         {% endif %}
         {% if is_edit %}
             {% if is_estimate %}
-                <a class="btn-link" href="{{ url_for('estimate_view', estimate_id=invoice.id) }}">View Estimate</a>
+                <a class="btn-link" href="{{ url_for('estimate_view', estimate_id=invoice.id) }}">View {{ proposal_word }}</a>
             {% else %}
                 <a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>
             {% endif %}
@@ -85,7 +85,7 @@
             <div>
                 <label>Status</label>
                 <select name="status">
-                    {% for value in (['draft','sent','accepted','declined','expired','converted'] if is_estimate else ['draft','sent','paid','overdue','canceled']) %}
+                    {% for value in (['draft','sent','accepted','declined','expired','converted','revoked'] if is_estimate else ['draft','sent','paid','overdue','canceled']) %}
                         <option value="{{ value }}" {% if invoice and invoice.status == value %}selected{% endif %}>{{ value|title }}</option>
                     {% endfor %}
                 </select>
@@ -221,7 +221,7 @@
                 {% else %}
                 <span hidden id="livePayments"></span><span hidden id="liveCredit"></span>
                 {% endif %}
-                <p class="invoiceLiveBalance"><span>{{ 'Estimate Total' if is_estimate else 'Balance Due' }}</span><strong id="liveBalanceDue">$0.00</strong></p>
+                <p class="invoiceLiveBalance"><span>{{ (proposal_word ~ ' Total') if is_estimate else 'Balance Due' }}</span><strong id="liveBalanceDue">$0.00</strong></p>
             </div>
         </div>
 

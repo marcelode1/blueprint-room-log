@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>{% if selected_project %}Estimates - {{ selected_project.name }}{% else %}Estimates{% endif %}</h2>
+    <h2>{% if selected_project %}{{ proposal_word }}s - {{ selected_project.name }}{% else %}{{ proposal_word }}s{% endif %}</h2>
     {% if selected_project %}
         <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
-        <a class="btn-link" href="{{ url_for('new_estimate', project_id=selected_project.id) }}">Create Estimate</a>
+        <a class="btn-link" href="{{ url_for('new_estimate', project_id=selected_project.id) }}">Create {{ proposal_word }}</a>
         <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
     {% else %}
-        <a class="btn-link" href="{{ url_for('new_estimate') }}">Create Estimate</a>
+        <a class="btn-link" href="{{ url_for('new_estimate') }}">Create {{ proposal_word }}</a>
         <a class="btn-link btn-secondary" href="{{ url_for('invoice_customers') }}">Back to Customers</a>
     {% endif %}
 </div>
@@ -18,30 +18,30 @@
         <div class="grid">
             <div>
                 <label>Search</label>
-                <input name="q" value="{{ q or '' }}" placeholder="Estimate, customer, project, email">
+                <input name="q" value="{{ q or '' }}" placeholder="{{ proposal_word }}, customer, project, email">
             </div>
             <div>
                 <label>Status</label>
                 <select name="status">
                     <option value="">All statuses</option>
-                    {% for value in ['draft','sent','accepted','declined','expired','converted'] %}
+                    {% for value in ['draft','sent','accepted','declined','expired','converted','revoked'] %}
                         <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ estimate_status_label(value) }}</option>
                     {% endfor %}
                 </select>
             </div>
         </div>
-        <button type="submit">Show Estimates</button>
+        <button type="submit">Show {{ proposal_word }}s</button>
         <a class="btn-link btn-secondary" href="{{ url_for('estimates', project_id=selected_project.id) if selected_project else url_for('estimates') }}">Clear</a>
     </form>
 </div>
 
 <div class="card">
-    <h3>Estimate List</h3>
+    <h3>{{ proposal_word }} List</h3>
     <div class="invoiceTableWrap">
         <table class="invoiceTable">
             <thead>
                 <tr>
-                    <th>Estimate</th>
+                    <th>{{ proposal_word }}</th>
                     <th>Customer</th>
                     <th>Project</th>
                     <th>Date</th>
@@ -80,7 +80,7 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="9">No estimates found.</td></tr>
+                <tr><td colspan="9">No {{ proposal_word|lower }}s found.</td></tr>
             {% endfor %}
             </tbody>
         </table>
