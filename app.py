@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-25 V1"
+APP_BUILD = "2026-08-25 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2882,35 +2882,6 @@ def email_invoice_record(conn, invoice, lines, to_email=None):
         if sent:
             conn.execute("UPDATE invoices SET status = 'sent', sent_at = COALESCE(sent_at, %s), updated_at = %s WHERE id = %s", (utc_now_iso(), utc_now_iso(), invoice["id"]))
     return sent, "" if sent else "Invoice could not be emailed. Check SMTP email settings."
-
-
-def create_project_invoice_draft(conn, project):
-    invoice_date = local_now().date().isoformat()
-    invoice_number = next_invoice_number(conn, invoice_date)
-    row = conn.execute(
-        """
-        INSERT INTO invoices
-        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'draft', 0, %s, 0, 0, '', %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            invoice_number,
-            project["id"],
-            project.get("customer_name") or project.get("name") or "",
-            project.get("customer_email") or "",
-            format_us_phone(project.get("customer_phone")),
-            project.get("billing_address") or project.get("customer_address") or "",
-            invoice_date,
-            "",
-            default_invoice_tax_rate(),
-            invoice_due_date_terms(""),
-            session.get("user_id"),
-            utc_now_iso(),
-            utc_now_iso(),
-        )
-    ).fetchone()
-    return row["id"]
 
 
 def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=None, tax_total=None, total=None):
@@ -9662,8 +9633,10 @@ def new_invoice():
     if request.method == "POST":
         lines, subtotal, tax_rate, tax_total, total = invoice_line_values_from_form()
         if not lines:
+            conn.close()
             flash("Add at least one invoice item.")
-            return redirect(url_for("new_invoice"))
+            posted_project_id = request.form.get("project_id", type=int)
+            return redirect(url_for("new_invoice", project_id=posted_project_id) if posted_project_id else url_for("new_invoice"))
         try:
             invoice_id = create_invoice_record_from_form(conn, lines, subtotal, tax_rate, tax_total, total)
             conn.commit()
@@ -9687,23 +9660,23 @@ def new_invoice():
         conn.close()
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
 
+    # Nothing is written to the database until the user presses Save. Opening
+    # this page just shows an empty invoice form, pre-filled from the project
+    # when one was chosen.
     selected_project_id = request.args.get("project_id", type=int)
+    selected_project = None
+    invoice_rooms = []
     if selected_project_id:
         selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
         if not selected_project:
             conn.close()
             flash("Project not found.")
             return redirect(url_for("invoices"))
-        invoice_id = create_project_invoice_draft(conn, selected_project)
-        conn.commit()
-        conn.close()
-        return redirect(url_for("edit_invoice", invoice_id=invoice_id))
+        invoice_rooms = invoice_room_options(conn, selected_project_id)
 
     projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
-    selected_project = None
-    invoice_rooms = []
     rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
     return render_template(
