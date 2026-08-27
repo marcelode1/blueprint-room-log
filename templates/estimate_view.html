@@ -32,7 +32,26 @@
         <strong>{{ estimate.signer_name or estimate.customer_name or 'Customer' }} signed this {{ proposal_word|lower }}</strong>
     </div>
     <p class="muted">{{ format_date(estimate.signed_at) }} at {{ format_time(estimate.signed_at) }}</p>
-    <p class="muted">A signed PDF copy was emailed to the customer.</p>
+
+    {% if signed_copy_log and signed_copy_log.success %}
+        <p class="copyOk">Signed copy emailed to {{ signed_copy_log.sent_to }}
+            on {{ format_date(signed_copy_log.sent_at) }} at {{ format_time(signed_copy_log.sent_at) }}{% if signed_copy_log.error %} - {{ signed_copy_log.error|trim|trim('.') }}{% endif %}.</p>
+    {% elif signed_copy_log %}
+        <p class="copyBad"><strong>The customer did not get their signed copy.</strong>
+            Tried {{ signed_copy_log.sent_to }} on {{ format_date(signed_copy_log.sent_at) }}{% if signed_copy_log.error %} - {{ signed_copy_log.error|trim|trim('.') }}{% endif %}.
+            Use Send Signed Copy below to try again.</p>
+    {% else %}
+        <p class="copyBad"><strong>No signed copy has been emailed yet.</strong>
+            Use Send Signed Copy below.</p>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('resend_signed_copy', estimate_id=estimate.id) }}" class="copyForm">
+        <label>Send Signed Copy To</label>
+        <input name="copy_email" type="email"
+               value="{{ estimate.signer_email or estimate.customer_email or '' }}"
+               placeholder="customer@example.com" required>
+        <button type="submit">Send Signed Copy</button>
+    </form>
 
     <details class="revokeBox">
         <summary>Need to change something? Revoke this signature</summary>
@@ -257,6 +276,12 @@ if(copySignLink){
 .signedBannerHead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .signedTag{display:inline-flex;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:800;background:rgba(22,163,74,.14);color:#15803d}
 .declinedBanner{border-left:6px solid #dc2626}
+.copyOk{margin:8px 0;font-size:13.5px;color:#15803d;font-weight:700}
+.copyBad{margin:8px 0;font-size:13.5px;color:#b91c1c;background:rgba(220,38,38,.08);
+    border:1px solid rgba(220,38,38,.28);border-radius:9px;padding:9px 12px}
+.copyForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:10px 0 4px}
+.copyForm label{width:100%;font-weight:700;font-size:13px}
+.copyForm input{max-width:320px}
 .revokeBox{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}
 .revokeBox summary{cursor:pointer;font-weight:800;font-size:13.5px;color:#b91c1c}
 .revokeBox form{margin-top:10px}

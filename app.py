@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-08-25 V4"
+APP_BUILD = "2026-08-27 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -10535,11 +10535,17 @@ def estimate_signature_payload(estimate):
 
 def estimate_pdf_attachment(estimate, lines, company, include_signature=True):
     signature = estimate_signature_payload(estimate) if include_signature else None
-    attachment, error = invoice_pdf_attachment(
-        estimate_as_document(estimate), lines, company, 0.0,
-        doc_label=PROPOSAL_WORD.upper(), total_label=f"{PROPOSAL_WORD} Total",
-        signature=signature, footer_url=estimate_public_url(estimate),
-    )
+    # A PDF problem must never take the email down with it, so this returns a
+    # message instead of raising no matter what goes wrong inside the builder.
+    try:
+        attachment, error = invoice_pdf_attachment(
+            estimate_as_document(estimate), lines, company, 0.0,
+            doc_label=PROPOSAL_WORD.upper(), total_label=f"{PROPOSAL_WORD} Total",
+            signature=signature, footer_url=estimate_public_url(estimate),
+        )
+    except Exception as e:
+        print("Proposal PDF build failed:", e)
+        return None, f"The PDF could not be created. {e}"
     if error:
         return None, error.replace("Invoice", PROPOSAL_WORD)
     if attachment and signature:
@@ -10597,6 +10603,66 @@ def email_estimate_record(conn, estimate, lines, to_email=None):
     return sent, "" if sent else f"{PROPOSAL_WORD} could not be emailed. Check SMTP email settings."
 
 
+def send_signed_copy_to_customer(conn, estimate, lines, to_email=None):
+    """Email the customer their signed copy and write what happened to the
+    email log, so the office can see it on the proposal page and resend.
+
+    The PDF is built separately from the send: if the PDF cannot be produced the
+    customer still gets the email with a link to their signed copy.
+    """
+    to_email = (to_email or "").strip() or (estimate.get("signer_email") or "").strip()         or (estimate.get("customer_email") or "").strip()
+    if not to_email:
+        return False, "No email address for the signer, so no copy could be sent."
+
+    company = account_info()
+    attachment, pdf_error = estimate_pdf_attachment(estimate, lines, company)
+    signed_at = estimate.get("signed_at")
+    body = "\n".join([
+        f"Thank you {estimate.get('signer_name') or estimate.get('customer_name') or ''},".replace(" ,", ","),
+        "",
+        f"We received your signed acceptance of {PROPOSAL_WORD.lower()} "
+        f"{estimate.get('estimate_number')} for {format_invoice_money(estimate.get('total'))}.",
+        f"Signed on {format_date(signed_at)} at {format_time(signed_at)}." if signed_at else "",
+        "",
+        ("A signed PDF copy is attached to this email for your records."
+         if attachment else "You can open your signed copy at the link below."),
+        "",
+        "You can view it again here:",
+        estimate_public_url(estimate),
+        "",
+        company.get("company_name") or "ProjectONus",
+    ])
+    subject = f"Your signed {PROPOSAL_WORD.lower()} {estimate.get('estimate_number')}"
+    try:
+        sent = send_email(to_email, subject, body, attachments=[attachment] if attachment else None)
+        send_error = "" if sent else "The mail server did not accept the message."
+    except Exception as e:
+        sent, send_error = False, str(e)
+
+    note = []
+    if pdf_error:
+        note.append(f"PDF not attached: {pdf_error}")
+    if send_error:
+        note.append(send_error)
+    try:
+        conn.execute(
+            """
+            INSERT INTO estimate_email_logs (estimate_id, sent_to, subject, sent_by, success, error, sent_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (estimate["id"], to_email, subject + (" (signed copy)" if attachment else " (signed copy, no PDF)"),
+             session.get("user_id"), sent, " ".join(note), utc_now_iso())
+        )
+    except Exception as e:
+        print("Signed copy log skipped:", e)
+
+    if sent and not pdf_error:
+        return True, ""
+    if sent:
+        return True, f"Sent without the PDF attached. {pdf_error}"
+    return False, " ".join(note) or "The copy could not be emailed."
+
+
 def record_estimate_signature_event(conn, estimate_id, event_type, signer_name="", note="",
                                     latitude=None, longitude=None, accuracy=None, location_label=""):
     conn.execute(
@@ -10613,7 +10679,7 @@ def record_estimate_signature_event(conn, estimate_id, event_type, signer_name="
     )
 
 
-def notify_admins_estimate_signed(conn, estimate):
+def notify_admins_estimate_signed(conn, estimate, copy_sent=None, copy_error=""):
     """The office finds out the moment the customer signs: a bell notification
     plus an email to every admin."""
     signer = estimate.get("signer_name") or estimate.get("customer_name") or "Customer"
@@ -10658,6 +10724,16 @@ def notify_admins_estimate_signed(conn, estimate):
     if estimate.get("signed_accuracy"):
         body_lines.append(f"GPS accuracy: about {int(float(estimate['signed_accuracy']))} meters")
     body_lines.append(f"Device: {estimate.get('signed_user_agent') or '-'}")
+    if copy_sent is not None:
+        body_lines.extend([
+            "",
+            "Signed copy to the customer",
+            ("Emailed to " + (estimate.get("signer_email") or estimate.get("customer_email") or "-")
+             if copy_sent else "NOT SENT - please resend it from the "
+             f"{PROPOSAL_WORD.lower()} page."),
+        ])
+        if copy_error:
+            body_lines.append(f"Note: {copy_error}")
     if estimate.get("id"):
         body_lines.extend(["", f"Open the {PROPOSAL_WORD.lower()}: {external_url('estimate_view', estimate_id=estimate['id'])}"])
     body = "\n".join(body_lines)
@@ -10903,6 +10979,14 @@ def estimate_view(estimate_id):
         "SELECT * FROM estimate_signature_revocations WHERE estimate_id = %s ORDER BY revoked_at DESC, id DESC",
         (estimate_id,)
     ).fetchall()
+    signed_copy_log = conn.execute(
+        """
+        SELECT * FROM estimate_email_logs
+        WHERE estimate_id = %s AND subject ILIKE %s
+        ORDER BY sent_at DESC, id DESC LIMIT 1
+        """,
+        (estimate_id, "%(signed copy%")
+    ).fetchone()
     conn.close()
     return render_template(
         "estimate_view.html",
@@ -10912,6 +10996,7 @@ def estimate_view(estimate_id):
         email_logs=email_logs,
         signature_events=signature_events,
         revocations=revocations,
+        signed_copy_log=signed_copy_log,
         totals_breakdown=estimate_totals_breakdown(estimate, lines),
         sign_url=estimate_public_url(estimate),
         map_url=estimate_signed_map_url(estimate),
@@ -11238,6 +11323,37 @@ def revoke_estimate(estimate_id):
     return redirect(url_for("edit_estimate", estimate_id=estimate_id))
 
 
+@app.route("/proposals/<int:estimate_id>/resend-signed-copy", methods=["POST"])
+@admin_required
+def resend_signed_copy(estimate_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash(f"{PROPOSAL_WORD} not found.")
+        return redirect(url_for("estimates"))
+    if not estimate.get("signed_at"):
+        conn.close()
+        flash(f"This {PROPOSAL_WORD.lower()} is not signed yet, so there is no signed copy to send.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    to_email = (request.form.get("copy_email") or "").strip()
+    sent, error = send_signed_copy_to_customer(conn, estimate, lines, to_email)
+    try:
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    conn.close()
+    if sent and not error:
+        flash(f"Signed copy emailed to {to_email or estimate.get('signer_email') or estimate.get('customer_email')}.")
+    elif sent:
+        flash(f"Signed copy emailed, but {error}")
+    else:
+        flash(f"The signed copy could not be sent. {error}")
+    return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+
 @app.route("/proposals/<int:estimate_id>/signed.pdf")
 @admin_required
 def estimate_signed_pdf(estimate_id):
@@ -11385,42 +11501,23 @@ def estimate_sign_submit(token):
         return render_estimate_sign_page(estimate, lines, f"The signature could not be saved. {e}")
 
     signed_estimate, signed_lines = load_estimate_by_token(conn, token)
+
+    # Send the customer their copy first, so the office notification can say
+    # whether it actually went out.
+    copy_sent, copy_error = send_signed_copy_to_customer(conn, signed_estimate, signed_lines)
     try:
-        notify_admins_estimate_signed(conn, signed_estimate)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Signed copy log commit skipped:", e)
+
+    try:
+        notify_admins_estimate_signed(conn, signed_estimate, copy_sent, copy_error)
         conn.commit()
     except Exception as e:
         conn.rollback()
         print("Estimate signed notification skipped:", e)
-    company = account_info()
-    to_signer = signer_email or signed_estimate.get("customer_email")
-    if to_signer:
-        try:
-            attachment, pdf_error = estimate_pdf_attachment(signed_estimate, signed_lines, company)
-            if pdf_error:
-                print("Signed PDF skipped:", pdf_error)
-            body = "\n".join([
-                f"Thank you {signer_name},",
-                "",
-                f"We received your signed acceptance of {PROPOSAL_WORD.lower()} "
-                f"{signed_estimate.get('estimate_number')} for {format_invoice_money(signed_estimate.get('total'))}.",
-                f"Signed on {format_date(signed_at)} at {format_time(signed_at)}.",
-                "",
-                ("A signed PDF copy is attached to this email for your records."
-                 if attachment else "You can view your signed copy at the link below."),
-                "",
-                "You can view it again here:",
-                estimate_public_url(signed_estimate),
-                "",
-                company.get("company_name") or "ProjectONus",
-            ])
-            send_email(
-                to_signer,
-                f"Your signed {PROPOSAL_WORD.lower()} {signed_estimate.get('estimate_number')}",
-                body,
-                attachments=[attachment] if attachment else None,
-            )
-        except Exception as e:
-            print("Signer receipt email skipped:", e)
+
     conn.close()
     return render_estimate_sign_page(signed_estimate, signed_lines, "Thank you. Your acceptance has been recorded.")
 
