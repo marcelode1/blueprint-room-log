@@ -56,16 +56,9 @@
     {% if my_report %}<p class="muted">This report only shows your own clock in and clock out records.</p>{% endif %}
 </div>
 
-{# Everything below is one printed sheet: title, totals, then the rows. #}
-{# When every row belongs to the same person, their name is stated once above the
-   table and the User column is dropped - repeating it on every line is noise and
-   the space is better spent on the addresses. #}
-{% set ns = namespace(names=[]) %}
-{% for p in pairs %}
-    {% set who = p.user.user_name or "Unknown user" %}
-    {% if who not in ns.names %}{% set ns.names = ns.names + [who] %}{% endif %}
-{% endfor %}
-{% set show_user_col = ns.names|length > 1 %}
+{# Everything below is one printed sheet: title, totals, then the rows.
+   Every column of the original report is kept - only the email and the Time Zone
+   column were taken out. #}
 <div class="card timeSheet">
     <div class="timeSheetHead">
         <div>
@@ -80,29 +73,27 @@
 
     {# With one person the grand total above already says it, so the per-person
        breakdown only appears when the report covers more than one. #}
-    {% if summary|length > 1 %}
+    {% if summary %}
     <ul class="timeSummary">
         {% for row in summary %}
             <li><span class="timeSummaryName">{{ row.name }}</span><span class="timeSummaryHours">{{ minutes_text(row.minutes) }}</span></li>
         {% endfor %}
     </ul>
-    {% elif ns.names %}
-        <p class="timeSheetWho">{{ ns.names[0] }}</p>
     {% else %}
         <p class="muted">No completed clock-in/clock-out pairs for this period.</p>
     {% endif %}
 
     <div class="timeWrap">
-        <table class="timeTable{% if not show_user_col %} noUserCol{% endif %}">
+        <table class="timeTable">
             <colgroup>
-                {% if show_user_col %}<col class="colUser">{% endif %}<col class="colProject"><col class="colDate">
+                <col class="colUser"><col class="colProject"><col class="colDate">
                 <col class="colTime"><col class="colPlace">
                 <col class="colTime"><col class="colPlace">
                 <col class="colTotal">
             </colgroup>
             <thead>
                 <tr>
-                    {% if show_user_col %}<th>User</th>{% endif %}
+                    <th>User</th>
                     <th>Project</th>
                     <th>Date</th>
                     <th>Clock In</th>
@@ -119,7 +110,7 @@
                 {% set u = p.user %}
                 {% set event = ci if ci else co %}
                 <tr>
-                    {% if show_user_col %}<td class="cellName">{{ u.user_name or "Unknown user" }}</td>{% endif %}
+                    <td class="cellName">{{ u.user_name or "Unknown user" }}</td>
                     <td>{{ event.project_name or "No project" }}</td>
                     <td class="tNoWrap">{{ format_event_date(event) }}</td>
                     <td class="tNoWrap">
@@ -171,12 +162,12 @@
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="{{ 8 if show_user_col else 7 }}" class="tCenter muted">No time clock records for this period.</td></tr>
+                <tr><td colspan="8" class="tCenter muted">No time clock records for this period.</td></tr>
             {% endfor %}
             </tbody>
             <tfoot>
                 <tr class="timeTotalRow">
-                    <td colspan="{{ 7 if show_user_col else 6 }}" class="tRight">Total Hours ({{ period|capitalize }})</td>
+                    <td colspan="7" class="tRight">Total Hours ({{ period|capitalize }})</td>
                     <td class="tRight">{{ minutes_text(total_minutes) }}</td>
                 </tr>
             </tfoot>
@@ -201,7 +192,6 @@
     border-bottom:1px dotted var(--border,#e2e8f0);font-size:13px}
 .timeSummaryName{font-weight:700}
 .timeSummaryHours{font-weight:800;white-space:nowrap}
-.timeSheetWho{margin:0 0 12px;font-weight:800;font-size:14px}
 
 /* ---- the table -------------------------------------------------------- */
 .timeWrap{overflow-x:auto}
@@ -213,8 +203,6 @@
 .timeTable tbody tr:nth-child(even){background:#f8fbff}
 .colUser{width:13%}.colProject{width:12%}.colDate{width:9%}
 .colTime{width:9%}.colPlace{width:18%}.colTotal{width:12%}
-.timeTable.noUserCol .colProject{width:14%}
-.timeTable.noUserCol .colPlace{width:23%}
 .tRight{text-align:right}.tCenter{text-align:center}.tNoWrap{white-space:nowrap}
 .cellName{font-weight:700}
 .clockTime{display:block;font-weight:700;white-space:nowrap}
@@ -250,7 +238,6 @@
     .timeSheetGrand strong{font-size:14px}
     .timeSummary{gap:0 18px;margin-bottom:9px}
     .timeSummary li{font-size:9.5px;padding:2px 0}
-    .timeSheetWho{font-size:10px;margin-bottom:7px}
     .timeTable th,.timeTable td{font-size:8.4px;padding:3px 4px;line-height:1.25}
     .timeTable th{font-size:7.4px}
     .clockNote{font-size:7.4px}
