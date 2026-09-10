@@ -15,7 +15,8 @@
                 <select name="user_id">
                     <option value="">All Users</option>
                     {% for u in users %}
-                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }} - {{ u.email }}</option>
+                        {# The filter keeps the email so two people with the same name can still be told apart. It never prints. #}
+                        <option value="{{ u.id }}" {% if selected_user_id == u.id %}selected{% endif %}>{{ u.name }}{% if u.email %} - {{ u.email }}{% endif %}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -51,43 +52,64 @@
         <button type="button" class="btn-secondary" onclick="window.print()">Print Report</button>
         {% endif %}
     </form>
-    <p class="muted">Showing {{ start.date() }} through {{ end.date() }}.</p>
+    <p class="muted">Showing {{ format_date(start.date().isoformat()) }} through {{ format_date(end.date().isoformat()) }}.</p>
     {% if my_report %}<p class="muted">This report only shows your own clock in and clock out records.</p>{% endif %}
 </div>
 
-<div class="card">
-    <h3>Total Hours</h3>
-    {% for row in summary %}
-        <p><strong>{{ row.name }}</strong> <span class="muted">{{ row.email }}</span>: {{ minutes_text(row.minutes) }}</p>
-    {% else %}
-        <p>No completed clock-in/clock-out pairs for this period.</p>
-    {% endfor %}
-</div>
+{# Everything below is one printed sheet: title, totals, then the rows. #}
+{# When every row belongs to the same person, their name is stated once above the
+   table and the User column is dropped - repeating it on every line is noise and
+   the space is better spent on the addresses. #}
+{% set ns = namespace(names=[]) %}
+{% for p in pairs %}
+    {% set who = p.user.user_name or "Unknown user" %}
+    {% if who not in ns.names %}{% set ns.names = ns.names + [who] %}{% endif %}
+{% endfor %}
+{% set show_user_col = ns.names|length > 1 %}
+<div class="card timeSheet">
+    <div class="timeSheetHead">
+        <div>
+            <h2 class="timeSheetTitle">{% if my_report %}My Time Report{% else %}Time Report{% endif %}</h2>
+            <p class="timeSheetRange">{{ format_date(start.date().isoformat()) }} &ndash; {{ format_date(end.date().isoformat()) }}</p>
+        </div>
+        <div class="timeSheetGrand">
+            <span>Total Hours</span>
+            <strong>{{ minutes_text(total_minutes) }}</strong>
+        </div>
+    </div>
 
-<div class="card">
-    <h3>Hours</h3>
-    <style>
-        .timeTable{width:100%;border-collapse:collapse}
-        .timeTable th,.timeTable td{border:1px solid #ddd;padding:9px;text-align:left;vertical-align:top}
-        .timeTable th{background:#f3f4f6}
-        .timeTotalRow td{background:#eef2ff;font-weight:800;font-size:1.02rem}
-        .editClock{font-size:12px;margin-top:6px;display:inline-block}
-        @media(max-width:800px){.timeWrap{overflow-x:auto}.timeTable{min-width:1320px}}
-        @media print{header,.bottom-nav,.noPrint,footer{display:none!important}main{max-width:none;padding:0}.card{box-shadow:none;border:0}.timeTable th,.timeTable td{font-size:11px;padding:5px}}
-    </style>
+    {# With one person the grand total above already says it, so the per-person
+       breakdown only appears when the report covers more than one. #}
+    {% if summary|length > 1 %}
+    <ul class="timeSummary">
+        {% for row in summary %}
+            <li><span class="timeSummaryName">{{ row.name }}</span><span class="timeSummaryHours">{{ minutes_text(row.minutes) }}</span></li>
+        {% endfor %}
+    </ul>
+    {% elif ns.names %}
+        <p class="timeSheetWho">{{ ns.names[0] }}</p>
+    {% else %}
+        <p class="muted">No completed clock-in/clock-out pairs for this period.</p>
+    {% endif %}
+
     <div class="timeWrap">
-        <table class="timeTable">
+        <table class="timeTable{% if not show_user_col %} noUserCol{% endif %}">
+            <colgroup>
+                {% if show_user_col %}<col class="colUser">{% endif %}<col class="colProject"><col class="colDate">
+                <col class="colTime"><col class="colPlace">
+                <col class="colTime"><col class="colPlace">
+                <col class="colTotal">
+            </colgroup>
             <thead>
                 <tr>
-                    <th>User</th>
+                    {% if show_user_col %}<th>User</th>{% endif %}
                     <th>Project</th>
                     <th>Date</th>
-                    <th>Time Zone</th>
                     <th>Clock In</th>
                     <th>Clock In Location</th>
                     <th>Clock Out</th>
                     <th>Clock Out Location</th>
-                    <th>Total</th>
+                    <th class="tRight">Total</th>
                 </tr>
             </thead>
             <tbody>
@@ -97,66 +119,146 @@
                 {% set u = p.user %}
                 {% set event = ci if ci else co %}
                 <tr>
-                    <td>{{ u.user_name or "Unknown user" }}<br><span class="muted">{{ u.user_email or "" }}</span></td>
+                    {% if show_user_col %}<td class="cellName">{{ u.user_name or "Unknown user" }}</td>{% endif %}
                     <td>{{ event.project_name or "No project" }}</td>
-                    <td>{{ format_event_date(event) }}</td>
-                    <td>{{ event_timezone_name(event) }}</td>
-                    <td>
+                    <td class="tNoWrap">{{ format_event_date(event) }}</td>
+                    <td class="tNoWrap">
                         {% if ci %}
-                            {{ format_event_time(ci) }}
+                            <span class="clockTime">{{ format_event_time(ci) }}</span>
                             {% if not my_report %}
-                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=report_url) }}">Edit</a>
+                            <a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=ci.id, return_url=report_url) }}">Edit</a>
                             {% endif %}
                         {% elif not my_report and co %}
-                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=co.id, return_url=report_url) }}">Add Clock In</a>
+                            <span class="clockTime">-</span>
+                            <a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=co.id, return_url=report_url) }}">Add Clock In</a>
                         {% else %}-{% endif %}
                     </td>
-                    <td>
+                    <td class="cellPlace">
                         {% if ci %}
                             {{ ci.address or "-" }}
-                            {% if ci.latitude and ci.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ ci.latitude }},{{ ci.longitude }}">Map</a>{% endif %}
+                            {% if ci.latitude and ci.longitude %}<a class="mapLink noPrint" target="_blank" rel="noopener" href="https://www.google.com/maps?q={{ ci.latitude }},{{ ci.longitude }}">Map</a>{% endif %}
                         {% else %}-{% endif %}
                     </td>
-                    <td>
+                    <td class="tNoWrap">
                         {% if co %}
-                            {{ format_event_time(co) }}
-                            {% if co.comment %}<br><span class="muted" style="font-style:italic">{{ co.comment }}</span>{% endif %}
+                            <span class="clockTime">{{ format_event_time(co) }}</span>
+                            {% if co.comment %}<span class="clockNote">{{ co.comment }}</span>{% endif %}
                             {% if not my_report %}
-                            <br><a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=report_url) }}">Edit</a>
+                            <a class="editClock noPrint" href="{{ url_for('edit_attendance_event', event_id=co.id, return_url=report_url) }}">Edit</a>
                             {% endif %}
                         {% elif not my_report and ci %}
-                            -<br><a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=ci.id, return_url=report_url) }}">Add Clock Out</a>
+                            <span class="clockTime">-</span>
+                            <a class="editClock noPrint" href="{{ url_for('add_attendance_event', complete_id=ci.id, return_url=report_url) }}">Add Clock Out</a>
                         {% else %}-{% endif %}
                     </td>
-                    <td>
+                    <td class="cellPlace">
                         {% if co %}
                             {{ co.address or "-" }}
-                            {% if co.latitude and co.longitude %}<br><a target="_blank" href="https://www.google.com/maps?q={{ co.latitude }},{{ co.longitude }}">Map</a>{% endif %}
+                            {% if co.latitude and co.longitude %}<a class="mapLink noPrint" target="_blank" rel="noopener" href="https://www.google.com/maps?q={{ co.latitude }},{{ co.longitude }}">Map</a>{% endif %}
                         {% else %}-{% endif %}
                     </td>
-                    <td>
-                        {{ duration_text(ci.created_at, co.created_at) if ci and co else "-" }}
+                    <td class="tRight cellTotal">
+                        <span class="totalValue">{{ duration_text(ci.created_at, co.created_at) if ci and co else "-" }}</span>
                         {% if not my_report %}
-                        <form method="post" action="{{ url_for('delete_attendance_line') }}" class="noPrint" style="margin:6px 0 0" onsubmit="return confirm('Send a delete PIN to your admin email for this clock record?');">
+                        <form method="post" action="{{ url_for('delete_attendance_line') }}" class="noPrint deleteClockForm"
+                              onsubmit="return confirm('Send a delete PIN to your admin email for this clock record?');">
                             <input type="hidden" name="ci_id" value="{{ ci.id if ci else '' }}">
                             <input type="hidden" name="co_id" value="{{ co.id if co else '' }}">
                             <input type="hidden" name="return_url" value="{{ report_url }}">
-                            <button type="submit" class="editClock" style="background:none;border:0;color:#dc2626;padding:0;min-height:0;font-weight:700;cursor:pointer;text-decoration:underline">Delete</button>
+                            <button type="submit" class="deleteClockBtn">Delete</button>
                         </form>
                         {% endif %}
                     </td>
                 </tr>
             {% else %}
-                <tr><td colspan="9">No time clock records for this period.</td></tr>
+                <tr><td colspan="{{ 8 if show_user_col else 7 }}" class="tCenter muted">No time clock records for this period.</td></tr>
             {% endfor %}
             </tbody>
             <tfoot>
                 <tr class="timeTotalRow">
-                    <td colspan="8" style="text-align:right">Total Hours ({{ period|capitalize }})</td>
-                    <td>{{ minutes_text(total_minutes) }}</td>
+                    <td colspan="{{ 7 if show_user_col else 6 }}" class="tRight">Total Hours ({{ period|capitalize }})</td>
+                    <td class="tRight">{{ minutes_text(total_minutes) }}</td>
                 </tr>
             </tfoot>
         </table>
     </div>
 </div>
+
+<style>
+/* ---- the printed sheet ------------------------------------------------ */
+.timeSheet{max-width:1000px;margin-left:auto;margin-right:auto}
+.timeSheetHead{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;
+    border-bottom:2px solid #172033;padding-bottom:10px;margin-bottom:12px;flex-wrap:wrap}
+.timeSheetTitle{margin:0;font-size:21px}
+.timeSheetRange{margin:3px 0 0;font-size:12.5px;color:var(--muted,#64748b);font-weight:700}
+.timeSheetGrand{text-align:right;line-height:1.15}
+.timeSheetGrand span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#64748b);font-weight:800}
+.timeSheetGrand strong{font-size:20px}
+
+.timeSummary{list-style:none;margin:0 0 14px;padding:0;display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:2px 22px}
+.timeSummary li{display:flex;justify-content:space-between;gap:14px;padding:4px 0;
+    border-bottom:1px dotted var(--border,#e2e8f0);font-size:13px}
+.timeSummaryName{font-weight:700}
+.timeSummaryHours{font-weight:800;white-space:nowrap}
+.timeSheetWho{margin:0 0 12px;font-weight:800;font-size:14px}
+
+/* ---- the table -------------------------------------------------------- */
+.timeWrap{overflow-x:auto}
+.timeTable{width:100%;border-collapse:collapse;table-layout:fixed}
+.timeTable th,.timeTable td{border:1px solid #d9e2ee;padding:6px 7px;text-align:left;
+    vertical-align:top;font-size:12.5px;overflow-wrap:anywhere}
+.timeTable th{background:#eef4ff;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;
+    color:#475569;font-weight:800;white-space:nowrap}
+.timeTable tbody tr:nth-child(even){background:#f8fbff}
+.colUser{width:13%}.colProject{width:12%}.colDate{width:9%}
+.colTime{width:9%}.colPlace{width:18%}.colTotal{width:12%}
+.timeTable.noUserCol .colProject{width:14%}
+.timeTable.noUserCol .colPlace{width:23%}
+.tRight{text-align:right}.tCenter{text-align:center}.tNoWrap{white-space:nowrap}
+.cellName{font-weight:700}
+.clockTime{display:block;font-weight:700;white-space:nowrap}
+.clockNote{display:block;font-style:italic;color:var(--muted,#64748b);font-size:10.5px;
+    white-space:normal;margin-top:2px}
+.cellPlace{line-height:1.3}
+.totalValue{display:block;font-weight:800;white-space:nowrap}
+.editClock{display:inline-block;font-size:11px;margin-top:3px;font-weight:700}
+.mapLink{display:block;font-size:11px;margin-top:3px;font-weight:700}
+.deleteClockForm{margin:4px 0 0}
+.deleteClockBtn{background:none;border:0;color:#dc2626;padding:0;min-height:0;width:auto;
+    font-weight:700;font-size:11px;cursor:pointer;text-decoration:underline}
+.timeTotalRow td{background:#eef2ff;font-weight:800;font-size:13px}
+
+@media(max-width:900px){
+    .timeTable{table-layout:auto;min-width:900px}
+    .timeSheetHead{flex-direction:column}
+    .timeSheetGrand{text-align:left}
+}
+
+/* ---- Letter portrait -------------------------------------------------- */
+@media print{
+    @page{size:letter portrait;margin:.4in}
+    header,.bottom-nav,.backButton,.noPrint,.flash,footer{display:none!important}
+    body{background:#fff!important;color:#111!important}
+    main{max-width:none!important;padding:0!important;margin:0!important}
+    .card{box-shadow:none!important;border:0!important;padding:0!important;margin:0!important}
+    .timeSheet{max-width:none!important}
+    .timeWrap{overflow:visible!important}
+    .timeTable{table-layout:fixed!important;min-width:0!important;width:100%!important}
+    .timeSheetTitle{font-size:15px}
+    .timeSheetRange{font-size:9.5px}
+    .timeSheetGrand strong{font-size:14px}
+    .timeSummary{gap:0 18px;margin-bottom:9px}
+    .timeSummary li{font-size:9.5px;padding:2px 0}
+    .timeSheetWho{font-size:10px;margin-bottom:7px}
+    .timeTable th,.timeTable td{font-size:8.4px;padding:3px 4px;line-height:1.25}
+    .timeTable th{font-size:7.4px}
+    .clockNote{font-size:7.4px}
+    .timeTotalRow td{font-size:9px}
+    /* keep a row whole and repeat the header on every page */
+    .timeTable thead{display:table-header-group}
+    .timeTable tr{page-break-inside:avoid;break-inside:avoid}
+    .timeSheetHead{page-break-after:avoid;break-after:avoid}
+}
+</style>
 {% endblock %}
