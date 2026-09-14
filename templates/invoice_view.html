@@ -10,7 +10,7 @@
             <button type="submit" class="btn-secondary">Back to Invoice</button>
         </form>
     {% else %}
-        <a class="btn-link btn-secondary" href="{{ back_url|default(url_for('invoices')) }}">{{ back_label|default('Back to Invoices') }}</a>
+        <a class="btn-link btn-secondary" href="{{ back_url|default(url_for('invoices')) }}">Back to Invoices</a>
     {% endif %}
     {% if not is_preview %}
     <a class="btn-link btn-secondary" href="{{ url_for('edit_invoice', invoice_id=invoice.id) }}">Edit</a>
