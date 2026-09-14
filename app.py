@@ -32,7 +32,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-10 V2"
+APP_BUILD = "2026-09-14 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -9530,6 +9530,35 @@ def update_order(po_id):
     return redirect(url_for("order_view", po_id=po_id))
 
 
+def remember_invoice_list_url():
+    """Note the invoice list the admin is looking at (a project's invoices, the
+    customer hub, or the full list) so an opened invoice can send them back to
+    that same list."""
+    target = request.full_path.rstrip("?")
+    if target.startswith("/"):
+        session["invoice_list_url"] = target
+
+
+def invoice_back_link(invoice):
+    """Where "Back to Invoices" on an invoice should go, and what to call it."""
+    project_id = (invoice or {}).get("project_id")
+    project_name = (invoice or {}).get("project_name") or ""
+    remembered = session.get("invoice_list_url") or ""
+    if remembered.startswith("/") and not remembered.startswith("//"):
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(remembered).query)
+        listed_project = (query.get("project_id") or [""])[0]
+        # A list filtered to some other project does not belong to this
+        # invoice (e.g. it was opened from a notification); fall through.
+        if not listed_project or not project_id or str(listed_project) == str(project_id):
+            if listed_project and project_name:
+                return remembered, f"Back to {project_name} Invoices"
+            return remembered, "Back to Invoices"
+    if project_id:
+        return url_for("invoices", project_id=project_id), (
+            f"Back to {project_name} Invoices" if project_name else "Back to Invoices")
+    return url_for("invoices"), "Back to Invoices"
+
+
 @app.route("/invoices/customers")
 @admin_required
 def invoice_customers():
@@ -9652,6 +9681,7 @@ def invoice_customers():
         c["balance_label"] = format_invoice_money(c["balance"])
         c["total_billed_label"] = format_invoice_money(c["total_billed"])
         c["total_payments_label"] = format_invoice_money(c["total_payments"])
+    remember_invoice_list_url()
     return render_template(
         "invoice_customers.html",
         customers=customer_list,
@@ -9693,6 +9723,7 @@ def invoices():
         tuple(params)
     ).fetchall()
     conn.close()
+    remember_invoice_list_url()
     return render_template("invoices.html", invoices=rows, q=q, status=status, selected_project=selected_project)
 
 
@@ -9962,8 +9993,10 @@ def invoice_view(invoice_id):
         return redirect(url_for("invoices"))
     paid_total = round(sum(float(p.get("amount") or 0) for p in payments), 2)
     totals_breakdown = invoice_breakdown_with_payments(invoice, lines, paid_total)
+    back_url, back_label = invoice_back_link(invoice)
     return render_template(
         "invoice_view.html", invoice=invoice, lines=lines, company=account_info(),
+        back_url=back_url, back_label=back_label,
         email_logs=email_logs, totals_breakdown=totals_breakdown,
         payments=payments, paid_total=paid_total,
         payment_methods=INVOICE_PAYMENT_METHODS,
