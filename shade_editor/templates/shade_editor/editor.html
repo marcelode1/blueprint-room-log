@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card noPrint">
+    <h2>Shade Designer{% if project_title %} - {{ project_title }}{% endif %}</h2>
+    <a class="btn-link btn-secondary" href="{{ url_for('simulation_shades') }}">Back to Shades</a>
+    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project_id) }}">Back to Project</a>
+    {% if can_write %}
+        <button type="button" class="btn" id="save-layout">Save layout</button>
+    {% endif %}
+    <span id="save-status" class="muted" role="status" aria-live="polite"></span>
+    <p class="muted">Add a picture of the window, choose a fabric and panel, then drag the round corners to fit the
+        opening. Drag the bottom handle to raise or lower the shade, and the centre handle to move the gap between
+        panels. The outer edges stay where you put them.</p>
+</div>
+
+<div class="card shadeCard">
+<div id="full-drop-shades"
+     data-api="{{ url_for('shade_editor.read', project_id=project_id) }}"
+     data-csrf="{{ csrf }}"
+     data-example="{{ url_for('shade_editor.static', filename='example.jpg') }}">
+
+    <div class="viz-controls">
+        <label class="form-label">Add pictures
+            <input class="form-control" id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></label>
+        <label class="form-label">Picture
+            <select class="form-select" id="picture"><option value="0">Sample window</option></select></label>
+    </div>
+
+    <div class="viz-controls">
+        <label class="form-label">Mouse tool
+            <select class="form-select" id="tool">
+                <option value="fabric">Adjust fabric</option>
+                <option value="draw">Draw red line</option>
+                <option value="erase">Erase a line</option>
+            </select></label>
+        <label class="form-check"><input class="form-check-input" id="hide" type="checkbox"><span class="form-check-label">Hide fabric controls</span></label>
+        <label class="form-check"><input class="form-check-input" id="snap" type="checkbox"><span class="form-check-label">Horizontal / vertical lines</span></label>
+        <button class="btn btn-secondary" id="undo" type="button">Undo line edit</button>
+        <button class="btn btn-secondary" id="clear" type="button">Clear lines</button>
+    </div>
+
+    <div id="fabric-controls">
+        <div class="viz-grid">
+            <div><span class="shadeGroupTitle">Blackout panels</span><div class="viz-row" id="blackout-panels"></div></div>
+            <div><span class="shadeGroupTitle">Sheer panels</span><div class="viz-row" id="sheer-panels"></div></div>
+        </div>
+        <div class="viz-controls">
+            <label class="form-label">Fabric
+                <select class="form-select" id="layer"><option value="b">Blackout</option><option value="s">Sheer</option></select></label>
+            <label class="form-label">Panel to adjust
+                <select class="form-select" id="panel">
+                    <option value="0">Panel 1</option><option value="1">Panel 2</option>
+                    <option value="2">Panel 3</option><option value="3">Panel 4</option>
+                </select></label>
+            <label class="form-label">Position
+                <select class="form-select" id="position">
+                    <option value="custom">Custom</option><option value="0">Fully open</option>
+                    <option value="0.5">Half open</option><option value="1">Fully closed</option>
+                </select></label>
+        </div>
+        <div class="viz-controls">
+            <label class="form-label">Gap between
+                <select class="form-select" id="gap-pair">
+                    <option value="0">Panels 1 and 2</option><option value="1">Panels 2 and 3</option>
+                    <option value="2">Panels 3 and 4</option>
+                </select></label>
+            <label class="form-label">Move horizontally
+                <select class="form-select" id="gap-mode">
+                    <option value="both">Both inner edges - keep gap width</option>
+                    <option value="left">Left inner edge only - resize gap</option>
+                    <option value="right">Right inner edge only - resize gap</option>
+                </select></label>
+        </div>
+        <label class="form-label" for="gap-position">Left / right position</label>
+        <input class="form-range" id="gap-position" type="range" min="0" max="100" step="0.1">
+        <label class="form-label" for="drop">Lower fabric: <output id="drop-value">100%</output></label>
+        <input class="form-range" id="drop" type="range" min="0" max="100" value="100">
+    </div>
+
+    <div class="scene"><canvas aria-label="Photo with adjustable fabric corners, bottom pull handles, and red line annotations"></canvas></div>
+    <div id="status" class="text-small muted" aria-live="polite"></div>
+</div>
+</div>
+
+<link rel="stylesheet" href="{{ url_for('shade_editor.static', filename='editor.css') }}">
+<style>
+/* The app makes every control full width; the editor needs them inline. */
+.shadeCard .viz-controls{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end;margin:0 0 12px}
+.shadeCard .viz-controls > *{margin:0}
+.shadeCard .form-label{display:flex;flex-direction:column;gap:3px;font-size:13px;font-weight:750;
+    color:var(--muted);margin:0;min-width:0}
+.shadeCard .form-select,.shadeCard .form-control{width:auto!important;min-width:190px;max-width:320px;margin:0!important}
+.shadeCard .form-check{display:flex!important;flex-direction:row;align-items:center;gap:8px;font-weight:750;
+    font-size:13px;color:var(--muted);margin:0}
+.shadeCard .form-check-input{width:20px!important;height:20px;min-height:20px!important;margin:0!important;flex:0 0 auto}
+.shadeCard .form-range{width:100%;max-width:520px;margin:2px 0 14px}
+.shadeCard .viz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 20px;margin:0 0 12px}
+.shadeCard .viz-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.shadeCard .shadeGroupTitle{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+    font-weight:800;color:var(--muted);margin-bottom:4px}
+.shadeCard .btn{width:auto;margin:0}
+.shadeCard .scene{margin-top:8px;background:#0f172a;border-radius:10px;overflow:hidden;
+    aspect-ratio:3/2;max-width:100%}
+.shadeCard canvas{display:block;width:100%;height:100%;touch-action:none}
+.shadeCard #status{margin-top:8px;min-height:1.2em}
+#save-status{margin-left:8px;font-weight:750}
+@media(max-width:760px){
+    .shadeCard .form-select,.shadeCard .form-control{width:100%!important;max-width:none;min-width:0}
+    .shadeCard .form-label{width:100%}
+    .shadeCard .viz-controls{gap:10px}
+}
+</style>
+<script src="{{ url_for('shade_editor.static', filename='editor.js') }}" defer></script>
+{% endblock %}

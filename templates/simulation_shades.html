@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Shade Simulation</h2>
+    <p class="muted">Open a project to photograph a window and try blackout and sheer shades on it.</p>
+    <form method="get">
+        <div class="grid">
+            <div>
+                <label>Search</label>
+                <input name="q" value="{{ q or '' }}" placeholder="Project or customer">
+            </div>
+        </div>
+        <button type="submit">Search</button>
+        {% if q %}<a class="btn-link btn-secondary" href="{{ url_for('simulation_shades') }}">Clear</a>{% endif %}
+    </form>
+</div>
+
+<div class="card">
+    <h3>Projects</h3>
+    <div class="simTableWrap">
+        <table class="simTable">
+            <thead>
+                <tr><th>Project</th><th>Customer</th><th>Shades</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for p in projects %}
+                <tr>
+                    <td><strong>{{ p.name }}</strong></td>
+                    <td>{{ p.customer_name or '-' }}</td>
+                    <td>
+                        {% if p.id in started %}
+                            <span class="simTag simTagOn">Saved layout</span>
+                        {% else %}
+                            <span class="muted">Not started</span>
+                        {% endif %}
+                    </td>
+                    <td><a class="btn-link" href="{{ url_for('shade_editor.editor', project_id=p.id) }}">Open Shade Designer</a></td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4" class="muted">No projects found.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+<style>
+.simTableWrap{overflow-x:auto}
+.simTable{width:100%;border-collapse:collapse;min-width:640px}
+.simTable th,.simTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:middle}
+.simTable th{background:#f3f4f6;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#475569}
+.simTable .btn-link{margin:0}
+.simTag{display:inline-flex;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;white-space:nowrap}
+.simTagOn{background:rgba(22,163,74,.14);color:#15803d}
+</style>
+{% endblock %}

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import os, uuid, zipfile, tempfile, json, mimetypes, smtplib, ssl, secrets, csv, io, urllib.parse, urllib.request, urllib.error, base64, re, hashlib, math, threading
 import psycopg
 from psycopg.rows import dict_row
+import shade_editor
 
 try:
     import fitz
@@ -32,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-14 V2"
+APP_BUILD = "2026-09-17 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -20484,9 +20485,12 @@ def storage_file(storage_path):
         SELECT project_id FROM tasks WHERE task_photo_file = %s OR task_audio_file = %s OR completion_photo_file = %s OR completion_audio_file = %s
         UNION
         SELECT tasks.project_id FROM task_attachments JOIN tasks ON task_attachments.task_id = tasks.id WHERE task_attachments.storage_path = %s
+        UNION
+        SELECT project_id FROM shade_photos WHERE storage_path = %s
         LIMIT 1
         """,
         (
+            storage_path,
             storage_path,
             storage_path,
             storage_path,
@@ -20700,6 +20704,224 @@ def company_card_vcf():
         mimetype="text/vcard",
         headers={"Content-Disposition": f"attachment; filename={fname}.vcf"}
     )
+
+
+# ---------------------------------------------------------------------------
+# Simulation > Shades
+#
+# The editor itself lives in the shade_editor package. Everything ProjectONus
+# specific - who may open a project, where the document is stored, where the
+# photos go - is supplied from here.
+# ---------------------------------------------------------------------------
+
+def ensure_shade_tables(conn):
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS shade_documents (
+            project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL DEFAULT 0,
+            document TEXT NOT NULL,
+            updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS shade_photos (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            storage_path TEXT NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS shade_photos_path_idx ON shade_photos(storage_path)",
+        "CREATE INDEX IF NOT EXISTS shade_photos_project_idx ON shade_photos(project_id)",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+        except Exception as e:
+            conn.rollback()
+            print("Shade migration skipped:", e)
+    conn.commit()
+
+
+class ShadeDocumentStore:
+    """Keeps one shade document per project.
+
+    The revision is a compare-and-set guard: a save only lands if the caller
+    was editing the version that is still current, so two people cannot
+    silently overwrite each other.
+    """
+
+    def get(self, project_id):
+        conn = db()
+        ensure_shade_tables(conn)
+        row = conn.execute(
+            "SELECT revision, document FROM shade_documents WHERE project_id = %s",
+            (int(project_id),)
+        ).fetchone()
+        conn.close()
+        if not row:
+            return {"revision": 0, "document": None}
+        try:
+            document = json.loads(row["document"])
+        except Exception:
+            document = None
+        return {"revision": int(row["revision"] or 0), "document": document}
+
+    def save(self, project_id, document, expected_revision):
+        conn = db()
+        ensure_shade_tables(conn)
+        try:
+            row = conn.execute(
+                "SELECT revision FROM shade_documents WHERE project_id = %s FOR UPDATE",
+                (int(project_id),)
+            ).fetchone()
+            current = int(row["revision"]) if row else 0
+            if current != int(expected_revision):
+                conn.rollback()
+                conn.close()
+                return None
+            revision = current + 1
+            payload = json.dumps(document)
+            if row:
+                conn.execute(
+                    """
+                    UPDATE shade_documents
+                    SET revision = %s, document = %s, updated_by = %s, updated_at = %s
+                    WHERE project_id = %s
+                    """,
+                    (revision, payload, session.get("user_id"), utc_now_iso(), int(project_id))
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO shade_documents (project_id, revision, document, updated_by, updated_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (int(project_id), revision, payload, session.get("user_id"), utc_now_iso())
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
+        conn.close()
+        return revision
+
+    def store_photo(self, project_id, data, content_type, extension):
+        """Put the picture in Supabase Storage like every other photo in the app
+        and keep only its path in the document."""
+        path = upload_bytes_to_storage(data, f"shade-{uuid.uuid4().hex}.{extension}", content_type)
+        conn = db()
+        ensure_shade_tables(conn)
+        try:
+            conn.execute(
+                """
+                INSERT INTO shade_photos (project_id, storage_path, created_by, created_at)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (int(project_id), path, session.get("user_id"), utc_now_iso())
+            )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Shade photo record skipped:", e)
+        conn.close()
+        return shade_editor.STORED_PREFIX + path
+
+
+def shade_can_access(project_id, write=False):
+    """Reading needs access to the project. Saving also needs an account that
+    edits work - customers can look at their shades but not change them."""
+    if "user_id" not in session:
+        return False
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
+        return False
+    conn = db()
+    try:
+        project = conn.execute("SELECT id FROM projects WHERE id = %s", (pid,)).fetchone()
+        if not project:
+            return False
+        if not user_can_access_project(conn, pid):
+            return False
+    finally:
+        conn.close()
+    if write and not is_main_admin() and session.get("role") == "customer":
+        return False
+    return True
+
+
+def shade_project_name(project_id):
+    conn = db()
+    row = conn.execute("SELECT name FROM projects WHERE id = %s", (int(project_id),)).fetchone()
+    conn.close()
+    return (row or {}).get("name") or ""
+
+
+def shade_photo_url(src, to_url=True):
+    """Two directions on purpose: a stored reference becomes a URL the canvas
+    can load, and that same URL coming back on save maps to its reference, so
+    re-saving never uploads the picture a second time."""
+    if not isinstance(src, str) or not src:
+        return None if not to_url else ""
+    if to_url:
+        if src.startswith(shade_editor.STORED_PREFIX):
+            return url_for("storage_file", storage_path=src[len(shade_editor.STORED_PREFIX):])
+        return src
+    prefix = url_for("storage_file", storage_path="")
+    if src.startswith(prefix):
+        return shade_editor.STORED_PREFIX + src[len(prefix):]
+    return None
+
+
+app.register_blueprint(shade_editor.create_blueprint(
+    store=ShadeDocumentStore(),
+    authorize=shade_can_access,
+    project_name=shade_project_name,
+    photo_url=shade_photo_url,
+))
+
+
+@app.route("/simulation/shades")
+@login_required
+def simulation_shades():
+    """Pick a project to open the Shade Designer on."""
+    conn = db()
+    ensure_shade_tables(conn)
+    q = (request.args.get("q") or "").strip()
+    if is_main_admin():
+        if q:
+            rows = conn.execute(
+                "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s ORDER BY name",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT projects.* FROM projects
+            JOIN project_permissions ON project_permissions.project_id = projects.id
+            WHERE project_permissions.user_id = %s
+            ORDER BY projects.name
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+        if q:
+            needle = q.lower()
+            rows = [r for r in rows
+                    if needle in (r.get("name") or "").lower()
+                    or needle in (r.get("customer_name") or "").lower()]
+    started = {
+        r["project_id"] for r in conn.execute(
+            "SELECT project_id FROM shade_documents").fetchall()
+    }
+    conn.close()
+    return render_template("simulation_shades.html", projects=rows, q=q, started=started)
 
 
 @app.route("/health")
