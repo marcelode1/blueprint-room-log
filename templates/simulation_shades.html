@@ -2,54 +2,142 @@
 {% block content %}
 <div class="card">
     <h2>Shade Simulation</h2>
-    <p class="muted">Open a project to photograph a window and try blackout and sheer shades on it.</p>
-    <form method="get">
-        <div class="grid">
-            <div>
-                <label>Search</label>
-                <input name="q" value="{{ q or '' }}" placeholder="Project or customer">
-            </div>
-        </div>
-        <button type="submit">Search</button>
-        {% if q %}<a class="btn-link btn-secondary" href="{{ url_for('simulation_shades') }}">Clear</a>{% endif %}
-    </form>
-</div>
+    <p class="muted">Start typing the project name and pick it from the list.</p>
 
-<div class="card">
-    <h3>Projects</h3>
-    <div class="simTableWrap">
-        <table class="simTable">
-            <thead>
-                <tr><th>Project</th><th>Customer</th><th>Shades</th><th></th></tr>
-            </thead>
-            <tbody>
-            {% for p in projects %}
-                <tr>
-                    <td><strong>{{ p.name }}</strong></td>
-                    <td>{{ p.customer_name or '-' }}</td>
-                    <td>
-                        {% if p.id in started %}
-                            <span class="simTag simTagOn">Saved layout</span>
-                        {% else %}
-                            <span class="muted">Not started</span>
-                        {% endif %}
-                    </td>
-                    <td><a class="btn-link" href="{{ url_for('shade_editor.editor', project_id=p.id) }}">Open Shade Designer</a></td>
-                </tr>
-            {% else %}
-                <tr><td colspan="4" class="muted">No projects found.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
+    <div class="shadePick">
+        <label for="shadeProject">Project</label>
+        <input type="text" id="shadeProject" autocomplete="off" spellcheck="false"
+               placeholder="Start typing a project name">
+        <div class="shadeSuggest" id="shadeSuggest" hidden></div>
+        <p class="muted shadeHint" id="shadeHint"></p>
     </div>
 </div>
+
+<script id="shadeProjectData" type="application/json">{{ project_json|safe }}</script>
+<script>
+(function(){
+    const input=document.getElementById("shadeProject");
+    const box=document.getElementById("shadeSuggest");
+    const hint=document.getElementById("shadeHint");
+    const projects=JSON.parse(document.getElementById("shadeProjectData").textContent||"[]");
+    let matches=[],index=-1;
+
+    const norm=v=>(v===null||v===undefined?"":String(v)).trim().toLowerCase();
+
+    function findMatches(typed){
+        const query=norm(typed);
+        if(!query)return [];
+        const starts=[],contains=[];
+        for(const p of projects){
+            const name=norm(p.name),customer=norm(p.customer_name);
+            if(name.startsWith(query))starts.push(p);
+            else if(name.includes(query)||customer.includes(query))contains.push(p);
+        }
+        return starts.concat(contains).slice(0,12);
+    }
+
+    function hide(){box.hidden=true;box.innerHTML="";matches=[];index=-1;}
+
+    function show(typed){
+        matches=findMatches(typed);
+        index=-1;
+        box.innerHTML="";
+        if(!matches.length){
+            hide();
+            hint.textContent=typed.trim()?"No project matches that name.":"";
+            return;
+        }
+        hint.textContent="";
+        matches.forEach((p,i)=>{
+            const option=document.createElement("button");
+            option.type="button";
+            option.className="shadeSuggestOpt";
+            option.dataset.idx=String(i);
+            const name=document.createElement("span");
+            name.className="shadeSuggestName";
+            name.textContent=p.name;
+            option.append(name);
+            if(p.customer_name){
+                const who=document.createElement("span");
+                who.className="shadeSuggestWho";
+                who.textContent=p.customer_name;
+                option.append(who);
+            }
+            if(p.started){
+                const tag=document.createElement("span");
+                tag.className="shadeSuggestTag";
+                tag.textContent="Saved layout";
+                option.append(tag);
+            }
+            box.append(option);
+        });
+        box.hidden=false;
+    }
+
+    function highlight(){
+        [...box.children].forEach((el,i)=>el.classList.toggle("hl",i===index));
+        if(index>=0&&box.children[index])box.children[index].scrollIntoView({block:"nearest"});
+    }
+
+    function open(i){
+        const project=matches[i];
+        if(!project)return;
+        input.value=project.name;
+        hide();
+        hint.textContent="Opening "+project.name+"...";
+        window.location.href=project.url;
+    }
+
+    input.addEventListener("input",()=>show(input.value));
+    input.addEventListener("focus",()=>{if(input.value.trim())show(input.value);});
+    input.addEventListener("keydown",event=>{
+        if(box.hidden)return;
+        if(event.key==="ArrowDown"||event.key==="ArrowUp"){
+            event.preventDefault();
+            index=(index+(event.key==="ArrowDown"?1:-1)+matches.length)%matches.length;
+            highlight();
+        }else if(event.key==="Enter"){
+            event.preventDefault();
+            open(index>=0?index:0);
+        }else if(event.key==="Escape"){
+            hide();
+        }
+    });
+    box.addEventListener("mousedown",event=>{
+        const option=event.target.closest(".shadeSuggestOpt");
+        if(!option)return;
+        event.preventDefault();
+        open(Number(option.dataset.idx));
+    });
+    document.addEventListener("focusout",event=>{
+        if(event.target===input)setTimeout(hide,160);
+    });
+    input.focus();
+})();
+</script>
+
 <style>
-.simTableWrap{overflow-x:auto}
-.simTable{width:100%;border-collapse:collapse;min-width:640px}
-.simTable th,.simTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:middle}
-.simTable th{background:#f3f4f6;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#475569}
-.simTable .btn-link{margin:0}
-.simTag{display:inline-flex;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800;white-space:nowrap}
-.simTagOn{background:rgba(22,163,74,.14);color:#15803d}
+.shadePick{position:relative;max-width:520px}
+.shadePick label{display:block;margin:0 0 4px;font-size:13px;font-weight:750;color:var(--muted)}
+.shadePick input{width:100%;max-width:520px}
+.shadeHint{margin:6px 0 0;min-height:1.2em;font-size:13px}
+.shadeSuggest{position:absolute;z-index:60;left:0;right:0;top:100%;margin-top:2px;background:#fff;
+    border:1px solid #cbd5e1;border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.22);
+    max-height:320px;overflow-y:auto}
+.shadeSuggest[hidden]{display:none}
+.shadeSuggestOpt{display:flex!important;flex-direction:column;gap:2px;width:100%!important;
+    text-align:left!important;background:#fff!important;border:0!important;
+    border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:10px 12px!important;
+    margin:0!important;min-height:0!important;cursor:pointer}
+.shadeSuggestOpt:last-child{border-bottom:0!important}
+.shadeSuggestOpt:hover,.shadeSuggestOpt.hl{background:#e0ecff!important}
+.shadeSuggestName{font-weight:800;font-size:14px;color:#0f172a}
+.shadeSuggestWho{font-size:12.5px;color:#64748b;font-weight:600}
+.shadeSuggestTag{align-self:flex-start;margin-top:3px;border-radius:999px;padding:2px 8px;
+    font-size:11px;font-weight:800;background:rgba(22,163,74,.14);color:#15803d}
+body.dark .shadeSuggest{background:#1e293b;border-color:#334155}
+body.dark .shadeSuggestOpt{background:#1e293b!important;border-bottom-color:#334155!important}
+body.dark .shadeSuggestOpt:hover,body.dark .shadeSuggestOpt.hl{background:#334155!important}
+body.dark .shadeSuggestName{color:#f1f5f9}
 </style>
 {% endblock %}

@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-17 V1"
+APP_BUILD = "2026-09-17 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -20892,15 +20892,8 @@ def simulation_shades():
     """Pick a project to open the Shade Designer on."""
     conn = db()
     ensure_shade_tables(conn)
-    q = (request.args.get("q") or "").strip()
     if is_main_admin():
-        if q:
-            rows = conn.execute(
-                "SELECT * FROM projects WHERE name ILIKE %s OR customer_name ILIKE %s ORDER BY name",
-                (f"%{q}%", f"%{q}%")
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+        rows = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
     else:
         rows = conn.execute(
             """
@@ -20911,17 +20904,23 @@ def simulation_shades():
             """,
             (session.get("user_id"),)
         ).fetchall()
-        if q:
-            needle = q.lower()
-            rows = [r for r in rows
-                    if needle in (r.get("name") or "").lower()
-                    or needle in (r.get("customer_name") or "").lower()]
     started = {
         r["project_id"] for r in conn.execute(
             "SELECT project_id FROM shade_documents").fetchall()
     }
     conn.close()
-    return render_template("simulation_shades.html", projects=rows, q=q, started=started)
+    # The page is one type-ahead box, so it gets the list it searches through.
+    project_json = json.dumps([
+        {
+            "id": r["id"],
+            "name": r.get("name") or "",
+            "customer_name": r.get("customer_name") or "",
+            "started": r["id"] in started,
+            "url": url_for("shade_editor.editor", project_id=r["id"]),
+        }
+        for r in rows
+    ])
+    return render_template("simulation_shades.html", project_json=project_json)
 
 
 @app.route("/health")
