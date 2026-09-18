@@ -8,9 +8,9 @@
         <button type="button" class="btn" id="save-layout">Save layout</button>
     {% endif %}
     <span id="save-status" class="muted" role="status" aria-live="polite"></span>
-    <p class="muted">Add a picture of the window, choose a fabric and panel, then drag the round corners to fit the
-        opening. Drag the bottom handle to raise or lower the shade, and the centre handle to move the gap between
-        panels. The outer edges stay where you put them.</p>
+    <p class="muted">Add a picture of the window, then <strong>click a shade</strong> to select it and drag its round
+        corners to fit the opening. Drag the bottom handle to raise or lower it, and the centre handle to move the gap
+        between panels. Where two shades overlap, click the same spot again to reach the one behind.</p>
 </div>
 
 <div class="card shadeCard">
@@ -37,6 +37,15 @@
         <label class="form-check"><input class="form-check-input" id="snap" type="checkbox"><span class="form-check-label">Horizontal / vertical lines</span></label>
         <button class="btn btn-secondary" id="undo" type="button">Undo line edit</button>
         <button class="btn btn-secondary" id="clear" type="button">Clear lines</button>
+    </div>
+
+    {# Outside the fabric controls on purpose: it stays usable in customer view,
+       which is when you want to show 1% next to 10%. #}
+    <div class="opennessRow">
+        <label class="form-label" for="openness">Sheer openness: <output id="openness-value">10%</output></label>
+        <input class="form-range" id="openness" type="range" min="0" max="5" step="1" value="3">
+        <div class="opennessTicks" aria-hidden="true"><span>1%</span><span>3%</span><span>5%</span><span>10%</span><span>20%</span><span>30%</span></div>
+        <p class="muted opennessNote">Lower openness blocks more view and glare. Higher lets more light and view through.</p>
     </div>
 
     <div id="fabric-controls">
@@ -104,6 +113,12 @@
 .shadeCard canvas{display:block;width:100%;height:100%;touch-action:none}
 .shadeCard #status{margin-top:8px;min-height:1.2em}
 #save-status{margin-left:8px;font-weight:750}
+.shadeCard .opennessRow{max-width:520px;margin:0 0 16px;padding:10px 12px;border:1px solid var(--border);border-radius:9px}
+.shadeCard .opennessRow .form-label{flex-direction:row;gap:6px;align-items:baseline}
+.shadeCard .opennessRow output{font-weight:900;color:var(--text,#0f172a)}
+.shadeCard .opennessRow .form-range{margin:4px 0 0}
+.shadeCard .opennessTicks{display:flex;justify-content:space-between;font-size:11px;font-weight:800;color:var(--muted);padding:0 2px}
+.shadeCard .opennessNote{margin:6px 0 0;font-size:12px}
 @media(max-width:760px){
     .shadeCard .form-select,.shadeCard .form-control{width:100%!important;max-width:none;min-width:0}
     .shadeCard .form-label{width:100%}

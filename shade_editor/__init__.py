@@ -28,6 +28,7 @@ MAX_BYTES = 25 * 1024 * 1024
 MAX_PHOTO_BYTES = 12 * 1024 * 1024
 MAX_PIXELS = 25_000_000
 MAX_PHOTOS = 20
+OPENNESS_VALUES = (1, 3, 5, 10, 20, 30)   # sheer fabric openness, percent
 STORED_PREFIX = "shade:"
 DATA_PREFIXES = (
     "data:image/jpeg;base64",
@@ -135,7 +136,11 @@ def validate_document(doc, store_photo=None, photo_url=None):
             _point(line.get("a"))
             _point(line.get("b"))
 
-        clean.append(dict(name=name, src=stored, panels=panels, lines=lines))
+        openness = photo.get("openness", 10)
+        if isinstance(openness, bool) or openness not in OPENNESS_VALUES:
+            raise ValueError("Sheer openness must be 1, 3, 5, 10, 20 or 30 percent")
+
+        clean.append(dict(name=name, src=stored, panels=panels, lines=lines, openness=int(openness)))
     return dict(schema_version=1, photos=clean)
 
 
