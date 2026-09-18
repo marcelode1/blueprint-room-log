@@ -10,7 +10,8 @@
     <span id="save-status" class="muted" role="status" aria-live="polite"></span>
     <p class="muted">Add a picture of the window, then <strong>click a shade</strong> to select it and drag its round
         corners to fit the opening. Drag the bottom handle to raise or lower it, and the centre handle to move the gap
-        between panels. Where two shades overlap, click the same spot again to reach the one behind.</p>
+        between panels. Where two shades overlap, click the same spot again to reach the one behind.
+        Click the picture outside the shades, or press Esc, to stop editing - then Open / Close moves every panel of the chosen fabric together.</p>
 </div>
 
 <div class="card shadeCard">
@@ -82,7 +83,7 @@
         </div>
         <label class="form-label" for="gap-position">Left / right position</label>
         <input class="form-range" id="gap-position" type="range" min="0" max="100" step="0.1">
-        <label class="form-label" for="drop">Lower fabric: <output id="drop-value">100%</output></label>
+        <label class="form-label" for="drop">Open / Close - <span id="drop-target">All blackout panels</span>: <output id="drop-value">100% closed</output></label>
         <input class="form-range" id="drop" type="range" min="0" max="100" value="100">
     </div>
 
@@ -119,6 +120,7 @@
 .shadeCard .opennessRow .form-range{margin:4px 0 0}
 .shadeCard .opennessTicks{display:flex;justify-content:space-between;font-size:11px;font-weight:800;color:var(--muted);padding:0 2px}
 .shadeCard .opennessNote{margin:6px 0 0;font-size:12px}
+.shadeCard #drop-target{font-weight:900;color:var(--text,#0f172a)}
 @media(max-width:760px){
     .shadeCard .form-select,.shadeCard .form-control{width:100%!important;max-width:none;min-width:0}
     .shadeCard .form-label{width:100%}
