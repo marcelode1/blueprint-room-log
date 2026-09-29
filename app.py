@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-17 V5"
+APP_BUILD = "2026-09-29 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -482,6 +482,45 @@ def create_pdf_preview_from_bytes(pdf_bytes):
         return None
 
 
+def upgrade_real_columns_to_double(conn):
+    """Move every REAL column to DOUBLE PRECISION.
+
+    Postgres REAL is single precision and only carries about six significant
+    digits, so a payment of 25,934.31 comes back out as 25,934.30 - the amount
+    needs seven. DOUBLE PRECISION carries fifteen, which covers cents well past
+    a million dollars. Runs once: after the change there are no REAL columns
+    left to find, so later boots do nothing.
+    """
+    try:
+        columns = conn.execute(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND data_type = 'real'
+            ORDER BY table_name, column_name
+            """
+        ).fetchall()
+    except Exception as e:
+        print("Money column check skipped:", e)
+        return
+    for column in columns or []:
+        table, name = column.get("table_name"), column.get("column_name")
+        if not table or not name:
+            continue
+        try:
+            # Rounding on the way across clears the single-precision noise
+            # (25934.3105... becomes 25934.31) so later arithmetic stays clean.
+            conn.execute(
+                f'ALTER TABLE "{table}" ALTER COLUMN "{name}" TYPE DOUBLE PRECISION '
+                f'USING ROUND("{name}"::numeric, 6)::double precision'
+            )
+            conn.commit()
+            print(f"Money precision upgraded: {table}.{name}")
+        except Exception as e:
+            conn.rollback()
+            print(f"Column upgrade skipped for {table}.{name}:", e)
+
+
 def init_db():
     conn = db()
     cur = conn.cursor()
@@ -551,7 +590,7 @@ def init_db():
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         item_date TEXT NOT NULL,
-        quantity REAL NOT NULL DEFAULT 0,
+        quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
         part_number TEXT,
         description TEXT NOT NULL,
         material_status TEXT NOT NULL DEFAULT 'not_in_stock',
@@ -565,10 +604,10 @@ def init_db():
         id SERIAL PRIMARY KEY,
         project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
-        x REAL NOT NULL DEFAULT 0,
-        y REAL NOT NULL DEFAULT 0,
-        w REAL NOT NULL DEFAULT 0,
-        h REAL NOT NULL DEFAULT 0,
+        x DOUBLE PRECISION NOT NULL DEFAULT 0,
+        y DOUBLE PRECISION NOT NULL DEFAULT 0,
+        w DOUBLE PRECISION NOT NULL DEFAULT 0,
+        h DOUBLE PRECISION NOT NULL DEFAULT 0,
         polygon_points TEXT,
         category TEXT DEFAULT 'general',
         room_color TEXT DEFAULT 'blue',
@@ -599,7 +638,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS inventory_items (
         id SERIAL PRIMARY KEY,
         item_date TEXT NOT NULL,
-        quantity REAL NOT NULL DEFAULT 0,
+        quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
         item_name TEXT NOT NULL,
         item_model TEXT,
         brand TEXT,
@@ -654,8 +693,8 @@ def init_db():
         brand TEXT,
         category TEXT,
         description TEXT,
-        unit_price REAL,
-        unit_cost REAL,
+        unit_price DOUBLE PRECISION,
+        unit_cost DOUBLE PRECISION,
         taxable BOOLEAN,
         item_type TEXT NOT NULL DEFAULT 'part',
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -669,7 +708,7 @@ def init_db():
         id SERIAL PRIMARY KEY,
         item_name TEXT NOT NULL,
         description TEXT,
-        unit_price REAL NOT NULL DEFAULT 0,
+        unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
         taxable BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TEXT NOT NULL,
         updated_at TEXT
@@ -696,10 +735,10 @@ def init_db():
         invoice_date TEXT NOT NULL,
         due_date TEXT,
         status TEXT NOT NULL DEFAULT 'draft',
-        subtotal REAL NOT NULL DEFAULT 0,
-        tax_rate REAL NOT NULL DEFAULT 0,
-        tax_total REAL NOT NULL DEFAULT 0,
-        total REAL NOT NULL DEFAULT 0,
+        subtotal DOUBLE PRECISION NOT NULL DEFAULT 0,
+        tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+        tax_total DOUBLE PRECISION NOT NULL DEFAULT 0,
+        total DOUBLE PRECISION NOT NULL DEFAULT 0,
         notes TEXT,
         terms TEXT,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -717,10 +756,10 @@ def init_db():
         item_name TEXT NOT NULL,
         description TEXT,
         location TEXT,
-        quantity REAL NOT NULL DEFAULT 0,
-        unit_price REAL NOT NULL DEFAULT 0,
+        quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+        unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
         taxable BOOLEAN NOT NULL DEFAULT FALSE,
-        line_total REAL NOT NULL DEFAULT 0,
+        line_total DOUBLE PRECISION NOT NULL DEFAULT 0,
         position INTEGER NOT NULL DEFAULT 0
     )
     """)
@@ -928,8 +967,8 @@ def init_db():
         user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         event_type TEXT NOT NULL,
-        latitude REAL,
-        longitude REAL,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
         address TEXT,
         event_timezone TEXT,
         created_at TEXT NOT NULL
@@ -990,9 +1029,9 @@ def init_db():
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        accuracy REAL,
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        accuracy DOUBLE PRECISION,
         address TEXT,
         event_timezone TEXT,
         created_at TEXT NOT NULL
@@ -1069,7 +1108,7 @@ def init_db():
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS supplier_inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
         "ALTER TABLE tasks DROP COLUMN IF EXISTS completion_at",
-        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude REAL, longitude REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS attendance_events (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, event_type TEXT NOT NULL, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS event_timezone TEXT",
         "ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS comment TEXT",
@@ -1078,10 +1117,10 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS room_delete_codes (id SERIAL PRIMARY KEY, room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS attendance_delete_codes (id SERIAL PRIMARY KEY, ci_id INTEGER, co_id INTEGER, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_report_action_codes (id SERIAL PRIMARY KEY, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, action TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE, source_type TEXT, source_id INTEGER, next_url TEXT, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude REAL NOT NULL, longitude REAL NOT NULL, accuracy REAL, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS worker_location_pings (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL, latitude DOUBLE PRECISION NOT NULL, longitude DOUBLE PRECISION NOT NULL, accuracy DOUBLE PRECISION, address TEXT, event_timezone TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS inventory_items (id SERIAL PRIMARY KEY, item_date TEXT NOT NULL, quantity DOUBLE PRECISION NOT NULL DEFAULT 0, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, item_condition TEXT NOT NULL DEFAULT 'new', location_type TEXT NOT NULL DEFAULT 'warehouse', location_detail TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'available', added_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_note TEXT, picture_file TEXT, legacy_material_id INTEGER UNIQUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_date TEXT",
-        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS quantity REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS quantity DOUBLE PRECISION NOT NULL DEFAULT 0",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_name TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS item_model TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS brand TEXT",
@@ -1110,15 +1149,15 @@ def init_db():
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at TEXT",
         "ALTER TABLE task_attachments ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS worker_class TEXT",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate REAL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate DOUBLE PRECISION",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_rate_unit TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_frequency TEXT",
         "CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, doc_type TEXT NOT NULL, file_path TEXT NOT NULL, original_name TEXT, uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_invite_links (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, invite_role TEXT NOT NULL, token TEXT UNIQUE NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, pending_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, used_at TEXT, used_by INTEGER REFERENCES users(id) ON DELETE SET NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
         "ALTER TABLE project_invite_links ADD COLUMN IF NOT EXISTS pending_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
-        "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS work_expenses (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, expense_date TEXT NOT NULL, amount DOUBLE PRECISION NOT NULL DEFAULT 0, description TEXT, receipt_file TEXT, paystub_id INTEGER, created_at TEXT NOT NULL)",
         "ALTER TABLE work_expenses ADD COLUMN IF NOT EXISTS audio_file TEXT",
-        "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate REAL, pay_rate_unit TEXT, pay_frequency TEXT, base_pay REAL NOT NULL DEFAULT 0, expenses_total REAL NOT NULL DEFAULT 0, total_pay REAL NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS paystubs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, period_start TEXT NOT NULL, period_end TEXT NOT NULL, total_minutes INTEGER NOT NULL DEFAULT 0, pay_rate DOUBLE PRECISION, pay_rate_unit TEXT, pay_frequency TEXT, base_pay DOUBLE PRECISION NOT NULL DEFAULT 0, expenses_total DOUBLE PRECISION NOT NULL DEFAULT 0, total_pay DOUBLE PRECISION NOT NULL DEFAULT 0, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_at TEXT",
         "ALTER TABLE paystubs ADD COLUMN IF NOT EXISTS paid_by INTEGER REFERENCES users(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS expense_delete_codes (id SERIAL PRIMARY KEY, expense_id INTEGER NOT NULL, admin_id INTEGER REFERENCES users(id) ON DELETE CASCADE, pin_hash TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL)",
@@ -1163,20 +1202,20 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS project_files_folder_idx ON project_files(project_id, folder_key, folder_id)",
         "CREATE TABLE IF NOT EXISTS custom_file_folders (id SERIAL PRIMARY KEY, folder_key TEXT UNIQUE NOT NULL, label TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
-        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 1, unit_cost DOUBLE PRECISION, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
         "CREATE INDEX IF NOT EXISTS task_materials_task_idx ON task_materials(task_id)",
         "CREATE INDEX IF NOT EXISTS task_materials_item_idx ON task_materials(inventory_item_id)",
-        "CREATE TABLE IF NOT EXISTS project_phases (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'auto', manual_pct REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS project_phases (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'auto', manual_pct DOUBLE PRECISION NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS project_scope_items (id SERIAL PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, label TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT FALSE, position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
         "ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phase_id INTEGER REFERENCES project_phases(id) ON DELETE SET NULL",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_focus TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_upcoming TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS progress_open TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
-        "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price REAL, unit_cost REAL, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS part_catalog (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, item_model TEXT, part_number TEXT, brand TEXT, category TEXT, description TEXT, unit_price DOUBLE PRECISION, unit_cost DOUBLE PRECISION, taxable BOOLEAN, item_type TEXT NOT NULL DEFAULT 'part', is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TEXT NOT NULL, updated_at TEXT)",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
-        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
@@ -1186,10 +1225,10 @@ def init_db():
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
-        "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price DOUBLE PRECISION NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS invoice_number_counters (year_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal REAL NOT NULL DEFAULT 0, tax_rate REAL NOT NULL DEFAULT 0, tax_total REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
-        "CREATE TABLE IF NOT EXISTS invoice_lines (id SERIAL PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL, item_name TEXT NOT NULL, description TEXT, quantity REAL NOT NULL DEFAULT 0, unit_price REAL NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, line_total REAL NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal DOUBLE PRECISION NOT NULL DEFAULT 0, tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0, tax_total DOUBLE PRECISION NOT NULL DEFAULT 0, total DOUBLE PRECISION NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
+        "CREATE TABLE IF NOT EXISTS invoice_lines (id SERIAL PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, saved_item_id INTEGER REFERENCES invoice_saved_items(id) ON DELETE SET NULL, item_name TEXT NOT NULL, description TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 0, unit_price DOUBLE PRECISION NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, line_total DOUBLE PRECISION NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)",
         "CREATE TABLE IF NOT EXISTS invoice_email_logs (id SERIAL PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE, sent_to TEXT NOT NULL, subject TEXT NOT NULL, sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL, success BOOLEAN NOT NULL DEFAULT FALSE, error TEXT, sent_at TEXT NOT NULL)",
         """
         DO $$
@@ -1226,6 +1265,8 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print("Task number backfill skipped:", e)
+
+    upgrade_real_columns_to_double(conn)
 
     conn.close()
 
@@ -2137,7 +2178,7 @@ def ensure_invoice_tables(conn):
             id SERIAL PRIMARY KEY,
             item_name TEXT NOT NULL,
             description TEXT,
-            unit_price REAL NOT NULL DEFAULT 0,
+            unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
             taxable BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TEXT NOT NULL,
             updated_at TEXT
@@ -2162,10 +2203,10 @@ def ensure_invoice_tables(conn):
             invoice_date TEXT NOT NULL,
             due_date TEXT,
             status TEXT NOT NULL DEFAULT 'draft',
-            subtotal REAL NOT NULL DEFAULT 0,
-            tax_rate REAL NOT NULL DEFAULT 0,
-            tax_total REAL NOT NULL DEFAULT 0,
-            total REAL NOT NULL DEFAULT 0,
+            subtotal DOUBLE PRECISION NOT NULL DEFAULT 0,
+            tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+            tax_total DOUBLE PRECISION NOT NULL DEFAULT 0,
+            total DOUBLE PRECISION NOT NULL DEFAULT 0,
             notes TEXT,
             terms TEXT,
             created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -2182,10 +2223,10 @@ def ensure_invoice_tables(conn):
             item_name TEXT NOT NULL,
             description TEXT,
             location TEXT,
-            quantity REAL NOT NULL DEFAULT 0,
-            unit_price REAL NOT NULL DEFAULT 0,
+            quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
             taxable BOOLEAN NOT NULL DEFAULT FALSE,
-            line_total REAL NOT NULL DEFAULT 0,
+            line_total DOUBLE PRECISION NOT NULL DEFAULT 0,
             position INTEGER NOT NULL DEFAULT 0
         )
         """,
@@ -2219,15 +2260,15 @@ def ensure_invoice_tables(conn):
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS customer_phone TEXT",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_address TEXT",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS due_date TEXT",
-        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate REAL NOT NULL DEFAULT 0",
-        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_total DOUBLE PRECISION NOT NULL DEFAULT 0",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS sent_at TEXT",
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TEXT",
         """
         CREATE TABLE IF NOT EXISTS invoice_payments (
             id SERIAL PRIMARY KEY,
             invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-            amount REAL NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
             payment_date TEXT NOT NULL,
             method TEXT,
             reference TEXT,
@@ -3844,8 +3885,8 @@ def ensure_part_catalog_tables(conn):
             brand TEXT,
             category TEXT,
             description TEXT,
-            unit_price REAL,
-            unit_cost REAL,
+            unit_price DOUBLE PRECISION,
+            unit_cost DOUBLE PRECISION,
             taxable BOOLEAN,
             item_type TEXT NOT NULL DEFAULT 'part',
             is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -3854,7 +3895,7 @@ def ensure_part_catalog_tables(conn):
         )
         """,
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS part_number TEXT",
-        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost REAL",
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_cost DOUBLE PRECISION",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS category TEXT",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
@@ -6023,9 +6064,9 @@ def ensure_worker_location_tables(conn):
         user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         attendance_event_id INTEGER REFERENCES attendance_events(id) ON DELETE SET NULL,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        accuracy REAL,
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        accuracy DOUBLE PRECISION,
         address TEXT,
         event_timezone TEXT,
         created_at TEXT NOT NULL
@@ -8427,8 +8468,8 @@ def po_status_label(value):
 def ensure_orders_tables(conn):
     statements = [
         "CREATE TABLE IF NOT EXISTS purchase_orders (id SERIAL PRIMARY KEY, po_number TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, status TEXT NOT NULL DEFAULT 'draft', order_method TEXT, expected_date TEXT, notes TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, ordered_at TEXT, purchased_at TEXT, received_at TEXT)",
-        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, unit_cost REAL, comment TEXT, created_at TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity REAL NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS purchase_order_lines (id SERIAL PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 1, unit_cost DOUBLE PRECISION, comment TEXT, created_at TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
         "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_mode TEXT",
         "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_address TEXT",
@@ -10233,10 +10274,10 @@ def ensure_estimate_tables(conn):
             estimate_date TEXT NOT NULL,
             valid_until TEXT,
             status TEXT NOT NULL DEFAULT 'draft',
-            subtotal REAL NOT NULL DEFAULT 0,
-            tax_rate REAL NOT NULL DEFAULT 0,
-            tax_total REAL NOT NULL DEFAULT 0,
-            total REAL NOT NULL DEFAULT 0,
+            subtotal DOUBLE PRECISION NOT NULL DEFAULT 0,
+            tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+            tax_total DOUBLE PRECISION NOT NULL DEFAULT 0,
+            total DOUBLE PRECISION NOT NULL DEFAULT 0,
             notes TEXT,
             terms TEXT,
             public_token TEXT UNIQUE,
@@ -10246,9 +10287,9 @@ def ensure_estimate_tables(conn):
             signed_at TEXT,
             signed_ip TEXT,
             signed_user_agent TEXT,
-            signed_latitude REAL,
-            signed_longitude REAL,
-            signed_accuracy REAL,
+            signed_latitude DOUBLE PRECISION,
+            signed_longitude DOUBLE PRECISION,
+            signed_accuracy DOUBLE PRECISION,
             signed_location TEXT,
             declined_at TEXT,
             decline_reason TEXT,
@@ -10268,10 +10309,10 @@ def ensure_estimate_tables(conn):
             item_name TEXT NOT NULL,
             description TEXT,
             location TEXT,
-            quantity REAL NOT NULL DEFAULT 0,
-            unit_price REAL NOT NULL DEFAULT 0,
+            quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
             taxable BOOLEAN NOT NULL DEFAULT FALSE,
-            line_total REAL NOT NULL DEFAULT 0,
+            line_total DOUBLE PRECISION NOT NULL DEFAULT 0,
             position INTEGER NOT NULL DEFAULT 0
         )
         """,
@@ -10295,9 +10336,9 @@ def ensure_estimate_tables(conn):
             signer_name TEXT,
             ip_address TEXT,
             user_agent TEXT,
-            latitude REAL,
-            longitude REAL,
-            accuracy REAL,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
+            accuracy DOUBLE PRECISION,
             location_label TEXT,
             note TEXT,
             created_at TEXT NOT NULL
@@ -10323,9 +10364,9 @@ def ensure_estimate_tables(conn):
             signed_at TEXT,
             signed_ip TEXT,
             signed_user_agent TEXT,
-            signed_latitude REAL,
-            signed_longitude REAL,
-            signed_accuracy REAL,
+            signed_latitude DOUBLE PRECISION,
+            signed_longitude DOUBLE PRECISION,
+            signed_accuracy DOUBLE PRECISION,
             signed_location TEXT,
             revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
             revoked_by_name TEXT,
