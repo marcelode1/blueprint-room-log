@@ -5,7 +5,19 @@
     <a class="btn-link btn-secondary" href="{{ url_for('invoice_customers', c=(invoice.customer_name or '')|lower) if invoice else url_for('invoice_customers') }}">Back to Customer</a>
     {% if invoice %}<a class="btn-link btn-secondary" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">Open Invoice {{ invoice.invoice_number }}</a>{% endif %}
     <button type="button" onclick="window.print()">Print / Save PDF</button>
+    <form method="post" action="{{ url_for('send_payment_receipt', payment_id=payment.id) }}" class="receiptSendForm">
+        <label>Email Receipt To</label>
+        <input name="customer_email" type="email" value="{{ invoice.customer_email if invoice else '' }}" required>
+        <button type="submit">Email Receipt</button>
+    </form>
 </div>
+
+<style>
+.receiptSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
+.receiptSendForm label{width:100%}
+.receiptSendForm input{max-width:320px}
+.receiptSendForm button{margin:0}
+</style>
 
 <div class="card receiptPaper">
     <div class="receiptHeader">

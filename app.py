@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-29 V1"
+APP_BUILD = "2026-09-29 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8319,6 +8319,203 @@ def payment_receipt(payment_id):
         balance_after=max(total - paid_total, 0),
         payment_methods=INVOICE_PAYMENT_METHODS,
     )
+
+
+def receipt_pdf_attachment(payment, invoice, company, paid_total=0.0, balance_after=0.0):
+    """A one page receipt built with PyMuPDF, the same builder the invoice PDF
+    falls back to on Render."""
+    if fitz is None:
+        return None, "PDF support is not available on this server."
+    try:
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        left, right = 42, 570
+        ink = (0.08, 0.12, 0.2)
+        grey = (0.42, 0.47, 0.55)
+        rule = (0.78, 0.83, 0.89)
+
+        def text(x, y, value, size=10, bold=False, color=ink):
+            page.insert_text((x, y), str(value or ""), fontsize=size,
+                             fontname="hebo" if bold else "helv", color=color)
+
+        def right_text(x_right, y, value, size=10, bold=False, color=ink):
+            s = str(value or "")
+            font = "hebo" if bold else "helv"
+            try:
+                width = fitz.get_text_length(s, fontname=font, fontsize=size)
+            except Exception:
+                width = len(s) * size * 0.5
+            page.insert_text((x_right - width, y), s, fontsize=size, fontname=font, color=color)
+
+        y = 60
+        logo_path = get_app_setting("company_logo", "")
+        logo = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
+        if logo:
+            try:
+                page.insert_image(fitz.Rect(left, y - 16, left + 180, y + 52), stream=logo, keep_proportion=True)
+                y += 58
+            except Exception as e:
+                print("Receipt logo skipped:", e)
+        for line in [company.get("company_name"), company.get("company_address"),
+                     company.get("company_phone"), company.get("company_email")]:
+            if line:
+                text(left, y, line, 9.5)
+                y += 13
+
+        text(right - 150, 64, "RECEIPT", 22, bold=True)
+        meta_y = 88
+        for label, value in [
+            ("Receipt #", f"P-{int(payment.get('id') or 0):05d}"),
+            ("Date", format_date(payment.get("payment_date"))),
+            ("Invoice #", (invoice or {}).get("invoice_number") or "-"),
+        ]:
+            text(right - 150, meta_y, label, 7, bold=True, color=grey)
+            right_text(right, meta_y, value, 9.5, bold=True)
+            meta_y += 15
+
+        y = max(y, meta_y) + 16
+        page.draw_line((left, y), (right, y), color=ink, width=1.4)
+        y += 26
+
+        text(left, y, "RECEIVED FROM", 7.5, bold=True, color=grey)
+        text(left, y + 16, (invoice or {}).get("customer_name") or "-", 12, bold=True)
+        line_y = y + 31
+        for line in [(invoice or {}).get("billing_address"),
+                     f"Project: {(invoice or {}).get('project_name')}" if (invoice or {}).get("project_name") else ""]:
+            if line:
+                text(left, line_y, line, 9)
+                line_y += 12
+
+        box = fitz.Rect(right - 210, y - 6, right, y + 54)
+        page.draw_rect(box, color=rule, fill=(0.96, 0.98, 1.0), width=0.8)
+        text(right - 198, y + 12, "AMOUNT RECEIVED", 7.5, bold=True, color=grey)
+        right_text(right - 12, y + 40, format_invoice_money(payment.get("amount")), 20, bold=True)
+
+        y = max(line_y, y + 70) + 18
+        rows = [("Form of Payment", payment.get("method") or "-")]
+        if payment.get("reference"):
+            rows.append(("Reference / Check #", payment.get("reference")))
+        if invoice:
+            rows.append(("Applied to Invoice",
+                         f"{invoice.get('invoice_number')} - total {format_invoice_money(invoice.get('total'))}"))
+            rows.append(("Total Paid on Invoice", format_invoice_money(paid_total)))
+            rows.append(("Remaining Balance", format_invoice_money(balance_after)
+                         + (" - PAID IN FULL" if balance_after <= 0.005 else "")))
+        if payment.get("notes"):
+            rows.append(("Note", payment.get("notes")))
+        if payment.get("created_by_name"):
+            rows.append(("Received By", payment.get("created_by_name")))
+
+        for label, value in rows:
+            page.draw_line((left, y - 12), (right, y - 12), color=rule, width=0.6)
+            text(left, y, label, 8.5, bold=True, color=grey)
+            text(left + 170, y, value, 9.5, bold=(label == "Remaining Balance"))
+            y += 24
+        page.draw_line((left, y - 12), (right, y - 12), color=rule, width=0.6)
+
+        text(left, y + 20, "Thank you for your payment.", 10.5, bold=True)
+        stamp = local_now().strftime("%m/%d/%y, %I:%M %p")
+        text(left, 762, stamp, 7.4, color=grey)
+        right_text(right, 762, "ProjectONus", 7.4, color=grey)
+
+        data = doc.tobytes()
+        doc.close()
+        name = secure_filename(f"receipt-P-{int(payment.get('id') or 0):05d}") or "receipt"
+        return (f"{name}.pdf", data, "application/pdf"), ""
+    except Exception as e:
+        print("Receipt PDF failed:", e)
+        return None, f"The receipt PDF could not be created. {e}"
+
+
+@app.route("/invoices/payments/<int:payment_id>/send", methods=["POST"])
+@admin_required
+def send_payment_receipt(payment_id):
+    conn = db()
+    ensure_invoice_tables(conn)
+    payment = conn.execute(
+        """
+        SELECT invoice_payments.*, users.name AS created_by_name
+        FROM invoice_payments
+        LEFT JOIN users ON invoice_payments.created_by = users.id
+        WHERE invoice_payments.id = %s
+        """,
+        (payment_id,)
+    ).fetchone()
+    if not payment:
+        conn.close()
+        flash("Payment not found.")
+        return redirect(url_for("invoice_customers"))
+    invoice = conn.execute(
+        """
+        SELECT invoices.*, projects.name AS project_name
+        FROM invoices
+        LEFT JOIN projects ON invoices.project_id = projects.id
+        WHERE invoices.id = %s
+        """,
+        (payment["invoice_id"],)
+    ).fetchone()
+    paid_total = invoice_paid_total(conn, payment["invoice_id"]) if invoice else 0.0
+    total = float((invoice or {}).get("total") or 0)
+    balance_after = max(total - paid_total, 0)
+
+    to_email = (request.form.get("customer_email") or "").strip() or (invoice or {}).get("customer_email")
+    if not to_email:
+        conn.close()
+        flash("Add a customer email before sending this receipt.")
+        return redirect(url_for("payment_receipt", payment_id=payment_id))
+
+    company = account_info()
+    attachment, pdf_error = receipt_pdf_attachment(payment, invoice, company, paid_total, balance_after)
+    if pdf_error:
+        print("Receipt PDF skipped:", pdf_error)
+    subject = (f"Receipt P-{payment_id:05d} from "
+               f"{company.get('company_name') or 'ProjectONus'}")
+    body = "\n".join([
+        f"Hello {(invoice or {}).get('customer_name') or 'there'},",
+        "",
+        f"Thank you for your payment of {format_invoice_money(payment.get('amount'))}"
+        + (f" on invoice {invoice.get('invoice_number')}." if invoice else "."),
+        f"Received {format_date(payment.get('payment_date'))} by {payment.get('method') or 'payment'}"
+        + (f", reference {payment.get('reference')}." if payment.get("reference") else "."),
+        (f"Remaining balance: {format_invoice_money(balance_after)}"
+         if invoice and balance_after > 0.005 else
+         ("This invoice is now paid in full." if invoice else "")),
+        "",
+        ("A receipt is attached to this email for your records."
+         if attachment else "Your receipt is recorded in our office."),
+        "",
+        company.get("company_name") or "ProjectONus",
+    ])
+    try:
+        sent = send_email(to_email, subject, body, attachments=[attachment] if attachment else None)
+        send_error = "" if sent else "The mail server did not accept the message."
+    except Exception as e:
+        sent, send_error = False, str(e)
+
+    note = [n for n in [f"PDF not attached: {pdf_error}" if pdf_error else "", send_error] if n]
+    if invoice:
+        try:
+            conn.execute(
+                """
+                INSERT INTO invoice_email_logs (invoice_id, sent_to, subject, sent_by, success, error, sent_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (invoice["id"], to_email, subject + " (receipt)", session.get("user_id"),
+                 sent, " ".join(note), utc_now_iso())
+            )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Receipt log skipped:", e)
+    conn.close()
+
+    if sent and not note:
+        flash(f"Receipt emailed to {to_email}.")
+    elif sent:
+        flash(f"Receipt emailed to {to_email}, but {' '.join(note)}")
+    else:
+        flash(f"The receipt could not be emailed. {' '.join(note)}")
+    return redirect(url_for("payment_receipt", payment_id=payment_id))
 
 
 @app.route("/invoices/payments/<int:payment_id>/edit", methods=["POST"])
