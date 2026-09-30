@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V7"
+APP_BUILD = "2026-09-30 V9"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8623,6 +8623,176 @@ PO_SHIP_TO_MODES = {
 }
 
 
+def order_pdf_attachment(po, lines, company=None, ship_label="", ship_address=""):
+    """The purchase order as a PDF, laid out like the printed one, so the
+    supplier gets a document rather than a list in the body of an email."""
+    if fitz is None:
+        return None, "PDF support is not available on this server."
+    company = company or account_info()
+    try:
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        left, right = 42, 570
+        ink, grey, rule = (0.08, 0.12, 0.2), (0.42, 0.47, 0.55), (0.78, 0.83, 0.89)
+
+        def text(x, y, value, size=10, bold=False, color=ink):
+            page.insert_text((x, y), str(value or ""), fontsize=size,
+                             fontname="hebo" if bold else "helv", color=color)
+
+        def right_text(x_right, y, value, size=10, bold=False, color=ink):
+            s = str(value or "")
+            font = "hebo" if bold else "helv"
+            try:
+                width = fitz.get_text_length(s, fontname=font, fontsize=size)
+            except Exception:
+                width = len(s) * size * 0.5
+            page.insert_text((x_right - width, y), s, fontsize=size, fontname=font, color=color)
+
+        def wrap(value, width, size):
+            out, line = [], ""
+            for word in str(value or "").split():
+                candidate = (line + " " + word).strip()
+                try:
+                    too_wide = fitz.get_text_length(candidate, fontname="helv", fontsize=size) > width
+                except Exception:
+                    too_wide = len(candidate) * size * 0.5 > width
+                if too_wide and line:
+                    out.append(line); line = word
+                else:
+                    line = candidate
+            if line:
+                out.append(line)
+            return out or [""]
+
+        y = 58
+        logo_path = get_app_setting("company_logo", "")
+        logo = download_storage_file(logo_path) if logo_path and file_ext(logo_path) != "svg" else b""
+        if logo:
+            try:
+                page.insert_image(fitz.Rect(left, y - 18, left + 175, y + 48), stream=logo, keep_proportion=True)
+                y += 56
+            except Exception as e:
+                print("PO logo skipped:", e)
+        text(left, y, company.get("company_name") or "", 12, bold=True); y += 15
+        for line in [company.get("company_address"), company.get("company_phone"), company.get("company_email")]:
+            if line:
+                text(left, y, line, 9); y += 12
+
+        right_text(right, 66, "PURCHASE", 19, bold=True)
+        right_text(right, 86, "ORDER", 19, bold=True)
+        meta_y = 108
+        for label, value in [("PO #", po.get("po_number")),
+                             ("DATE", format_date(po.get("created_at"))),
+                             ("STATUS", po_status_label(po.get("status")))]:
+            text(right - 150, meta_y, label, 7, bold=True, color=grey)
+            right_text(right, meta_y, value, 9.5, bold=True)
+            meta_y += 14
+
+        y = max(y, meta_y) + 12
+        page.draw_line((left, y), (right, y), color=ink, width=1.4)
+        y += 24
+
+        text(left, y, "SUPPLIER", 7.5, bold=True, color=grey)
+        text(left, y + 15, po.get("supplier_name") or "-", 11, bold=True)
+        sy = y + 29
+        for line in [po.get("supplier_address"), po.get("supplier_phone"), po.get("supplier_email")]:
+            if line:
+                for chunk in wrap(line, 230, 9):
+                    text(left, sy, chunk, 9); sy += 12
+
+        if ship_address:
+            text(310, y, (ship_label or "Ship To").upper(), 7.5, bold=True, color=grey)
+            ty = y + 15
+            for part in str(ship_address).split("\n"):
+                for chunk in wrap(part, 250, 9.5):
+                    text(310, ty, chunk, 9.5); ty += 13
+            if po.get("project_name"):
+                text(310, ty + 2, f"For project: {po['project_name']}", 8, color=grey)
+                ty += 14
+        else:
+            ty = y
+
+        y = max(sy, ty) + 22
+        page.draw_rect(fitz.Rect(left, y - 12, right, y + 6), color=None, fill=(0.95, 0.97, 0.99))
+        text(left + 4, y, "#", 7, bold=True, color=grey)
+        text(left + 24, y, "ITEM", 7, bold=True, color=grey)
+        text(left + 230, y, "BRAND", 7, bold=True, color=grey)
+        text(left + 318, y, "MODEL #", 7, bold=True, color=grey)
+        right_text(left + 412, y, "QTY", 7, bold=True, color=grey)
+        right_text(left + 472, y, "UNIT PRICE", 7, bold=True, color=grey)
+        right_text(right - 2, y, "AMOUNT", 7, bold=True, color=grey)
+        y += 16
+
+        total, unpriced = 0.0, 0
+        for index, line in enumerate(lines or [], 1):
+            if y > 700:
+                page = doc.new_page(width=612, height=792)
+                y = 60
+            quantity = float(line.get("quantity") or 0)
+            cost = line.get("unit_cost")
+            item_lines = wrap(line.get("item_name") or "", 190, 8.6)
+            brand_lines = wrap(line.get("brand") or "-", 80, 8.2)
+            model_lines = wrap(line.get("item_model") or "-", 66, 8.2)
+            text(left + 4, y, str(index), 8.6)
+            for i, chunk in enumerate(item_lines):
+                text(left + 24, y + i * 10, chunk, 8.6, bold=(i == 0))
+            for i, chunk in enumerate(brand_lines):
+                text(left + 230, y + i * 10, chunk, 8.2)
+            for i, chunk in enumerate(model_lines):
+                text(left + 318, y + i * 10, chunk, 8.2)
+            right_text(left + 412, y, f"{quantity:g}", 8.6)
+            if cost is not None:
+                amount = quantity * float(cost or 0)
+                total += amount
+                right_text(left + 472, y, format_invoice_money(cost), 8.6)
+                right_text(right - 2, y, format_invoice_money(amount), 8.6, bold=True)
+            else:
+                unpriced += 1
+                right_text(left + 472, y, "-", 8.6)
+                right_text(right - 2, y, "-", 8.6)
+            rows = max(len(item_lines), len(brand_lines), len(model_lines))
+            y += rows * 10
+            if line.get("comment"):
+                for chunk in wrap(line["comment"], 380, 8):
+                    text(left + 24, y, chunk, 8, color=grey); y += 10
+            y += 6
+            page.draw_line((left, y - 4), (right, y - 4), color=rule, width=0.5)
+            y += 8
+
+        page.draw_line((left, y), (right, y), color=ink, width=1.2)
+        text(left + 24, y + 16, "Total", 10.5, bold=True)
+        if unpriced:
+            text(left + 70, y + 16, f"({unpriced} item{'' if unpriced == 1 else 's'} with no price yet)", 8, color=grey)
+        right_text(right - 2, y + 16, format_invoice_money(total), 11.5, bold=True)
+        y += 38
+
+        notes = (po.get("notes") or "").strip()
+        if notes and notes != "Created from the inventory Order Cart":
+            text(left, y, "NOTES", 7.5, bold=True, color=grey); y += 14
+            for part in notes.split("\n"):
+                for chunk in wrap(part, right - left, 9):
+                    text(left, y, chunk, 9); y += 12
+
+        if po.get("expected_date"):
+            y += 6
+            text(left, y, f"Needed by: {format_date(po['expected_date'])}", 9.5, bold=True)
+
+        stamp = local_now().strftime("%m/%d/%y, %I:%M %p")
+        for index in range(doc.page_count):
+            footer = doc.load_page(index)
+            footer.insert_text((left, 762), stamp, fontsize=7.4, fontname="helv", color=grey)
+            footer.insert_text((right - 60, 762), f"{index + 1}/{doc.page_count}",
+                               fontsize=7.4, fontname="helv", color=grey)
+
+        data = doc.tobytes()
+        doc.close()
+        name = secure_filename(po.get("po_number") or "purchase-order") or "purchase-order"
+        return (f"{name}.pdf", data, "application/pdf"), ""
+    except Exception as e:
+        print("Purchase order PDF failed:", e)
+        return None, f"The purchase order PDF could not be created. {e}"
+
+
 def po_ship_to(po, company=None, project_address=""):
     """Where the supplier should deliver: our office, the job site, or a
     one-off address typed on the order. Returns (label, address)."""
@@ -9687,8 +9857,11 @@ def update_order(po_id):
     conn = db()
     ensure_orders_tables(conn)
     po = conn.execute(
-        "SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email "
+        "SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email, "
+        "suppliers.phone AS supplier_phone, suppliers.address AS supplier_address, "
+        "suppliers.contact_name AS supplier_contact, projects.name AS project_name "
         "FROM purchase_orders LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id "
+        "LEFT JOIN projects ON purchase_orders.project_id = projects.id "
         "WHERE purchase_orders.id = %s",
         (po_id,)
     ).fetchone()
@@ -9735,45 +9908,46 @@ def update_order(po_id):
             return redirect(url_for("order_view", po_id=po_id))
         lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
         company = account_info()
-        body_lines = [f"Purchase Order {po['po_number']} from {company.get('company_name') or 'ProjectONus'}", ""]
-        po_total, unpriced = 0.0, 0
-        for line in lines:
-            desc = f'- {line["quantity"]:g} x {line["item_name"]}'
-            if line.get("brand"):
-                desc += f' ({line["brand"]}'
-                desc += f' {line["item_model"]})' if line.get("item_model") else ')'
-            elif line.get("item_model"):
-                desc += f' ({line["item_model"]})'
-            if line.get("unit_cost") is not None:
-                amount = float(line.get("quantity") or 0) * float(line.get("unit_cost") or 0)
-                desc += f' - {format_invoice_money(line["unit_cost"])} each, {format_invoice_money(amount)}'
-                po_total += amount
-            else:
-                unpriced += 1
-            body_lines.append(desc)
-            if line.get("comment"):
-                body_lines.append(f'    {line["comment"]}')
-        body_lines.append("")
-        total_line = f"Total: {format_invoice_money(po_total)}"
-        if unpriced:
-            total_line += f" ({unpriced} item{'' if unpriced == 1 else 's'} with no price yet)"
-        body_lines.append(total_line)
-        if po.get("expected_date"):
-            body_lines.append("")
-            body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
         project_address_row = conn.execute(
             "SELECT customer_address FROM projects WHERE id = %s", (po.get("project_id"),)
         ).fetchone() if po.get("project_id") else None
         ship_label, ship_address = po_ship_to(
             po, company, (project_address_row or {}).get("customer_address") or ""
         )
+        # The supplier gets the order as a PDF document; the email itself stays short.
+        attachment, pdf_error = order_pdf_attachment(po, lines, company, ship_label, ship_address)
+        if pdf_error:
+            print("Purchase order PDF skipped:", pdf_error)
+        po_total = sum(float(l.get("quantity") or 0) * float(l.get("unit_cost") or 0)
+                       for l in lines if l.get("unit_cost") is not None)
+        unpriced = sum(1 for l in lines if l.get("unit_cost") is None)
+        body_lines = [
+            f"Hello{' ' + po['supplier_contact'] if po.get('supplier_contact') else ''},",
+            "",
+            f"Please find purchase order {po['po_number']} from "
+            f"{company.get('company_name') or 'ProjectONus'} attached as a PDF.",
+            f"{len(lines)} item{'' if len(lines) == 1 else 's'}, total {format_invoice_money(po_total)}"
+            + (f" ({unpriced} with no price yet)" if unpriced else "") + ".",
+        ]
+        if po.get("expected_date"):
+            body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
         if ship_address:
-            body_lines.append("")
-            body_lines.append(f"{ship_label}:")
-            body_lines.extend(ship_address.split("\n"))
+            body_lines += ["", f"{ship_label}:"] + ship_address.split("\n")
+        if not attachment:
+            body_lines += ["", "The PDF could not be attached, so the items are listed below.", ""]
+            for line in lines:
+                desc = f'- {float(line.get("quantity") or 0):g} x {line.get("item_name")}'
+                if line.get("unit_cost") is not None:
+                    desc += (f' - {format_invoice_money(line["unit_cost"])} each, '
+                             f'{format_invoice_money(float(line.get("quantity") or 0) * float(line["unit_cost"]))}')
+                body_lines.append(desc)
+                if line.get("comment"):
+                    body_lines.append(f'    {line["comment"]}')
+        body_lines += ["", company.get("company_name") or "ProjectONus"]
         cc_list = split_email_list(request.form.get("cc_emails"))
         sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}",
-                          "\n".join(body_lines), cc=cc_list)
+                          "\n".join(body_lines),
+                          attachments=[attachment] if attachment else None, cc=cc_list)
         if sent:
             conn.execute(
                 "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
@@ -11617,30 +11791,6 @@ def notify_customer_estimate_revoked(estimate, reason=""):
         return False
 
 
-def estimate_labor_lines(conn, project_id):
-    """Labor from this project's proposals. It is deliberately kept out of the
-    BOM - a bill of materials lists parts, not hours - but the office still
-    needs to see it, so the BOM page shows it in its own section."""
-    try:
-        return conn.execute(
-            """
-            SELECT estimate_lines.*, estimates.estimate_number, estimates.status AS estimate_status,
-                   COALESCE(part_catalog.item_type, 'part') AS item_type
-            FROM estimate_lines
-            JOIN estimates ON estimate_lines.estimate_id = estimates.id
-            LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
-            WHERE estimates.project_id = %s
-              AND COALESCE(part_catalog.item_type, 'part') = 'service'
-            ORDER BY estimates.id, estimate_lines.position, estimate_lines.id
-            """,
-            (project_id,)
-        ).fetchall()
-    except Exception as e:
-        conn.rollback()
-        print("Labor lookup skipped:", e)
-        return []
-
-
 @app.route("/proposals/<int:estimate_id>/create-bom", methods=["POST"])
 @admin_required
 def create_estimate_bom(estimate_id):
@@ -11749,7 +11899,7 @@ def create_estimate_bom(estimate_id):
         message.append(f"{skipped} were already there and were left alone.")
     if labor:
         message.append(f"{labor} labor line{'' if labor == 1 else 's'} stayed out of the BOM - "
-                       "labor is listed separately on the BOM page.")
+                       "a BOM lists material only.")
     flash(" ".join(message))
     return redirect(url_for("project_materials", project_id=project_id))
 
@@ -12771,7 +12921,6 @@ def project_materials(project_id):
         conn.rollback()
         print("Inventory status sync failed:", e)
     materials = fetch_inventory_items(conn, {"project_id": project_id})
-    labor_lines = estimate_labor_lines(conn, project_id)
     rooms = fetch_inventory_rooms(conn, project_id)
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
@@ -12828,7 +12977,6 @@ def project_materials(project_id):
         "materials.html",
         project=project,
         materials=materials,
-        labor_lines=labor_lines,
         rooms=rooms,
         suppliers=suppliers,
         part_catalog=catalog,
