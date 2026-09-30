@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V6"
+APP_BUILD = "2026-09-30 V7"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -360,7 +360,14 @@ def billing_address_from_form(customer_address_parts):
     )
 
 
-def send_email(to_email, subject, body, attachments=None):
+def split_email_list(value):
+    """Split a typed list of addresses on commas, semicolons or spaces and keep
+    the ones that look like an address."""
+    parts = re.split(r"[,;\s]+", str(value or ""))
+    return [p.strip() for p in parts if p.strip() and "@" in p and "." in p.split("@")[-1]]
+
+
+def send_email(to_email, subject, body, attachments=None, cc=None):
     if not SMTP_HOST:
         print("Email not sent: SMTP_HOST is not configured.")
         return False
@@ -368,6 +375,10 @@ def send_email(to_email, subject, body, attachments=None):
         msg = EmailMessage()
         msg["From"] = SMTP_FROM
         msg["To"] = to_email
+        cc_list = cc if isinstance(cc, (list, tuple)) else split_email_list(cc)
+        cc_list = [a for a in cc_list if a.lower() != str(to_email or "").lower()]
+        if cc_list:
+            msg["Cc"] = ", ".join(cc_list)
         msg["Subject"] = subject
         msg.set_content(body)
         for attachment in attachments or []:
@@ -9760,14 +9771,20 @@ def update_order(po_id):
             body_lines.append("")
             body_lines.append(f"{ship_label}:")
             body_lines.extend(ship_address.split("\n"))
-        sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}", "\n".join(body_lines))
+        cc_list = split_email_list(request.form.get("cc_emails"))
+        sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}",
+                          "\n".join(body_lines), cc=cc_list)
         if sent:
             conn.execute(
                 "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
-                (now, append_note(f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"), now, po_id)
+                (now, append_note(
+                    f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"
+                    + (f", copied to {', '.join(cc_list)}" if cc_list else "")), now, po_id)
             )
             mark_po_inventory_ordered(conn, po_id, now)
-            flash(f"Purchase order emailed to {po['supplier_email']} and marked Ordered. The inventory now shows the material on order.")
+            flash(f"Purchase order emailed to {po['supplier_email']}"
+                  + (f" and copied to {', '.join(cc_list)}" if cc_list else "")
+                  + ". Marked Ordered, and the inventory now shows the material on order.")
         else:
             flash("The email could not be sent. Check SMTP settings.")
     elif action == "ordered":
