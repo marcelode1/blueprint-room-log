@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V1"
+APP_BUILD = "2026-09-30 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -12535,6 +12535,70 @@ def update_inventory_location(item_id):
     conn.commit()
     conn.close()
     flash("Inventory location updated.")
+    return redirect(safe_next_url("inventory"))
+
+
+@app.route("/inventory/<int:item_id>/edit", methods=["POST"])
+@login_required
+def edit_inventory_item(item_id):
+    """Correct a BOM line: what it is, how many, and which room it belongs to.
+    Status, supplier and location keep their own controls on the row."""
+    if not can_edit_inventory():
+        flash("You do not have permission to update the BOM.")
+        return redirect(safe_next_url("inventory"))
+
+    conn = db()
+    item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+    if not item:
+        conn.close()
+        flash("BOM item not found.")
+        return redirect(safe_next_url("inventory"))
+    if not inventory_item_access_allowed(conn, item):
+        conn.close()
+        flash("You do not have access to that BOM item.")
+        return redirect(url_for("inventory"))
+
+    item_name = (request.form.get("item_name") or "").strip()
+    if not item_name:
+        conn.close()
+        flash("The item needs a name.")
+        return redirect(safe_next_url("inventory"))
+    try:
+        quantity = float(request.form.get("quantity") or 0)
+    except (TypeError, ValueError):
+        quantity = 0.0
+    if quantity <= 0:
+        conn.close()
+        flash("Enter a quantity greater than zero.")
+        return redirect(safe_next_url("inventory"))
+
+    room_id = project_room_id_or_none(conn, item.get("project_id"), request.form.get("room_id"))         if item.get("project_id") else None
+    condition = (request.form.get("item_condition") or "").strip()
+    if condition not in INVENTORY_CONDITION_LABELS:
+        condition = item.get("item_condition") or "new"
+
+    conn.execute(
+        """
+        UPDATE inventory_items
+        SET item_name = %s, item_model = %s, brand = %s, quantity = %s,
+            item_condition = %s, room_id = %s, used_note = %s, updated_at = %s
+        WHERE id = %s
+        """,
+        (
+            item_name,
+            (request.form.get("item_model") or "").strip(),
+            (request.form.get("brand") or "").strip(),
+            quantity,
+            condition,
+            room_id,
+            (request.form.get("used_note") or "").strip(),
+            utc_now_iso(),
+            item_id,
+        )
+    )
+    conn.commit()
+    conn.close()
+    flash(f"{item_name} updated.")
     return redirect(safe_next_url("inventory"))
 
 
