@@ -4,7 +4,7 @@
     <h2>D-Tools Preview</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
     <p class="muted">Review what ProjectONus found before importing. Parts become inventory and catalog records. Services/labor become Parts / Services records only. Items D-Tools marks as Client Supplied import with the status <strong>Client Supplied</strong> instead of Needs Purchase.</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Back to Project Inventory</a>
+    <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Back to Project BOM</a>
 </div>
 
 <div class="card">

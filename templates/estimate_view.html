@@ -23,6 +23,14 @@
             <button type="submit">Turn Into Invoice</button>
         </form>
     {% endif %}
+
+    <form method="post" action="{{ url_for('create_estimate_bom', estimate_id=estimate.id) }}" class="inlineInvoiceForm"
+          onsubmit="return confirm('Send the material lines of this {{ proposal_word|lower }} to the project BOM? Labor lines stay out of it.');">
+        <button type="submit" class="btn-secondary">Create a BOM</button>
+    </form>
+    {% if estimate.bom_created_at %}
+        <p class="muted">BOM created on {{ format_date(estimate.bom_created_at) }}. Pressing it again only adds lines that are not there yet.</p>
+    {% endif %}
 </div>
 
 {% if estimate.signed_at %}

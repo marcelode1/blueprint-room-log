@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-29 V2"
+APP_BUILD = "2026-09-30 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -10571,6 +10571,9 @@ def ensure_estimate_tables(conn):
             revoked_at TEXT NOT NULL
         )
         """,
+        "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS bom_created_at TEXT",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_estimate_line_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS inventory_source_line_idx ON inventory_items(source_estimate_line_id)",
         "CREATE INDEX IF NOT EXISTS estimate_lines_estimate_idx ON estimate_lines(estimate_id)",
         "CREATE INDEX IF NOT EXISTS estimate_revocations_estimate_idx ON estimate_signature_revocations(estimate_id)",
         "CREATE INDEX IF NOT EXISTS estimate_signature_events_estimate_idx ON estimate_signature_events(estimate_id)",
@@ -11548,6 +11551,133 @@ def notify_customer_estimate_revoked(estimate, reason=""):
         return False
 
 
+def estimate_labor_lines(conn, project_id):
+    """Labor from this project's proposals. It is deliberately kept out of the
+    BOM - a bill of materials lists parts, not hours - but the office still
+    needs to see it, so the BOM page shows it in its own section."""
+    try:
+        return conn.execute(
+            """
+            SELECT estimate_lines.*, estimates.estimate_number, estimates.status AS estimate_status,
+                   COALESCE(part_catalog.item_type, 'part') AS item_type
+            FROM estimate_lines
+            JOIN estimates ON estimate_lines.estimate_id = estimates.id
+            LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
+            WHERE estimates.project_id = %s
+              AND COALESCE(part_catalog.item_type, 'part') = 'service'
+            ORDER BY estimates.id, estimate_lines.position, estimate_lines.id
+            """,
+            (project_id,)
+        ).fetchall()
+    except Exception as e:
+        conn.rollback()
+        print("Labor lookup skipped:", e)
+        return []
+
+
+@app.route("/proposals/<int:estimate_id>/create-bom", methods=["POST"])
+@admin_required
+def create_estimate_bom(estimate_id):
+    """Push the proposal's material lines into the project's BOM.
+
+    Labor lines are left out on purpose. Lines already sent across are skipped,
+    so pressing the button twice does not double the order.
+    """
+    conn = db()
+    ensure_invoice_tables(conn)
+    ensure_estimate_tables(conn)
+    estimate, lines = load_estimate(conn, estimate_id)
+    if not estimate:
+        conn.close()
+        flash(f"{PROPOSAL_WORD} not found.")
+        return redirect(url_for("estimates"))
+    project_id = estimate.get("project_id")
+    if not project_id:
+        conn.close()
+        flash(f"Attach this {PROPOSAL_WORD.lower()} to a project before creating a BOM.")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+
+    rooms = {}
+    try:
+        for room in conn.execute("SELECT id, name FROM rooms WHERE project_id = %s", (project_id,)).fetchall():
+            rooms[(room.get("name") or "").strip().lower()] = room.get("id")
+    except Exception as e:
+        conn.rollback()
+        print("Room lookup skipped:", e)
+
+    already = set()
+    try:
+        for row in conn.execute(
+            "SELECT source_estimate_line_id FROM inventory_items WHERE source_estimate_line_id IS NOT NULL"
+        ).fetchall():
+            already.add(row.get("source_estimate_line_id"))
+    except Exception as e:
+        conn.rollback()
+        print("BOM duplicate check skipped:", e)
+
+    catalog = {}
+    try:
+        for row in conn.execute("SELECT id, brand, item_model FROM part_catalog").fetchall():
+            catalog[row["id"]] = row
+    except Exception as e:
+        conn.rollback()
+        print("Catalog lookup skipped:", e)
+
+    added = skipped = labor = 0
+    now = utc_now_iso()
+    today = local_now().date().isoformat()
+    try:
+        for line in lines:
+            if (line.get("item_type") or "part") == "service":
+                labor += 1
+                continue
+            if line.get("id") in already:
+                skipped += 1
+                continue
+            quantity = float(line.get("quantity") or 0)
+            if quantity <= 0:
+                skipped += 1
+                continue
+            part = catalog.get(line.get("part_catalog_id")) or {}
+            location = (line.get("location") or "").strip()
+            conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, item_condition, location_type,
+                 location_detail, project_id, room_id, status, added_by, source_estimate_line_id,
+                 created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, %s, 'needs_purchase', %s, %s, %s, %s)
+                """,
+                (
+                    today, quantity, line.get("item_name") or "Item",
+                    part.get("item_model") or "", part.get("brand") or "",
+                    location, project_id, rooms.get(location.lower()),
+                    session.get("user_id"), line.get("id"), now, now,
+                )
+            )
+            added += 1
+        conn.execute(
+            "UPDATE estimates SET bom_created_at = %s, updated_at = %s WHERE id = %s",
+            (now, now, estimate_id)
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"The BOM could not be created. {e}")
+        return redirect(url_for("estimate_view", estimate_id=estimate_id))
+    conn.close()
+
+    message = [f"{added} material line{'' if added == 1 else 's'} added to the BOM."]
+    if skipped:
+        message.append(f"{skipped} were already there and were left alone.")
+    if labor:
+        message.append(f"{labor} labor line{'' if labor == 1 else 's'} stayed out of the BOM - "
+                       "labor is listed separately on the BOM page.")
+    flash(" ".join(message))
+    return redirect(url_for("project_materials", project_id=project_id))
+
+
 @app.route("/proposals/<int:estimate_id>/revoke", methods=["POST"])
 @admin_required
 def revoke_estimate(estimate_id):
@@ -12495,6 +12625,7 @@ def project_materials(project_id):
         conn.rollback()
         print("Inventory status sync failed:", e)
     materials = fetch_inventory_items(conn, {"project_id": project_id})
+    labor_lines = estimate_labor_lines(conn, project_id)
     rooms = fetch_inventory_rooms(conn, project_id)
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
@@ -12551,6 +12682,7 @@ def project_materials(project_id):
         "materials.html",
         project=project,
         materials=materials,
+        labor_lines=labor_lines,
         rooms=rooms,
         suppliers=suppliers,
         part_catalog=catalog,
