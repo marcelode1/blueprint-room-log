@@ -143,6 +143,12 @@
             </div>
         </div>
 
+        <label for="poNotes">Notes for the Supplier</label>
+        <p class="muted poNotesHint">Type what you want the supplier to read. This prints at the bottom of the
+            purchase order they receive. The History below is the app's own record and is never sent.</p>
+        <textarea name="notes" id="poNotes" rows="4"
+                  placeholder="Deliver before noon, ask for Lou at the dock, quote reference...">{{ po.notes or '' }}</textarea>
+
         <button type="submit" class="btn-secondary">Save Details</button>
     </form>
 
@@ -212,6 +218,7 @@
 </div>
 
 <style>
+.poNotesHint{margin:0 0 6px;font-size:12px}
 .poActivity{margin-top:16px;border-top:1px solid var(--border);padding-top:12px}
 .poActivity h4{margin:0 0 2px}
 .poActivityNote{margin:0 0 8px;font-size:12px}
