@@ -49,7 +49,8 @@
 
     <table class="poTable">
         <thead>
-            <tr><th>#</th><th>Item</th><th>Brand</th><th>Model #</th><th>Qty</th></tr>
+            <tr><th>#</th><th>Item</th><th>Brand</th><th>Model #</th><th class="poRight">Qty</th>
+                <th class="poRight">Unit Price</th><th class="poRight">Amount</th></tr>
         </thead>
         <tbody>
             {% for line in lines %}
@@ -58,26 +59,50 @@
                 <td><strong>{{ line.item_name }}</strong></td>
                 <td>{{ line.brand or '-' }}</td>
                 <td>{{ line.item_model or '-' }}</td>
-                <td>{{ '%g'|format(line.quantity or 0) }}</td>
+                <td class="poRight">{{ '%g'|format(line.quantity or 0) }}</td>
+                <td class="poRight">{{ format_invoice_money(line.unit_cost) if line.unit_cost is not none else '-' }}</td>
+                <td class="poRight">{{ format_invoice_money((line.quantity or 0) * (line.unit_cost or 0)) if line.unit_cost is not none else '-' }}</td>
             </tr>
             {% if line.comment %}
             {# the note belongs with its item, not in a column of its own #}
-            <tr class="poNoteRow"><td></td><td colspan="4">{{ line.comment }}</td></tr>
+            <tr class="poNoteRow"><td></td><td colspan="6">{{ line.comment }}</td></tr>
             {% endif %}
             {% else %}
-            <tr><td colspan="5">No items on this purchase order.</td></tr>
+            <tr><td colspan="7">No items on this purchase order.</td></tr>
             {% endfor %}
         </tbody>
+        {% if lines %}
+        {% set po_total = namespace(value=0, priced=0, unpriced=0) %}
+        {% for line in lines %}
+            {% if line.unit_cost is not none %}
+                {% set po_total.value = po_total.value + (line.quantity or 0) * (line.unit_cost or 0) %}
+                {% set po_total.priced = po_total.priced + 1 %}
+            {% else %}
+                {% set po_total.unpriced = po_total.unpriced + 1 %}
+            {% endif %}
+        {% endfor %}
+        <tfoot>
+            <tr class="poTotalRow">
+                <td colspan="6" class="poRight">Total{% if po_total.unpriced %}
+                    <span class="poTotalNote">({{ po_total.unpriced }} item{{ '' if po_total.unpriced == 1 else 's' }} with no price yet)</span>{% endif %}</td>
+                <td class="poRight">{{ format_invoice_money(po_total.value) }}</td>
+            </tr>
+        </tfoot>
+        {% endif %}
     </table>
 
-    {% if po.notes %}
+    {% set shown_notes = '' if (po.notes or '').strip() == 'Created from the inventory Order Cart' else po.notes %}
+    {% if shown_notes %}
         <h3 class="poSectionTitle">Notes</h3>
-        <p class="poNotes">{{ po.notes }}</p>
+        <p class="poNotes">{{ shown_notes }}</p>
     {% endif %}
 
 </div>
 
 <style>
+.poRight{text-align:right}
+.poTotalRow td{border-top:2px solid #172033;font-weight:800;font-size:13.5px;padding-top:8px}
+.poTotalNote{font-weight:600;font-size:11px;color:#64748b}
 .poLineWithNote td{border-bottom:0!important;padding-bottom:2px!important}
 .poNoteRow td{border-top:0!important;padding-top:0!important;font-size:11.5px;color:#475569;font-style:italic}
 .poPaper{max-width:780px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}

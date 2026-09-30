@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V5"
+APP_BUILD = "2026-09-30 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -480,6 +480,21 @@ def create_pdf_preview_from_bytes(pdf_bytes):
     except Exception as e:
         print("PDF preview conversion failed:", str(e))
         return None
+
+
+def clear_legacy_po_cart_note(conn):
+    """Purchase orders made from the cart used to get "Created from the inventory
+    Order Cart" written into their notes. Nobody wants that on a document sent to
+    a supplier, so it is cleared from the ones already on file."""
+    try:
+        conn.execute(
+            "UPDATE purchase_orders SET notes = '' WHERE notes = %s",
+            ("Created from the inventory Order Cart",)
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("PO note cleanup skipped:", e)
 
 
 def upgrade_real_columns_to_double(conn):
@@ -1267,6 +1282,7 @@ def init_db():
         print("Task number backfill skipped:", e)
 
     upgrade_real_columns_to_double(conn)
+    clear_legacy_po_cart_note(conn)
 
     conn.close()
 
@@ -9709,6 +9725,7 @@ def update_order(po_id):
         lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
         company = account_info()
         body_lines = [f"Purchase Order {po['po_number']} from {company.get('company_name') or 'ProjectONus'}", ""]
+        po_total, unpriced = 0.0, 0
         for line in lines:
             desc = f'- {line["quantity"]:g} x {line["item_name"]}'
             if line.get("brand"):
@@ -9716,9 +9733,20 @@ def update_order(po_id):
                 desc += f' {line["item_model"]})' if line.get("item_model") else ')'
             elif line.get("item_model"):
                 desc += f' ({line["item_model"]})'
+            if line.get("unit_cost") is not None:
+                amount = float(line.get("quantity") or 0) * float(line.get("unit_cost") or 0)
+                desc += f' - {format_invoice_money(line["unit_cost"])} each, {format_invoice_money(amount)}'
+                po_total += amount
+            else:
+                unpriced += 1
             body_lines.append(desc)
             if line.get("comment"):
                 body_lines.append(f'    {line["comment"]}')
+        body_lines.append("")
+        total_line = f"Total: {format_invoice_money(po_total)}"
+        if unpriced:
+            total_line += f" ({unpriced} item{'' if unpriced == 1 else 's'} with no price yet)"
+        body_lines.append(total_line)
         if po.get("expected_date"):
             body_lines.append("")
             body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
