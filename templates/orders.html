@@ -64,9 +64,56 @@
 </div>
 
 <div class="card">
+    <h3>Find an Order</h3>
+    <form method="get">
+        <div class="grid">
+            <div>
+                <label>Search</label>
+                <input name="q" value="{{ q or '' }}" placeholder="PO number, supplier or project">
+            </div>
+            <div>
+                <label>Supplier</label>
+                <select name="supplier_id">
+                    <option value="">All suppliers</option>
+                    {% for s in suppliers %}
+                        <option value="{{ s.id }}" {% if supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Project</label>
+                <select name="project_id">
+                    <option value="">All projects</option>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}" {% if project_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label>Status</label>
+                <select name="status">
+                    <option value="">All statuses</option>
+                    {% for value, label in po_status_labels.items() %}
+                        <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit">Search Orders</button>
+        {% if q or supplier_id or project_id or status %}
+            <a class="btn-link btn-secondary" href="{{ url_for('orders') }}">Clear</a>
+        {% endif %}
+    </form>
+</div>
+
+<div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-        <h3 style="margin:0">Purchase Orders</h3>
+        <h3 style="margin:0">Purchase Orders{% if selected_project %} - {{ selected_project.name }}{% endif %}
+            <span class="muted" style="font-weight:600;font-size:13px">({{ orders|length }})</span></h3>
         <form method="get" style="margin:0">
+            {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+            {% if supplier_id %}<input type="hidden" name="supplier_id" value="{{ supplier_id }}">{% endif %}
+            {% if project_id %}<input type="hidden" name="project_id" value="{{ project_id }}">{% endif %}
             <select name="status" onchange="this.form.submit()" style="margin:0;width:auto">
                 <option value="">All statuses</option>
                 {% for value, label in po_status_labels.items() %}

@@ -49,21 +49,23 @@
 
     <table class="poTable">
         <thead>
-            <tr><th>#</th><th>Item</th><th>Brand</th><th>Model #</th><th>Qty</th><th>Unit</th><th>Note</th></tr>
+            <tr><th>#</th><th>Item</th><th>Brand</th><th>Model #</th><th>Qty</th></tr>
         </thead>
         <tbody>
             {% for line in lines %}
-            <tr>
+            <tr{% if line.comment %} class="poLineWithNote"{% endif %}>
                 <td>{{ loop.index }}</td>
                 <td><strong>{{ line.item_name }}</strong></td>
                 <td>{{ line.brand or '-' }}</td>
                 <td>{{ line.item_model or '-' }}</td>
                 <td>{{ '%g'|format(line.quantity or 0) }}</td>
-                <td>{{ line.unit_measure or 'UN' }}</td>
-                <td>{{ line.comment or '' }}</td>
             </tr>
+            {% if line.comment %}
+            {# the note belongs with its item, not in a column of its own #}
+            <tr class="poNoteRow"><td></td><td colspan="4">{{ line.comment }}</td></tr>
+            {% endif %}
             {% else %}
-            <tr><td colspan="7">No items on this purchase order.</td></tr>
+            <tr><td colspan="5">No items on this purchase order.</td></tr>
             {% endfor %}
         </tbody>
     </table>
@@ -73,10 +75,11 @@
         <p class="poNotes">{{ po.notes }}</p>
     {% endif %}
 
-    <p class="poFooterNote">Please confirm availability and pricing, and reference {{ po.po_number }} on the invoice.</p>
 </div>
 
 <style>
+.poLineWithNote td{border-bottom:0!important;padding-bottom:2px!important}
+.poNoteRow td{border-top:0!important;padding-top:0!important;font-size:11.5px;color:#475569;font-style:italic}
 .poPaper{max-width:780px;margin-left:auto;margin-right:auto;background:#fff;color:#172033}
 .poHeader{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:30px;align-items:start;border-bottom:2px solid #172033;padding-bottom:18px}
 .poCompanyBox p{margin:3px 0}

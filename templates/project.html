@@ -33,6 +33,7 @@
     {% endif %}
     {% if can_view_inventory() %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">BOM</a>
+        <a class="btn-link btn-secondary desktop-only" href="{{ url_for('orders', project_id=project.id) }}">Orders</a>
     {% endif %}
     {% if is_main_admin() %}
         <a class="btn-link btn-secondary" target="_blank" rel="noopener" href="{{ url_for('create_global_task', project_id=project.id) }}">Create Task</a>

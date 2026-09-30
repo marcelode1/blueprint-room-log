@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V2"
+APP_BUILD = "2026-09-30 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8919,7 +8919,7 @@ def create_orders_from_cart():
             VALUES (%s, %s, %s, 'draft', '', '', %s, %s, %s, %s)
             RETURNING id, po_number
             """,
-            (po_number, supplier_id, project_id, "Created from the inventory Order Cart",
+            (po_number, supplier_id, project_id, "",
              session.get("user_id"), now, now)
         ).fetchone()
         for r in rows:
@@ -9294,8 +9294,26 @@ def orders():
     conn = db()
     ensure_orders_tables(conn)
     status = (request.args.get("status") or "").strip()
-    where = "WHERE purchase_orders.status = %s" if status in PO_STATUS_LABELS else ""
-    params = (status,) if where else ()
+    supplier_id = optional_int(request.args.get("supplier_id"))
+    project_id = optional_int(request.args.get("project_id"))
+    q = (request.args.get("q") or "").strip()
+    clauses, params = [], []
+    if status in PO_STATUS_LABELS:
+        clauses.append("purchase_orders.status = %s")
+        params.append(status)
+    if supplier_id:
+        clauses.append("purchase_orders.supplier_id = %s")
+        params.append(supplier_id)
+    if project_id:
+        clauses.append("purchase_orders.project_id = %s")
+        params.append(project_id)
+    if q:
+        like = f"%{q}%"
+        clauses.append("(purchase_orders.po_number ILIKE %s OR suppliers.name ILIKE %s "
+                       "OR projects.name ILIKE %s OR projects.customer_name ILIKE %s)")
+        params.extend([like, like, like, like])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params = tuple(params)
     rows = conn.execute(
         f"""
         SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
@@ -9313,8 +9331,13 @@ def orders():
     projects = conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()
     conn.close()
     just_created = session.pop("po_cart_created", []) if request.args.get("created") == "1" else []
+    selected_project = None
+    if project_id:
+        selected_project = next((p for p in projects if p["id"] == project_id), None)
     return render_template("orders.html", orders=rows, status=status, po_status_labels=PO_STATUS_LABELS,
-                           suppliers=suppliers, projects=projects, just_created=just_created)
+                           suppliers=suppliers, projects=projects, just_created=just_created,
+                           q=q, supplier_id=supplier_id, project_id=project_id,
+                           selected_project=selected_project)
 
 
 @app.route("/orders/<int:po_id>/print")
@@ -9687,15 +9710,15 @@ def update_order(po_id):
         company = account_info()
         body_lines = [f"Purchase Order {po['po_number']} from {company.get('company_name') or 'ProjectONus'}", ""]
         for line in lines:
-            desc = f'- {line["quantity"]:g} {line.get("unit_measure") or "UN"} x {line["item_name"]}'
+            desc = f'- {line["quantity"]:g} x {line["item_name"]}'
             if line.get("brand"):
                 desc += f' ({line["brand"]}'
                 desc += f' {line["item_model"]})' if line.get("item_model") else ')'
             elif line.get("item_model"):
                 desc += f' ({line["item_model"]})'
-            if line.get("comment"):
-                desc += f' - {line["comment"]}'
             body_lines.append(desc)
+            if line.get("comment"):
+                body_lines.append(f'    {line["comment"]}')
         if po.get("expected_date"):
             body_lines.append("")
             body_lines.append(f"Needed by: {format_date(po['expected_date'])}")
@@ -9709,8 +9732,6 @@ def update_order(po_id):
             body_lines.append("")
             body_lines.append(f"{ship_label}:")
             body_lines.extend(ship_address.split("\n"))
-        body_lines.append("")
-        body_lines.append(f"Please confirm availability and pricing. Reference {po['po_number']} on the invoice.")
         sent = send_email(po["supplier_email"], f"Purchase Order {po['po_number']}", "\n".join(body_lines))
         if sent:
             conn.execute(
@@ -11640,19 +11661,29 @@ def create_estimate_bom(estimate_id):
                 continue
             part = catalog.get(line.get("part_catalog_id")) or {}
             location = (line.get("location") or "").strip()
+            catalog_id = line.get("part_catalog_id")
+            if not catalog_id:
+                try:
+                    catalog_id = upsert_part_catalog(
+                        conn, line.get("item_name") or "", "", "",
+                        line.get("description") or "", unit_price=line.get("unit_price"),
+                        item_type="part")
+                except Exception as e:
+                    conn.rollback()
+                    print("Catalog add skipped:", e)
             conn.execute(
                 """
                 INSERT INTO inventory_items
                 (item_date, quantity, item_name, item_model, brand, item_condition, location_type,
                  location_detail, project_id, room_id, status, added_by, source_estimate_line_id,
-                 created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, %s, 'needs_purchase', %s, %s, %s, %s)
+                 part_catalog_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, %s, 'needs_purchase', %s, %s, %s, %s, %s)
                 """,
                 (
                     today, quantity, line.get("item_name") or "Item",
                     part.get("item_model") or "", part.get("brand") or "",
                     location, project_id, rooms.get(location.lower()),
-                    session.get("user_id"), line.get("id"), now, now,
+                    session.get("user_id"), line.get("id"), catalog_id, now, now,
                 )
             )
             added += 1
@@ -12577,23 +12608,29 @@ def edit_inventory_item(item_id):
     if condition not in INVENTORY_CONDITION_LABELS:
         condition = item.get("item_condition") or "new"
 
+    item_model = (request.form.get("item_model") or "").strip()
+    brand = (request.form.get("brand") or "").strip()
+    note = (request.form.get("used_note") or "").strip()
+    # Anything typed on a BOM line belongs in Items & Catalog as well, the same
+    # way invoice and proposal lines do, so the next job can reuse it.
+    catalog_id = item.get("part_catalog_id")
+    try:
+        catalog_id = upsert_part_catalog(conn, item_name, item_model, brand, note, item_type="part") or catalog_id
+    except Exception as e:
+        conn.rollback()
+        print("Catalog update skipped:", e)
+
     conn.execute(
         """
         UPDATE inventory_items
         SET item_name = %s, item_model = %s, brand = %s, quantity = %s,
-            item_condition = %s, room_id = %s, used_note = %s, updated_at = %s
+            item_condition = %s, room_id = %s, used_note = %s,
+            part_catalog_id = %s, updated_at = %s
         WHERE id = %s
         """,
         (
-            item_name,
-            (request.form.get("item_model") or "").strip(),
-            (request.form.get("brand") or "").strip(),
-            quantity,
-            condition,
-            room_id,
-            (request.form.get("used_note") or "").strip(),
-            utc_now_iso(),
-            item_id,
+            item_name, item_model, brand, quantity, condition, room_id, note,
+            catalog_id, utc_now_iso(), item_id,
         )
     )
     conn.commit()

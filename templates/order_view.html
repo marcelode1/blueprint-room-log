@@ -242,6 +242,33 @@
     sync();
 })();
 </script>
+<script>
+// Money typed on a purchase order reads back as money: 540 becomes $540.00 when
+// you leave the box, and again when the order is saved.
+(function(){
+    const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
+    const parseMoney=v=>{
+        const text=String(v||"").trim().replace(/[$,]/g,"");
+        if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);
+        return Number(text||0);
+    };
+    const isMoney=el=>el&&el.matches&&el.matches('input[name="unit_cost"]');
+    const format=el=>{
+        const raw=String(el.value||"").trim();
+        if(!raw){el.value="";return;}
+        const number=parseMoney(raw);
+        el.value=Number.isFinite(number)?money(number):raw;
+    };
+    // blur covers clicking away, change covers tabbing out and mobile keyboards
+    document.addEventListener("blur",event=>{if(isMoney(event.target))format(event.target);},true);
+    document.addEventListener("change",event=>{if(isMoney(event.target))format(event.target);},true);
+    document.addEventListener("submit",event=>{
+        const form=event.target;
+        if(form&&form.querySelectorAll)form.querySelectorAll('input[name="unit_cost"]').forEach(format);
+        document.querySelectorAll('input[name="unit_cost"][form="'+(form.id||"")+'"]').forEach(format);
+    },true);
+})();
+</script>
 {% include "_catalog_typeahead.html" %}
 {% include "_part_catalog_autocomplete.html" %}
 {% endblock %}
