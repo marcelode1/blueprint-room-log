@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V9"
+APP_BUILD = "2026-09-30 V10"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -491,6 +491,37 @@ def create_pdf_preview_from_bytes(pdf_bytes):
     except Exception as e:
         print("PDF preview conversion failed:", str(e))
         return None
+
+
+def split_po_activity_from_notes(conn):
+    """Status lines the app wrote ("09/30/2026: Emailed to ...") used to land in
+    the order's Notes and then print on the supplier's copy. Move them into the
+    activity column once, and leave behind only what the user typed."""
+    try:
+        rows = conn.execute(
+            "SELECT id, notes, activity FROM purchase_orders WHERE notes IS NOT NULL AND notes <> ''"
+        ).fetchall()
+    except Exception as e:
+        conn.rollback()
+        print("PO note split skipped:", e)
+        return
+    stamp = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}:\s")
+    for row in rows or []:
+        lines = str(row.get("notes") or "").split("\n")
+        written = [line for line in lines if not stamp.match(line.strip())]
+        logged = [line for line in lines if stamp.match(line.strip())]
+        if not logged:
+            continue
+        activity = "\n".join([str(row.get("activity") or "").strip()] + logged).strip()
+        try:
+            conn.execute(
+                "UPDATE purchase_orders SET notes = %s, activity = %s WHERE id = %s",
+                ("\n".join(written).strip(), activity, row["id"])
+            )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"PO note split skipped for {row['id']}:", e)
 
 
 def clear_legacy_po_cart_note(conn):
@@ -1294,6 +1325,7 @@ def init_db():
 
     upgrade_real_columns_to_double(conn)
     clear_legacy_po_cart_note(conn)
+    split_po_activity_from_notes(conn)
 
     conn.close()
 
@@ -8866,6 +8898,7 @@ def ensure_orders_tables(conn):
         "CREATE TABLE IF NOT EXISTS task_materials (id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL, inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL, po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL, pickup_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, item_name TEXT NOT NULL, item_model TEXT, brand TEXT, unit_measure TEXT, quantity DOUBLE PRECISION NOT NULL DEFAULT 1, comment TEXT, source TEXT NOT NULL DEFAULT 'note', status TEXT NOT NULL DEFAULT 'ready', created_at TEXT NOT NULL)",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS po_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL",
         "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_mode TEXT",
+        "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS activity TEXT",
         "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS ship_to_address TEXT",
     ]
     for statement in statements:
@@ -9874,7 +9907,10 @@ def update_order(po_id):
     note = request.form.get("status_note", "").strip()
 
     def append_note(text):
-        existing = (po.get("notes") or "").strip()
+        """What the app did with this order - emailed, ordered, received. Kept
+        apart from the Notes the user writes, which are the only thing printed
+        on the document the supplier sees."""
+        existing = (po.get("activity") or "").strip()
         stamp = f"{format_date(local_now().date().isoformat())}: {text}"
         return (existing + "\n" + stamp).strip()
 
@@ -9897,7 +9933,8 @@ def update_order(po_id):
             (optional_int(request.form.get("supplier_id")),
              optional_int(request.form.get("project_id")) if request.form.get("project_id") is not None else po.get("project_id"),
              request.form.get("expected_date", "").strip(),
-             request.form.get("notes", "").strip(),
+             # The page has no Notes box any more; keep whatever is stored.
+             request.form.get("notes").strip() if request.form.get("notes") is not None else (po.get("notes") or ""),
              ship_mode, ship_address, now, po_id)
         )
         flash("Purchase order saved.")
@@ -9950,7 +9987,7 @@ def update_order(po_id):
                           attachments=[attachment] if attachment else None, cc=cc_list)
         if sent:
             conn.execute(
-                "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+                "UPDATE purchase_orders SET status = 'ordered', order_method = 'email', ordered_at = COALESCE(ordered_at, %s), activity = %s, updated_at = %s WHERE id = %s",
                 (now, append_note(
                     f"Emailed to {po.get('supplier_name') or 'supplier'} ({po['supplier_email']})"
                     + (f", copied to {', '.join(cc_list)}" if cc_list else "")), now, po_id)
@@ -9966,14 +10003,14 @@ def update_order(po_id):
         if method not in ("online", "phone", "email", "other"):
             method = "other"
         conn.execute(
-            "UPDATE purchase_orders SET status = 'ordered', order_method = %s, ordered_at = COALESCE(ordered_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            "UPDATE purchase_orders SET status = 'ordered', order_method = %s, ordered_at = COALESCE(ordered_at, %s), activity = %s, updated_at = %s WHERE id = %s",
             (method, now, append_note(note or f"Ordered by {method}"), now, po_id)
         )
         mark_po_inventory_ordered(conn, po_id, now)
         flash("Purchase order marked Ordered. The inventory now shows the material on order.")
     elif action == "purchased":
         conn.execute(
-            "UPDATE purchase_orders SET status = 'purchased', purchased_at = COALESCE(purchased_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            "UPDATE purchase_orders SET status = 'purchased', purchased_at = COALESCE(purchased_at, %s), activity = %s, updated_at = %s WHERE id = %s",
             (now, append_note(note or "Purchased"), now, po_id)
         )
         conn.execute(
@@ -9983,7 +10020,7 @@ def update_order(po_id):
         flash("Purchase order marked Purchased. Inventory shows the material as waiting arrival.")
     elif action == "received":
         conn.execute(
-            "UPDATE purchase_orders SET status = 'received', received_at = COALESCE(received_at, %s), notes = %s, updated_at = %s WHERE id = %s",
+            "UPDATE purchase_orders SET status = 'received', received_at = COALESCE(received_at, %s), activity = %s, updated_at = %s WHERE id = %s",
             (now, append_note(note or "Received"), now, po_id)
         )
         conn.execute(
@@ -9994,7 +10031,7 @@ def update_order(po_id):
         flash("Purchase order received. Inventory updated and task workers notified.")
     elif action == "canceled":
         conn.execute(
-            "UPDATE purchase_orders SET status = 'canceled', notes = %s, updated_at = %s WHERE id = %s",
+            "UPDATE purchase_orders SET status = 'canceled', activity = %s, updated_at = %s WHERE id = %s",
             (append_note(note or "Canceled"), now, po_id)
         )
         # Put the material back to Needs purchase so it can be ordered again.
