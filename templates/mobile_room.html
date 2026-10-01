@@ -10,7 +10,6 @@
             <option value="{{ url_for('mobile_room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
         {% endfor %}
     </select>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Project</a>
 </div>
 {% if can_add_notes() %}
 <div class="card">

@@ -4,7 +4,6 @@
     <h2>Files</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
     <p class="muted">Files are stored inside ProjectONus. Folder access is managed in Settings > User Permissions.{% if is_main_admin() %} Right-click (or tap the &#8942; button) on a folder for options.{% endif %}</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
 </div>
 
 <div class="card projectFileExplorer">

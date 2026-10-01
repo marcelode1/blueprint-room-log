@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">&larr; Back to Project</a>
     <h2 style="margin-top:10px">{{ project.name }} &mdash; Blueprint</h2>
     {% if active_blueprint %}
         <a class="btn-link btn-secondary" target="_blank" href="{{ url_for('storage_file', storage_path=active_blueprint.blueprint_file, bp=active_blueprint.id) }}">Open Current Blueprint File</a>

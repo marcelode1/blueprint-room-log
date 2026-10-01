@@ -4,7 +4,6 @@
     <h2>Project Notes</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
     <p class="muted">Write anything related to this project here. Only the admin and users granted "View and edit project notes" can see this.</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project' if is_mobile_request() else 'project', project_id=project.id) }}">Back to Project</a>
 </div>
 
 <div class="card">

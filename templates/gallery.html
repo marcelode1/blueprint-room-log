@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">&larr; Back to Project</a>
     <h2 style="margin-top:10px">{{ project.name }} &mdash; Gallery</h2>
     <p class="muted">{{ total }} picture{{ '' if total == 1 else 's' }} grouped by room. Click a picture to see its comment and details.</p>
 </div>
@@ -39,7 +38,6 @@
 <div id="galLightbox" class="galLightbox" hidden>
     <div class="galLightboxBar">
         <button type="button" class="btn-secondary" id="galBackBtn">&larr; Back to Gallery</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
     </div>
     <div class="galLightboxBody">
         <img id="galBigImg" src="" alt="">

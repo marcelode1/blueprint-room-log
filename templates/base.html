@@ -177,11 +177,12 @@
         {% if not hide_back_button %}
         <div class="backRow">
             <button type="button" class="backButton" onclick="goBackOnePage()">Back</button>
-            {# straight to the project, rather than one page at a time #}
+            {# straight to the project, rather than one page at a time. The task
+               pages carry their own, so they are left out and never show two. #}
             {% set back_project = back_project_id() %}
-            {% if back_project and request.endpoint not in ['project', 'mobile_project'] %}
+            {% if back_project and request.endpoint not in ['project', 'mobile_project', 'today_tasks', 'open_task_workspace', 'assignment_tasks'] %}
                 <a class="backButton backProjectButton"
-                   href="{{ url_for('mobile_project' if is_mobile_request() and not is_main_admin() else 'project', project_id=back_project) }}">Back to Project</a>
+                   href="{{ url_for('mobile_project' if is_mobile_request() and not is_main_admin() else 'project', project_id=back_project) }}">&larr; Back to Project</a>
             {% endif %}
         </div>
         {% endif %}

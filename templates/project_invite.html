@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
     <h2>Invite to {{ project.name }}</h2>
     <p class="muted">Create a link, then copy it and text it to the person yourself (text messaging is not set up on the server yet). They tap the link, type their name and phone number, and set their own login PIN. The link can be opened and re-filled as many times as needed - it only stops working once someone actually finishes setting up their PIN.</p>
     <div class="inviteCreateRow">

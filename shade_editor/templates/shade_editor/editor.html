@@ -3,7 +3,6 @@
 <div class="card noPrint">
     <h2>Shade Designer{% if project_title %} - {{ project_title }}{% endif %}</h2>
     <a class="btn-link btn-secondary" href="{{ url_for('simulation_shades') }}">Back to Shades</a>
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project_id) }}">Back to Project</a>
     {% if can_write %}
         <button type="button" class="btn" id="save-layout">Save layout</button>
     {% endif %}

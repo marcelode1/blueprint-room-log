@@ -5,7 +5,6 @@
     {% if selected_project %}
         <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
         <a class="btn-link" href="{{ url_for('new_invoice', project_id=selected_project.id) }}">Create Invoice</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
     {% else %}
         <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
         <a class="btn-link btn-secondary" href="{{ url_for('invoice_customers') }}">Back to Customers</a>

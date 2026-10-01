@@ -3,7 +3,6 @@
 <div class="card">
     <h2>Project BOM</h2>
     <p><strong>Project:</strong> {{ project.name }}</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=project.id) }}">Back to Project</a>
     <a class="btn-link" href="{{ url_for('inventory', project_id=project.id) }}">Open Main Inventory</a>
 </div>
 

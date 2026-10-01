@@ -3,7 +3,6 @@
 <div class="card">
     <h2>Project BOM</h2>
     <p>{{ project.name }}</p>
-    <a class="btn-link btn-secondary" href="{{ url_for('mobile_project', project_id=project.id) }}">Back to Project</a>
 </div>
 
 {% if can_edit_inventory() %}
