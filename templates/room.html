@@ -128,7 +128,8 @@
             <tbody>
             {% for item in room_inventory %}
                 <tr class="inventoryStatus inventory-{{ item.status }}">
-                    <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}</td>
+                    <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}
+                        {% if can_edit_inventory() %}<button type="button" class="bomEditLink" data-edit-row="roomBomEdit{{ item.id }}">Edit</button>{% endif %}</td>
                     <td>{{ item.quantity }}</td>
                     <td>{{ item.item_model or '-' }}</td>
                     <td>{{ item.brand or '-' }}</td>
@@ -184,6 +185,42 @@
                     </td>
                     {% endif %}
                 </tr>
+                {% if can_edit_inventory() %}
+                <tr class="bomEditRow" id="roomBomEdit{{ item.id }}" hidden>
+                    <td colspan="7">
+                        <form method="post" action="{{ url_for('edit_inventory_item', item_id=item.id) }}" class="bomEditForm">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <div class="bomEditGrid">
+                                <div class="bomWide"><label>Item</label>
+                                    <input name="item_name" value="{{ item.item_name }}" required></div>
+                                <div><label>Brand</label><input name="brand" value="{{ item.brand or '' }}"></div>
+                                <div><label>Model #</label><input name="item_model" value="{{ item.item_model or '' }}"></div>
+                                <div><label>Qty</label>
+                                    <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity }}" required></div>
+                                <div><label>Room</label>
+                                    <select name="room_id">
+                                        <option value="">Project general</option>
+                                        {% for r in rooms %}
+                                            <option value="{{ r.id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                                        {% endfor %}
+                                    </select></div>
+                                <div><label>Condition</label>
+                                    <select name="item_condition">
+                                        {% for value, label in condition_options.items() %}
+                                            <option value="{{ value }}" {% if item.item_condition == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select></div>
+                                <div class="bomWide"><label>Note</label>
+                                    <input name="used_note" value="{{ item.used_note or '' }}" placeholder="Optional note about this line"></div>
+                            </div>
+                            <div class="bomEditActions">
+                                <button type="submit">Save Changes</button>
+                                <button type="button" class="btn-secondary bomEditCancel">Cancel</button>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+                {% endif %}
             {% else %}
                 <tr><td colspan="7" class="muted">No inventory allocated to this room.</td></tr>
             {% endfor %}
@@ -322,6 +359,10 @@ const addNoteToggle=document.getElementById("addNoteToggle"),addNotePanel=docume
 function openAddNote(){if(!addNotePanel)return;addNotePanel.hidden=false;if(addNoteToggle){addNoteToggle.setAttribute("aria-expanded","true");addNoteToggle.textContent="Hide the comment box"}}
 if(addNoteToggle&&addNotePanel){addNoteToggle.addEventListener("click",()=>{if(addNotePanel.hidden){openAddNote();addNotePanel.scrollIntoView({behavior:"smooth",block:"nearest"})}else{addNotePanel.hidden=true;addNoteToggle.setAttribute("aria-expanded","false");addNoteToggle.textContent="+ Add Comment / Picture / Audio"}})}
 const noteForm=document.getElementById("noteForm");if(noteForm){noteForm.addEventListener("submit",()=>{try{localStorage.setItem(ROOM_TAB_KEY,"notes")}catch(e){}})}
+// changing a BOM line reloads the room, so come back to the Inventory tab
+function rememberInventoryTab(){try{localStorage.setItem(ROOM_TAB_KEY,"inventory")}catch(e){}}
+if(roomPanels.inventory)roomPanels.inventory.querySelectorAll("form").forEach(f=>f.addEventListener("submit",rememberInventoryTab));
+document.querySelectorAll(".cartAddOverlay form").forEach(f=>f.addEventListener("submit",rememberInventoryTab));
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
 const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{showRoomTab("notes",true);openAddNote();const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}

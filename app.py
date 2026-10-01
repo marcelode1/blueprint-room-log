@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-01 V5"
+APP_BUILD = "2026-10-01 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -15354,6 +15354,7 @@ def room(room_id):
                            selected_date=selected_date, today=local_now().date().isoformat(),
                            status_options=INVENTORY_STATUS_LABELS,
                            location_options=INVENTORY_LOCATION_LABELS,
+                           condition_options=INVENTORY_CONDITION_LABELS,
                            task_cart=get_task_cart(), po_cart=get_po_cart(),
                            pickup_tasks_by_item=pickup_tasks_by_item,
                            active_po_by_item=active_po_by_item)

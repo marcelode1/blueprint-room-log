@@ -63,8 +63,39 @@
 .inOrderCartNote{background:#fef3c7;color:#b45309}
 .onOrderNote{background:#dbeafe;color:#1d4ed8;text-decoration:none;margin-left:6px}
 .onOrderNote:hover{text-decoration:underline}
+.bomEditLink{width:auto!important;min-height:0!important;margin:4px 0 0!important;padding:2px 8px!important;
+    font-size:11px!important;font-weight:800;background:none!important;border:1px solid var(--border)!important;
+    color:var(--muted)!important;border-radius:6px!important;cursor:pointer}
+.bomEditLink:hover{background:#e0ecff!important;color:#1d4ed8!important}
+.bomEditRow[hidden]{display:none}
+.bomEditRow td{background:#f1f6ff!important;padding:14px 16px!important}
+.bomEditGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 14px;align-items:end}
+.bomEditGrid .bomWide{grid-column:span 2}
+.bomEditGrid label{margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.bomEditGrid input,.bomEditGrid select{width:100%;margin:0;min-height:34px}
+.bomEditActions{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.bomEditActions button{margin:0}
+@media(max-width:760px){.bomEditGrid .bomWide{grid-column:span 1}}
 </style>
 <script>
+// Edit on a BOM line opens the row underneath it.
+document.addEventListener("click", event => {
+    const open = event.target.closest("[data-edit-row]");
+    if (open) {
+        const row = document.getElementById(open.dataset.editRow);
+        if (row) {
+            row.hidden = !row.hidden;
+            if (!row.hidden) {
+                const first = row.querySelector("input[name='item_name']");
+                if (first) first.focus();
+            }
+        }
+        return;
+    }
+    const cancel = event.target.closest(".bomEditCancel");
+    if (cancel) cancel.closest(".bomEditRow").hidden = true;
+});
+
 const cartAddOverlay = document.getElementById("cartAddOverlay");
 const cartAddItemId = document.getElementById("cartAddItemId");
 const cartAddTitle = document.getElementById("cartAddTitle");
