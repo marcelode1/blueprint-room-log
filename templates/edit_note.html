@@ -7,9 +7,19 @@
         <input type="hidden" name="next" value="{{ next_url }}">
         <label>Date</label>
         <input type="date" name="note_date" value="{{ note.note_date }}" required>
+        <label for="noteRoom">Room</label>
+        <select name="room_id" id="noteRoom">
+            {% for r in rooms %}
+                <option value="{{ r.id }}" {% if r.id == note.room_id %}selected{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+        </select>
+        <p class="muted noteRoomHint">Filed in the wrong room? Pick the right one and the comment, picture and
+            audio move with it.</p>
+
         <label>Comment</label>
         <textarea name="comment" rows="6" required>{{ note.comment }}</textarea>
         <button type="submit">Save Changes</button>
     </form>
 </div>
+<style>.noteRoomHint{margin:-4px 0 10px;font-size:12.5px}</style>
 {% endblock %}

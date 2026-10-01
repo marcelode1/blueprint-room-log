@@ -1,4 +1,4 @@
-﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify
+﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify, g
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-09-30 V11"
+APP_BUILD = "2026-10-01 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6219,9 +6219,57 @@ def attendance_pair_sort_key(pair):
     )
 
 
+def back_project_id():
+    """The project the current page belongs to, worked out from whatever the URL
+    carries - the project itself, a room, a comment or a task. Used for the
+    Back to Project button; looked up once per request."""
+    if "user_id" not in session:
+        return None
+    if hasattr(g, "_back_project_id"):
+        return g._back_project_id
+    g._back_project_id = None
+    args = dict(request.view_args or {})
+    args.update({k: v for k, v in request.args.items() if k.endswith("_id")})
+
+    def as_int(value):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    project_id = as_int(args.get("project_id"))
+    lookups = [
+        (as_int(args.get("room_id")), "SELECT project_id FROM rooms WHERE id = %s"),
+        (as_int(args.get("note_id")), "SELECT rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s"),
+        (as_int(args.get("task_id")), "SELECT project_id FROM tasks WHERE id = %s"),
+    ]
+    conn = None
+    try:
+        if not project_id:
+            for value, sql in lookups:
+                if not value:
+                    continue
+                conn = conn or db()
+                row = conn.execute(sql, (value,)).fetchone()
+                if row and row.get("project_id"):
+                    project_id = row["project_id"]
+                    break
+        if project_id:
+            conn = conn or db()
+            if user_can_access_project(conn, project_id):
+                g._back_project_id = project_id
+    except Exception as e:
+        print("Back to Project lookup skipped:", e)
+    finally:
+        if conn:
+            conn.close()
+    return g._back_project_id
+
+
 @app.context_processor
 def utility_processor():
     return dict(
+        back_project_id=back_project_id,
         file_url=file_url,
         is_main_admin=is_main_admin,
         can_add_notes=can_add_notes,
@@ -20573,15 +20621,32 @@ def edit_note(note_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    rooms = conn.execute(
+        "SELECT id, name FROM rooms WHERE project_id = %s ORDER BY name",
+        (note["project_id"],)
+    ).fetchall()
     if request.method == "POST":
-        conn.execute("UPDATE notes SET comment = %s, note_date = %s WHERE id = %s", (request.form["comment"].strip(), request.form["note_date"], note_id))
+        # Put it in another room of the same project when it was filed in the
+        # wrong one. The picture and audio travel with the comment.
+        room_id = project_room_id_or_none(conn, note["project_id"], request.form.get("room_id")) or note["room_id"]
+        moved = room_id != note["room_id"]
+        conn.execute(
+            "UPDATE notes SET comment = %s, note_date = %s, room_id = %s WHERE id = %s",
+            (request.form["comment"].strip(), request.form["note_date"], room_id, note_id)
+        )
         conn.commit()
-        room_id = note["room_id"]
         conn.close()
-        flash("Comment updated.")
+        if moved:
+            new_room = next((r["name"] for r in rooms if r["id"] == room_id), "another room")
+            flash(f"Comment updated and moved to {new_room}.")
+        else:
+            flash("Comment updated.")
         return redirect(safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=room_id))
     conn.close()
-    return render_template("edit_note.html", note=note, next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"]))
+    return render_template(
+        "edit_note.html", note=note, rooms=rooms,
+        next_url=safe_next_url("mobile_room" if is_mobile_request() else "room", room_id=note["room_id"])
+    )
 
 
 @app.route("/backup")
