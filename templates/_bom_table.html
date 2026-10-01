@@ -1,0 +1,156 @@
+{# One BOM, wherever it is shown - a whole project or a single room. The caller
+   sets bom_items and turns on the columns that only make sense project-wide. #}
+{% set show_supplier = bom_show_supplier|default(false) %}
+{% set show_room = bom_show_room|default(false) %}
+{% set can_edit = can_edit_inventory() %}
+{% set delete_col = bom_show_delete|default(false) and is_main_admin() %}
+{% set prefix = bom_edit_prefix|default('bomEdit') %}
+{% set span = 6 + (1 if show_supplier else 0) + (1 if show_room else 0) + (1 if can_edit else 0) + (1 if delete_col else 0) %}
+{% set cart_item_ids = task_cart|default([])|map(attribute='inventory_item_id')|list %}
+{% set po_cart_item_ids = po_cart|default([])|map(attribute='inventory_item_id')|list %}
+<div class="inventoryWrap">
+    <table class="inventoryTable bomTable {{ bom_table_class|default('') }}">
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Model #</th>
+                <th>Brand</th>
+                {% if show_supplier %}<th>Supplier</th>{% endif %}
+                {% if show_room %}<th>Room</th>{% endif %}
+                <th>Status</th>
+                <th>Located</th>
+                {% if can_edit %}<th>Action</th>{% endif %}
+                {% if delete_col %}<th>Delete</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in bom_items %}
+            <tr class="inventoryStatus inventory-{{ item.status }}">
+                <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}
+                    {% if can_edit %}<button type="button" class="bomEditLink" data-edit-row="{{ prefix }}{{ item.id }}">Edit</button>{% endif %}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.item_model or '-' }}</td>
+                <td>{{ item.brand or '-' }}</td>
+                {% if show_supplier %}
+                <td>
+                    {% if can_edit %}
+                    <form method="post" action="{{ url_for('update_inventory_supplier', item_id=item.id) }}" class="inventoryCompactForm">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <select name="supplier_id" class="inventorySubmitSelect">
+                            <option value="">No supplier</option>
+                            {% for s in suppliers %}
+                                <option value="{{ s.id }}" {% if item.supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                    {% else %}
+                        {{ item.supplier_name or '-' }}
+                    {% endif %}
+                    {% if item.supplier_address %}<a class="muted inventorySmall" target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Map</a>{% endif %}
+                </td>
+                {% endif %}
+                {% if show_room %}<td>{{ item.room_name or 'Project general' }}</td>{% endif %}
+                <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
+                <td>
+                    {% if can_edit %}
+                    <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryCompactForm">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <input type="hidden" name="location_detail" value="{{ item.location_detail or '' }}">
+                        <select name="location_type" class="locationSelect" data-item-id="{{ item.id }}"
+                                data-current-location="{{ item.location_type or 'warehouse' }}">
+                            {% for value, label in location_options.items() %}
+                                <option value="{{ value }}" {% if item.location_type == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                            <option value="__add_location__">+ Add a place...</option>
+                        </select>
+                    </form>
+                    {% else %}
+                        {{ inventory_location_label(item.location_type) }}
+                    {% endif %}
+                    {% if item.location_detail %}<span class="muted inventorySmall">{{ item.location_detail }}</span>{% endif %}
+                </td>
+                {% if can_edit %}
+                <td>
+                    <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <input type="hidden" name="project_id" value="{{ project.id }}">
+                        <select name="status" class="inventoryActionSelect" data-current-status="{{ item.status }}"
+                                data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=item.room_id, supplier_id=item.supplier_id, pickup_item_id=item.id) }}"
+                                data-item-id="{{ item.id }}" data-item-name="{{ item.item_name }}" data-item-room-id="{{ item.room_id or '' }}"
+                                data-item-qty="{{ item.quantity or 1 }}" data-supplier-id="{{ item.supplier_id or '' }}"
+                                data-supplier-name="{{ item.supplier_name or '' }}">
+                            {% for value, label in status_options.items() %}<option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                            {% if item.id not in pickup_tasks_by_item %}
+                            <option value="__create_pickup_task__">Create a pickup task</option>
+                            {% endif %}
+                            {% if item.id not in cart_item_ids %}
+                            <option value="__create_task_with_material__">Create a Task with this Material</option>
+                            {% endif %}
+                            {% if item.id not in po_cart_item_ids and item.id not in active_po_by_item %}
+                            <option value="__create_an_order__">Create an Order</option>
+                            {% endif %}
+                        </select>
+                        {% if item.id in active_po_by_item %}
+                            {% set apo = active_po_by_item[item.id] %}
+                            <a class="inTaskCartNote onOrderNote" href="{{ url_for('order_view', po_id=apo.po_id) }}">{{ apo.po_number }} &middot; {{ po_status_label(apo.status) }}</a>
+                        {% endif %}
+                        {% if item.id in cart_item_ids %}<span class="inTaskCartNote">In Task Cart</span>{% endif %}
+                        {% if item.id in po_cart_item_ids %}<span class="inTaskCartNote inOrderCartNote">In Order Cart</span>{% endif %}
+                        {% if item.id in pickup_tasks_by_item %}
+                            <a class="inTaskCartNote pickupTaskNote" href="{{ url_for('open_task_workspace', task_id=pickup_tasks_by_item[item.id].id) }}">Pickup task {{ pickup_tasks_by_item[item.id].task_number or pickup_tasks_by_item[item.id].id }} created</a>
+                        {% endif %}
+                    </form>
+                </td>
+                {% endif %}
+                {% if delete_col %}
+                <td>
+                    <form method="post" action="{{ url_for('delete_inventory_item', item_id=item.id) }}" onsubmit="return confirm('Delete this inventory item?');">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <button type="submit" class="btn-danger">Delete</button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% if can_edit %}
+            <tr class="bomEditRow" id="{{ prefix }}{{ item.id }}" hidden>
+                <td colspan="{{ span }}">
+                    <form method="post" action="{{ url_for('edit_inventory_item', item_id=item.id) }}" class="bomEditForm">
+                        <input type="hidden" name="next" value="{{ request.full_path }}">
+                        <div class="bomEditGrid">
+                            <div class="bomWide"><label>Item</label>
+                                <input name="item_name" value="{{ item.item_name }}" required></div>
+                            <div><label>Brand</label><input name="brand" value="{{ item.brand or '' }}"></div>
+                            <div><label>Model #</label><input name="item_model" value="{{ item.item_model or '' }}"></div>
+                            <div><label>Qty</label>
+                                <input name="quantity" type="number" step="0.01" min="0.01" value="{{ item.quantity }}" required></div>
+                            <div><label>Room</label>
+                                <select name="room_id">
+                                    <option value="">Project general</option>
+                                    {% for r in rooms %}
+                                        <option value="{{ r.id }}" {% if item.room_id == r.id %}selected{% endif %}>{{ r.name }}</option>
+                                    {% endfor %}
+                                </select></div>
+                            <div><label>Condition</label>
+                                <select name="item_condition">
+                                    {% for value, label in condition_options.items() %}
+                                        <option value="{{ value }}" {% if item.item_condition == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select></div>
+                            <div class="bomWide"><label>Note</label>
+                                <input name="used_note" value="{{ item.used_note or '' }}" placeholder="Optional note about this line"></div>
+                        </div>
+                        <div class="bomEditActions">
+                            <button type="submit">Save Changes</button>
+                            <button type="button" class="btn-secondary bomEditCancel">Cancel</button>
+                        </div>
+                    </form>
+                </td>
+            </tr>
+            {% endif %}
+        {% else %}
+            <tr><td colspan="{{ span }}" class="muted">{{ bom_empty_text|default('No BOM lines yet.') }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
