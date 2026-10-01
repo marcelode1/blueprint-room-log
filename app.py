@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-01 V3"
+APP_BUILD = "2026-10-01 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -12967,6 +12967,42 @@ def delete_inventory_item(item_id):
 
 
 
+def inventory_action_context(conn, items):
+    """What the Action dropdown needs to know about a list of BOM lines: which
+    ones already have a pickup task, and which ones are already on a live
+    purchase order. Both options are hidden for those lines."""
+    pickup_tasks_by_item = {}
+    active_po_by_item = {}
+    item_ids = [item["id"] for item in items or []]
+    if not item_ids:
+        return pickup_tasks_by_item, active_po_by_item
+    try:
+        for row in conn.execute(
+            "SELECT id, task_number, supplier_inventory_item_id FROM tasks WHERE supplier_inventory_item_id = ANY(%s)",
+            (item_ids,)
+        ).fetchall():
+            pickup_tasks_by_item[row["supplier_inventory_item_id"]] = row
+    except Exception as e:
+        conn.rollback()
+        print("Pickup task lookup failed:", e)
+    try:
+        for row in conn.execute(
+            """
+            SELECT inventory_items.id AS item_id, purchase_orders.id AS po_id,
+                   purchase_orders.po_number, purchase_orders.status
+            FROM inventory_items
+            JOIN purchase_orders ON inventory_items.po_id = purchase_orders.id
+            WHERE inventory_items.id = ANY(%s) AND purchase_orders.status <> 'canceled'
+            """,
+            (item_ids,)
+        ).fetchall():
+            active_po_by_item[row["item_id"]] = row
+    except Exception as e:
+        conn.rollback()
+        print("Active PO lookup failed:", e)
+    return pickup_tasks_by_item, active_po_by_item
+
+
 @app.route("/project/<int:project_id>/materials", methods=["GET", "POST"])
 @login_required
 def project_materials(project_id):
@@ -13010,39 +13046,9 @@ def project_materials(project_id):
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
 
-    # Items that already have a pickup task, so that option can be hidden.
-    pickup_tasks_by_item = {}
-    material_ids = [m["id"] for m in materials]
-    if material_ids:
-        try:
-            for row in conn.execute(
-                "SELECT id, task_number, supplier_inventory_item_id FROM tasks WHERE supplier_inventory_item_id = ANY(%s)",
-                (material_ids,)
-            ).fetchall():
-                pickup_tasks_by_item[row["supplier_inventory_item_id"]] = row
-        except Exception as e:
-            conn.rollback()
-            print("Pickup task lookup failed:", e)
-
-    # Materials already sitting on a live purchase order - the Create an Order
-    # option is hidden for these until that PO is canceled or deleted.
-    active_po_by_item = {}
-    if material_ids:
-        try:
-            for row in conn.execute(
-                """
-                SELECT inventory_items.id AS item_id, purchase_orders.id AS po_id,
-                       purchase_orders.po_number, purchase_orders.status
-                FROM inventory_items
-                JOIN purchase_orders ON inventory_items.po_id = purchase_orders.id
-                WHERE inventory_items.id = ANY(%s) AND purchase_orders.status <> 'canceled'
-                """,
-                (material_ids,)
-            ).fetchall():
-                active_po_by_item[row["item_id"]] = row
-        except Exception as e:
-            conn.rollback()
-            print("Active PO lookup failed:", e)
+    # Lines that already have a pickup task or sit on a live purchase order:
+    # those options are hidden for them.
+    pickup_tasks_by_item, active_po_by_item = inventory_action_context(conn, materials)
 
     # Order cart: flag anything already sitting unassigned in general inventory
     # so the admin can allocate it instead of buying the same thing twice.
@@ -15279,7 +15285,7 @@ def room(room_id):
     users = conn.execute(
         "SELECT id, name, email, role FROM users ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, name"
     ).fetchall() if is_main_admin() else []
-    suppliers = fetch_suppliers(conn) if is_main_admin() else []
+    suppliers = fetch_suppliers(conn) if is_main_admin() or can_edit_inventory() else []
     tasks = conn.execute(
         """
         SELECT tasks.*, users.name AS assigned_user_name
@@ -15292,7 +15298,17 @@ def room(room_id):
         (room_id, room_id, session.get("user_id"), session.get("role"))
     ).fetchall()
     tasks = load_task_details(conn, tasks, room_id)
-    room_inventory = fetch_inventory_items(conn, {"room_id": room_id}) if can_view_inventory() else []
+    # The room's own BOM, with everything the Action list on a line needs.
+    room_inventory = []
+    pickup_tasks_by_item, active_po_by_item = {}, {}
+    if can_view_inventory():
+        try:
+            sync_po_inventory_statuses(conn)
+        except Exception as e:
+            conn.rollback()
+            print("Inventory status sync failed:", e)
+        room_inventory = fetch_inventory_items(conn, {"room_id": room_id})
+        pickup_tasks_by_item, active_po_by_item = inventory_action_context(conn, room_inventory)
 
     if request.method == "POST":
         file = request.files.get("photo") or request.files.get("photo_camera")
@@ -15333,7 +15349,14 @@ def room(room_id):
     notes = conn.execute(query, tuple(params)).fetchall()
     catalog = part_catalog_options(conn)
     conn.close()
-    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, users=users, suppliers=suppliers, part_catalog=catalog, selected_date=selected_date, today=local_now().date().isoformat())
+    return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks,
+                           room_inventory=room_inventory, users=users, suppliers=suppliers, part_catalog=catalog,
+                           selected_date=selected_date, today=local_now().date().isoformat(),
+                           status_options=INVENTORY_STATUS_LABELS,
+                           location_options=INVENTORY_LOCATION_LABELS,
+                           task_cart=get_task_cart(), po_cart=get_po_cart(),
+                           pickup_tasks_by_item=pickup_tasks_by_item,
+                           active_po_by_item=active_po_by_item)
 
 
 @app.route("/project/<int:project_id>/timeline")

@@ -109,30 +109,87 @@
         <h3>Room Inventory</h3>
         <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Open Project Inventory</a>
     </div>
-    {% for item in room_inventory %}
-        <div class="card roomInventoryItem inventory-{{ item.status }}">
-            <strong>{{ item.item_name }}</strong>
-            <p><strong>Qty:</strong> {{ item.quantity }} | <strong>Model #:</strong> {{ item.item_model or '-' }} | <strong>Brand:</strong> {{ item.brand or '-' }}</p>
-            {% if item.supplier_name %}<p><strong>Supplier:</strong> {{ item.supplier_name }}{% if item.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
-            <p><strong>Status:</strong> {{ inventory_status_label(item.status) }} | <strong>Located:</strong> {{ inventory_location_label(item.location_type) }}{% if item.location_detail %} - {{ item.location_detail }}{% endif %}</p>
-            {% if item.used_note %}<p>{{ item.used_note }}</p>{% endif %}
-            {% if item.picture_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=item.picture_file) }}">{% endif %}
-            {% if can_edit_inventory() and item.status != 'used' %}
-            <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
-                <input type="hidden" name="next" value="{{ request.full_path }}">
-                <input type="hidden" name="status" value="{{ 'purchased_waiting_arrival' if item.status == 'needs_purchase' else 'used' }}">
-                <input type="hidden" name="project_id" value="{{ project.id }}">
-                <input type="hidden" name="room_id" value="{{ room.id }}">
-                {% if item.status != 'needs_purchase' %}<label>Used Note</label>
-                <input name="used_note" placeholder="Where/how it was used">
-                {% endif %}
-                <label class="inventoryCheck"><input type="checkbox" onchange="this.form.submit()"> {{ 'Purchased Waiting Arrival' if item.status == 'needs_purchase' else 'Used' }}</label>
-            </form>
-            {% endif %}
-        </div>
-    {% else %}
-        <p class="muted">No inventory allocated to this room.</p>
-    {% endfor %}
+    {# the same BOM line, and the same Action list, as the project BOM #}
+    {% set cart_item_ids = task_cart|default([])|map(attribute='inventory_item_id')|list %}
+    {% set po_cart_item_ids = po_cart|default([])|map(attribute='inventory_item_id')|list %}
+    <div class="inventoryWrap">
+        <table class="inventoryTable roomBomTable">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th>Model #</th>
+                    <th>Brand</th>
+                    <th>Status</th>
+                    <th>Located</th>
+                    {% if can_edit_inventory() %}<th>Action</th>{% endif %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in room_inventory %}
+                <tr class="inventoryStatus inventory-{{ item.status }}">
+                    <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.item_model or '-' }}</td>
+                    <td>{{ item.brand or '-' }}</td>
+                    <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
+                    <td>
+                        {% if item.status in ['needs_purchase', 'ordered', 'unavailable', 'backordered'] %}
+                            <span class="locationUnavailable">Unavailable</span>
+                        {% elif can_edit_inventory() %}
+                        <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryCompactForm">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="location_detail" value="{{ item.location_detail or '' }}">
+                            <select name="location_type" onchange="this.form.submit()">
+                                {% for value, label in location_options.items() %}
+                                    <option value="{{ value }}" {% if item.location_type == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        {% else %}
+                            {{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}
+                        {% endif %}
+                    </td>
+                    {% if can_edit_inventory() %}
+                    <td>
+                        <form method="post" action="{{ url_for('update_inventory_status', item_id=item.id) }}">
+                            <input type="hidden" name="next" value="{{ request.full_path }}">
+                            <input type="hidden" name="project_id" value="{{ project.id }}">
+                            <select name="status" class="inventoryActionSelect" data-current-status="{{ item.status }}"
+                                    data-pickup-url="{{ url_for('create_global_task', project_id=project.id, room_id=item.room_id, supplier_id=item.supplier_id, pickup_item_id=item.id) }}"
+                                    data-item-id="{{ item.id }}" data-item-name="{{ item.item_name }}" data-item-room-id="{{ item.room_id or '' }}"
+                                    data-item-qty="{{ item.quantity or 1 }}" data-supplier-id="{{ item.supplier_id or '' }}"
+                                    data-supplier-name="{{ item.supplier_name or '' }}">
+                                {% for value, label in status_options.items() %}<option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                                {% if item.id not in pickup_tasks_by_item %}
+                                <option value="__create_pickup_task__">Create a pickup task</option>
+                                {% endif %}
+                                {% if item.id not in cart_item_ids %}
+                                <option value="__create_task_with_material__">Create a Task with this Material</option>
+                                {% endif %}
+                                {% if item.id not in po_cart_item_ids and item.id not in active_po_by_item %}
+                                <option value="__create_an_order__">Create an Order</option>
+                                {% endif %}
+                            </select>
+                            {% if item.id in active_po_by_item %}
+                                {% set apo = active_po_by_item[item.id] %}
+                                <a class="inTaskCartNote onOrderNote" href="{{ url_for('order_view', po_id=apo.po_id) }}">{{ apo.po_number }} &middot; {{ po_status_label(apo.status) }}</a>
+                            {% endif %}
+                            {% if item.id in cart_item_ids %}<span class="inTaskCartNote">In Task Cart</span>{% endif %}
+                            {% if item.id in po_cart_item_ids %}<span class="inTaskCartNote inOrderCartNote">In Order Cart</span>{% endif %}
+                            {% if item.id in pickup_tasks_by_item %}
+                                <a class="inTaskCartNote pickupTaskNote" href="{{ url_for('open_task_workspace', task_id=pickup_tasks_by_item[item.id].id) }}">Pickup task {{ pickup_tasks_by_item[item.id].task_number or pickup_tasks_by_item[item.id].id }} created</a>
+                            {% endif %}
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+            {% else %}
+                <tr><td colspan="7" class="muted">No inventory allocated to this room.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 </section>
 {% endif %}
@@ -222,11 +279,14 @@
 <button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
 {% endif %}
 
+{% if show_inventory %}{% include "_inventory_actions.html" %}{% endif %}
+
 <style>
+.roomBomTable{min-width:720px}.roomBomTable td,.roomBomTable th{padding:9px}.roomBomTable .muted{margin:4px 0 0;font-size:12.5px}
 .roomTopCard h2{margin-bottom:4px}.roomProjectLine{margin:0 0 12px}.roomHeaderActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.roomHeaderActions form{margin:0}.roomHeaderActions button{width:auto!important;min-height:36px!important;padding:7px 11px!important;margin:0!important;border-radius:8px!important;font-size:13px!important}.roomSwitch{display:flex;gap:7px;align-items:center}.roomSwitch label{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.roomSwitch select{width:auto;min-width:150px;margin:0;padding:7px 10px;font-size:13px;border-radius:8px}
 .roomTabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}.roomTab{width:auto!important;margin:0!important;min-height:auto!important;padding:10px 15px!important;font-size:14px!important;font-weight:800;border-radius:11px!important;border:1px solid var(--border)!important;background:var(--card);color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--shadow)}.roomTab:hover{background:rgba(37,99,235,.1);color:var(--primary-dark);border-color:var(--primary)!important}body.dark .roomTab:hover{background:rgba(96,165,250,.16);color:var(--primary)}.roomTab.isActive,.roomTab.isActive:hover{background:var(--primary-dark);border-color:var(--primary-dark)!important;color:#fff}.roomTabCount{min-width:22px;padding:1px 7px;border-radius:999px;background:rgba(15,23,42,.09);font-size:12px;font-weight:800;text-align:center}body.dark .roomTabCount{background:rgba(255,255,255,.12)}.roomTab.isActive .roomTabCount{background:rgba(255,255,255,.26);color:#fff}
 .roomPanel[hidden]{display:none}.roomPanelHead{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between;margin-bottom:12px}.roomPanelHead h3{margin:0}.roomPanelHead .btn-link{margin:0}.roomNotesTools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.roomNotesTools button{width:auto!important;margin:0!important;min-height:38px!important;padding:8px 13px!important;font-size:13px!important;border-radius:9px!important}.roomDateFilter{display:flex;gap:7px;align-items:center;margin:0}.roomDateFilter input{width:auto;margin:0;padding:8px 10px;font-size:13px;border-radius:9px}.roomDateFilter .btn-link{margin:0}.roomAddNote{border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:18px;background:rgba(37,99,235,.05)}.roomAddNote[hidden]{display:none}
-#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-ordered{border-left:8px solid #4f46e5;background:#eef2ff}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}.roomInventoryItem.inventory-client_supplied{border-left:8px solid #7c3aed;background:#f5f3ff}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}
+#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}
 @media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.roomTabs{gap:6px}.roomTab{flex:1 1 42%;justify-content:center;padding:11px 8px!important;font-size:13px!important}.roomSwitch{width:100%}.roomSwitch select{flex:1}.roomPanelHead{align-items:stretch}.roomNotesTools,.roomDateFilter{width:100%}.roomNotesTools button,.roomDateFilter input{flex:1}}
 </style>
 <div id="drawModal">

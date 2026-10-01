@@ -1,0 +1,144 @@
+{# The Action dropdown on a BOM line, wherever that line is shown: the Task Cart
+   and Order Cart pop-ups it opens, the styling of the row, and the script that
+   ties them together. Include once per page, below the table. #}
+{% if can_edit_inventory() %}
+<div class="cartAddOverlay" id="orderAddOverlay" hidden>
+    <div class="cartAddModal">
+        <h3 style="margin-top:0" id="orderAddTitle">Add to Order Cart</h3>
+        <form method="post" action="{{ url_for('add_to_po_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="inventory_item_id" id="orderAddItemId">
+            <label>Supplier</label>
+            <select name="supplier_id" id="orderAddSupplier" required>
+                <option value="">Choose the supplier to order from</option>
+                {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+            </select>
+            <label>Quantity to Order</label>
+            <input type="number" name="quantity" id="orderAddQty" step="0.01" min="0.01" value="1" required>
+            <label>Note for the supplier (optional)</label>
+            <input name="comment" id="orderAddComment" placeholder="Colour, spec, urgency...">
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button type="submit" style="flex:1;margin:0">Add to Order Cart</button>
+                <button type="button" class="btn-secondary" id="orderAddCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="cartAddOverlay" id="cartAddOverlay" hidden>
+    <div class="cartAddModal">
+        <h3 style="margin-top:0" id="cartAddTitle">Add to Task Cart</h3>
+        <form method="post" action="{{ url_for('add_to_task_cart') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="inventory_item_id" id="cartAddItemId">
+            <label>Quantity</label>
+            <input type="number" name="quantity" id="cartAddQty" step="0.01" min="0.01" value="1">
+            <label>Room This Is For</label>
+            <select name="room_id" id="cartAddRoom">
+                <option value="">Project general</option>
+                {% for r in rooms %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+            </select>
+            <label>What needs to be done with this material</label>
+            <textarea name="comment" id="cartAddComment" rows="2" placeholder="e.g. Mount on the north wall"></textarea>
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button type="submit" style="flex:1;margin:0">Add to Task Cart</button>
+                <button type="button" class="btn-secondary" id="cartAddCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.cartAddOverlay{position:fixed;inset:0;z-index:2100;background:rgba(15,23,42,.58);display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto}
+.cartAddOverlay[hidden]{display:none!important}
+.cartAddModal{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:460px;width:100%;padding:18px;margin-top:40px}
+.inventoryWrap{overflow-x:auto}.inventoryTable{width:100%;min-width:1050px;border-collapse:collapse}
+.inventoryTable th,.inventoryTable td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}.inventoryTable th{background:#eef2f7}
+.inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}.inventory-picked_up{background:#dbeafe}.inventory-ordered{background:#eef2ff}.inventory-purchased_waiting_arrival{background:#e0f2fe}.inventory-unavailable{background:#f1f5f9}.inventory-backordered{background:#fef3c7}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-ordered .statusBadge{background:#4f46e5}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}
+.inventoryCompactForm{display:grid;gap:6px;min-width:145px}.inventoryCompactForm select,.inventoryCompactForm input{min-height:34px;padding:6px 8px;font-size:13px}.inventorySmall{display:block;font-size:12px;margin-top:4px}
+.locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
+.inTaskCartNote{display:inline-block;margin-top:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:3px 9px}
+.inOrderCartNote{background:#fef3c7;color:#b45309}
+.onOrderNote{background:#dbeafe;color:#1d4ed8;text-decoration:none;margin-left:6px}
+.onOrderNote:hover{text-decoration:underline}
+</style>
+<script>
+const cartAddOverlay = document.getElementById("cartAddOverlay");
+const cartAddItemId = document.getElementById("cartAddItemId");
+const cartAddTitle = document.getElementById("cartAddTitle");
+const cartAddQty = document.getElementById("cartAddQty");
+const cartAddRoom = document.getElementById("cartAddRoom");
+const cartAddComment = document.getElementById("cartAddComment");
+const cartAddCancelBtn = document.getElementById("cartAddCancelBtn");
+
+document.querySelectorAll(".inventoryActionSelect").forEach(select => {
+    select.addEventListener("change", () => {
+        if (select.value === "__create_pickup_task__") {
+            window.location.href = select.dataset.pickupUrl;
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
+        if (select.value === "__create_an_order__") {
+            const ov = document.getElementById("orderAddOverlay");
+            if (ov) {
+                document.getElementById("orderAddItemId").value = select.dataset.itemId || "";
+                document.getElementById("orderAddTitle").textContent =
+                    "Order " + (select.dataset.itemName || "material");
+                document.getElementById("orderAddQty").value = select.dataset.itemQty || "1";
+                document.getElementById("orderAddComment").value = "";
+                const supSel = document.getElementById("orderAddSupplier");
+                if (supSel) supSel.value = select.dataset.supplierId || "";
+                ov.hidden = false;
+                document.body.style.overflow = "hidden";
+                if (supSel && !supSel.value) supSel.focus();
+            }
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
+        if (select.value === "__create_task_with_material__") {
+            if (cartAddOverlay) {
+                cartAddItemId.value = select.dataset.itemId || "";
+                cartAddTitle.textContent = "Add " + (select.dataset.itemName || "material") + " to Task Cart";
+                cartAddQty.value = "1";
+                if (cartAddRoom) cartAddRoom.value = select.dataset.itemRoomId || "";
+                cartAddComment.value = "";
+                cartAddOverlay.hidden = false;
+                document.body.style.overflow = "hidden";
+                cartAddComment.focus();
+            }
+            select.value = select.dataset.currentStatus || "";
+            return;
+        }
+        select.form.submit();
+    });
+});
+
+const orderAddOverlay = document.getElementById("orderAddOverlay");
+const orderAddCancelBtn = document.getElementById("orderAddCancelBtn");
+function closeOrderAdd() {
+    if (!orderAddOverlay) return;
+    orderAddOverlay.hidden = true;
+    document.body.style.overflow = "";
+}
+if (orderAddCancelBtn) orderAddCancelBtn.addEventListener("click", closeOrderAdd);
+if (orderAddOverlay) {
+    orderAddOverlay.addEventListener("click", e => { if (e.target === orderAddOverlay) closeOrderAdd(); });
+}
+
+if (cartAddCancelBtn) {
+    cartAddCancelBtn.addEventListener("click", () => {
+        cartAddOverlay.hidden = true;
+        document.body.style.overflow = "";
+    });
+}
+if (cartAddOverlay) {
+    cartAddOverlay.addEventListener("click", e => {
+        if (e.target === cartAddOverlay) {
+            cartAddOverlay.hidden = true;
+            document.body.style.overflow = "";
+        }
+    });
+}
+</script>
