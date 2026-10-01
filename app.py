@@ -1,4 +1,4 @@
-﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify, g
+﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify, g, has_request_context
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-01 V6"
+APP_BUILD = "2026-10-01 V7"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1326,6 +1326,13 @@ def init_db():
     upgrade_real_columns_to_double(conn)
     clear_legacy_po_cart_note(conn)
     split_po_activity_from_notes(conn)
+
+    try:
+        ensure_inventory_location_table(conn)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Inventory location table skipped:", e)
 
     conn.close()
 
@@ -3856,10 +3863,13 @@ SUPPLIER_TASK_STATUS_LABELS = {
     "backordered": "Backordered"
 }
 
+# The places material can be. These always exist; a company can add its own
+# through the Located dropdown, and those are kept in inventory_locations.
 INVENTORY_LOCATION_LABELS = {
     "storage": "Storage",
-    "warehouse": "Warehouse",
     "job_site": "Job site",
+    "warehouse": "Warehouse",
+    "office": "Office",
     "truck": "Truck"
 }
 
@@ -3897,9 +3907,61 @@ def unit_measure_label(value):
     return UNIT_MEASURE_LABELS.get(clean_unit_measure(value) or "UN", "Unit")
 
 
+def ensure_inventory_location_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inventory_locations (
+            id SERIAL PRIMARY KEY,
+            location_key TEXT UNIQUE NOT NULL,
+            label TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 100,
+            created_by INTEGER,
+            created_at TEXT
+        )
+        """
+    )
+
+
+def inventory_location_key(label):
+    """A short, stable key for a place someone typed in."""
+    key = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_")
+    return key[:40] or ""
+
+
+def inventory_location_options(conn=None):
+    """Where material can be: the built-in places, then anything this company
+    added. Looked up once per request."""
+    if has_request_context() and getattr(g, "_inventory_locations", None):
+        return g._inventory_locations
+    options = dict(INVENTORY_LOCATION_LABELS)
+    owned = None
+    try:
+        if conn is None:
+            owned = conn = db()
+        ensure_inventory_location_table(conn)
+        rows = conn.execute(
+            "SELECT location_key, label FROM inventory_locations ORDER BY sort_order, lower(label)"
+        ).fetchall()
+        for row in rows:
+            options[row["location_key"]] = row["label"]
+    except Exception as e:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        print("Inventory location list failed:", e)
+    finally:
+        if owned is not None:
+            owned.close()
+    if has_request_context():
+        g._inventory_locations = options
+    return options
+
+
 def clean_inventory_location(value):
     value = (value or "warehouse").strip()
-    return value if value in INVENTORY_LOCATION_LABELS else "warehouse"
+    return value if value in inventory_location_options() else "warehouse"
 
 
 def clean_inventory_condition(value):
@@ -3912,7 +3974,7 @@ def inventory_status_label(value):
 
 
 def inventory_location_label(value):
-    return INVENTORY_LOCATION_LABELS.get(value or "", "Warehouse")
+    return inventory_location_options().get(value or "", "Warehouse")
 
 
 def inventory_condition_label(value):
@@ -6432,7 +6494,7 @@ def mobile_inventory():
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
-        location_options=INVENTORY_LOCATION_LABELS,
+        location_options=inventory_location_options(),
         condition_options=INVENTORY_CONDITION_LABELS,
     )
 
@@ -6632,7 +6694,7 @@ def mobile_project_materials(project_id):
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
-        location_options=INVENTORY_LOCATION_LABELS,
+        location_options=inventory_location_options(),
         condition_options=INVENTORY_CONDITION_LABELS
     )
 
@@ -12688,7 +12750,7 @@ def inventory():
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
-        location_options=INVENTORY_LOCATION_LABELS,
+        location_options=inventory_location_options(),
         condition_options=INVENTORY_CONDITION_LABELS
     )
 
@@ -12846,6 +12908,60 @@ def update_inventory_location(item_id):
     conn.commit()
     conn.close()
     flash("Inventory location updated.")
+    return redirect(safe_next_url("inventory"))
+
+
+@app.route("/inventory/location/new", methods=["POST"])
+@login_required
+def add_inventory_location():
+    """Add a place of your own to the Located list. It is kept for good, so it
+    shows up on every job from then on."""
+    if not can_edit_inventory():
+        flash("You do not have permission to update inventory.")
+        return redirect(safe_next_url("inventory"))
+    label = " ".join((request.form.get("label") or "").split())[:60]
+    if not label:
+        flash("Type the name of the place first.")
+        return redirect(safe_next_url("inventory"))
+    key = inventory_location_key(label)
+    if not key:
+        flash(f"\"{label}\" cannot be used as a location name.")
+        return redirect(safe_next_url("inventory"))
+
+    conn = db()
+    try:
+        ensure_inventory_location_table(conn)
+        existing = inventory_location_options(conn)
+        if key in existing:
+            flash(f"{existing[key]} is already on the list.")
+        else:
+            conn.execute(
+                """
+                INSERT INTO inventory_locations (location_key, label, sort_order, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (key, label, 200, session.get("user_id"), utc_now_iso())
+            )
+            flash(f"{label} added to the Located list.")
+        if has_request_context():
+            g._inventory_locations = None
+
+        # put the line that asked for it in the new place straight away
+        item_id = optional_int(request.form.get("inventory_item_id"))
+        if item_id:
+            item = conn.execute("SELECT * FROM inventory_items WHERE id = %s", (item_id,)).fetchone()
+            if item and inventory_item_access_allowed(conn, item):
+                conn.execute(
+                    "UPDATE inventory_items SET location_type = %s, updated_at = %s WHERE id = %s",
+                    (key, utc_now_iso(), item_id)
+                )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Adding an inventory location failed:", e)
+        flash("That location could not be added.")
+    finally:
+        conn.close()
     return redirect(safe_next_url("inventory"))
 
 
@@ -13073,7 +13189,7 @@ def project_materials(project_id):
         part_catalog=catalog,
         today=local_now().date().isoformat(),
         status_options=INVENTORY_STATUS_LABELS,
-        location_options=INVENTORY_LOCATION_LABELS,
+        location_options=inventory_location_options(),
         condition_options=INVENTORY_CONDITION_LABELS,
         task_cart=get_task_cart(),
         po_cart=po_cart,
@@ -15353,7 +15469,7 @@ def room(room_id):
                            room_inventory=room_inventory, users=users, suppliers=suppliers, part_catalog=catalog,
                            selected_date=selected_date, today=local_now().date().isoformat(),
                            status_options=INVENTORY_STATUS_LABELS,
-                           location_options=INVENTORY_LOCATION_LABELS,
+                           location_options=inventory_location_options(),
                            condition_options=INVENTORY_CONDITION_LABELS,
                            task_cart=get_task_cart(), po_cart=get_po_cart(),
                            pickup_tasks_by_item=pickup_tasks_by_item,

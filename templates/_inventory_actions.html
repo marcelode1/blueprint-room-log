@@ -25,6 +25,24 @@
     </div>
 </div>
 
+<div class="cartAddOverlay" id="locationAddOverlay" hidden>
+    <div class="cartAddModal">
+        <h3 style="margin-top:0">Add a Place</h3>
+        <p class="muted" style="margin-top:0">Somewhere your material sits that is not on the list yet - a second
+            warehouse, a container, a client's garage. It is kept for good and shows up on every job from now on.</p>
+        <form method="post" action="{{ url_for('add_inventory_location') }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="inventory_item_id" id="locationAddItemId">
+            <label>Name of the place</label>
+            <input name="label" id="locationAddLabel" maxlength="60" placeholder="e.g. Container B, Shop, Client garage" required>
+            <div style="display:flex;gap:10px;margin-top:12px">
+                <button type="submit" style="flex:1;margin:0">Add the Place</button>
+                <button type="button" class="btn-secondary" id="locationAddCancelBtn" style="flex:0 0 auto;margin:0">Cancel</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="cartAddOverlay" id="cartAddOverlay" hidden>
     <div class="cartAddModal">
         <h3 style="margin-top:0" id="cartAddTitle">Add to Task Cart</h3>
@@ -96,6 +114,45 @@ document.addEventListener("click", event => {
     if (cancel) cancel.closest(".bomEditRow").hidden = true;
 });
 
+// form.submit() skips the page's own submit handlers; requestSubmit() does not.
+function submitInventoryForm(form) {
+    if (!form) return;
+    if (form.requestSubmit) form.requestSubmit();
+    else form.submit();
+}
+
+// Located: picking "+ Add a place..." asks for the name instead of saving a status.
+const locationAddOverlay = document.getElementById("locationAddOverlay");
+function closeLocationAdd(select) {
+    if (!locationAddOverlay) return;
+    locationAddOverlay.hidden = true;
+    document.body.style.overflow = "";
+    if (select) select.value = select.dataset.currentLocation || "";
+}
+document.querySelectorAll(".locationSelect").forEach(select => {
+    select.addEventListener("change", () => {
+        if (select.value !== "__add_location__") {
+            submitInventoryForm(select.form);
+            return;
+        }
+        if (locationAddOverlay) {
+            document.getElementById("locationAddItemId").value = select.dataset.itemId || "";
+            const box = document.getElementById("locationAddLabel");
+            box.value = "";
+            locationAddOverlay.hidden = false;
+            document.body.style.overflow = "hidden";
+            box.focus();
+            locationAddOverlay.dataset.openedBy = select.dataset.itemId || "";
+        }
+        select.value = select.dataset.currentLocation || "";
+    });
+});
+const locationAddCancelBtn = document.getElementById("locationAddCancelBtn");
+if (locationAddCancelBtn) locationAddCancelBtn.addEventListener("click", () => closeLocationAdd());
+if (locationAddOverlay) {
+    locationAddOverlay.addEventListener("click", e => { if (e.target === locationAddOverlay) closeLocationAdd(); });
+}
+
 const cartAddOverlay = document.getElementById("cartAddOverlay");
 const cartAddItemId = document.getElementById("cartAddItemId");
 const cartAddTitle = document.getElementById("cartAddTitle");
@@ -142,7 +199,7 @@ document.querySelectorAll(".inventoryActionSelect").forEach(select => {
             select.value = select.dataset.currentStatus || "";
             return;
         }
-        select.form.submit();
+        submitInventoryForm(select.form);
     });
 });
 

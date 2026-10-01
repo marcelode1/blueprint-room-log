@@ -135,21 +135,22 @@
                     <td>{{ item.brand or '-' }}</td>
                     <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
                     <td>
-                        {% if item.status in ['needs_purchase', 'ordered', 'unavailable', 'backordered'] %}
-                            <span class="locationUnavailable">Unavailable</span>
-                        {% elif can_edit_inventory() %}
+                        {% if can_edit_inventory() %}
                         <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryCompactForm">
                             <input type="hidden" name="next" value="{{ request.full_path }}">
                             <input type="hidden" name="location_detail" value="{{ item.location_detail or '' }}">
-                            <select name="location_type" onchange="this.form.submit()">
+                            <select name="location_type" class="locationSelect" data-item-id="{{ item.id }}"
+                                    data-current-location="{{ item.location_type or 'warehouse' }}">
                                 {% for value, label in location_options.items() %}
                                     <option value="{{ value }}" {% if item.location_type == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
+                                <option value="__add_location__">+ Add a place...</option>
                             </select>
                         </form>
                         {% else %}
-                            {{ inventory_location_label(item.location_type) }}{% if item.location_detail %}<br><span class="muted">{{ item.location_detail }}</span>{% endif %}
+                            {{ inventory_location_label(item.location_type) }}
                         {% endif %}
+                        {% if item.location_detail %}<span class="muted inventorySmall">{{ item.location_detail }}</span>{% endif %}
                     </td>
                     {% if can_edit_inventory() %}
                     <td>
