@@ -21,8 +21,7 @@
         <tbody>
         {% for item in bom_items %}
             <tr class="inventoryStatus inventory-{{ item.status }}">
-                <td><strong>{{ item.item_name }}</strong>{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}
-                    {% if can_edit %}<button type="button" class="bomEditLink" data-edit-row="{{ prefix }}{{ item.id }}">Edit</button>{% endif %}</td>
+                <td><strong>{{ item.item_name }}</strong>{% if can_edit %}<button type="button" class="bomEditLink" data-edit-row="{{ prefix }}{{ item.id }}">Edit</button>{% endif %}{% if item.used_note %}<p class="muted">{{ item.used_note }}</p>{% endif %}</td>
                 <td>{{ item.quantity }}</td>
                 <td>{{ item.item_model or '-' }}</td>
                 <td>{{ item.brand or '-' }}</td>
@@ -41,9 +40,8 @@
                         </select>
                     </form>
                     {% else %}
-                        {{ inventory_location_label(item.location_type) }}
+                        <span class="locationUnavailable">{{ inventory_location_label(item.location_type) }}</span>
                     {% endif %}
-                    {% if item.location_detail %}<span class="muted inventorySmall">{{ item.location_detail }}</span>{% endif %}
                 </td>
                 {% if can_edit %}
                 <td>
