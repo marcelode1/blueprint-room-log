@@ -1,10 +1,19 @@
 
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
+{% set show_inventory = can_view_inventory() %}
+<div class="card roomTopCard">
     <h2>{{ room.name }}</h2>
-    <p>Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
+    <p class="muted roomProjectLine">Project: <a href="{{ url_for('project', project_id=project.id) }}">{{ project.name }}</a></p>
     <div class="roomHeaderActions">
+        <span class="roomSwitch">
+            <label for="roomSwitchSelect">Room</label>
+            <select id="roomSwitchSelect">
+            {% for r in rooms %}
+                <option value="{{ url_for('room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
+            {% endfor %}
+            </select>
+        </span>
         <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Timeline</a>
         {% if is_main_admin() %}
         <form method="post" action="{{ url_for('delete_room', room_id=room.id) }}" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
@@ -15,27 +24,26 @@
     </div>
 </div>
 
+{# One section at a time - pick what you want to see. #}
+<div class="roomTabs" role="tablist" aria-label="Room sections">
+    <button type="button" class="roomTab" role="tab" aria-selected="false"
+            data-room-tab="tasks" data-room-count="{{ tasks|length }}">Tasks<span class="roomTabCount">{{ tasks|length }}</span></button>
+    {% if show_inventory %}
+    <button type="button" class="roomTab" role="tab" aria-selected="false"
+            data-room-tab="inventory" data-room-count="{{ room_inventory|length }}">Inventory<span class="roomTabCount">{{ room_inventory|length }}</span></button>
+    {% endif %}
+    <button type="button" class="roomTab" role="tab" aria-selected="false"
+            data-room-tab="notes" data-room-count="{{ notes|length }}">Comments &amp; Pictures<span class="roomTabCount">{{ notes|length }}</span></button>
+</div>
+
+<section class="roomPanel" data-room-panel="tasks" role="tabpanel" aria-label="Tasks">
 <div class="card">
-    <h3>Switch Rooms</h3>
-    <div class="roomChooser">
-        <label for="roomSwitchSelect">Choose a Room</label>
-        <select id="roomSwitchSelect">
-        {% for r in rooms %}
-            <option value="{{ url_for('room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
-        {% endfor %}
-        </select>
+    <div class="roomPanelHead">
+        <h3>Tasks</h3>
+        {% if is_main_admin() %}
+        <a class="btn-link" href="{{ url_for('create_global_task', project_id=project.id, room_id=room.id) }}">Create a Task</a>
+        {% endif %}
     </div>
-</div>
-
-{% if is_main_admin() %}
-<div class="card">
-    <h3>Create a Task</h3>
-    <a class="btn-link" href="{{ url_for('create_global_task', project_id=project.id, room_id=room.id) }}">Create a Task</a>
-</div>
-{% endif %}
-
-<div class="card">
-    <h3>Tasks</h3>
     {% for t in tasks %}
         <div class="card taskCard {% if task_is_completed(t) %}taskDone{% endif %}">
             <strong>{{ task_display_name(t) }}</strong>
@@ -89,14 +97,18 @@
             {% if t.completion_audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=t.completion_audio_file) }}"></audio>{% endif %}
         </div>
     {% else %}
-        <p>No tasks for this room.</p>
+        <p class="muted">No tasks for this room.</p>
     {% endfor %}
 </div>
+</section>
 
-{% if can_view_inventory() %}
+{% if show_inventory %}
+<section class="roomPanel" data-room-panel="inventory" role="tabpanel" aria-label="Room inventory">
 <div class="card">
-    <h3>Room Inventory</h3>
-    <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Open Project Inventory</a>
+    <div class="roomPanelHead">
+        <h3>Room Inventory</h3>
+        <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Open Project Inventory</a>
+    </div>
     {% for item in room_inventory %}
         <div class="card roomInventoryItem inventory-{{ item.status }}">
             <strong>{{ item.item_name }}</strong>
@@ -119,71 +131,76 @@
             {% endif %}
         </div>
     {% else %}
-        <p>No inventory allocated to this room.</p>
+        <p class="muted">No inventory allocated to this room.</p>
     {% endfor %}
 </div>
+</section>
 {% endif %}
 
-{% if can_add_notes() %}
+<section class="roomPanel" data-room-panel="notes" role="tabpanel" aria-label="Comments, pictures and audio">
 <div class="card">
-    <h3>Add Comment / Picture / Audio</h3>
-    <form method="post" enctype="multipart/form-data" id="noteForm">
-        <label>Date</label>
-        <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
-        {% if has_perm("write_comments") %}
-        <label>Comment</label>
-        <textarea name="comment" id="commentBox" rows="5" required placeholder="Write what was decided for this room..."></textarea>
-        <button type="button" class="btn-secondary" id="voiceBtn">Voice-to-Text Note</button>
-        {% else %}<input type="hidden" name="comment" value="">{% endif %}
-        <p id="voiceStatus" class="muted"></p>
-        {% if has_perm("add_pictures") or has_perm("add_audio") %}
-        <div class="roomMobileMediaActions" aria-label="Add picture, upload, or audio">
+    <div class="roomPanelHead">
+        <h3>Comments, Pictures &amp; Audio</h3>
+        <div class="roomNotesTools">
+            {% if can_add_notes() %}
+            <button type="button" id="addNoteToggle" aria-expanded="false" aria-controls="addNotePanel">+ Add Comment / Picture / Audio</button>
+            {% endif %}
+            <form method="get" class="roomDateFilter">
+                <input name="date" type="date" value="{{ selected_date or '' }}" aria-label="Show one date only">
+                <button type="submit" class="btn-secondary">Show Date</button>
+                {% if selected_date %}<a class="btn-link btn-secondary" href="{{ url_for('room', room_id=room.id) }}">Show All</a>{% endif %}
+            </form>
+        </div>
+    </div>
+
+    {% if can_add_notes() %}
+    <div class="roomAddNote" id="addNotePanel" hidden>
+        <form method="post" enctype="multipart/form-data" id="noteForm">
+            <label>Date</label>
+            <input name="note_date" type="date" value="{{ selected_date or '' }}" required>
+            {% if has_perm("write_comments") %}
+            <label>Comment</label>
+            <textarea name="comment" id="commentBox" rows="5" required placeholder="Write what was decided for this room..."></textarea>
+            <button type="button" class="btn-secondary" id="voiceBtn">Voice-to-Text Note</button>
+            {% else %}<input type="hidden" name="comment" value="">{% endif %}
+            <p id="voiceStatus" class="muted"></p>
+            {% if has_perm("add_pictures") or has_perm("add_audio") %}
+            <div class="roomMobileMediaActions" aria-label="Add picture, upload, or audio">
+                {% if has_perm("add_pictures") %}
+                <button type="button" class="btn-secondary" data-room-media-pick="photoInput">Upload Picture</button>
+                <button type="button" data-room-media-pick="cameraInput">Take Picture</button>
+                {% endif %}
+                {% if has_perm("add_audio") %}
+                <button type="button" class="btn-secondary" data-room-media-pick="audioInput">Audio</button>
+                {% endif %}
+            </div>
+            <p class="muted roomMobileMediaStatus" id="roomMobileMediaStatus">No picture or audio selected.</p>
+            {% endif %}
             {% if has_perm("add_pictures") %}
-            <button type="button" class="btn-secondary" data-room-media-pick="photoInput">Upload Picture</button>
-            <button type="button" data-room-media-pick="cameraInput">Take Picture</button>
+            <div class="roomNativeMediaField">
+                <label>Upload Picture</label>
+                <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
+            </div>
+            <div class="roomNativeMediaField">
+                <label>Take Picture From Phone</label>
+                <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
+            </div>
             {% endif %}
             {% if has_perm("add_audio") %}
-            <button type="button" class="btn-secondary" data-room-media-pick="audioInput">Audio</button>
+            <div class="roomNativeMediaField">
+                <label>Upload Audio Recording</label>
+                <input name="audio" id="audioInput" type="file" accept="audio/*">
+            </div>
+            <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
+            <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
             {% endif %}
-        </div>
-        <p class="muted roomMobileMediaStatus" id="roomMobileMediaStatus">No picture or audio selected.</p>
-        {% endif %}
-        {% if has_perm("add_pictures") %}
-        <div class="roomNativeMediaField">
-            <label>Upload Picture</label>
-            <input name="photo" id="photoInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif">
-        </div>
-        <div class="roomNativeMediaField">
-            <label>Take Picture From Phone</label>
-            <input name="photo_camera" id="cameraInput" class="annotatablePhoto" type="file" accept="image/*,.heic,.heif" capture="environment">
-        </div>
-        {% endif %}
-        {% if has_perm("add_audio") %}
-        <div class="roomNativeMediaField">
-            <label>Upload Audio Recording</label>
-            <input name="audio" id="audioInput" type="file" accept="audio/*">
-        </div>
-        <button type="button" class="btn-secondary" id="recordBtn">Start Audio Recording</button>
-        <button type="button" class="btn-secondary" id="stopBtn" disabled>Stop Recording</button>
-        {% endif %}
-        <p id="recordStatus" class="muted"></p>
-        <button type="submit">Save Note</button>
-    </form>
-</div>
-<button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
-{% endif %}
+            <p id="recordStatus" class="muted"></p>
+            <button type="submit">Save Note</button>
+        </form>
+    </div>
+    {% endif %}
 
-<div class="card">
-    <h3>Filter by Date</h3>
-    <form method="get">
-        <input name="date" type="date" value="{{ selected_date }}">
-        <button type="submit">Show Date</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('room', room_id=room.id) }}">Show All</a>
-    </form>
-</div>
-
-<div class="card">
-    <h3>Comments, Pictures & Audio</h3>
+    {% if selected_date %}<p class="muted">Showing {{ selected_date }} only.</p>{% endif %}
     {% for n in notes %}
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or "Unknown user" }}
@@ -197,11 +214,20 @@
             </form>
             {% endif %}
         </div>
-    {% else %}<p>No comments/photos.</p>{% endfor %}
+    {% else %}<p class="muted">No comments/photos.</p>{% endfor %}
 </div>
+</section>
+
+{% if can_add_notes() %}
+<button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
+{% endif %}
 
 <style>
-.roomHeaderActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.roomHeaderActions form{margin:0}.roomHeaderActions button{width:auto!important;min-height:36px!important;padding:7px 11px!important;margin:0!important;border-radius:8px!important;font-size:13px!important}.roomChooser{display:grid;gap:8px}.roomChooser select{margin:0}#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-ordered{border-left:8px solid #4f46e5;background:#eef2ff}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}.roomInventoryItem.inventory-client_supplied{border-left:8px solid #7c3aed;background:#f5f3ff}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}}
+.roomTopCard h2{margin-bottom:4px}.roomProjectLine{margin:0 0 12px}.roomHeaderActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.roomHeaderActions form{margin:0}.roomHeaderActions button{width:auto!important;min-height:36px!important;padding:7px 11px!important;margin:0!important;border-radius:8px!important;font-size:13px!important}.roomSwitch{display:flex;gap:7px;align-items:center}.roomSwitch label{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.roomSwitch select{width:auto;min-width:150px;margin:0;padding:7px 10px;font-size:13px;border-radius:8px}
+.roomTabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 16px}.roomTab{width:auto!important;margin:0!important;min-height:auto!important;padding:10px 15px!important;font-size:14px!important;font-weight:800;border-radius:11px!important;border:1px solid var(--border)!important;background:var(--card);color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:8px;box-shadow:var(--shadow)}.roomTab:hover{background:rgba(37,99,235,.1);color:var(--primary-dark);border-color:var(--primary)!important}body.dark .roomTab:hover{background:rgba(96,165,250,.16);color:var(--primary)}.roomTab.isActive,.roomTab.isActive:hover{background:var(--primary-dark);border-color:var(--primary-dark)!important;color:#fff}.roomTabCount{min-width:22px;padding:1px 7px;border-radius:999px;background:rgba(15,23,42,.09);font-size:12px;font-weight:800;text-align:center}body.dark .roomTabCount{background:rgba(255,255,255,.12)}.roomTab.isActive .roomTabCount{background:rgba(255,255,255,.26);color:#fff}
+.roomPanel[hidden]{display:none}.roomPanelHead{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between;margin-bottom:12px}.roomPanelHead h3{margin:0}.roomPanelHead .btn-link{margin:0}.roomNotesTools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.roomNotesTools button{width:auto!important;margin:0!important;min-height:38px!important;padding:8px 13px!important;font-size:13px!important;border-radius:9px!important}.roomDateFilter{display:flex;gap:7px;align-items:center;margin:0}.roomDateFilter input{width:auto;margin:0;padding:8px 10px;font-size:13px;border-radius:9px}.roomDateFilter .btn-link{margin:0}.roomAddNote{border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:18px;background:rgba(37,99,235,.05)}.roomAddNote[hidden]{display:none}
+#floatingCameraBtn{position:fixed;right:18px;bottom:92px;width:68px;height:68px;border-radius:50%;font-size:30px;z-index:300;box-shadow:0 10px 26px rgba(0,0,0,.3)}.taskDone{opacity:.82}.taskOptions label{display:flex;gap:8px;align-items:center}.taskOptions input{width:auto;min-height:auto}.roomSupplierPanel{border:1px solid var(--border);border-radius:8px;padding:12px;margin:10px 0;background:rgba(14,165,233,.06)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px;margin:6px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.mobileTaskCamera,.mobile-only-delete-note,.roomMobileMediaActions,.roomMobileMediaStatus,.roomMobileCompletionActions,.roomMobileCompletionStatus{display:none}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-ordered{border-left:8px solid #4f46e5;background:#eef2ff}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}.roomInventoryItem.inventory-client_supplied{border-left:8px solid #7c3aed;background:#f5f3ff}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}#drawModal .drawActions{display:flex;gap:8px}
+@media(max-width:760px){.mobileTaskCamera,.mobile-only-delete-note{display:block}.roomMobileMediaActions,.roomMobileCompletionActions{display:grid;grid-template-columns:1fr;gap:8px;margin:10px 0}.roomMobileMediaActions button,.roomMobileCompletionActions button{margin:0}.roomMobileMediaStatus,.roomMobileCompletionStatus{display:block;margin:6px 0 10px}.roomNativeMediaField{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.roomTabs{gap:6px}.roomTab{flex:1 1 42%;justify-content:center;padding:11px 8px!important;font-size:13px!important}.roomSwitch{width:100%}.roomSwitch select{flex:1}.roomPanelHead{align-items:stretch}.roomNotesTools,.roomDateFilter{width:100%}.roomNotesTools button,.roomDateFilter input{flex:1}}
 </style>
 <div id="drawModal">
     <canvas id="drawCanvas"></canvas>
@@ -212,9 +238,33 @@
     </div>
 </div>
 <script>
+// One section on screen at a time; the choice is remembered for the next room you open.
+const roomTabButtons=Array.prototype.slice.call(document.querySelectorAll("[data-room-tab]"));
+const roomPanels={};document.querySelectorAll("[data-room-panel]").forEach(p=>{roomPanels[p.dataset.roomPanel]=p});
+const ROOM_TAB_KEY="projectonusRoomTab";
+function showRoomTab(name,remember){
+    if(!name||!roomPanels[name])return false;
+    roomTabButtons.forEach(b=>{const on=b.dataset.roomTab===name;b.classList.toggle("isActive",on);b.setAttribute("aria-selected",on?"true":"false")});
+    Object.keys(roomPanels).forEach(key=>{roomPanels[key].hidden=key!==name});
+    if(remember){try{localStorage.setItem(ROOM_TAB_KEY,name)}catch(e){}}
+    return true;
+}
+roomTabButtons.forEach(b=>b.addEventListener("click",()=>showRoomTab(b.dataset.roomTab,true)));
+if(roomTabButtons.length){
+    const params=new URLSearchParams(window.location.search);
+    let remembered=null;try{remembered=localStorage.getItem(ROOM_TAB_KEY)}catch(e){}
+    // a date filter is about the comments, so that is what you came to see
+    const busy=roomTabButtons.filter(b=>Number(b.dataset.roomCount||0)>0)[0];
+    const wanted=params.get("tab")||(params.get("date")?"notes":null)||remembered||(busy?busy.dataset.roomTab:null);
+    if(!showRoomTab(wanted,false))showRoomTab(roomTabButtons[0].dataset.roomTab,false);
+}
+const addNoteToggle=document.getElementById("addNoteToggle"),addNotePanel=document.getElementById("addNotePanel");
+function openAddNote(){if(!addNotePanel)return;addNotePanel.hidden=false;if(addNoteToggle){addNoteToggle.setAttribute("aria-expanded","true");addNoteToggle.textContent="Hide the comment box"}}
+if(addNoteToggle&&addNotePanel){addNoteToggle.addEventListener("click",()=>{if(addNotePanel.hidden){openAddNote();addNotePanel.scrollIntoView({behavior:"smooth",block:"nearest"})}else{addNotePanel.hidden=true;addNoteToggle.setAttribute("aria-expanded","false");addNoteToggle.textContent="+ Add Comment / Picture / Audio"}})}
+const noteForm=document.getElementById("noteForm");if(noteForm){noteForm.addEventListener("submit",()=>{try{localStorage.setItem(ROOM_TAB_KEY,"notes")}catch(e){}})}
 let mediaRecorder,audioChunks=[];const recordBtn=document.getElementById("recordBtn"),stopBtn=document.getElementById("stopBtn"),audioInput=document.getElementById("audioInput"),statusEl=document.getElementById("recordStatus");
 if(recordBtn){recordBtn.onclick=async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({audio:true});mediaRecorder=new MediaRecorder(stream);audioChunks=[];mediaRecorder.ondataavailable=e=>audioChunks.push(e.data);mediaRecorder.onstop=()=>{const blob=new Blob(audioChunks,{type:"audio/webm"});const file=new File([blob],"room-recording.webm",{type:"audio/webm"});const dt=new DataTransfer();dt.items.add(file);audioInput.files=dt.files;statusEl.textContent="Audio recording attached.";stream.getTracks().forEach(t=>t.stop())};mediaRecorder.start();recordBtn.disabled=true;stopBtn.disabled=false;statusEl.textContent="Recording..."}catch(e){statusEl.textContent="Audio recording not allowed."}};stopBtn.onclick=()=>{if(mediaRecorder&&mediaRecorder.state!=="inactive"){mediaRecorder.stop();recordBtn.disabled=false;stopBtn.disabled=true}}}
-const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
+const floatingCameraBtn=document.getElementById("floatingCameraBtn");if(floatingCameraBtn){floatingCameraBtn.onclick=()=>{showRoomTab("notes",true);openAddNote();const c=document.getElementById("cameraInput")||document.getElementById("photoInput");if(c)c.click()}}
 document.querySelectorAll("[data-room-media-pick]").forEach(btn=>btn.addEventListener("click",()=>{const input=document.getElementById(btn.dataset.roomMediaPick);if(input)input.click()}));
 ["photoInput","cameraInput","audioInput"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("change",()=>{const status=document.getElementById("roomMobileMediaStatus");if(!status)return;const selected=["photoInput","cameraInput","audioInput"].map(inputId=>document.getElementById(inputId)).filter(input=>input&&input.files&&input.files.length).map(input=>input.files[0].name);status.textContent=selected.length?selected.join(", "):"No picture or audio selected."})});
 document.querySelectorAll("[data-completion-media-pick]").forEach(btn=>btn.addEventListener("click",()=>{const form=btn.closest("form");const input=form?form.querySelector('[name="'+btn.dataset.completionMediaPick+'"]'):null;if(input)input.click()}));
