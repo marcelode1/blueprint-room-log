@@ -140,11 +140,9 @@
 
 <div class="card">
     <h3>Materials</h3>
-    {# the project's whole BOM, in the same shape as the one inside a room #}
+    {# the project's whole BOM - the very same table as the one inside a room #}
     {% set bom_items = materials %}
-    {% set bom_show_supplier = true %}
-    {% set bom_show_room = true %}
-    {% set bom_show_delete = true %}
+    {% set bom_table_class = 'roomBomTable' %}
     {% include "_bom_table.html" %}
 </div>
 

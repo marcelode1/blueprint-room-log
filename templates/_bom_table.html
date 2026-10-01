@@ -1,11 +1,8 @@
-{# One BOM, wherever it is shown - a whole project or a single room. The caller
-   sets bom_items and turns on the columns that only make sense project-wide. #}
-{% set show_supplier = bom_show_supplier|default(false) %}
-{% set show_room = bom_show_room|default(false) %}
+{# One BOM, wherever it is shown - a whole project or a single room. Both get
+   exactly the same columns; the caller only sets which lines to list. #}
 {% set can_edit = can_edit_inventory() %}
-{% set delete_col = bom_show_delete|default(false) and is_main_admin() %}
 {% set prefix = bom_edit_prefix|default('bomEdit') %}
-{% set span = 6 + (1 if show_supplier else 0) + (1 if show_room else 0) + (1 if can_edit else 0) + (1 if delete_col else 0) %}
+{% set span = 6 + (1 if can_edit else 0) %}
 {% set cart_item_ids = task_cart|default([])|map(attribute='inventory_item_id')|list %}
 {% set po_cart_item_ids = po_cart|default([])|map(attribute='inventory_item_id')|list %}
 <div class="inventoryWrap">
@@ -16,12 +13,9 @@
                 <th>Qty</th>
                 <th>Model #</th>
                 <th>Brand</th>
-                {% if show_supplier %}<th>Supplier</th>{% endif %}
-                {% if show_room %}<th>Room</th>{% endif %}
                 <th>Status</th>
                 <th>Located</th>
                 {% if can_edit %}<th>Action</th>{% endif %}
-                {% if delete_col %}<th>Delete</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -32,25 +26,6 @@
                 <td>{{ item.quantity }}</td>
                 <td>{{ item.item_model or '-' }}</td>
                 <td>{{ item.brand or '-' }}</td>
-                {% if show_supplier %}
-                <td>
-                    {% if can_edit %}
-                    <form method="post" action="{{ url_for('update_inventory_supplier', item_id=item.id) }}" class="inventoryCompactForm">
-                        <input type="hidden" name="next" value="{{ request.full_path }}">
-                        <select name="supplier_id" class="inventorySubmitSelect">
-                            <option value="">No supplier</option>
-                            {% for s in suppliers %}
-                                <option value="{{ s.id }}" {% if item.supplier_id == s.id %}selected{% endif %}>{{ s.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </form>
-                    {% else %}
-                        {{ item.supplier_name or '-' }}
-                    {% endif %}
-                    {% if item.supplier_address %}<a class="muted inventorySmall" target="_blank" href="{{ maps_directions_url(item.supplier_address) }}">Map</a>{% endif %}
-                </td>
-                {% endif %}
-                {% if show_room %}<td>{{ item.room_name or 'Project general' }}</td>{% endif %}
                 <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
                 <td>
                     {% if can_edit %}
@@ -100,14 +75,6 @@
                         {% if item.id in pickup_tasks_by_item %}
                             <a class="inTaskCartNote pickupTaskNote" href="{{ url_for('open_task_workspace', task_id=pickup_tasks_by_item[item.id].id) }}">Pickup task {{ pickup_tasks_by_item[item.id].task_number or pickup_tasks_by_item[item.id].id }} created</a>
                         {% endif %}
-                    </form>
-                </td>
-                {% endif %}
-                {% if delete_col %}
-                <td>
-                    <form method="post" action="{{ url_for('delete_inventory_item', item_id=item.id) }}" onsubmit="return confirm('Delete this inventory item?');">
-                        <input type="hidden" name="next" value="{{ request.full_path }}">
-                        <button type="submit" class="btn-danger">Delete</button>
                     </form>
                 </td>
                 {% endif %}
