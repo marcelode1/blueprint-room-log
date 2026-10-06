@@ -152,7 +152,7 @@
                                 <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
                                 <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
                                 <div class="lineCombo">
-                                    <input type="text" class="lineItemSearch" value="{{ line.item_name }}" placeholder="Type item name" autocomplete="off" spellcheck="false">
+                                    <textarea class="lineItemSearch" rows="1" placeholder="Type item name" autocomplete="off" spellcheck="false">{{ line.item_name or '' }}</textarea>
                                     <div class="lineSuggest" hidden></div>
                                 </div>
                                 <select name="line_part_catalog_id" class="lineItemSelect" tabindex="-1">
@@ -243,7 +243,7 @@
                     <input type="hidden" name="line_item_name" class="lineItemName">
                     <input type="hidden" name="line_item_type" class="lineItemType" value="part">
                     <div class="lineCombo">
-                        <input type="text" class="lineItemSearch" placeholder="Type item name" autocomplete="off" spellcheck="false">
+                        <textarea class="lineItemSearch" rows="1" placeholder="Type item name" autocomplete="off" spellcheck="false"></textarea>
                         <div class="lineSuggest" hidden></div>
                     </div>
                     <select name="line_part_catalog_id" class="lineItemSelect" tabindex="-1">
@@ -460,6 +460,7 @@ const closeNewRoomModal=document.getElementById("closeNewRoomModal");
 const invoiceRoomsByProject={{ rooms_by_project|default({})|tojson }};
 let currentInvoiceProjectId="{{ selected_project.id if selected_project else (invoice.project_id if invoice and invoice.project_id else '') }}";
 let pendingItemSelect=null;
+let pendingAddLine=null;
 let pendingLocationSelect=null;
 let pendingCatalogUpdate=null;
 let invoiceDirty=false;
@@ -680,6 +681,53 @@ function openCatalogUpdatePrompt(line){
 function closeCatalogUpdatePrompt(){
     pendingCatalogUpdate=null;
     if(catalogUpdateModal)catalogUpdateModal.hidden=true;
+    runPendingAddLine();
+}
+// Runs when the user clicks Add Line: offers to create a new catalog item for a
+// typed item, or to save a changed description/price. Returns true if a prompt opened.
+function promptLineCatalogChanges(line){
+    if(!line)return false;
+    const search=line.querySelector(".lineItemSearch");
+    const select=line.querySelector(".lineItemSelect");
+    const typed=(search?.value||"").trim();
+    if(typed&&select&&!select.value){
+        const exact=catalogOptionsOf(select).find(o=>(o.dataset.name||"").trim().toLowerCase()===typed.toLowerCase());
+        if(exact){
+            const description=line.querySelector(".lineDescription");
+            const price=line.querySelector(".lineUnitPrice");
+            const typedDescription=(description?.value||"").trim();
+            const typedPrice=parseMoney(price?.value||0);
+            select.value=exact.value;
+            applySelectedItem(select);
+            if(description&&typedDescription)description.value=typedDescription;
+            if(price&&typedPrice)price.value=money(typedPrice);
+            updateLineAmount(line);
+            markInvoiceDirty();
+        }else{
+            openNewItemModal(select,typed);
+            return true;
+        }
+    }
+    const price=line.querySelector(".lineUnitPrice");
+    if(price){
+        formatMoneyInput(price);
+        updateLineAmount(line);
+    }
+    pendingCatalogUpdate=null;
+    openCatalogUpdatePrompt(line);
+    return !!pendingCatalogUpdate;
+}
+function addLineAfterPrompts(line,insertAfter){
+    if(promptLineCatalogChanges(line)){
+        pendingAddLine=()=>addInvoiceLine({},insertAfter);
+        return;
+    }
+    addInvoiceLine({},insertAfter);
+}
+function runPendingAddLine(){
+    const next=pendingAddLine;
+    pendingAddLine=null;
+    if(next)next();
 }
 function updateCatalogOptionEverywhere(item){
     document.querySelectorAll(`.lineItemSelect option[value="${item.id}"]`).forEach(option=>{
@@ -762,10 +810,14 @@ function appendCatalogOption(item, targetSelect){
     }
 }
 
-document.getElementById("addInvoiceLine").addEventListener("click",()=>addInvoiceLine());
+document.getElementById("addInvoiceLine").addEventListener("click",()=>{
+    const rows=lineRows();
+    addLineAfterPrompts(rows[rows.length-1]||null,null);
+});
 document.getElementById("closeNewItemModal").addEventListener("click",()=>{
     newItemModal.hidden=true;
     if(pendingItemSelect&&pendingItemSelect.value==="__new__")pendingItemSelect.value="";
+    runPendingAddLine();
 });
 if(closeNewRoomModal){
     closeNewRoomModal.addEventListener("click",()=>{
@@ -793,13 +845,11 @@ invoiceLines.addEventListener("input",event=>{
 });
 invoiceLines.addEventListener("keydown",event=>{
     if(event.key!=="Enter")return;
-    if(event.target.matches(".lineDescription,.lineUnitPrice")){
+    // Enter in Item/Description adds a new line in the text; catalog prompts wait for Add Line.
+    if(event.target.matches(".lineUnitPrice")){
         event.preventDefault();
-        if(event.target.matches(".lineUnitPrice")){
-            formatMoneyInput(event.target);
-            updateLineAmount(event.target.closest(".invoiceLine"));
-        }
-        openCatalogUpdatePrompt(event.target.closest(".invoiceLine"));
+        formatMoneyInput(event.target);
+        updateLineAmount(event.target.closest(".invoiceLine"));
     }
 });
 invoiceLines.addEventListener("blur",event=>{
@@ -838,7 +888,8 @@ if(saveCatalogUpdate){
 invoiceLines.addEventListener("click",event=>{
     const insert=event.target.closest(".insertInvoiceLine");
     if(insert){
-        addInvoiceLine({},insert.closest(".invoiceLine"));
+        const line=insert.closest(".invoiceLine");
+        addLineAfterPrompts(line,line);
         return;
     }
     const remove=event.target.closest(".removeInvoiceLine");
@@ -866,6 +917,7 @@ newItemForm.addEventListener("submit",async event=>{
             if(useExisting){
                 appendCatalogOption(payload.item,pendingItemSelect);
                 newItemModal.hidden=true;
+                runPendingAddLine();
             }else{
                 error.textContent="Change the item name, brand, or model to create a new item.";
             }
@@ -874,6 +926,7 @@ newItemForm.addEventListener("submit",async event=>{
         if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
         appendCatalogOption(payload.item,pendingItemSelect);
         newItemModal.hidden=true;
+        runPendingAddLine();
     }catch(err){
         error.textContent=err.message||"Could not create item.";
     }
@@ -994,7 +1047,8 @@ invoiceDirty=false;
 
 /* ===== Item & Description type-ahead =====
    Click = clean field, nothing opens. Typing shows matches that start with
-   the typed letters. Enter with no existing match opens the New Item window. */
+   the typed letters. Enter adds a new line; Add Line opens the New Item window
+   for a typed item that is not in the catalog. */
 let combo=null; // {input, box, matches, index, kind}
 const suggestFloat=document.createElement("div");
 suggestFloat.className="lineSuggest suggestFloat";
@@ -1132,25 +1186,16 @@ invoiceLines.addEventListener("keydown",event=>{
         return;
     }
     if(event.key!=="Enter")return;
+    // Enter in Item adds a new line in the text. It only picks a suggestion when one
+    // was highlighted with the arrow keys; new-item prompts wait for Add Line.
     if(event.target.matches(".lineItemSearch")){
-        event.preventDefault();
         event.stopPropagation();
-        const input=event.target;
-        const line=input.closest(".invoiceLine");
-        const select=line?.querySelector(".lineItemSelect");
-        const typed=input.value.trim();
-        if(comboOpen&&combo.index>=0){pickComboOption(combo.index);return;}
-        if(!typed){hideCombo();return;}
-        const exact=select?catalogOptionsOf(select).find(o=>(o.dataset.name||"").trim().toLowerCase()===typed.toLowerCase()):null;
-        hideCombo();
-        if(exact&&select){
-            select.value=exact.value;
-            applySelectedItem(select);
-            markInvoiceDirty();
-            line.querySelector(".lineDescription")?.focus();
-        }else if(select){
-            openNewItemModal(select,typed);
+        if(comboOpen&&combo.index>=0){
+            event.preventDefault();
+            pickComboOption(combo.index);
+            return;
         }
+        hideCombo();
         return;
     }
     if(event.target.matches(".lineDescription")&&comboOpen&&combo.index>=0){
@@ -1199,7 +1244,7 @@ window.addEventListener("resize",()=>{if(combo)positionSuggestFloat(combo.input)
 @media(max-width:900px){.invoiceLinePanel{position:static}.invoiceTopTextFields{grid-template-columns:1fr}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:1050px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 .lineItemSelect{display:none!important}
 .lineCombo{position:relative}
-.lineCombo .lineItemSearch{width:100%}
+.lineCombo .lineItemSearch{width:100%;font-family:inherit;resize:vertical;overflow-wrap:anywhere}
 .lineSuggest{position:absolute;top:100%;left:0;min-width:100%;max-width:360px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);z-index:40;max-height:240px;overflow-y:auto;margin-top:2px}
 .lineSuggest.suggestFloat{position:fixed;top:auto;left:auto;min-width:240px;max-width:380px;width:max-content;z-index:9999;margin-top:0}
 .lineSuggest[hidden]{display:none}
