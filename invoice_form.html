@@ -1,75 +1,1098 @@
 {% extends "base.html" %}
 {% block content %}
+{% set is_edit = invoice is not none and invoice.id %}
+{% set default_customer_name = '' %}
+{% set default_customer_email = '' %}
+{% set default_customer_phone = '' %}
+{% set default_billing_address = '' %}
+{% if invoice %}
+    {% set default_customer_name = invoice.customer_name or '' %}
+    {% set default_customer_email = invoice.customer_email or '' %}
+    {% set default_customer_phone = invoice.customer_phone or '' %}
+    {% set default_billing_address = invoice.billing_address or '' %}
+{% elif selected_project %}
+    {% set default_customer_name = selected_project.customer_name or selected_project.name or '' %}
+    {% set default_customer_email = selected_project.customer_email or '' %}
+    {% set default_customer_phone = selected_project.customer_phone or '' %}
+    {% set default_billing_address = selected_project.billing_address or selected_project.customer_address or '' %}
+{% endif %}
+
 <div class="card">
-    <h2>{% if selected_project %}Invoices - {{ selected_project.name }}{% else %}Invoices{% endif %}</h2>
-    {% if selected_project %}
-        <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
-        <a class="btn-link" href="{{ url_for('new_invoice', project_id=selected_project.id) }}">Create Invoice</a>
-        <a class="btn-link btn-secondary" href="{{ url_for('project', project_id=selected_project.id) }}">Back to Project</a>
-    {% else %}
-        <a class="btn-link" href="{{ url_for('new_invoice') }}">Create Invoice</a>
-    {% endif %}
+    <h2>{{ 'Edit Invoice' if is_edit else 'Create Invoice' }}</h2>
+    {% if selected_project %}<p><strong>Project:</strong> {{ selected_project.name }}</p>{% endif %}
+    <div class="invoiceHeaderActions">
+        {% if selected_project %}
+            <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) }}">Invoices</a>
+        {% else %}
+            <a class="btn-link btn-secondary" href="{{ url_for('invoices') }}">Back to Invoices</a>
+        {% endif %}
+        {% if is_edit %}<a class="btn-link" href="{{ url_for('invoice_view', invoice_id=invoice.id) }}">View Invoice</a>{% endif %}
+        <button type="submit" class="btn-secondary" form="invoiceForm" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
+        <button type="submit" class="btn-secondary" form="invoiceForm" name="submit_action" value="email">Email Invoice</button>
+        <button type="submit" form="invoiceForm">{{ 'Save Invoice' if is_edit else 'Create Invoice' }}</button>
+    </div>
 </div>
 
 <div class="card">
-    <form method="get">
-        {% if selected_project %}<input type="hidden" name="project_id" value="{{ selected_project.id }}">{% endif %}
+    <form method="post" id="invoiceForm" action="{{ form_action }}">
+        {% if invoice and invoice.id %}<input type="hidden" name="invoice_id" value="{{ invoice.id }}">{% endif %}
+        {% if invoice and invoice.invoice_number %}<input type="hidden" name="invoice_number" value="{{ invoice.invoice_number }}">{% endif %}
         <div class="grid">
             <div>
-                <label>Search</label>
-                <input name="q" value="{{ q or '' }}" placeholder="Invoice, customer, project, email">
+                <label>Invoice Number</label>
+                <input value="{{ invoice.invoice_number if invoice else 'Auto generated when saved' }}" readonly>
             </div>
+            {% if selected_project %}
+                <input type="hidden" name="project_id" value="{{ selected_project.id }}">
+                <div>
+                    <label>Project</label>
+                    <input value="{{ selected_project.name }}" readonly>
+                </div>
+            {% else %}
             <div>
-                <label>Status</label>
-                <select name="status">
-                    <option value="">All statuses</option>
-                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
-                        <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ value|title }}</option>
+                <label>Project</label>
+                <select name="project_id" id="invoiceProjectSelect">
+                    <option value="">No project</option>
+                    {% for p in projects %}
+                        <option value="{{ p.id }}"
+                            data-customer-name="{{ p.customer_name or p.name }}"
+                            data-customer-email="{{ p.customer_email or '' }}"
+                            data-customer-phone="{{ p.customer_phone or '' }}"
+                            data-billing-address="{{ p.billing_address or p.customer_address or '' }}"
+                            {% if (invoice and invoice.project_id == p.id) or (selected_project and selected_project.id == p.id) %}selected{% endif %}>
+                            {{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}
+                        </option>
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
+            <div>
+                <label>Status</label>
+                <select name="status">
+                    {% for value in ['draft','sent','paid','overdue','canceled'] %}
+                        <option value="{{ value }}" {% if invoice and invoice.status == value %}selected{% endif %}>{{ value|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div><label>Invoice Date</label><input name="invoice_date" type="date" value="{{ invoice.invoice_date if invoice else today }}" required></div>
+            <div><label>Due Date</label><input name="due_date" id="invoiceDueDate" type="date" value="{{ invoice.due_date if invoice else '' }}"></div>
         </div>
-        <button type="submit">Show Invoices</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('invoices', project_id=selected_project.id) if selected_project else url_for('invoices') }}">Clear</a>
+
+        <h3>Customer</h3>
+        <div class="grid">
+            <div><label>Customer Name</label><input name="customer_name" id="customerName" value="{{ default_customer_name }}" required></div>
+            <div><label>Email</label><input name="customer_email" id="customerEmail" type="email" value="{{ default_customer_email }}"></div>
+            <div><label>Phone</label><input name="customer_phone" id="customerPhone" value="{{ default_customer_phone }}"></div>
+        </div>
+        <div class="invoiceTopTextFields">
+            <div>
+                <label>Billing Address</label>
+                <textarea name="billing_address" id="billingAddress" rows="3">{{ default_billing_address }}</textarea>
+            </div>
+            <div>
+                <label>Notes</label>
+                <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
+            </div>
+            <div>
+                <label>Terms</label>
+                <textarea name="terms" id="invoiceTerms" rows="3">{{ invoice_terms_for_due_date(invoice.due_date, invoice.terms) if invoice else 'Payment due upon receipt. Thank you for your business.' }}</textarea>
+            </div>
+        </div>
+
+        <div class="invoiceLinePanel">
+            <div class="invoiceLineToolbar">
+                <h3>Invoice Item Lines</h3>
+                <button type="button" id="addInvoiceLine">Add Line</button>
+            </div>
+            <div class="invoiceGridWrap">
+                <table class="invoiceGridTable">
+                    <thead>
+                        <tr>
+                            <th>Line #</th>
+                            <th>Qty</th>
+                            <th>Item</th>
+                            <th>Description</th>
+                            <th>Location</th>
+                            <th>Unit Price</th>
+                            <th>Amount</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="invoiceLines">
+                        {% for line in lines %}
+                        <tr class="invoiceLine">
+                            <td class="lineNumber">{{ loop.index }}</td>
+                            <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="{{ line.quantity or 1 }}"></td>
+                            <td>
+                                <input type="hidden" name="line_item_name" class="lineItemName" value="{{ line.item_name }}">
+                                <input type="hidden" name="line_item_type" class="lineItemType" value="{{ line.item_type or 'part' }}">
+                                <input type="hidden" name="line_part_catalog_id" class="lineCatalogId" value="{{ line.part_catalog_id or '' }}">
+                                <textarea class="lineItemInput" rows="1" autocomplete="off" spellcheck="false" placeholder="Type item name">{{ line.item_name or '' }}</textarea>
+                            </td>
+                            <td><textarea name="line_description" class="lineDescription" rows="1">{{ line.description or '' }}</textarea></td>
+                            <td>
+                                {% set location_match = namespace(found=false) %}
+                                <select name="line_location" class="lineLocation">
+                                    <option value="">Choose location</option>
+                                    {% for room_option in invoice_rooms %}
+                                        {% if (line.location or '') == room_option.name %}{% set location_match.found = true %}{% endif %}
+                                        <option value="{{ room_option.name }}" data-room-id="{{ room_option.id }}" {% if (line.location or '') == room_option.name %}selected{% endif %}>{{ room_option.name }}</option>
+                                    {% endfor %}
+                                    {% if line.location and not location_match.found %}
+                                        <option value="{{ line.location }}" selected>{{ line.location }}</option>
+                                    {% endif %}
+                                    <option value="__new_room__">NEW ROOM</option>
+                                </select>
+                            </td>
+                            <td><input name="line_unit_price" class="lineUnitPrice" type="text" inputmode="text" value="{{ format_invoice_money(line.unit_price) }}"></td>
+                            <td><input class="lineAmount" value="{{ format_invoice_money(line.line_total) }}" readonly></td>
+                            <td>
+                                <input type="checkbox" name="line_taxable" class="lineTaxable" value="{{ loop.index0 }}" {% if line.taxable %}checked{% endif %} hidden>
+                                <div class="invoiceLineActions">
+                                    <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+                                    <button type="button" class="btn-secondary insertInvoiceLine">Add Line</button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="invoiceLiveTotals">
+                <p><span>Total Material</span><strong id="liveTotalMaterial">$0.00</strong></p>
+                <p><span>Total Labor</span><strong id="liveTotalLabor">$0.00</strong></p>
+                <p><span>Total Sales Tax</span><strong id="liveTotalTax">$0.00</strong></p>
+                <p><span>Total Amount</span><strong id="liveTotalAmount">$0.00</strong></p>
+                <p><span>Payments/Credit</span><strong id="livePaymentsCredit">$0.00</strong></p>
+                <p class="invoiceLiveBalance"><span>Balance Due</span><strong id="liveBalanceDue">$0.00</strong></p>
+            </div>
+        </div>
+
+        <template id="invoiceLineTemplate">
+            <tr class="invoiceLine">
+                <td class="lineNumber"></td>
+                <td><input name="line_quantity" class="lineQty" type="number" step="0.01" min="0" value="1"></td>
+                <td>
+                    <input type="hidden" name="line_item_name" class="lineItemName">
+                    <input type="hidden" name="line_item_type" class="lineItemType" value="part">
+                    <input type="hidden" name="line_part_catalog_id" class="lineCatalogId" value="">
+                    <textarea class="lineItemInput" rows="1" autocomplete="off" spellcheck="false" placeholder="Type item name"></textarea>
+                </td>
+                <td><textarea name="line_description" class="lineDescription" rows="1"></textarea></td>
+                <td>
+                    <select name="line_location" class="lineLocation">
+                        <option value="">Choose location</option>
+                        {% for room_option in invoice_rooms %}
+                            <option value="{{ room_option.name }}" data-room-id="{{ room_option.id }}">{{ room_option.name }}</option>
+                        {% endfor %}
+                        <option value="__new_room__">NEW ROOM</option>
+                    </select>
+                </td>
+                <td><input name="line_unit_price" class="lineUnitPrice" type="text" inputmode="text" value="$0.00"></td>
+                <td><input class="lineAmount" value="$0.00" readonly></td>
+                <td>
+                    <input type="checkbox" name="line_taxable" class="lineTaxable" value="__INDEX__" hidden>
+                    <div class="invoiceLineActions">
+                        <button type="button" class="btn-danger removeInvoiceLine">Remove</button>
+                        <button type="button" class="btn-secondary insertInvoiceLine">Add Line</button>
+                    </div>
+                </td>
+            </tr>
+        </template>
+
     </form>
 </div>
 
-<div class="card">
-    <h3>Invoice List</h3>
-    <div class="invoiceTableWrap">
-        <table class="invoiceTable">
-            <thead>
-                <tr>
-                    <th>Invoice</th>
-                    <th>Customer</th>
-                    <th>Project</th>
-                    <th>Date</th>
-                    <th>Due</th>
-                    <th>Status</th>
-                    <th>Total</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for inv in invoices %}
-                <tr>
-                    <td><a href="{{ url_for('invoice_view', invoice_id=inv.id) }}">{{ inv.invoice_number }}</a></td>
-                    <td>{{ inv.customer_name or '-' }}<br><span class="muted">{{ inv.customer_email or '' }}</span></td>
-                    <td>{{ inv.project_name or '-' }}</td>
-                    <td>{{ format_date(inv.invoice_date) }}</td>
-                    <td>{{ format_date(inv.due_date) if inv.due_date else '-' }}</td>
-                    <td><span class="invoiceStatus">{{ inv.status|title }}</span></td>
-                    <td>{{ format_invoice_money(inv.total) }}</td>
-                    <td><a class="btn-link btn-secondary" href="{{ url_for('edit_invoice', invoice_id=inv.id) }}">Edit</a></td>
-                </tr>
-            {% else %}
-                <tr><td colspan="8">No invoices found.</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
+<div class="invoiceModal" id="newRoomModal" hidden>
+    <div class="invoiceModalDialog newRoomDialog">
+        <div class="invoiceModalHeader">
+            <h3>New Room</h3>
+            <button type="button" class="btn-secondary" id="closeNewRoomModal">Close</button>
+        </div>
+        <form id="newInvoiceRoomForm">
+            <label>Room Name</label>
+            <input name="name" id="newInvoiceRoomName" placeholder="Kitchen, Theater, Rack Room" required>
+            <div class="invoiceItemOptions">
+                <label>
+                    Room Type
+                    <select name="category">
+                        <option value="general">General</option>
+                        <option value="electrical">Electrical</option>
+                        <option value="av">AV / Low Voltage</option>
+                        <option value="lighting">Lighting</option>
+                    </select>
+                </label>
+                <label>
+                    Highlight Color
+                    <select name="room_color">
+                        <option value="blue">Blue</option>
+                        <option value="red">Red</option>
+                        <option value="green">Green</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="purple">Purple</option>
+                        <option value="orange">Orange</option>
+                        <option value="gray">Gray</option>
+                    </select>
+                </label>
+            </div>
+            <p class="formError" id="newRoomError"></p>
+            <button type="submit">Create Room</button>
+        </form>
     </div>
 </div>
+
+<div class="invoiceModal" id="newItemModal" hidden>
+    <div class="invoiceModalDialog">
+        <div class="invoiceModalHeader">
+            <h3>New Item</h3>
+            <button type="button" class="btn-secondary" id="closeNewItemModal">Close</button>
+        </div>
+        <form id="newCatalogItemForm">
+            <div class="grid">
+                <div><label>Item Name</label><input name="item_name" required></div>
+                <div><label>Brand</label><input name="brand"></div>
+                <div><label>Model</label><input name="item_model"></div>
+                <div><label>Part Number</label><input name="part_number"></div>
+                <div><label>Unit Price</label><input name="unit_price" class="newItemCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
+                <div><label>Unit Cost</label><input name="unit_cost" class="newItemCurrencyInput" type="text" inputmode="text" placeholder="$0.00"></div>
+            </div>
+            <label>Description</label>
+            <textarea name="description" rows="3"></textarea>
+            <div class="invoiceItemOptions">
+                <label class="invoiceToggle"><input type="checkbox" name="taxable" value="1"><span>Taxable</span></label>
+                <label>
+                    Type
+                    <select name="item_type">
+                        <option value="part" selected>Material</option>
+                        <option value="service">Labor</option>
+                    </select>
+                </label>
+            </div>
+            <p class="formError" id="newItemError"></p>
+            <button type="submit">Create</button>
+        </form>
+    </div>
+</div>
+
+<div class="invoiceModal" id="catalogUpdateModal" hidden>
+    <div class="invoiceModalDialog catalogUpdateDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Item Change?</h3>
+        </div>
+        <p id="catalogUpdateMessage">Save this description or price to Items & Catalog for future invoices?</p>
+        <p class="muted">This will not change invoices that were already saved or sent to customers.</p>
+        <p class="formError" id="catalogUpdateError"></p>
+        <div class="catalogUpdateActions">
+            <button type="button" id="saveCatalogUpdate">Save to Catalog</button>
+            <button type="button" class="btn-secondary" id="skipCatalogUpdate">Only This Invoice</button>
+        </div>
+    </div>
+</div>
+
+<div class="invoiceModal" id="unsavedInvoiceModal" hidden>
+    <div class="invoiceModalDialog unsavedInvoiceDialog">
+        <div class="invoiceModalHeader">
+            <h3>Save Invoice Changes?</h3>
+        </div>
+        <p>You have changes on this invoice that are not saved yet.</p>
+        <div class="unsavedInvoiceActions">
+            <button type="button" id="saveBeforeLeaving">Save Invoice</button>
+            <button type="button" class="btn-secondary" id="leaveWithoutSaving">Leave Without Saving</button>
+            <button type="button" class="btn-secondary" id="keepEditingInvoice">Keep Editing</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const projectSelect=document.getElementById("invoiceProjectSelect");
+const dueDateInput=document.getElementById("invoiceDueDate");
+const termsInput=document.getElementById("invoiceTerms");
+const invoiceForm=document.getElementById("invoiceForm");
+if(projectSelect){
+    projectSelect.addEventListener("change",()=>{
+        const option=projectSelect.options[projectSelect.selectedIndex];
+        currentInvoiceProjectId=option?.value||"";
+        if(!option||!option.value){
+            document.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+            return;
+        }
+        const fill=(id,value)=>{const el=document.getElementById(id);if(el&&!el.value)el.value=value||""};
+        fill("customerName",option.dataset.customerName);
+        fill("customerEmail",option.dataset.customerEmail);
+        fill("customerPhone",option.dataset.customerPhone);
+        fill("billingAddress",option.dataset.billingAddress);
+        document.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+    });
+}
+function formattedInvoiceDueDate(value){
+    const parts=String(value||"").split("-");
+    if(parts.length!==3)return "";
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+}
+function automaticTermsForDueDate(value){
+    const formatted=formattedInvoiceDueDate(value);
+    return formatted ? `Payment due by ${formatted}. Thank you for your business.` : "Payment due upon receipt. Thank you for your business.";
+}
+function isAutomaticInvoiceTerms(value){
+    const text=String(value||"").trim();
+    return !text || text==="Payment due upon receipt. Thank you for your business." || /^Payment due by .+\. Thank you for your business\.$/.test(text);
+}
+if(dueDateInput&&termsInput){
+    dueDateInput.addEventListener("change",()=>{
+        if(isAutomaticInvoiceTerms(termsInput.value)){
+            termsInput.value=automaticTermsForDueDate(dueDateInput.value);
+        }
+    });
+}
+
+const invoiceLines=document.getElementById("invoiceLines");
+const lineTemplate=document.getElementById("invoiceLineTemplate");
+const newItemModal=document.getElementById("newItemModal");
+const newItemForm=document.getElementById("newCatalogItemForm");
+const catalogUpdateModal=document.getElementById("catalogUpdateModal");
+const catalogUpdateMessage=document.getElementById("catalogUpdateMessage");
+const catalogUpdateError=document.getElementById("catalogUpdateError");
+const saveCatalogUpdate=document.getElementById("saveCatalogUpdate");
+const skipCatalogUpdate=document.getElementById("skipCatalogUpdate");
+const unsavedInvoiceModal=document.getElementById("unsavedInvoiceModal");
+const saveBeforeLeaving=document.getElementById("saveBeforeLeaving");
+const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
+const keepEditingInvoice=document.getElementById("keepEditingInvoice");
+const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
+const newRoomModal=document.getElementById("newRoomModal");
+const newRoomForm=document.getElementById("newInvoiceRoomForm");
+const newRoomError=document.getElementById("newRoomError");
+const closeNewRoomModal=document.getElementById("closeNewRoomModal");
+const invoiceRoomsByProject={{ rooms_by_project|default({})|tojson }};
+let currentInvoiceProjectId="{{ selected_project.id if selected_project else (invoice.project_id if invoice and invoice.project_id else '') }}";
+const invoiceCatalog=[
+{% for item in part_catalog %}
+    {id:{{ item.id }},name:{{ (item.item_name or '')|tojson }},brand:{{ (item.brand or '')|tojson }},model:{{ (item.item_model or '')|tojson }},description:{{ (item.description or '')|tojson }},price:Number("{{ item.unit_price or 0 }}")||0,type:{{ (item.item_type or 'part')|tojson }},taxable:{{ 'true' if item.taxable else 'false' }}}{{ "," if not loop.last }}
+{% endfor %}
+];
+const invoiceCatalogById={};
+invoiceCatalog.forEach(item=>{invoiceCatalogById[String(item.id)]=item;});
+let pendingItemLine=null;
+let pendingAddLine=null;
+let pendingLocationSelect=null;
+let pendingCatalogUpdate=null;
+let invoiceDirty=false;
+let allowInvoiceLeave=false;
+let pendingInvoiceNavigation=null;
+
+function markInvoiceDirty(){
+    if(!allowInvoiceLeave)invoiceDirty=true;
+}
+function showUnsavedInvoicePrompt(navigateFn){
+    pendingInvoiceNavigation=navigateFn;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=false;
+}
+function hideUnsavedInvoicePrompt(){
+    pendingInvoiceNavigation=null;
+    if(unsavedInvoiceModal)unsavedInvoiceModal.hidden=true;
+}
+
+function money(value){
+    const number=Number(value||0);
+    return number.toLocaleString(undefined,{style:"currency",currency:"USD"});
+}
+function parseMoney(value){
+    const text=String(value||"").trim().replace(/[$,]/g,"");
+    if(text.startsWith("(")&&text.endsWith(")"))return -Number(text.slice(1,-1)||0);
+    return Number(text||0);
+}
+function formatMoneyInput(input){
+    if(input)input.value=money(parseMoney(input.value));
+}
+function lineRows(){
+    return Array.from(invoiceLines.querySelectorAll(".invoiceLine"));
+}
+function invoiceProjectRooms(projectId=currentInvoiceProjectId){
+    return invoiceRoomsByProject[String(projectId||"")]||[];
+}
+function refreshLocationSelect(select,currentValue=""){
+    if(!select)return;
+    const value=String(currentValue||"");
+    const rooms=invoiceProjectRooms();
+    select.innerHTML="";
+    const empty=document.createElement("option");
+    empty.value="";
+    empty.textContent=currentInvoiceProjectId ? "Choose location" : "Choose project first";
+    select.appendChild(empty);
+    let matched=false;
+    rooms.forEach(room=>{
+        const option=document.createElement("option");
+        option.value=room.name||"";
+        option.textContent=room.name||"";
+        option.dataset.roomId=room.id;
+        if(value&&value===option.value){
+            option.selected=true;
+            matched=true;
+        }
+        select.appendChild(option);
+    });
+    if(value&&value!=="__new_room__"&&!matched){
+        const current=document.createElement("option");
+        current.value=value;
+        current.textContent=value;
+        current.selected=true;
+        select.appendChild(current);
+    }
+    const newRoom=document.createElement("option");
+    newRoom.value="__new_room__";
+    newRoom.textContent="NEW ROOM";
+    select.appendChild(newRoom);
+}
+function openNewRoomModal(select){
+    pendingLocationSelect=select;
+    if(!currentInvoiceProjectId){
+        alert("Choose a project before creating a room.");
+        if(select)select.value="";
+        return;
+    }
+    if(newRoomForm)newRoomForm.reset();
+    if(newRoomError)newRoomError.textContent="";
+    if(newRoomModal)newRoomModal.hidden=false;
+    requestAnimationFrame(()=>document.getElementById("newInvoiceRoomName")?.focus());
+}
+function closeInvoiceRoomModal(){
+    if(newRoomModal)newRoomModal.hidden=true;
+}
+function addRoomToInvoiceOptions(room, selectToChoose=null){
+    if(!room||!room.id||!room.name)return;
+    const key=String(room.project_id||currentInvoiceProjectId||"");
+    if(!invoiceRoomsByProject[key])invoiceRoomsByProject[key]=[];
+    const exists=invoiceRoomsByProject[key].some(existing=>String(existing.id)===String(room.id)||String(existing.name||"").toLowerCase()===String(room.name||"").toLowerCase());
+    if(!exists)invoiceRoomsByProject[key].push({id:room.id,name:room.name});
+    invoiceRoomsByProject[key].sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
+    document.querySelectorAll(".lineLocation").forEach(select=>{
+        const keepValue=select===selectToChoose ? room.name : (select.value==="__new_room__" ? "" : select.value);
+        refreshLocationSelect(select, keepValue);
+    });
+    if(lineTemplate&&lineTemplate.content){
+        lineTemplate.content.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+    }
+}
+function lineCatalogItem(line){
+    const id=line?.querySelector(".lineCatalogId")?.value||"";
+    return invoiceCatalogById[id]||null;
+}
+function updateLineAmount(line){
+    const qty=Number(line.querySelector(".lineQty")?.value||0);
+    const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+    const amount=line.querySelector(".lineAmount");
+    if(amount)amount.value=money(qty*price);
+    updateInvoiceLiveTotals();
+}
+function updateInvoiceLiveTotals(){
+    let material=0;
+    let labor=0;
+    let taxableSubtotal=0;
+    let paymentsCredit=0;
+    lineRows().forEach(line=>{
+        const qty=Number(line.querySelector(".lineQty")?.value||0);
+        const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+        const lineTotal=qty*price;
+        const itemType=line.querySelector(".lineItemType")?.value||"part";
+        const taxable=line.querySelector(".lineTaxable")?.checked;
+        if(lineTotal<0){
+            paymentsCredit+=Math.abs(lineTotal);
+        }else if(itemType==="service"){
+            labor+=lineTotal;
+        }else{
+            material+=lineTotal;
+        }
+        if(taxable)taxableSubtotal+=lineTotal;
+    });
+    const tax=taxableSubtotal*(invoiceTaxRate/100);
+    const totalAmount=material+labor+tax;
+    const balanceDue=(material+labor-paymentsCredit)+tax;
+    const setTotal=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=money(value);};
+    setTotal("liveTotalMaterial",material);
+    setTotal("liveTotalLabor",labor);
+    setTotal("liveTotalTax",tax);
+    setTotal("liveTotalAmount",totalAmount);
+    setTotal("livePaymentsCredit",paymentsCredit ? -paymentsCredit : 0);
+    setTotal("liveBalanceDue",balanceDue);
+}
+function refreshLineIndexes(){
+    lineRows().forEach((line,index)=>{
+        const number=line.querySelector(".lineNumber");
+        const taxable=line.querySelector(".lineTaxable");
+        if(number)number.textContent=String(index+1);
+        if(taxable)taxable.value=String(index);
+        updateLineAmount(line);
+    });
+    updateInvoiceLiveTotals();
+}
+const suggestBox=document.createElement("div");
+suggestBox.id="invoiceSuggestBox";
+suggestBox.hidden=true;
+document.body.appendChild(suggestBox);
+let suggestInput=null;
+let suggestMode="";
+let suggestMatches=[];
+let suggestIndex=-1;
+function normText(value){return String(value||"").trim().toLowerCase();}
+function catalogLabel(item){
+    const typeLabel=item.type==="service"?" (Labor)":"";
+    return [`${item.name}${typeLabel}`,item.brand,item.model].filter(Boolean).join(" - ");
+}
+function hideSuggest(){
+    suggestBox.hidden=true;
+    suggestBox.innerHTML="";
+    suggestInput=null;
+    suggestMode="";
+    suggestMatches=[];
+    suggestIndex=-1;
+}
+function renderSuggest(){
+    suggestBox.innerHTML="";
+    if(!suggestMatches.length||!suggestInput){hideSuggest();return;}
+    suggestMatches.forEach((match,index)=>{
+        const row=document.createElement("div");
+        row.className="invoiceSuggestOption"+(index===suggestIndex?" active":"");
+        row.textContent=match.label;
+        row.dataset.index=String(index);
+        suggestBox.appendChild(row);
+    });
+    const rect=suggestInput.getBoundingClientRect();
+    suggestBox.style.left=`${rect.left}px`;
+    suggestBox.style.top=`${rect.bottom+2}px`;
+    suggestBox.style.minWidth=`${rect.width}px`;
+    suggestBox.hidden=false;
+    const active=suggestBox.querySelector(".invoiceSuggestOption.active");
+    if(active)active.scrollIntoView({block:"nearest"});
+}
+function itemSuggestions(text){
+    const query=normText(text);
+    if(!query)return[];
+    const starts=[];
+    const contains=[];
+    invoiceCatalog.forEach(item=>{
+        const name=normText(item.name);
+        if(!name)return;
+        if(name.startsWith(query))starts.push(item);
+        else if(normText(catalogLabel(item)).includes(query))contains.push(item);
+    });
+    return starts.concat(contains).slice(0,8).map(item=>({label:catalogLabel(item),item}));
+}
+function descriptionSuggestions(text){
+    const query=normText(text);
+    if(!query)return[];
+    const seen=new Set();
+    const matches=[];
+    invoiceCatalog.forEach(item=>{
+        const description=String(item.description||"").trim();
+        const key=normText(description);
+        if(!description||!key.startsWith(query)||seen.has(key))return;
+        seen.add(key);
+        matches.push({label:description,item});
+    });
+    return matches.slice(0,8);
+}
+function showSuggestions(input,mode){
+    const matches=mode==="item"?itemSuggestions(input.value):descriptionSuggestions(input.value);
+    suggestInput=input;
+    suggestMode=mode;
+    suggestMatches=matches;
+    suggestIndex=-1;
+    renderSuggest();
+}
+function chooseSuggestion(index){
+    const match=suggestMatches[index];
+    const input=suggestInput;
+    const mode=suggestMode;
+    if(!match||!input)return;
+    const line=input.closest(".invoiceLine");
+    hideSuggest();
+    if(!line)return;
+    if(mode==="item"){
+        applyCatalogItemToLine(line,match.item);
+        line.querySelector(".lineDescription")?.focus();
+    }else{
+        input.value=match.label;
+        markInvoiceDirty();
+    }
+}
+function applyCatalogItemToLine(line,item){
+    const itemInput=line.querySelector(".lineItemInput");
+    const name=line.querySelector(".lineItemName");
+    const type=line.querySelector(".lineItemType");
+    const catalogId=line.querySelector(".lineCatalogId");
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const taxable=line.querySelector(".lineTaxable");
+    if(itemInput)itemInput.value=item.name||"";
+    if(name)name.value=item.name||"";
+    if(type)type.value=item.type||"part";
+    if(catalogId)catalogId.value=String(item.id);
+    if(description)description.value=item.description||"";
+    if(price)price.value=money(item.price||0);
+    if(taxable)taxable.checked=!!item.taxable;
+    markCatalogBaseline(line);
+    updateLineAmount(line);
+    updateInvoiceLiveTotals();
+    markInvoiceDirty();
+}
+function syncTypedItem(input){
+    const line=input.closest(".invoiceLine");
+    if(!line)return;
+    const name=line.querySelector(".lineItemName");
+    const catalogId=line.querySelector(".lineCatalogId");
+    if(name)name.value=input.value.trim();
+    if(catalogId)catalogId.value="";
+}
+function linkExactCatalogMatch(input){
+    const line=input.closest(".invoiceLine");
+    if(!line)return;
+    const catalogId=line.querySelector(".lineCatalogId");
+    if(catalogId&&catalogId.value)return;
+    const typed=normText(input.value);
+    if(!typed)return;
+    const item=invoiceCatalog.find(entry=>normText(entry.name)===typed);
+    if(!item)return;
+    if(catalogId)catalogId.value=String(item.id);
+    const type=line.querySelector(".lineItemType");
+    if(type)type.value=item.type||"part";
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const taxable=line.querySelector(".lineTaxable");
+    if(description&&!description.value.trim())description.value=item.description||"";
+    if(price&&parseMoney(price.value)===0)price.value=money(item.price||0);
+    if(taxable&&!taxable.checked)taxable.checked=!!item.taxable;
+    markCatalogBaseline(line);
+    updateLineAmount(line);
+    updateInvoiceLiveTotals();
+}
+function markCatalogBaseline(line,useCurrent=false){
+    const item=lineCatalogItem(line);
+    if(!item)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    if(description)description.dataset.catalogBaseline=useCurrent ? (description.value||"").trim() : (item.description||"");
+    if(price)price.dataset.catalogBaseline=String(useCurrent ? parseMoney(price.value||0) : Number(item.price||0));
+}
+function openCatalogUpdatePrompt(line){
+    const item=lineCatalogItem(line);
+    if(!item||!catalogUpdateModal)return;
+    const description=line.querySelector(".lineDescription");
+    const price=line.querySelector(".lineUnitPrice");
+    const newDescription=(description?.value||"").trim();
+    const newPrice=parseMoney(price?.value||0);
+    const oldDescription=description?.dataset.catalogBaseline ?? (item.description||"");
+    const oldPrice=Number(price?.dataset.catalogBaseline ?? item.price ?? 0);
+    const descriptionChanged=newDescription!==String(oldDescription||"").trim();
+    const priceChanged=Math.abs(newPrice-oldPrice)>0.009;
+    if(!descriptionChanged&&!priceChanged)return;
+    pendingCatalogUpdate={line,partId:item.id,description:newDescription,unitPrice:newPrice};
+    const itemName=item.name||line.querySelector(".lineItemName")?.value||"this item";
+    if(catalogUpdateMessage)catalogUpdateMessage.textContent=`Save the new description or price for ${itemName} to Items & Catalog for future invoices?`;
+    if(catalogUpdateError)catalogUpdateError.textContent="";
+    catalogUpdateModal.hidden=false;
+}
+function closeCatalogUpdatePrompt(){
+    pendingCatalogUpdate=null;
+    if(catalogUpdateModal)catalogUpdateModal.hidden=true;
+    runPendingAddLine();
+}
+function updateCatalogItemEverywhere(item){
+    const entry=invoiceCatalogById[String(item.id)];
+    if(!entry)return;
+    entry.description=item.description||"";
+    entry.price=Number(item.unit_price||0);
+    entry.name=item.item_name||entry.name;
+    entry.type=item.item_type||entry.type||"part";
+    entry.taxable=!!item.taxable;
+}
+function registerCatalogItem(raw){
+    const item={
+        id:raw.id,
+        name:raw.item_name||"",
+        brand:raw.brand||"",
+        model:raw.item_model||"",
+        description:raw.description||"",
+        price:Number(raw.unit_price||0),
+        type:raw.item_type||"part",
+        taxable:!!raw.taxable
+    };
+    const existing=invoiceCatalogById[String(item.id)];
+    if(existing){
+        Object.assign(existing,item);
+        return existing;
+    }
+    invoiceCatalog.push(item);
+    invoiceCatalog.sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+    invoiceCatalogById[String(item.id)]=item;
+    return item;
+}
+function openNewItemModal(line,presetName=""){
+    pendingItemLine=line;
+    hideSuggest();
+    newItemForm.reset();
+    document.getElementById("newItemError").textContent="";
+    const nameField=newItemForm.querySelector('input[name="item_name"]');
+    if(nameField)nameField.value=presetName||"";
+    newItemModal.hidden=false;
+    requestAnimationFrame(()=>nameField?.focus());
+}
+function addInvoiceLine(data={}, afterLine=null){
+    const wrapper=document.createElement("tbody");
+    wrapper.innerHTML=lineTemplate.innerHTML.replace("__INDEX__",String(lineRows().length)).trim();
+    const line=wrapper.firstElementChild;
+    if(afterLine&&afterLine.parentElement===invoiceLines){
+        invoiceLines.insertBefore(line,afterLine.nextElementSibling);
+    }else{
+        invoiceLines.appendChild(line);
+    }
+    refreshLocationSelect(line.querySelector(".lineLocation"), data.location||"");
+    const catalogItem=data.part_catalog_id?invoiceCatalogById[String(data.part_catalog_id)]:null;
+    if(catalogItem)applyCatalogItemToLine(line,catalogItem);
+    refreshLineIndexes();
+    requestAnimationFrame(()=>{
+        const gridWrap=document.querySelector(".invoiceGridWrap");
+        if(gridWrap&&!afterLine)gridWrap.scrollTop=gridWrap.scrollHeight;
+        line.scrollIntoView({block:"nearest",inline:"nearest"});
+        const firstInput=line.querySelector(".lineItemInput");
+        if(firstInput)firstInput.focus({preventScroll:true});
+    });
+    markInvoiceDirty();
+}
+
+document.getElementById("addInvoiceLine").addEventListener("click",()=>{
+    const rows=lineRows();
+    addLineAfterPrompts(rows[rows.length-1]||null,null);
+});
+document.getElementById("closeNewItemModal").addEventListener("click",()=>{
+    newItemModal.hidden=true;
+    pendingItemLine=null;
+    runPendingAddLine();
+});
+if(closeNewRoomModal){
+    closeNewRoomModal.addEventListener("click",()=>{
+        if(pendingLocationSelect&&pendingLocationSelect.value==="__new_room__")pendingLocationSelect.value="";
+        closeInvoiceRoomModal();
+    });
+}
+invoiceLines.addEventListener("change",event=>{
+    if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    if(event.target.matches(".lineLocation")&&event.target.value==="__new_room__"){
+        openNewRoomModal(event.target);
+    }
+    markInvoiceDirty();
+});
+invoiceLines.addEventListener("input",event=>{
+    if(event.target.matches(".lineItemInput")){
+        syncTypedItem(event.target);
+        showSuggestions(event.target,"item");
+    }
+    if(event.target.matches(".lineDescription"))showSuggestions(event.target,"description");
+    if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
+    markInvoiceDirty();
+});
+invoiceLines.addEventListener("keydown",event=>{
+    const suggestOpen=suggestInput===event.target&&!suggestBox.hidden&&suggestMatches.length>0;
+    if(suggestOpen&&(event.key==="ArrowDown"||event.key==="ArrowUp")){
+        event.preventDefault();
+        const step=event.key==="ArrowDown"?1:-1;
+        suggestIndex=suggestIndex<0&&step<0 ? suggestMatches.length-1 : (suggestIndex+step+suggestMatches.length)%suggestMatches.length;
+        renderSuggest();
+        return;
+    }
+    if(suggestOpen&&event.key==="Escape"){
+        hideSuggest();
+        return;
+    }
+    if(event.key!=="Enter")return;
+    // Item and description: Enter adds a new line in the text. It only picks a
+    // suggestion when one was highlighted with the arrow keys.
+    if(event.target.matches(".lineItemInput,.lineDescription")){
+        if(suggestOpen&&suggestIndex>=0){
+            event.preventDefault();
+            chooseSuggestion(suggestIndex);
+            return;
+        }
+        hideSuggest();
+        return;
+    }
+    if(event.target.matches(".lineUnitPrice")){
+        event.preventDefault();
+        formatMoneyInput(event.target);
+        updateLineAmount(event.target.closest(".invoiceLine"));
+    }
+});
+// Runs when the user clicks Add Line: offers to create a new catalog item for a
+// typed item, or to save a changed description/price. Returns true if a prompt opened.
+function promptLineCatalogChanges(line){
+    if(!line)return false;
+    const itemInput=line.querySelector(".lineItemInput");
+    const catalogId=line.querySelector(".lineCatalogId");
+    const typed=(itemInput?.value||"").trim();
+    if(typed&&catalogId&&!catalogId.value){
+        const exact=invoiceCatalog.find(entry=>normText(entry.name)===normText(typed));
+        if(exact){
+            linkExactCatalogMatch(itemInput);
+        }else{
+            openNewItemModal(line,typed);
+            return true;
+        }
+    }
+    const price=line.querySelector(".lineUnitPrice");
+    if(price){
+        formatMoneyInput(price);
+        updateLineAmount(line);
+    }
+    pendingCatalogUpdate=null;
+    openCatalogUpdatePrompt(line);
+    return !!pendingCatalogUpdate;
+}
+function addLineAfterPrompts(line,insertAfter){
+    if(promptLineCatalogChanges(line)){
+        pendingAddLine=()=>addInvoiceLine({},insertAfter);
+        return;
+    }
+    addInvoiceLine({},insertAfter);
+}
+function runPendingAddLine(){
+    const next=pendingAddLine;
+    pendingAddLine=null;
+    if(next)next();
+}
+suggestBox.addEventListener("mousedown",event=>{
+    const option=event.target.closest(".invoiceSuggestOption");
+    if(!option)return;
+    event.preventDefault();
+    chooseSuggestion(Number(option.dataset.index));
+});
+invoiceLines.addEventListener("focusout",event=>{
+    if(event.target.matches(".lineItemInput")){
+        const input=event.target;
+        setTimeout(()=>{
+            if(suggestInput===input)hideSuggest();
+            linkExactCatalogMatch(input);
+        },150);
+    }
+    if(event.target.matches(".lineDescription")){
+        const input=event.target;
+        setTimeout(()=>{if(suggestInput===input)hideSuggest();},150);
+    }
+});
+document.addEventListener("scroll",event=>{
+    if(event.target===suggestBox)return;
+    if(!suggestBox.hidden)hideSuggest();
+},true);
+invoiceLines.addEventListener("blur",event=>{
+    if(event.target.matches(".lineUnitPrice")){
+        formatMoneyInput(event.target);
+        updateLineAmount(event.target.closest(".invoiceLine"));
+    }
+},true);
+if(skipCatalogUpdate){
+    skipCatalogUpdate.addEventListener("click",()=>{
+        if(pendingCatalogUpdate){
+            markCatalogBaseline(pendingCatalogUpdate.line,true);
+        }
+        closeCatalogUpdatePrompt();
+    });
+}
+if(saveCatalogUpdate){
+    saveCatalogUpdate.addEventListener("click",async()=>{
+        if(!pendingCatalogUpdate)return;
+        if(catalogUpdateError)catalogUpdateError.textContent="";
+        const formData=new FormData();
+        formData.set("description",pendingCatalogUpdate.description);
+        formData.set("unit_price",String(pendingCatalogUpdate.unitPrice));
+        try{
+            const response=await fetch(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,{method:"POST",body:formData});
+            const payload=await response.json();
+            if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not update catalog item.");
+            updateCatalogItemEverywhere(payload.item);
+            markCatalogBaseline(pendingCatalogUpdate.line);
+            closeCatalogUpdatePrompt();
+        }catch(err){
+            if(catalogUpdateError)catalogUpdateError.textContent=err.message||"Could not update catalog item.";
+        }
+    });
+}
+invoiceLines.addEventListener("click",event=>{
+    const insert=event.target.closest(".insertInvoiceLine");
+    if(insert){
+        const line=insert.closest(".invoiceLine");
+        addLineAfterPrompts(line,line);
+        return;
+    }
+    const remove=event.target.closest(".removeInvoiceLine");
+    if(remove){
+        const line=remove.closest(".invoiceLine");
+        if(line)line.remove();
+        if(lineRows().length===0)addInvoiceLine();
+        refreshLineIndexes();
+        updateInvoiceLiveTotals();
+        markInvoiceDirty();
+    }
+});
+newItemForm.addEventListener("submit",async event=>{
+    event.preventDefault();
+    const error=document.getElementById("newItemError");
+    error.textContent="";
+    newItemForm.querySelectorAll(".newItemCurrencyInput").forEach(formatMoneyInput);
+    const formData=new FormData(newItemForm);
+    if(!formData.get("taxable"))formData.set("taxable","0");
+    try{
+        const response=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:formData});
+        const payload=await response.json();
+        if(response.status===409&&payload.duplicate&&payload.item){
+            const useExisting=confirm(`${payload.error} Use the existing item for this invoice line?`);
+            if(useExisting){
+                const item=registerCatalogItem(payload.item);
+                if(pendingItemLine)applyCatalogItemToLine(pendingItemLine,item);
+                newItemModal.hidden=true;
+                pendingItemLine?.querySelector(".lineDescription")?.focus();
+                pendingItemLine=null;
+                runPendingAddLine();
+            }else{
+                error.textContent="Change the item name, brand, or model to create a new item.";
+            }
+            return;
+        }
+        if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create item.");
+        const item=registerCatalogItem(payload.item);
+        if(pendingItemLine)applyCatalogItemToLine(pendingItemLine,item);
+        newItemModal.hidden=true;
+        pendingItemLine?.querySelector(".lineDescription")?.focus();
+        pendingItemLine=null;
+        runPendingAddLine();
+    }catch(err){
+        error.textContent=err.message||"Could not create item.";
+    }
+});
+newItemForm.querySelectorAll(".newItemCurrencyInput").forEach(input=>{
+    input.addEventListener("blur",()=>formatMoneyInput(input));
+});
+if(newRoomForm){
+    newRoomForm.addEventListener("submit",async event=>{
+        event.preventDefault();
+        if(newRoomError)newRoomError.textContent="";
+        if(!currentInvoiceProjectId){
+            if(newRoomError)newRoomError.textContent="Choose a project before creating a room.";
+            return;
+        }
+        const formData=new FormData(newRoomForm);
+        try{
+            const response=await fetch(`/project/${currentInvoiceProjectId}/rooms/create-json`,{method:"POST",body:formData});
+            const payload=await response.json();
+            if(response.status===409&&payload.duplicate&&payload.room){
+                const useExisting=confirm(`${payload.error} Use the existing room for this invoice line?`);
+                if(useExisting){
+                    addRoomToInvoiceOptions({...payload.room,project_id:currentInvoiceProjectId},pendingLocationSelect);
+                    closeInvoiceRoomModal();
+                }else if(newRoomError){
+                    newRoomError.textContent="Change the room name to create a new room.";
+                }
+                return;
+            }
+            if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not create room.");
+            addRoomToInvoiceOptions(payload.room,pendingLocationSelect);
+            closeInvoiceRoomModal();
+            alert(`Room '${payload.room.name}' was created in this project and added to the invoice location list.`);
+            markInvoiceDirty();
+        }catch(err){
+            if(newRoomError)newRoomError.textContent=err.message||"Could not create room.";
+        }
+    });
+}
+if(invoiceForm){
+    invoiceForm.addEventListener("input",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("change",event=>{
+        if(event.target.closest("#newCatalogItemForm"))return;
+        markInvoiceDirty();
+    });
+    invoiceForm.addEventListener("submit",event=>{
+        const submitter=event.submitter;
+        const isPreview=submitter&&submitter.getAttribute("formtarget")==="_blank";
+        if(isPreview){
+            allowInvoiceLeave=false;
+            return;
+        }
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+    });
+}
+document.addEventListener("click",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    const link=event.target.closest("a[href]");
+    const backButton=event.target.closest(".backButton");
+    if(!link&&!backButton)return;
+    if(link&&link.target==="_blank")return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    showUnsavedInvoicePrompt(()=>{
+        allowInvoiceLeave=true;
+        if(link){
+            window.location.href=link.href;
+        }else if(window.history.length>1){
+            window.history.back();
+        }else{
+            window.location.href="{{ url_for('index') }}";
+        }
+    });
+},true);
+window.addEventListener("beforeunload",event=>{
+    if(!invoiceDirty||allowInvoiceLeave)return;
+    event.preventDefault();
+    event.returnValue="";
+});
+if(saveBeforeLeaving){
+    saveBeforeLeaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        if(invoiceForm){
+            const submitButton=invoiceForm.querySelector('button[type="submit"]:not([formaction])');
+            if(submitButton&&invoiceForm.requestSubmit)invoiceForm.requestSubmit(submitButton);
+            else invoiceForm.submit();
+        }
+    });
+}
+if(leaveWithoutSaving){
+    leaveWithoutSaving.addEventListener("click",()=>{
+        allowInvoiceLeave=true;
+        invoiceDirty=false;
+        const navigate=pendingInvoiceNavigation;
+        hideUnsavedInvoicePrompt();
+        if(navigate)navigate();
+    });
+}
+if(keepEditingInvoice){
+    keepEditingInvoice.addEventListener("click",hideUnsavedInvoicePrompt);
+}
+if(invoiceLines&&lineRows().length===0)addInvoiceLine();
+invoiceLines.querySelectorAll(".lineLocation").forEach(select=>refreshLocationSelect(select, select.value));
+invoiceLines.querySelectorAll(".lineUnitPrice").forEach(formatMoneyInput);
+lineRows().forEach(markCatalogBaseline);
+refreshLineIndexes();
+updateInvoiceLiveTotals();
+invoiceDirty=false;
+</script>
+
 <style>
-.invoiceTableWrap{overflow-x:auto}.invoiceTable{width:100%;border-collapse:collapse;min-width:860px}.invoiceTable th,.invoiceTable td{border:1px solid var(--border);padding:9px;text-align:left;vertical-align:top}.invoiceTable th{background:#f3f4f6}.invoiceStatus{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;background:#eef2ff;color:#1d4ed8}
+.invoiceLinePanel{position:sticky;top:8px;z-index:5;margin:22px 0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.08);overflow:hidden}
+.invoiceHeaderActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.invoiceHeaderActions .btn-link,.invoiceHeaderActions button{width:auto!important;min-height:34px!important;padding:7px 11px!important;margin:0!important;border-radius:8px!important;font-size:13px!important}
+.invoiceTopTextFields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:start;margin:8px 0 10px}.invoiceTopTextFields textarea{min-height:76px;resize:vertical}
+.invoiceLineToolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:#f8fafc}.invoiceLineToolbar h3{margin:0}
+.invoiceGridWrap{overflow:auto;max-height:58vh}.invoiceGridTable{width:100%;min-width:1120px;border-collapse:collapse}.invoiceGridTable th,.invoiceGridTable td{border:1px solid #d9e2ee;padding:4px;vertical-align:top}.invoiceGridTable th{position:sticky;top:0;background:#edf4ff;z-index:1;text-align:left;font-size:12px;text-transform:uppercase;color:#475569}.invoiceGridTable tbody tr:nth-child(even){background:#eef6ff}.invoiceGridTable tbody tr:nth-child(odd){background:#fff}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{width:100%;min-height:30px;margin:0;border:1px solid #cbd5e1;border-radius:4px;background:white}.invoiceGridTable textarea{resize:vertical;min-height:30px}.invoiceGridTable th:nth-child(1),.invoiceGridTable td:nth-child(1){width:58px;text-align:center}.invoiceGridTable th:nth-child(2),.invoiceGridTable td:nth-child(2){width:74px}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:230px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:160px;min-width:150px}.invoiceGridTable .lineLocation{width:max-content!important;min-width:150px;max-width:320px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:118px}.invoiceGridTable th:nth-child(8),.invoiceGridTable td:nth-child(8){width:70px}.lineAmount{font-weight:800;text-align:right;background:#f8fafc!important}.invoiceLineActions{display:grid;gap:3px}.invoiceLineActions button{width:100%!important;min-height:22px!important;padding:2px 5px!important;margin:0!important;border-radius:5px!important;font-size:11px!important;line-height:1.1!important}
+.invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
+#invoiceSuggestBox{position:fixed;z-index:120;max-height:260px;overflow:auto;background:#fff;border:1px solid #94a3b8;border-radius:6px;box-shadow:0 14px 34px rgba(15,23,42,.22);min-width:220px;max-width:440px}
+#invoiceSuggestBox[hidden]{display:none}
+.invoiceSuggestOption{padding:6px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid #eef2f7;white-space:normal}
+.invoiceSuggestOption:last-child{border-bottom:none}
+.invoiceSuggestOption.active,.invoiceSuggestOption:hover{background:#dbeafe}
+.invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog,.newRoomDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
+@media(min-width:901px){main:has(#invoiceForm){max-width:none;padding:10px 12px 18px}body.proTestTheme main:has(#invoiceForm){padding:10px 12px 18px}.invoiceHeaderActions{margin-bottom:2px}.invoiceTopTextFields{gap:8px;margin:4px 0 6px}.invoiceTopTextFields textarea{min-height:58px}.invoiceLinePanel{margin:8px 0}.invoiceLineToolbar{padding:4px 8px}.invoiceLineToolbar button{min-height:26px;padding:4px 9px;margin:0}.invoiceGridWrap{height:calc(100vh - 188px);min-height:660px;max-height:none}.invoiceGridTable{min-width:1380px}.invoiceGridTable th,.invoiceGridTable td{padding:2px 3px}.invoiceGridTable th{font-size:11px}.invoiceGridTable input,.invoiceGridTable select,.invoiceGridTable textarea{min-height:24px;padding:2px 5px;font-size:12px}.invoiceGridTable textarea{min-height:24px;line-height:1.15}
+.invoiceGridTable textarea.lineItemInput{font-family:inherit;overflow-wrap:anywhere}.invoiceGridTable th:nth-child(3),.invoiceGridTable td:nth-child(3){width:310px}.invoiceGridTable th:nth-child(4),.invoiceGridTable td:nth-child(4){width:390px}.invoiceGridTable th:nth-child(5),.invoiceGridTable td:nth-child(5){width:210px;min-width:180px}.invoiceGridTable .lineLocation{min-width:180px;max-width:360px}.invoiceGridTable th:nth-child(6),.invoiceGridTable td:nth-child(6),.invoiceGridTable th:nth-child(7),.invoiceGridTable td:nth-child(7){width:130px}.invoiceGridTable .removeInvoiceLine,.invoiceGridTable .insertInvoiceLine{min-height:20px!important;padding:2px 4px!important;font-size:10px!important}.invoiceLiveTotals{margin:6px 10px 6px auto;padding:7px 10px;font-size:13px}.invoiceLiveTotals p{margin:2px 0}.invoiceLiveBalance{padding-top:5px;font-size:18px}}
+@media(max-width:900px){.invoiceLinePanel{position:static}.invoiceTopTextFields{grid-template-columns:1fr}.invoiceGridWrap{max-height:none}.invoiceGridTable{min-width:980px}.invoiceLineToolbar{align-items:stretch;flex-direction:column}}
 </style>
 {% endblock %}
