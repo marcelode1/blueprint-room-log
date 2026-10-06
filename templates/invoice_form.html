@@ -453,6 +453,30 @@ const leaveWithoutSaving=document.getElementById("leaveWithoutSaving");
 const keepEditingInvoice=document.getElementById("keepEditingInvoice");
 const invoiceTaxRate=Number("{{ invoice.tax_rate if invoice else default_tax_rate }}")||0;
 const invoicePaidTotal=Number("{{ paid_total if paid_total is defined and paid_total else 0 }}")||0;
+// Posts a form and insists on a real answer. Without this, a login page or a
+// server crash page came back as HTML and the box showed
+// "Unexpected token '<', "<!doctype "... is not valid JSON".
+async function postInvoiceJson(url,formData){
+    let response;
+    try{
+        response=await fetch(url,{method:"POST",body:formData,credentials:"same-origin",
+            headers:{"X-Requested-With":"XMLHttpRequest","Accept":"application/json"}});
+    }catch(e){
+        throw new Error("No answer from the server. Check your connection and try again.");
+    }
+    const text=await response.text();
+    let payload=null;
+    try{payload=JSON.parse(text);}catch(e){payload=null;}
+    if(!payload){
+        if(response.status===401||/name="password"|id="loginForm"/i.test(text)){
+            throw new Error("Your sign-in has expired. Open this page again and sign in, then retry.");
+        }
+        if(response.status===404)throw new Error("That project could not be found on the server.");
+        throw new Error(`The server returned an error (${response.status}). Nothing was saved.`);
+    }
+    if(payload.signed_out)throw new Error(payload.error||"Your sign-in has expired.");
+    return {response,payload};
+}
 const newRoomModal=document.getElementById("newRoomModal");
 const newRoomForm=document.getElementById("newInvoiceRoomForm");
 const newRoomError=document.getElementById("newRoomError");
@@ -874,8 +898,7 @@ if(saveCatalogUpdate){
         formData.set("description",pendingCatalogUpdate.description);
         formData.set("unit_price",String(pendingCatalogUpdate.unitPrice));
         try{
-            const response=await fetch(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,{method:"POST",body:formData});
-            const payload=await response.json();
+            const {response,payload}=await postInvoiceJson(`/parts-catalog/${pendingCatalogUpdate.partId}/quick-update-json`,formData);
             if(!response.ok||!payload.ok)throw new Error(payload.error||"Could not update catalog item.");
             updateCatalogOptionEverywhere(payload.item);
             markCatalogBaseline(pendingCatalogUpdate.line);
@@ -910,8 +933,7 @@ newItemForm.addEventListener("submit",async event=>{
     const formData=new FormData(newItemForm);
     if(!formData.get("taxable"))formData.set("taxable","0");
     try{
-        const response=await fetch("{{ url_for('create_part_catalog_json') }}",{method:"POST",body:formData});
-        const payload=await response.json();
+        const {response,payload}=await postInvoiceJson("{{ url_for('create_part_catalog_json') }}",formData);
         if(response.status===409&&payload.duplicate&&payload.item){
             const useExisting=confirm(`${payload.error} Use the existing item for this invoice line?`);
             if(useExisting){
@@ -938,14 +960,13 @@ if(newRoomForm){
     newRoomForm.addEventListener("submit",async event=>{
         event.preventDefault();
         if(newRoomError)newRoomError.textContent="";
-        if(!currentInvoiceProjectId){
+        if(!currentInvoiceProjectId||!/^\d+$/.test(String(currentInvoiceProjectId))){
             if(newRoomError)newRoomError.textContent="Choose a project before creating a room.";
             return;
         }
         const formData=new FormData(newRoomForm);
         try{
-            const response=await fetch(`/project/${currentInvoiceProjectId}/rooms/create-json`,{method:"POST",body:formData});
-            const payload=await response.json();
+            const {response,payload}=await postInvoiceJson(`/project/${currentInvoiceProjectId}/rooms/create-json`,formData);
             if(response.status===409&&payload.duplicate&&payload.room){
                 const useExisting=confirm(`${payload.error} Use the existing room for this invoice line?`);
                 if(useExisting){

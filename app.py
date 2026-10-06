@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-06 V2"
+APP_BUILD = "2026-10-06 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1935,14 +1935,36 @@ def ensure_project_blueprints(conn, project):
         print("ensure_project_blueprints skipped:", e)
 
 
+def wants_json_response():
+    """True when the page asked for JSON with fetch() rather than loading a page.
+    Those callers cannot read a login page, so they are answered in JSON."""
+    try:
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return True
+        if "-json" in request.path:
+            return True
+        accept = request.headers.get("Accept", "")
+        return "application/json" in accept and "text/html" not in accept
+    except Exception:
+        return False
+
+
+def signed_out_response():
+    """What a signed-out request gets back: JSON for fetch, the login page otherwise."""
+    if wants_json_response():
+        return jsonify({"ok": False, "signed_out": True,
+                        "error": "Your sign-in has expired. Open the page again and sign in."}), 401
+    if request.path.startswith("/mobile"):
+        return redirect(url_for("mobile_login"))
+    return redirect(url_for("login"))
+
+
 def login_required(fn):
     from functools import wraps
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
-            if request.path.startswith("/mobile"):
-                return redirect(url_for("mobile_login"))
-            return redirect(url_for("login"))
+            return signed_out_response()
         return fn(*args, **kwargs)
     return wrapper
 
@@ -1956,8 +1978,10 @@ def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
-            return redirect(url_for("login"))
+            return signed_out_response()
         if not is_main_admin():
+            if wants_json_response():
+                return jsonify({"ok": False, "error": "Only the main admin can do that."}), 403
             flash("Only the main admin can do that.")
             return redirect(url_for("index"))
         return fn(*args, **kwargs)
@@ -15342,44 +15366,49 @@ def create_room_json(project_id):
         return jsonify({"ok": False, "error": "Room name is required."}), 400
 
     conn = db()
-    project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
-    if not project:
-        conn.close()
-        return jsonify({"ok": False, "error": "Project not found."}), 404
-    if not user_can_access_project(conn, project_id):
-        conn.close()
-        return jsonify({"ok": False, "error": "You do not have access to this project."}), 403
+    try:
+        project = conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone()
+        if not project:
+            return jsonify({"ok": False, "error": "Project not found."}), 404
+        if not user_can_access_project(conn, project_id):
+            return jsonify({"ok": False, "error": "You do not have access to this project."}), 403
 
-    duplicate_room = conn.execute(
-        "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
-        (project_id, name)
-    ).fetchone()
-    if duplicate_room:
-        conn.close()
-        return jsonify({
-            "ok": False,
-            "duplicate": True,
-            "error": f"Room '{duplicate_room['name']}' already exists.",
-            "room": {"id": duplicate_room["id"], "name": duplicate_room["name"]}
-        }), 409
+        duplicate_room = conn.execute(
+            "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
+            (project_id, name)
+        ).fetchone()
+        if duplicate_room:
+            return jsonify({
+                "ok": False,
+                "duplicate": True,
+                "error": f"Room '{duplicate_room['name']}' already exists.",
+                "room": {"id": duplicate_room["id"], "name": duplicate_room["name"]}
+            }), 409
 
-    row = conn.execute(
-        """
-        INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at)
-        VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)
-        RETURNING id, name, project_id
-        """,
-        (
-            project_id,
-            name,
-            request.form.get("category", "general"),
-            request.form.get("room_color", "blue"),
-            datetime.now().isoformat()
-        )
-    ).fetchone()
-    conn.commit()
-    conn.close()
-    return jsonify({"ok": True, "room": dict(row) if row else {}})
+        row = conn.execute(
+            """
+            INSERT INTO rooms (project_id, name, x, y, w, h, polygon_points, category, room_color, created_at)
+            VALUES (%s, %s, 0, 0, 0, 0, '', %s, %s, %s)
+            RETURNING id, name, project_id
+            """,
+            (
+                project_id,
+                name,
+                request.form.get("category", "general"),
+                request.form.get("room_color", "blue"),
+                datetime.now().isoformat()
+            )
+        ).fetchone()
+        conn.commit()
+        return jsonify({"ok": True, "room": dict(row) if row else {}})
+    except Exception as e:
+        # Say what went wrong in JSON; an HTML crash page the box cannot read
+        # is what produced "Unexpected token '<'".
+        conn.rollback()
+        print("Create room failed:", e)
+        return jsonify({"ok": False, "error": f"The room could not be created. {e}"}), 500
+    finally:
+        conn.close()
 
 
 
