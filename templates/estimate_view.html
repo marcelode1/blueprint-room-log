@@ -166,8 +166,8 @@
             <tr>
                 <td>{{ loop.index }}</td>
                 <td>{{ line.quantity }}</td>
-                <td>{{ line.item_name }}</td>
-                <td>{{ line.description or '' }}</td>
+                <td class="lineText">{{ line.item_name }}</td>
+                <td class="lineText">{{ line.description or '' }}</td>
                 <td>{{ line.location or '' }}</td>
                 <td>{{ format_invoice_money(line.unit_price) }}</td>
                 <td>{{ format_invoice_money(line.line_total) }}</td>
@@ -274,6 +274,8 @@ if(copySignLink){
 </script>
 
 <style>
+/* Keep the line breaks the user typed in Item and Description. */
+.lineText{white-space:pre-line}
 .inlineInvoiceForm{display:inline-block;margin:0 8px 8px 0}
 .invoiceSendForm{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:14px}
 .invoiceSendForm label{width:100%}

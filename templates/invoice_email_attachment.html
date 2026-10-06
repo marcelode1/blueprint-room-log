@@ -5,6 +5,8 @@
     <title>{{ inv_number }}</title>
     <style>
         @page{size:letter;margin:.35in}
+        /* Keep the line breaks the user typed in Item and Description. */
+        .lineText{white-space:pre-line}
         body{font-family:Arial,sans-serif;background:#fff;color:#172033;margin:0;padding:0}
         .invoicePaper{width:920px;max-width:920px;margin:0 auto;background:#fff;color:#172033;padding:20px}
         .invoiceHeader{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:34px;align-items:start;border-bottom:2px solid #172033;padding-bottom:22px}
@@ -93,8 +95,8 @@
                 <tr>
                     <td>{{ line.index }}</td>
                     <td>{{ line.quantity }}</td>
-                    <td>{{ line.item_name }}</td>
-                    <td>{{ line.description }}</td>
+                    <td class="lineText">{{ line.item_name }}</td>
+                    <td class="lineText">{{ line.description }}</td>
                     <td>{{ line.location }}</td>
                     <td class="col-price">{{ line.unit_price }}</td>
                     <td class="col-total">{{ line.line_total }}</td>
