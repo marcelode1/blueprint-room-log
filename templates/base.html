@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -77,9 +77,9 @@
                 </div>
             {% endif %}
             <div class="navDropdown">
-                <div class="navDropdownButton" tabindex="0">Simulation</div>
+                <div class="navDropdownButton" tabindex="0">Tools</div>
                 <div class="navDropdownMenu">
-                    <a href="{{ url_for('simulation_shades') }}">Shades</a>
+                    <a href="{{ url_for('tools_shades') }}">Shades</a>
                 </div>
             </div>
             {% if is_main_admin() %}<a href="{{ url_for('orders') }}">Orders</a>{% endif %}
@@ -127,8 +127,8 @@
         {% if session.get("role") != "customer" %}<a href="{{ url_for('expenses') }}">Expenses</a>{% endif %}
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
         <details class="mobileMenuGroup">
-            <summary>Simulation</summary>
-            <a href="{{ url_for('simulation_shades') }}">Shades</a>
+            <summary>Tools</summary>
+            <a href="{{ url_for('tools_shades') }}">Shades</a>
         </details>
         <a href="{{ url_for('notifications') }}" data-notification-link>Notifications <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
         <a href="{{ url_for('company_card') }}" target="_blank" rel="noopener">Contact Card</a>
@@ -144,8 +144,8 @@
         <a href="{{ url_for('invoice_customers') }}">Invoices</a>
         <a href="{{ url_for('estimates') }}">{{ proposal_word }}s</a>
         <details class="mobileMenuGroup">
-            <summary>Simulation</summary>
-            <a href="{{ url_for('simulation_shades') }}">Shades</a>
+            <summary>Tools</summary>
+            <a href="{{ url_for('tools_shades') }}">Shades</a>
         </details>
         <a href="{{ url_for('orders') }}">Orders</a>
         {% if can_view_inventory() %}<a href="{{ url_for('inventory') }}">Inventory</a>{% endif %}
@@ -332,8 +332,8 @@
         {% if session.get("role") != "customer" %}<a href="{{ url_for('expenses') }}">Expenses</a>{% endif %}
         <a href="{{ url_for('mobile_inventory') }}">Inventory</a>
         <details class="mobileMenuGroup">
-            <summary>Simulation</summary>
-            <a href="{{ url_for('simulation_shades') }}">Shades</a>
+            <summary>Tools</summary>
+            <a href="{{ url_for('tools_shades') }}">Shades</a>
         </details>
         <a href="{{ url_for('notifications') }}" data-notification-link>Alerts <span data-notification-inline-count style="{% if not live_unread_count %}display:none;{% endif %}">({{ live_unread_count }})</span></a>
     {% else %}
@@ -424,7 +424,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
             try{await navigator.storage.persist();}catch(e){}
         }
         localStorage.setItem(permissionKey,"done");
-        if(status)status.textContent=results.join(" • ")||"Permissions saved.";
+        if(status)status.textContent=results.join(" â€¢ ")||"Permissions saved.";
         if(status)status.textContent=results.length?results.join(" | "):"Permissions saved.";
         setTimeout(()=>{const modal=document.getElementById(modalId);if(modal)modal.hidden=true;},900);
     }

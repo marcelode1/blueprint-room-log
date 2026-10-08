@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>Shade Simulation</h2>
-    <p class="muted">Start typing the project name and pick it from the list.</p>
+    <p class="toolCrumb">Tools</p>
+    <h2>Shades</h2>
+    <p class="muted">Which project is this for? Start typing the name and pick it from the list.
+        Whatever you draw is saved to that project with the Save button.</p>
 
     <div class="shadePick">
         <label for="shadeProject">Project</label>
@@ -11,6 +13,24 @@
         <div class="shadeSuggest" id="shadeSuggest" hidden></div>
         <p class="muted shadeHint" id="shadeHint"></p>
     </div>
+</div>
+
+{# Everything already drawn, so it can be reopened at any time. #}
+<div class="card">
+    <h3>Projects with Shades Done <span class="shadeCount">{{ saved_projects|length }}</span></h3>
+    {% if saved_projects %}
+        <div class="shadeSavedList">
+        {% for p in saved_projects %}
+            <a class="shadeSavedRow" href="{{ p.url }}">
+                <span class="shadeSavedName">{{ p.name }}</span>
+                {% if p.customer_name %}<span class="shadeSavedWho">{{ p.customer_name }}</span>{% endif %}
+                {% if p.updated_at %}<span class="shadeSavedWhen">Last saved {{ format_datetime(p.updated_at) }}</span>{% endif %}
+            </a>
+        {% endfor %}
+        </div>
+    {% else %}
+        <p class="muted">No shades drawn yet. Pick a project above to start one.</p>
+    {% endif %}
 </div>
 
 <script id="shadeProjectData" type="application/json">{{ project_json|safe }}</script>
@@ -117,6 +137,15 @@
 </script>
 
 <style>
+.toolCrumb{margin:0 0 2px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.shadeCount{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:800;background:rgba(15,23,42,.09);color:var(--muted)}
+body.dark .shadeCount{background:rgba(255,255,255,.12)}
+.shadeSavedList{display:grid;gap:8px;margin-top:10px}
+.shadeSavedRow{display:grid;gap:2px;border:1px solid var(--border);border-radius:11px;padding:11px 13px;text-decoration:none;background:var(--card);color:var(--text)}
+.shadeSavedRow:hover{border-color:var(--primary);background:rgba(37,99,235,.06)}
+.shadeSavedName{font-weight:800;font-size:14.5px}
+.shadeSavedWho{font-size:12.5px;color:var(--muted);font-weight:600}
+.shadeSavedWhen{font-size:12px;color:var(--muted)}
 .shadePick{position:relative;max-width:520px}
 .shadePick label{display:block;margin:0 0 4px;font-size:13px;font-weight:750;color:var(--muted)}
 .shadePick input{width:100%;max-width:520px}

@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-08 V1"
+APP_BUILD = "2026-10-08 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -21822,9 +21822,15 @@ app.register_blueprint(shade_editor.create_blueprint(
 
 
 @app.route("/simulation/shades")
-@login_required
 def simulation_shades():
-    """Pick a project to open the Shade Designer on."""
+    """The old address, kept so saved links still work."""
+    return redirect(url_for("tools_shades"))
+
+
+@app.route("/tools/shades")
+@login_required
+def tools_shades():
+    """Pick a project to open the Shade Designer on, and list the ones already done."""
     conn = db()
     ensure_shade_tables(conn)
     if is_main_admin():
@@ -21839,10 +21845,10 @@ def simulation_shades():
             """,
             (session.get("user_id"),)
         ).fetchall()
-    started = {
-        r["project_id"] for r in conn.execute(
-            "SELECT project_id FROM shade_documents").fetchall()
-    }
+    saved_rows = conn.execute(
+        "SELECT project_id, updated_at, updated_by FROM shade_documents"
+    ).fetchall()
+    saved_by_project = {r["project_id"]: r for r in saved_rows}
     conn.close()
     # The page is one type-ahead box, so it gets the list it searches through.
     project_json = json.dumps([
@@ -21850,12 +21856,27 @@ def simulation_shades():
             "id": r["id"],
             "name": r.get("name") or "",
             "customer_name": r.get("customer_name") or "",
-            "started": r["id"] in started,
+            "started": r["id"] in saved_by_project,
             "url": url_for("shade_editor.editor", project_id=r["id"]),
         }
         for r in rows
     ])
-    return render_template("simulation_shades.html", project_json=project_json)
+    # Everything already drawn, newest first, so it can be reopened at any time.
+    saved_projects = sorted(
+        [
+            {
+                "id": r["id"],
+                "name": r.get("name") or "",
+                "customer_name": r.get("customer_name") or "",
+                "updated_at": (saved_by_project[r["id"]].get("updated_at") or ""),
+                "url": url_for("shade_editor.editor", project_id=r["id"]),
+            }
+            for r in rows if r["id"] in saved_by_project
+        ],
+        key=lambda item: item["updated_at"], reverse=True
+    )
+    return render_template("tools_shades.html", project_json=project_json,
+                           saved_projects=saved_projects)
 
 
 @app.route("/health")
