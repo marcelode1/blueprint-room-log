@@ -8,13 +8,14 @@
 
     <div class="shadePick">
         <label for="shadeProject">Project</label>
+        {# the list hangs straight off the box you type in #}
         <div class="shadeCombo">
             <input type="text" id="shadeProject" autocomplete="off" spellcheck="false"
-                   placeholder="Pick a project, or type to filter">
+                   placeholder="Start typing a project name">
             <button type="button" class="shadeCaret" id="shadeCaret"
-                    aria-label="Show the project list" aria-expanded="false">&#9662;</button>
+                    aria-label="Show the whole project list" aria-expanded="false">&#9662;</button>
+            <div class="shadeSuggest" id="shadeSuggest" hidden></div>
         </div>
-        <div class="shadeSuggest" id="shadeSuggest" hidden></div>
         <p class="muted shadeHint" id="shadeHint"></p>
     </div>
 </div>
@@ -74,9 +75,7 @@
             hint.textContent=typed.trim()?"No project matches that name.":"No projects to pick from.";
             return;
         }
-        hint.textContent=matches.length>10
-            ? matches.length+" projects - scroll the list, or type to narrow it down"
-            : "";
+        hint.textContent="";
         caret.setAttribute("aria-expanded","true");
         matches.forEach((p,i)=>{
             const option=document.createElement("button");
@@ -118,9 +117,12 @@
         window.location.href=project.url;
     }
 
-    input.addEventListener("input",()=>show(input.value));
-    input.addEventListener("focus",()=>show(input.value));
-    input.addEventListener("mousedown",()=>{if(box.hidden)setTimeout(()=>show(input.value),0);});
+    // Nothing opens until a letter is typed. The arrow is there for the times
+    // you would rather browse the whole list.
+    input.addEventListener("input",()=>{
+        if(input.value.trim())show(input.value);
+        else hide();
+    });
     caret.addEventListener("mousedown",event=>{
         event.preventDefault();
         if(box.hidden){input.focus();show(input.value);}
@@ -164,14 +166,14 @@ body.dark .shadeCount{background:rgba(255,255,255,.12)}
 .shadeSavedWhen{font-size:12px;color:var(--muted)}
 .shadePick{position:relative;max-width:520px}
 .shadePick label{display:block;margin:0 0 4px;font-size:13px;font-weight:750;color:var(--muted)}
-.shadeCombo{position:relative;display:flex;align-items:center}
-.shadePick input{width:100%;max-width:520px;padding-right:42px}
+.shadeCombo{position:relative;display:flex;align-items:center;max-width:520px}
+.shadePick input{width:100%;max-width:520px;padding-right:42px;margin:0}
 .shadeCaret{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px!important;min-height:32px!important;
     margin:0!important;padding:0!important;border:0!important;background:transparent!important;color:var(--muted)!important;
     font-size:15px;line-height:1;cursor:pointer;border-radius:8px!important}
 .shadeCaret:hover{background:rgba(37,99,235,.1)!important;color:var(--primary-dark)!important}
 .shadeHint{margin:6px 0 0;min-height:1.2em;font-size:13px}
-.shadeSuggest{position:absolute;z-index:60;left:0;right:0;top:100%;margin-top:2px;background:#fff;
+.shadeSuggest{position:absolute;z-index:60;left:0;right:0;top:calc(100% + 2px);background:#fff;
     border:1px solid #cbd5e1;border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.22);
     max-height:min(60vh,352px);overflow-y:auto}   /* ten projects, then it scrolls */
 .shadeSuggest[hidden]{display:none}
