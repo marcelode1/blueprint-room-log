@@ -25,6 +25,9 @@
     {% if can_view_project_notes(project.id) %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_notepad', project_id=project.id) }}">Notes</a>
     {% endif %}
+    {% if is_main_admin() or has_perm("see_pictures") %}
+        <a class="btn-link btn-secondary" href="{{ url_for('project_gallery', project_id=project.id) }}">Gallery</a>
+    {% endif %}
     <a class="btn-link" href="{{ url_for('project_timeline', project_id=project.id) }}">Open Project Timeline</a>
     {% if is_main_admin() or has_perm("view_project_progress") %}
         <a class="btn-link btn-secondary" href="{{ url_for('project_progress', project_id=project.id) }}">Progress</a>
