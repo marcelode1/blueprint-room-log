@@ -8,8 +8,12 @@
 
     <div class="shadePick">
         <label for="shadeProject">Project</label>
-        <input type="text" id="shadeProject" autocomplete="off" spellcheck="false"
-               placeholder="Start typing a project name">
+        <div class="shadeCombo">
+            <input type="text" id="shadeProject" autocomplete="off" spellcheck="false"
+                   placeholder="Pick a project, or type to filter">
+            <button type="button" class="shadeCaret" id="shadeCaret"
+                    aria-label="Show the project list" aria-expanded="false">&#9662;</button>
+        </div>
         <div class="shadeSuggest" id="shadeSuggest" hidden></div>
         <p class="muted shadeHint" id="shadeHint"></p>
     </div>
@@ -38,25 +42,28 @@
 (function(){
     const input=document.getElementById("shadeProject");
     const box=document.getElementById("shadeSuggest");
+    const caret=document.getElementById("shadeCaret");
     const hint=document.getElementById("shadeHint");
     const projects=JSON.parse(document.getElementById("shadeProjectData").textContent||"[]");
     let matches=[],index=-1;
 
     const norm=v=>(v===null||v===undefined?"":String(v)).trim().toLowerCase();
 
+    // With nothing typed the whole list is offered, ten at a time, and scrolls.
+    // Typing narrows it down.
     function findMatches(typed){
         const query=norm(typed);
-        if(!query)return [];
+        if(!query)return projects.slice();
         const starts=[],contains=[];
         for(const p of projects){
             const name=norm(p.name),customer=norm(p.customer_name);
             if(name.startsWith(query))starts.push(p);
             else if(name.includes(query)||customer.includes(query))contains.push(p);
         }
-        return starts.concat(contains).slice(0,12);
+        return starts.concat(contains);
     }
 
-    function hide(){box.hidden=true;box.innerHTML="";matches=[];index=-1;}
+    function hide(){box.hidden=true;box.innerHTML="";matches=[];index=-1;caret.setAttribute("aria-expanded","false");}
 
     function show(typed){
         matches=findMatches(typed);
@@ -64,10 +71,13 @@
         box.innerHTML="";
         if(!matches.length){
             hide();
-            hint.textContent=typed.trim()?"No project matches that name.":"";
+            hint.textContent=typed.trim()?"No project matches that name.":"No projects to pick from.";
             return;
         }
-        hint.textContent="";
+        hint.textContent=matches.length>10
+            ? matches.length+" projects - scroll the list, or type to narrow it down"
+            : "";
+        caret.setAttribute("aria-expanded","true");
         matches.forEach((p,i)=>{
             const option=document.createElement("button");
             option.type="button";
@@ -109,7 +119,13 @@
     }
 
     input.addEventListener("input",()=>show(input.value));
-    input.addEventListener("focus",()=>{if(input.value.trim())show(input.value);});
+    input.addEventListener("focus",()=>show(input.value));
+    input.addEventListener("mousedown",()=>{if(box.hidden)setTimeout(()=>show(input.value),0);});
+    caret.addEventListener("mousedown",event=>{
+        event.preventDefault();
+        if(box.hidden){input.focus();show(input.value);}
+        else hide();
+    });
     input.addEventListener("keydown",event=>{
         if(box.hidden)return;
         if(event.key==="ArrowDown"||event.key==="ArrowUp"){
@@ -148,21 +164,27 @@ body.dark .shadeCount{background:rgba(255,255,255,.12)}
 .shadeSavedWhen{font-size:12px;color:var(--muted)}
 .shadePick{position:relative;max-width:520px}
 .shadePick label{display:block;margin:0 0 4px;font-size:13px;font-weight:750;color:var(--muted)}
-.shadePick input{width:100%;max-width:520px}
+.shadeCombo{position:relative;display:flex;align-items:center}
+.shadePick input{width:100%;max-width:520px;padding-right:42px}
+.shadeCaret{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px!important;min-height:32px!important;
+    margin:0!important;padding:0!important;border:0!important;background:transparent!important;color:var(--muted)!important;
+    font-size:15px;line-height:1;cursor:pointer;border-radius:8px!important}
+.shadeCaret:hover{background:rgba(37,99,235,.1)!important;color:var(--primary-dark)!important}
 .shadeHint{margin:6px 0 0;min-height:1.2em;font-size:13px}
 .shadeSuggest{position:absolute;z-index:60;left:0;right:0;top:100%;margin-top:2px;background:#fff;
     border:1px solid #cbd5e1;border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.22);
-    max-height:320px;overflow-y:auto}
+    max-height:min(60vh,352px);overflow-y:auto}   /* ten projects, then it scrolls */
 .shadeSuggest[hidden]{display:none}
-.shadeSuggestOpt{display:flex!important;flex-direction:column;gap:2px;width:100%!important;
+/* one project per line, so ten fit in the open list before it scrolls */
+.shadeSuggestOpt{display:flex!important;flex-direction:row;align-items:baseline;gap:8px;width:100%!important;
     text-align:left!important;background:#fff!important;border:0!important;
-    border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:10px 12px!important;
-    margin:0!important;min-height:0!important;cursor:pointer}
+    border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:7px 12px!important;
+    margin:0!important;min-height:0!important;cursor:pointer;white-space:nowrap;overflow:hidden}
 .shadeSuggestOpt:last-child{border-bottom:0!important}
 .shadeSuggestOpt:hover,.shadeSuggestOpt.hl{background:#e0ecff!important}
-.shadeSuggestName{font-weight:800;font-size:14px;color:#0f172a}
-.shadeSuggestWho{font-size:12.5px;color:#64748b;font-weight:600}
-.shadeSuggestTag{align-self:flex-start;margin-top:3px;border-radius:999px;padding:2px 8px;
+.shadeSuggestName{font-weight:800;font-size:14px;color:#0f172a;overflow:hidden;text-overflow:ellipsis}
+.shadeSuggestWho{font-size:12.5px;color:#64748b;font-weight:600;overflow:hidden;text-overflow:ellipsis;flex:1}
+.shadeSuggestTag{margin-left:auto;flex:0 0 auto;border-radius:999px;padding:2px 8px;
     font-size:11px;font-weight:800;background:rgba(22,163,74,.14);color:#15803d}
 body.dark .shadeSuggest{background:#1e293b;border-color:#334155}
 body.dark .shadeSuggestOpt{background:#1e293b!important;border-bottom-color:#334155!important}

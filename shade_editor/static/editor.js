@@ -2,7 +2,12 @@
 (()=>{
 const root=document.getElementById('full-drop-shades'),q=s=>root.querySelector(s),canvas=q('canvas'),ctx=canvas.getContext('2d');
 function defaults(){const out={b:[],s:[]};for(const k of ['b','s'])for(let i=0;i<4;i++){let left,right;if(i<2){left=i===0?140:(k==='b'?727:776);right=i===0?(k==='b'?713:762):1488;}else{left=140+i*337;right=left+323;}out[k].push({on:i<2,drop:((k==='b'?580:449)-32)/(951-32),c:[{x:left/1653,y:32/951},{x:right/1653,y:32/951},{x:right/1653,y:1},{x:left/1653,y:1}]});}return out;}
-const photos=[{name:'Sample window',src:root.dataset.example,panels:defaults(),lines:[],history:[],openness:10}];let current=0,img=new Image(),version=0,drag=null,draft=null,editing=false;
+// A project with nothing saved opens empty: no picture and no shades, so the
+// page starts clean instead of showing the bundled sample window.
+function blankPanels(){const p=defaults();for(const k of ['b','s'])for(const panel of p[k])panel.on=false;return p;}
+const photos=[{name:'No picture yet',src:'',panels:blankPanels(),lines:[],history:[],openness:10}];let current=0,img=new Image(),version=0,drag=null,draft=null,editing=false;
+const isBlank=p=>!p||!p.src;
+function rebuildPictureList(){const sel=q('#picture');sel.replaceChildren();photos.forEach((p,i)=>{const option=document.createElement('option');option.value=i;option.textContent=p.name;sel.append(option);});sel.value=String(current);}
 // With no shade being edited, the Open / Close slider moves every panel of the
 // chosen fabric together; with one clicked it moves just that panel.
 const groupPanels=()=>photo().panels[q('#layer').value].filter(p=>p.on);
@@ -14,7 +19,9 @@ function polygon(p){return [p.c[0],p.c[1],mix(p.c[1],p.c[2],p.drop),mix(p.c[0],p
 const OPENNESS=[1,3,5,10,20,30],SHEER_ALPHA={1:.8,3:.66,5:.54,10:.38,20:.26,30:.18};
 function openness(){const o=photo().openness;return OPENNESS.includes(o)?o:10;}
 function sync(){q('#openness').value=OPENNESS.indexOf(openness());q('#openness-value').textContent=openness()+'%';q("#gap-position").value=gapAnchor()*100;q("#gap-position").disabled=!gapPanels().every(p=>p.on);for(const k of ['b','s'])for(let i=0;i<4;i++)q('#'+k+i).checked=photo().panels[k][i].on;const p=selected(),d=shownDrop(),same=editing||groupPanels().every(x=>x.drop===d);q('#drop').value=Math.round(d*100);q('#drop-value').textContent=Math.round(d*100)+'% closed';q('#drop-target').textContent=editing?((q('#layer').value==='b'?'Blackout':'Sheer')+' panel '+(+q('#panel').value+1)):('All '+(q('#layer').value==='b'?'blackout':'sheer')+' panels');q('#position').value=same&&[0,.5,1].includes(d)?String(d):'custom';q('#fabric-controls').hidden=q('#hide').checked;draw();}
-function load(index){current=index;editing=false;drag=null;draft=null;const token=++version,next=new Image();next.onload=()=>{if(token!==version)return;img=next;q('.scene').style.aspectRatio=img.naturalWidth+'/'+img.naturalHeight;sync();};next.onerror=()=>{q('#status').textContent='Could not open picture. Use JPG, PNG, or WebP.';};next.src=photo().src;}
+function load(index){current=index;editing=false;drag=null;draft=null;const token=++version;
+ if(isBlank(photo())){img=new Image();q('.scene').style.aspectRatio='16 / 10';sync();q('#status').textContent='Add a picture of the window to start.';return;}
+ const next=new Image();next.onload=()=>{if(token!==version)return;img=next;q('.scene').style.aspectRatio=img.naturalWidth+'/'+img.naturalHeight;sync();};next.onerror=()=>{q('#status').textContent='Could not open picture. Use JPG, PNG, or WebP.';};next.src=photo().src;}
 for(const k of ['b','s'])for(let i=0;i<4;i++){const label=document.createElement('label');label.className='form-check';const input=document.createElement('input');input.type='checkbox';input.className='form-check-input';input.id=k+i;input.checked=i<2;const span=document.createElement('span');span.className='form-check-label';span.textContent=String(i+1);label.append(input,span);q(k==='b'?'#blackout-panels':'#sheer-panels').append(label);input.addEventListener('change',()=>{photo().panels[k][i].on=input.checked;q('#layer').value=k;q('#panel').value=String(i);editing=input.checked;sync();});}
 function path(points,w,h){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x*w,p.y*h):ctx.moveTo(p.x*w,p.y*h));ctx.closePath();}
 function gapPanels(){const panels=photo().panels[q('#layer').value],i=+q('#gap-pair').value;return [panels[i],panels[i+1]];}
@@ -60,7 +67,10 @@ q('#panel').addEventListener('change',()=>{editing=true;});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&editing&&!e.target.closest('input,select,textarea')){editing=false;drag=null;q('#status').textContent='Click a shade to edit it. Open / Close moves all '+(q('#layer').value==='b'?'blackout':'sheer')+' panels together.';sync();}});
 for(const id of ['#layer','#panel','#tool','#hide'])q(id).addEventListener('change',()=>{drag=null;draft=null;sync();});q('#drop').addEventListener('input',()=>{setDrop(+q('#drop').value/100);sync();});q('#position').addEventListener('change',()=>{if(q('#position').value!=='custom')setDrop(+q('#position').value);sync();});
 q('#undo').addEventListener('click',()=>{if(photo().history.length)photo().lines=photo().history.pop();draw();});q('#clear').addEventListener('click',()=>{if(photo().lines.length){checkpoint();photo().lines=[];}draw();});q('#picture').addEventListener('change',()=>load(+q('#picture').value));
-q('#photos').addEventListener('change',async()=>{const files=[...q('#photos').files];q('#photos').disabled=true;let added=0,failed=0;for(const file of files){try{const src=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});await new Promise((resolve,reject)=>{const test=new Image();test.onload=resolve;test.onerror=reject;test.src=src;});photos.push({name:file.name,src,panels:defaults(),lines:[],history:[],openness:10});const option=document.createElement('option');option.value=photos.length-1;option.textContent=file.name;q('#picture').append(option);added++;}catch(e){failed++;}}q('#photos').disabled=false;q('#photos').value='';if(added){q('#picture').value=photos.length-1;load(photos.length-1);}q('#status').textContent=failed?'Some pictures could not open. Use JPG, PNG, or WebP.':'Photos, fabric layouts, and lines stay here while this view is open.';});
+q('#photos').addEventListener('change',async()=>{const files=[...q('#photos').files];q('#photos').disabled=true;let added=0,failed=0;for(const file of files){try{const src=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});await new Promise((resolve,reject)=>{const test=new Image();test.onload=resolve;test.onerror=reject;test.src=src;});photos.push({name:file.name,src,panels:defaults(),lines:[],history:[],openness:10});added++;}catch(e){failed++;}}q('#photos').disabled=false;q('#photos').value='';
+ // the empty placeholder steps aside as soon as there is a real picture
+ if(added&&photos.length>1&&isBlank(photos[0]))photos.shift();
+ if(added){current=photos.length-1;rebuildPictureList();load(photos.length-1);}q('#status').textContent=failed?'Some pictures could not open. Use JPG, PNG, or WebP.':'Photos, fabric layouts, and lines stay here while this view is open.';});
 q('#openness').addEventListener('input',()=>{photo().openness=OPENNESS[+q('#openness').value]||10;sync();});
 new ResizeObserver(draw).observe(q('.scene'));load(0);
 let revision=0,dirty=false,loading=true,saving=false;
@@ -70,7 +80,7 @@ for(const id of ['#clear','#undo'])q(id).addEventListener('click',()=>{dirty=tru
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 saveButton.addEventListener('click',async()=>{
  if(loading||saving)return;saving=true;saveButton.disabled=true;saveStatus.textContent='Saving…';
- try{const saveable=()=>photos.filter(p=>p.src!==root.dataset.example).map(({name,src,panels,lines,openness:o})=>({name,src,panels,lines,openness:OPENNESS.includes(o)?o:10}));
+ try{const saveable=()=>photos.filter(p=>p.src&&p.src!==root.dataset.example).map(({name,src,panels,lines,openness:o})=>({name,src,panels,lines,openness:OPENNESS.includes(o)?o:10}));
   const documentData={schema_version:1,photos:saveable()};
   if(!documentData.photos.length){saveStatus.textContent='Add a picture of the window first';saving=false;saveButton.disabled=false;return;}
  const response=await fetch(root.dataset.api,{method:'PUT',headers:{'Content-Type':'application/json','X-CSRF-Token':root.dataset.csrf},body:JSON.stringify({revision,document:documentData})});
@@ -79,7 +89,7 @@ saveButton.addEventListener('click',async()=>{
 });
 (async()=>{saveButton.disabled=true;saveStatus.textContent='Loading saved layout…';try{
 const response=await fetch(root.dataset.api,{cache:'no-store'});if(!response.ok)throw Error('Could not load saved layout. Saving is disabled to protect existing work.');const data=await response.json();revision=data.revision;
-if(data.document&&data.document.photos&&data.document.photos.length){photos.splice(0,photos.length,...data.document.photos.map(p=>({...p,history:[]})));q('#picture').replaceChildren();photos.forEach((p,i)=>{const option=document.createElement('option');option.value=i;option.textContent=p.name;q('#picture').append(option);});load(0);}
+if(data.document&&data.document.photos&&data.document.photos.length){photos.splice(0,photos.length,...data.document.photos.map(p=>({...p,history:[]})));current=0;rebuildPictureList();load(0);}else{rebuildPictureList();load(0);}
 loading=false;saveButton.disabled=false;saveStatus.textContent=data.document?'Saved layout loaded':'New layout';
 }catch(e){saveStatus.textContent=e.message;}})();
 
