@@ -1,17 +1,100 @@
 
 {% extends "base.html" %}
 {% block content %}
-<div class="card">
+{% set show_inventory = can_view_inventory() %}
+<div class="card mRoomTop">
     <h2>{{ room.name }}</h2>
-    <p>{{ project.name }}</p>
-    <label for="mobileRoomSwitchSelect">Choose a Room</label>
+    <p class="muted mRoomProject">Project: <a href="{{ url_for('mobile_project', project_id=project.id) }}">{{ project.name }}</a></p>
+    <label for="mobileRoomSwitchSelect">Room</label>
     <select id="mobileRoomSwitchSelect">
         {% for r in rooms %}
             <option value="{{ url_for('mobile_room', room_id=r.id) }}" {% if r.id == room.id %}selected{% endif %}>{{ r.name }}</option>
         {% endfor %}
     </select>
 </div>
+
+{# One section at a time - tap a button to pick what you want to see. #}
+<div class="mRoomTabs" role="tablist" aria-label="Room sections">
+    {% if can_add_notes() %}
+    <button type="button" class="mRoomTab mRoomTabWide" role="tab" data-room-tab="add">+ Add Field Note</button>
+    {% endif %}
+    <button type="button" class="mRoomTab" role="tab" data-room-tab="timeline">Timeline</button>
+    <button type="button" class="mRoomTab" role="tab" data-room-tab="tasks" data-room-count="{{ tasks|length }}">Tasks<span class="mRoomTabCount">{{ tasks|length }}</span></button>
+    {% if show_inventory %}
+    <button type="button" class="mRoomTab" role="tab" data-room-tab="bom" data-room-count="{{ room_inventory|length }}">BOM<span class="mRoomTabCount">{{ room_inventory|length }}</span></button>
+    {% endif %}
+    <button type="button" class="mRoomTab" role="tab" data-room-tab="notes" data-room-count="{{ notes|length }}">Comments &amp; Pictures<span class="mRoomTabCount">{{ notes|length }}</span></button>
+</div>
+
+{# Timeline: everything that happened in this room, newest first #}
+{% set timeline = [] %}
+{% for n in notes %}{% set _ = timeline.append({"when": (n.note_date|string)[:10] ~ " " ~ (n.created_at|string), "day": (n.note_date|string)[:10], "kind": "note", "row": n}) %}{% endfor %}
+{% for t in tasks %}{% set _ = timeline.append({"when": (t.task_date|string)[:10] ~ " " ~ (t.created_at|string), "day": (t.task_date|string)[:10], "kind": "task", "row": t}) %}{% endfor %}
+<section class="mRoomPanel" data-room-panel="timeline" hidden>
+<div class="card">
+    <div class="mRoomPanelHead">
+        <h3>Timeline</h3>
+        <a class="btn-link btn-secondary" href="{{ url_for('project_timeline', project_id=project.id) }}">Project Timeline</a>
+    </div>
+    {% set ns = namespace(day=None) %}
+    {% for e in timeline|sort(attribute="when", reverse=true) %}
+        {% if e.day != ns.day %}{% set ns.day = e.day %}<p class="mTimelineDay">{{ e.day if e.day and e.day != "None" else "No date" }}</p>{% endif %}
+        <div class="mTimelineItem mTimeline-{{ e.kind }}">
+            {% if e.kind == "note" %}
+                {% set n = e.row %}
+                <strong>{% if n.photo_file %}Picture{% elif n.audio_file %}Audio{% else %}Comment{% endif %}</strong> — {{ n.user_name or 'Unknown user' }}
+                {% if n.comment %}<p>{{ n.comment }}</p>{% endif %}
+            {% else %}
+                {% set t = e.row %}
+                <strong>Task: {{ task_display_name(t) }}</strong> — {{ task_status_label(t) }}
+                <p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>
+            {% endif %}
+        </div>
+    {% else %}
+        <p class="muted">No history for this room.</p>
+    {% endfor %}
+</div>
+</section>
+
+<section class="mRoomPanel" data-room-panel="tasks" hidden>
+<div class="card">
+    <h3>Tasks</h3>
+    {% for t in tasks %}
+        <div class="card taskCard {% if task_is_completed(t) %}taskDone{% endif %}">
+            <strong>{{ task_display_name(t) }}</strong>
+            <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ task_status_label(t) }}</p>
+            {% set task_info = task_instruction_text(t) %}
+            {% if task_info %}<p>{{ task_info }}</p>{% endif %}
+            <a class="btn-link" href="{{ url_for('open_task_workspace', task_id=t.id) }}">Open Task</a>
+        </div>
+    {% else %}
+        <p class="muted">No tasks for this room.</p>
+    {% endfor %}
+</div>
+</section>
+
+{% if show_inventory %}
+<section class="mRoomPanel" data-room-panel="bom" hidden>
+<div class="card">
+    <div class="mRoomPanelHead">
+        <h3>BOM</h3>
+        <a class="btn-link btn-secondary" href="{{ url_for('project_materials', project_id=project.id) }}">Project BOM</a>
+    </div>
+    {% for item in room_inventory %}
+        <div class="roomInventoryItem mBomItem inventory-{{ item.status }}">
+            <strong>{{ item.item_name }}</strong>
+            {% if item.brand or item.item_model %}<p class="muted">{{ item.brand or '' }} {{ item.item_model or '' }}</p>{% endif %}
+            <p><strong>Qty:</strong> {{ item.quantity|default(0, true) }} &nbsp; <strong>Status:</strong> {{ inventory_status_label(item.status) }}</p>
+        </div>
+    {% else %}
+        <p class="muted">No inventory allocated to this room.</p>
+    {% endfor %}
+</div>
+</section>
+{% endif %}
+
 {% if can_add_notes() %}
+<section class="mRoomPanel" data-room-panel="add" hidden>
 <div class="card">
     <h3>Add Field Note</h3>
     <form method="post" enctype="multipart/form-data">
@@ -29,9 +112,18 @@
         <button type="submit">Save Note</button>
     </form>
 </div>
+</section>
 {% endif %}
+
+<section class="mRoomPanel" data-room-panel="notes" hidden>
 <div class="card">
-    <h3>History</h3>
+    <h3>Comments &amp; Pictures</h3>
+    <form method="get" class="mRoomDateFilter">
+        <input name="date" type="date" value="{{ selected_date or '' }}" aria-label="Show one date only">
+        <button type="submit" class="btn-secondary">Show Date</button>
+        {% if selected_date %}<a class="btn-link btn-secondary" href="{{ url_for('mobile_room', room_id=room.id, tab='notes') }}">Show All</a>{% endif %}
+    </form>
+    {% if selected_date %}<p class="muted">Showing {{ selected_date }} only.</p>{% endif %}
     {% for n in notes %}
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or 'Unknown user' }}
@@ -43,9 +135,22 @@
             {% endif %}
         </div>
     {% else %}
-        <p>No history for this room.</p>
+        <p class="muted">No comments or pictures for this room.</p>
     {% endfor %}
 </div>
+</section>
+<style>
+.mRoomTop h2{margin-bottom:4px}.mRoomProject{margin:0 0 12px}
+.mRoomTabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 14px}
+.mRoomTab{margin:0!important;min-height:52px;padding:10px 8px!important;font-size:15px!important;font-weight:800;border-radius:12px!important;border:1px solid var(--border)!important;background:var(--card);color:var(--text,inherit);display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:var(--shadow);cursor:pointer}
+.mRoomTabWide{grid-column:1/-1;background:#16a34a;border-color:#16a34a!important;color:#fff}
+.mRoomTab.isActive{background:var(--primary-dark);border-color:var(--primary-dark)!important;color:#fff}
+.mRoomTabCount{min-width:22px;padding:1px 7px;border-radius:999px;background:rgba(15,23,42,.09);font-size:12px;text-align:center}.mRoomTab.isActive .mRoomTabCount{background:rgba(255,255,255,.26)}body.dark .mRoomTabCount{background:rgba(255,255,255,.12)}
+.mRoomPanel[hidden]{display:none}.mRoomPanelHead{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}.mRoomPanelHead h3{margin:0}.mRoomPanelHead .btn-link{margin:0}
+.mTimelineDay{font-weight:800;margin:14px 0 6px;color:var(--muted)}.mTimelineItem{border-left:4px solid var(--primary);padding:6px 10px;margin:0 0 8px}.mTimelineItem p{margin:4px 0 0}.mTimeline-task{border-left-color:#f59e0b}
+.mBomItem{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0}.mBomItem p{margin:4px 0 0}
+.mRoomDateFilter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.mRoomDateFilter input{flex:1;margin:0}.mRoomDateFilter button,.mRoomDateFilter .btn-link{width:auto;margin:0}
+</style>
 <style>
 .taskDone{opacity:.82}.mobile-only-delete-note{display:block}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-ordered{border-left:8px solid #4f46e5;background:#eef2ff}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}.roomInventoryItem.inventory-client_supplied{border-left:8px solid #7c3aed;background:#f5f3ff}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
 </style>
@@ -73,6 +178,25 @@
     </div>
 </div>
 <script>
+// One section on screen at a time; the choice is remembered for the next room you open.
+const mRoomTabButtons=Array.prototype.slice.call(document.querySelectorAll("[data-room-tab]"));
+const mRoomPanels={};document.querySelectorAll("[data-room-panel]").forEach(p=>{mRoomPanels[p.dataset.roomPanel]=p});
+const M_ROOM_TAB_KEY="projectonusMobileRoomTab";
+function showMobileRoomTab(name,remember){
+    if(!name||!mRoomPanels[name])return false;
+    mRoomTabButtons.forEach(b=>{const on=b.dataset.roomTab===name;b.classList.toggle("isActive",on);b.setAttribute("aria-selected",on?"true":"false")});
+    Object.keys(mRoomPanels).forEach(key=>{mRoomPanels[key].hidden=key!==name});
+    if(remember&&name!=="add"){try{localStorage.setItem(M_ROOM_TAB_KEY,name)}catch(e){}}
+    return true;
+}
+mRoomTabButtons.forEach(b=>b.addEventListener("click",()=>{showMobileRoomTab(b.dataset.roomTab,true);mRoomPanels[b.dataset.roomTab].scrollIntoView({behavior:"smooth",block:"start"})}));
+if(mRoomTabButtons.length){
+    const params=new URLSearchParams(window.location.search);
+    let remembered=null;try{remembered=localStorage.getItem(M_ROOM_TAB_KEY)}catch(e){}
+    // after saving a note (or filtering by date) show the comments
+    const wanted=params.get("tab")||(params.get("date")?"notes":null)||remembered||"timeline";
+    if(!showMobileRoomTab(wanted,false))showMobileRoomTab("timeline",false);
+}
 const mobileRoomSwitchSelect=document.getElementById("mobileRoomSwitchSelect");if(mobileRoomSwitchSelect){mobileRoomSwitchSelect.addEventListener("change",()=>{if(mobileRoomSwitchSelect.value)window.location.href=mobileRoomSwitchSelect.value})}
 document.addEventListener("click",event=>{
     const addButton=event.target.closest(".addCompletionBlock");
