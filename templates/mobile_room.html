@@ -99,7 +99,7 @@
     <h3>Add Field Note</h3>
     <form method="post" enctype="multipart/form-data">
         <label>Date</label>
-        <input name="note_date" type="date" value="{{ selected_date or today }}" required>
+        <input name="note_date" type="date" value="{{ today }}" required>
         {% set media_id = 'room_' ~ room.id ~ '_field_note' %}
         {% set media_camera_name = 'photo_camera' %}
         {% set media_upload_name = 'photo' %}
@@ -118,12 +118,6 @@
 <section class="mRoomPanel" data-room-panel="notes" hidden>
 <div class="card">
     <h3>Comments &amp; Pictures</h3>
-    <form method="get" class="mRoomDateFilter">
-        <input name="date" type="date" value="{{ selected_date or '' }}" aria-label="Show one date only">
-        <button type="submit" class="btn-secondary">Show Date</button>
-        {% if selected_date %}<a class="btn-link btn-secondary" href="{{ url_for('mobile_room', room_id=room.id, tab='notes') }}">Show All</a>{% endif %}
-    </form>
-    {% if selected_date %}<p class="muted">Showing {{ selected_date }} only.</p>{% endif %}
     {% for n in notes %}
         <div class="card">
             <strong>{{ n.note_date }}</strong> — {{ n.user_name or 'Unknown user' }}
@@ -149,7 +143,6 @@
 .mRoomPanel[hidden]{display:none}.mRoomPanelHead{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px}.mRoomPanelHead h3{margin:0}.mRoomPanelHead .btn-link{margin:0}
 .mTimelineDay{font-weight:800;margin:14px 0 6px;color:var(--muted)}.mTimelineItem{border-left:4px solid var(--primary);padding:6px 10px;margin:0 0 8px}.mTimelineItem p{margin:4px 0 0}.mTimeline-task{border-left-color:#f59e0b}
 .mBomItem{border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0}.mBomItem p{margin:4px 0 0}
-.mRoomDateFilter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.mRoomDateFilter input{flex:1;margin:0}.mRoomDateFilter button,.mRoomDateFilter .btn-link{width:auto;margin:0}
 </style>
 <style>
 .taskDone{opacity:.82}.mobile-only-delete-note{display:block}.taskMediaList{display:grid;gap:12px;margin:12px 0}.taskMediaItem{border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(255,255,255,.03)}.taskMediaComment{border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:rgba(14,165,233,.08)}.taskRoomState{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 8px;color:#b45309;background:#fffbeb}.taskRoomState.done{color:#047857;background:#ecfdf5}.completionBlock{border:1px solid var(--border);border-radius:8px;padding:10px;margin:10px 0;background:rgba(255,255,255,.03)}.inventoryCheck{display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:10px;margin:8px 0;font-weight:800}.inventoryCheck input{width:auto;min-height:auto}.roomInventoryItem.inventory-available{border-left:8px solid #16a34a;background:#f0fdf4}.roomInventoryItem.inventory-used{border-left:8px solid #dc2626;background:#fef2f2}.roomInventoryItem.inventory-needs_purchase{border-left:8px solid #f59e0b;background:#fffbeb}.roomInventoryItem.inventory-ordered{border-left:8px solid #4f46e5;background:#eef2ff}.roomInventoryItem.inventory-purchased_waiting_arrival{border-left:8px solid #0284c7;background:#e0f2fe}.roomInventoryItem.inventory-client_supplied{border-left:8px solid #7c3aed;background:#f5f3ff}#drawModal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.92);z-index:800;padding:12px}#drawCanvas{width:100%;max-height:72vh;background:white;touch-action:none}.drawActions{display:flex;gap:8px}
@@ -194,7 +187,7 @@ if(mRoomTabButtons.length){
     const params=new URLSearchParams(window.location.search);
     let remembered=null;try{remembered=localStorage.getItem(M_ROOM_TAB_KEY)}catch(e){}
     // after saving a note (or filtering by date) show the comments
-    const wanted=params.get("tab")||(params.get("date")?"notes":null)||remembered||"timeline";
+    const wanted=params.get("tab")||remembered||"timeline";
     if(!showMobileRoomTab(wanted,false))showMobileRoomTab("timeline",false);
 }
 const mobileRoomSwitchSelect=document.getElementById("mobileRoomSwitchSelect");if(mobileRoomSwitchSelect){mobileRoomSwitchSelect.addEventListener("change",()=>{if(mobileRoomSwitchSelect.value)window.location.href=mobileRoomSwitchSelect.value})}

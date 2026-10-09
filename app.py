@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-09 V1"
+APP_BUILD = "2026-10-09 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6851,7 +6851,7 @@ def mobile_room(room_id):
         if not note_comment and not photo_file and not audio_file:
             conn.close()
             flash("Add a comment, picture, or audio before saving.")
-            return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
+            return redirect(url_for("mobile_room", room_id=room_id, tab="add"))
 
         conn.execute(
             "INSERT INTO notes (room_id, user_id, note_date, comment, photo_file, audio_file, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -6864,19 +6864,20 @@ def mobile_room(room_id):
         else:
             flash("Field note saved. Admin notification or email could not be sent.")
         conn.close()
-        return redirect(url_for("mobile_room", room_id=room_id, date=note_date))
+        return redirect(url_for("mobile_room", room_id=room_id, tab="notes"))
 
-    selected_date = request.args.get("date", "")
-    query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
-    params = [room_id]
-    if selected_date:
-        query += " AND note_date = %s"
-        params.append(selected_date)
-    query += " ORDER BY note_date DESC, created_at DESC"
-    notes = conn.execute(query, tuple(params)).fetchall()
+    notes = conn.execute(
+        """
+        SELECT notes.*, users.name AS user_name
+        FROM notes LEFT JOIN users ON notes.user_id = users.id
+        WHERE room_id = %s
+        ORDER BY note_date DESC, created_at DESC
+        """,
+        (room_id,)
+    ).fetchall()
     catalog = part_catalog_options(conn)
     conn.close()
-    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, part_catalog=catalog, selected_date=selected_date, today=local_now().date().isoformat())
+    return render_template("mobile_room.html", room=room, project=project, rooms=rooms, notes=notes, tasks=tasks, room_inventory=room_inventory, part_catalog=catalog, today=local_now().date().isoformat())
 
 
 @app.route("/routes-check")
@@ -15484,19 +15485,20 @@ def room(room_id):
         else:
             flash("Field note saved. Admin notification or email could not be sent.")
 
-    selected_date = request.args.get("date", "")
-    query = "SELECT notes.*, users.name AS user_name FROM notes LEFT JOIN users ON notes.user_id = users.id WHERE room_id = %s"
-    params = [room_id]
-    if selected_date:
-        query += " AND note_date = %s"
-        params.append(selected_date)
-    query += " ORDER BY note_date DESC, created_at DESC"
-    notes = conn.execute(query, tuple(params)).fetchall()
+    notes = conn.execute(
+        """
+        SELECT notes.*, users.name AS user_name
+        FROM notes LEFT JOIN users ON notes.user_id = users.id
+        WHERE room_id = %s
+        ORDER BY note_date DESC, created_at DESC
+        """,
+        (room_id,)
+    ).fetchall()
     catalog = part_catalog_options(conn)
     conn.close()
     return render_template("room.html", room=room, project=project, rooms=project_rooms, notes=notes, tasks=tasks,
                            room_inventory=room_inventory, users=users, suppliers=suppliers, part_catalog=catalog,
-                           selected_date=selected_date, today=local_now().date().isoformat(),
+                           today=local_now().date().isoformat(),
                            status_options=INVENTORY_STATUS_LABELS,
                            location_options=inventory_location_options(),
                            condition_options=INVENTORY_CONDITION_LABELS,
