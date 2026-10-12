@@ -27,7 +27,12 @@
                 <td>{{ item.brand or '-' }}</td>
                 <td><span class="statusBadge">{{ inventory_status_label(item.status) }}</span>{% if item.used_by_name %}<br><span class="muted">By {{ item.used_by_name }}</span>{% endif %}</td>
                 <td>
-                    {% if can_edit %}
+                    {# Where it is follows what has happened to it: until it is in
+                       our hands there is no place to pick, so the status says it. #}
+                    {% set fixed_location = inventory_fixed_location(item.status) %}
+                    {% if fixed_location %}
+                        <span class="locationFixed">{{ fixed_location }}</span>
+                    {% elif can_edit %}
                     <form method="post" action="{{ url_for('update_inventory_location', item_id=item.id) }}" class="inventoryCompactForm">
                         <input type="hidden" name="next" value="{{ request.full_path }}">
                         <input type="hidden" name="location_detail" value="{{ item.location_detail or '' }}">

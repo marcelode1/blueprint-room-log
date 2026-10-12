@@ -52,7 +52,8 @@
             <p><strong>Model #:</strong> {{ m.item_model or '-' }}<br><strong>Brand:</strong> {{ m.brand or '-' }}</p>
             {% if m.supplier_name %}<p><strong>Supplier:</strong> {{ m.supplier_name }}{% if m.supplier_address %}<br><a target="_blank" href="{{ maps_directions_url(m.supplier_address) }}">Open Supplier Route</a>{% endif %}</p>{% endif %}
             <p><strong>Condition:</strong> {{ inventory_condition_label(m.item_condition) }}</p>
-            <p><strong>Room:</strong> {{ m.room_name or 'Project general' }}<br><strong>Located:</strong> {{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}</p>
+            {% set fixed_location = inventory_fixed_location(m.status) %}
+            <p><strong>Room:</strong> {{ m.room_name or 'Project general' }}<br><strong>Located:</strong> {% if fixed_location %}{{ fixed_location }}{% else %}{{ inventory_location_label(m.location_type) }}{% if m.location_detail %} - {{ m.location_detail }}{% endif %}{% endif %}</p>
             <span class="statusBadge">{{ inventory_status_label(m.status) }}</span>
             {% if m.used_by_name %}<p class="muted">By {{ m.used_by_name }}</p>{% endif %}
             {% if m.used_note %}<p>{{ m.used_note }}</p>{% endif %}

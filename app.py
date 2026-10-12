@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-12 V1"
+APP_BUILD = "2026-10-12 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -4002,6 +4002,24 @@ def inventory_location_label(value):
     return inventory_location_options().get(value or "", "Warehouse")
 
 
+# For these statuses the material is not sitting in a place we chose, so asking
+# "which of our locations is it at?" makes no sense - the status is the answer.
+INVENTORY_STATUS_LOCATION = {
+    "needs_purchase": "Not bought yet",
+    "ordered": "On order",
+    "purchased_waiting_arrival": "On its way",
+    "backordered": "Backordered",
+    "unavailable": "Unavailable",
+    "used": "Installed in the room",
+    "delivered_to_customer": "With the customer",
+}
+
+
+def inventory_fixed_location(status):
+    """The Located text a status dictates, or "" when the user picks the place."""
+    return INVENTORY_STATUS_LOCATION.get((status or "").strip(), "")
+
+
 def inventory_condition_label(value):
     return INVENTORY_CONDITION_LABELS.get(value or "", "New")
 
@@ -6397,6 +6415,7 @@ def utility_processor():
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
+        inventory_fixed_location=inventory_fixed_location,
         po_status_label=po_status_label,
         supplier_task_status_options=SUPPLIER_TASK_STATUS_LABELS,
         inventory_condition_label=inventory_condition_label,
