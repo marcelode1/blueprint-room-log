@@ -1,4 +1,4 @@
-{# The Action dropdown on a BOM line, wherever that line is shown: the Task Cart
+﻿{# The Action dropdown on a BOM line, wherever that line is shown: the Task Cart
    and Order Cart pop-ups it opens, the styling of the row, and the script that
    ties them together. Include once per page, below the table. #}
 {% if can_edit_inventory() %}
@@ -83,8 +83,8 @@
 .bomTable .statusBadge{padding:5px 9px;font-size:12.5px}
 .bomTable form{margin:0}
 .inventoryTable th,.inventoryTable td{border:1px solid var(--border);padding:10px;text-align:left;vertical-align:top}.inventoryTable th{background:#eef2f7}
-.inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}.inventory-picked_up{background:#dbeafe}.inventory-ordered{background:#eef2ff}.inventory-purchased_waiting_arrival{background:#e0f2fe}.inventory-unavailable{background:#f1f5f9}.inventory-backordered{background:#fef3c7}
-.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-ordered .statusBadge{background:#4f46e5}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}
+.inventory-available{background:#dcfce7}.inventory-used{background:#fee2e2}.inventory-needs_purchase{background:#ffedd5}.inventory-picked_up{background:#dbeafe}.inventory-ordered{background:#eef2ff}.inventory-purchased_waiting_arrival{background:#e0f2fe}.inventory-unavailable{background:#f1f5f9}.inventory-backordered{background:#fef3c7}.inventory-delivered_to_customer{background:#ccfbf1}
+.statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}.inventory-available .statusBadge{background:#16a34a}.inventory-used .statusBadge{background:#dc2626}.inventory-needs_purchase .statusBadge{background:#f59e0b}.inventory-picked_up .statusBadge{background:#2563eb}.inventory-ordered .statusBadge{background:#4f46e5}.inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}.inventory-unavailable .statusBadge{background:#64748b}.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}.inventory-delivered_to_customer .statusBadge{background:#0d9488}
 .inventoryCompactForm{display:grid;gap:6px;min-width:145px}.inventoryCompactForm select,.inventoryCompactForm input{min-height:34px;padding:6px 8px;font-size:13px}.inventorySmall{display:block;font-size:12px;margin-top:4px}
 .locationUnavailable{display:inline-flex;border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:#f8fafc;color:#64748b;font-weight:800}
 .inTaskCartNote{display:inline-block;margin-top:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:3px 9px}

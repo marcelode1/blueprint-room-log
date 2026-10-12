@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block content %}
 <div class="card">
     <h2>Main Inventory</h2>
@@ -261,7 +261,7 @@
 .inventoryStatus.inventory-ordered{background:#eef2ff}
 .inventoryStatus.inventory-purchased_waiting_arrival{background:#e0f2fe}
 .inventoryStatus.inventory-unavailable{background:#f1f5f9}
-.inventoryStatus.inventory-backordered{background:#fef3c7}
+.inventoryStatus.inventory-backordered{background:#fef3c7}.inventory-delivered_to_customer{background:#ccfbf1}
 .inventoryStatus.inventory-used{background:#fee2e2}
 .inventoryStatus.inventory-needs_purchase{background:#ffedd5}
 .statusBadge{display:inline-block;padding:6px 10px;border-radius:999px;color:white;font-weight:800}
@@ -270,7 +270,7 @@
 .inventory-ordered .statusBadge{background:#4f46e5}
 .inventory-purchased_waiting_arrival .statusBadge{background:#0284c7}
 .inventory-unavailable .statusBadge{background:#64748b}
-.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}
+.inventory-backordered .statusBadge{background:#d97706}.inventory-client_supplied .statusBadge{background:#7c3aed}.inventory-delivered_to_customer .statusBadge{background:#0d9488}
 .inventory-used .statusBadge{background:#dc2626}
 .inventory-needs_purchase .statusBadge{background:#f59e0b}
 .inventoryPic{max-width:25px;border-radius:8px;border:1px solid var(--border)}
