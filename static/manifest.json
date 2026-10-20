@@ -12,6 +12,33 @@
   "theme_color": "#0f172a",
   "description": "Project, field, room, photo, comment, audio, and client collaboration platform.",
   "categories": ["business", "productivity"],
+  "share_target": {
+    "action": "/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "shared_files",
+          "accept": [
+            "image/*",
+            "video/*",
+            "audio/*",
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "text/csv",
+            "text/plain"
+          ]
+        }
+      ]
+    }
+  },
   "icons": [
     {
       "src": "/static/icon-192.png",

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <p class="toolCrumb">Shared into ProjectONus</p>
+    <h2>Where does this go?</h2>
+    {% if pending %}
+        <p class="muted">Pick the project and the folder, and {{ 'these files' if pending|length > 1 else 'this file' }}
+            will be filed with the rest of that project's files.</p>
+    {% else %}
+        <p class="muted">Nothing is waiting to be filed.</p>
+    {% endif %}
+</div>
+
+{% if pending %}
+<div class="card">
+    <h3>Waiting <span class="shareCount">{{ pending|length }}</span></h3>
+    <div class="shareList">
+    {% for f in pending %}
+        <div class="shareItem">
+            {% if file_ext(f.original_filename or '') in ['png','jpg','jpeg','gif','webp','heic','heif'] %}
+                <img class="shareThumb" src="{{ url_for('storage_file', storage_path=f.storage_path) }}" alt="">
+            {% else %}
+                <span class="shareThumb shareThumbDoc">{{ (file_ext(f.original_filename or '') or 'file')|upper }}</span>
+            {% endif %}
+            <span class="shareName">
+                {{ f.original_filename or 'Shared file' }}
+                {% if f.file_size %}<span class="muted shareSize">{{ format_file_size(f.file_size) }}</span>{% endif %}
+            </span>
+        </div>
+    {% endfor %}
+    </div>
+    {% if pending[0].shared_text %}<p class="muted shareText">Shared with: {{ pending[0].shared_text }}</p>{% endif %}
+</div>
+
+<div class="card">
+    <form method="post" id="sharePutAwayForm">
+        <label for="shareProject">Project</label>
+        <select name="project_id" id="shareProject" required>
+            <option value="">Choose a project</option>
+            {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name and p.customer_name != p.name %} - {{ p.customer_name }}{% endif %}</option>
+            {% endfor %}
+        </select>
+
+        <label for="shareFolder">Folder</label>
+        <select name="folder_key" id="shareFolder" required>
+            {% for f in folder_options %}
+                <option value="{{ f.key }}">{{ f.label }}</option>
+            {% endfor %}
+        </select>
+
+        <div id="shareSubfolderWrap" hidden>
+            <label for="shareSubfolder">Subfolder (optional)</label>
+            <select name="folder_id" id="shareSubfolder">
+                <option value="">Top of the folder</option>
+            </select>
+        </div>
+
+        <label for="shareNote">Note (optional)</label>
+        <input name="description" id="shareNote" placeholder="What this is, in a few words">
+
+        <div class="shareActions">
+            <button type="submit">Put It Away</button>
+            <button type="submit" name="action" value="discard" class="btn-danger" formnovalidate
+                    onclick="return confirm('Throw away the shared files without filing them?');">Discard</button>
+        </div>
+    </form>
+</div>
+{% else %}
+<div class="card">
+    <p>Share a picture or a document from your phone into ProjectONus and it will land here,
+        waiting for you to say which project and folder it belongs to.</p>
+    <a class="btn-link" href="{{ url_for('index') }}">Back to Projects</a>
+</div>
+{% endif %}
+
+<script id="shareSubfolderData" type="application/json">{{ subfolders_json|safe }}</script>
+<script>
+// The subfolder list depends on the project and folder chosen above it.
+(function(){
+    const project=document.getElementById("shareProject");
+    const folder=document.getElementById("shareFolder");
+    const wrap=document.getElementById("shareSubfolderWrap");
+    const sub=document.getElementById("shareSubfolder");
+    if(!project||!folder||!sub)return;
+    const all=JSON.parse(document.getElementById("shareSubfolderData").textContent||"[]");
+    function refresh(){
+        const pid=Number(project.value||0),key=folder.value;
+        const matches=all.filter(f=>f.project_id===pid&&f.folder_key===key);
+        sub.replaceChildren();
+        const top=document.createElement("option");
+        top.value="";top.textContent="Top of the folder";
+        sub.append(top);
+        for(const f of matches){
+            const option=document.createElement("option");
+            option.value=f.id;option.textContent=f.name;
+            sub.append(option);
+        }
+        wrap.hidden=!matches.length;
+    }
+    project.addEventListener("change",refresh);
+    folder.addEventListener("change",refresh);
+    refresh();
+})();
+</script>
+
+<style>
+.toolCrumb{margin:0 0 2px;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.shareCount{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:800;background:rgba(15,23,42,.09);color:var(--muted)}
+body.dark .shareCount{background:rgba(255,255,255,.12)}
+.shareList{display:grid;gap:8px;margin-top:10px}
+.shareItem{display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:11px;padding:9px 11px}
+.shareThumb{width:46px;height:46px;flex:0 0 auto;border-radius:9px;border:1px solid var(--border);object-fit:cover;background:var(--bg)}
+.shareThumbDoc{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--muted)}
+.shareName{font-weight:700;word-break:break-word}
+.shareSize{display:block;font-weight:600;font-size:12px}
+.shareText{margin-top:10px}
+.shareActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.shareActions button{width:auto;margin:0}
+</style>
+{% endblock %}

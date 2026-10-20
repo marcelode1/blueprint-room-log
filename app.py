@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-12 V2"
+APP_BUILD = "2026-10-20 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6411,6 +6411,7 @@ def utility_processor():
         can_view_project_files=can_view_project_files,
         project_file_provider_label=project_file_provider_label,
         format_file_size=format_file_size,
+        file_ext=file_ext,
         dtools_cloud_config=dtools_cloud_config,
         dtools_cloud_configured=dtools_cloud_configured,
         inventory_status_label=inventory_status_label,
@@ -14553,6 +14554,197 @@ def project_notepad(project_id):
         updated_by_name = row["name"] if row else None
     conn.close()
     return render_template("project_notepad.html", project=project, updated_by_name=updated_by_name)
+
+
+def ensure_shared_uploads_table(conn):
+    """Files handed to us by the phone's Share sheet, parked until the user says
+    which project and folder they belong in."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS shared_uploads (
+            id SERIAL PRIMARY KEY,
+            claim_token TEXT NOT NULL,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            storage_path TEXT NOT NULL,
+            original_filename TEXT,
+            file_size INTEGER,
+            shared_text TEXT,
+            created_at TEXT NOT NULL,
+            claimed_at TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS shared_uploads_token_idx ON shared_uploads(claim_token)")
+
+
+def share_claim_token():
+    """The id that ties parked files to this browser, so a sign-in on the way
+    through does not lose them."""
+    token = session.get("share_token")
+    if not token:
+        token = secrets.token_urlsafe(24)
+        session["share_token"] = token
+        session.permanent = True
+    return token
+
+
+@app.route("/share-target", methods=["POST"])
+def share_target():
+    """Where the phone sends a picture or a document shared into ProjectONus.
+    The files are parked here and the next page asks where they go."""
+    token = share_claim_token()
+    shared_text = " ".join(
+        part for part in (request.form.get("title"), request.form.get("text"), request.form.get("url"))
+        if part and part.strip()
+    ).strip()[:500]
+    uploads = request.files.getlist("shared_files") or request.files.getlist("files")
+    allowed_here = ALLOWED_PROJECT_FILES | ALLOWED_PHOTOS | ALLOWED_VIDEOS | ALLOWED_AUDIO
+    saved, skipped = 0, []
+    conn = db()
+    try:
+        ensure_shared_uploads_table(conn)
+        now = utc_now_iso()
+        for uploaded in uploads:
+            if not uploaded or not uploaded.filename:
+                continue
+            if file_ext(uploaded.filename) not in allowed_here:
+                skipped.append(uploaded.filename)
+                continue
+            raw = uploaded.read()
+            if not raw:
+                continue
+            storage_path = upload_bytes_to_storage(
+                raw, uploaded.filename, upload_content_type(uploaded.filename, uploaded.content_type)
+            )
+            conn.execute(
+                """
+                INSERT INTO shared_uploads
+                (claim_token, user_id, storage_path, original_filename, file_size, shared_text, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (token, session.get("user_id"), storage_path, uploaded.filename, len(raw), shared_text or None, now)
+            )
+            saved += 1
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Share target failed:", e)
+        flash("That could not be brought into ProjectONus. Try sharing it again.")
+    finally:
+        conn.close()
+    if skipped:
+        flash(f"{len(skipped)} file(s) were not a kind ProjectONus can keep: " + ", ".join(skipped[:3]))
+    if not saved and not skipped:
+        flash("Nothing came through from the share. Try again.")
+    # 303 so the phone's back button does not re-post the files
+    return redirect(url_for("share_pending"), code=303)
+
+
+@app.route("/share/pending", methods=["GET", "POST"])
+@login_required
+def share_pending():
+    """Pick the project and folder for whatever was just shared in."""
+    token = share_claim_token()
+    conn = db()
+    ensure_shared_uploads_table(conn)
+    # anything parked before sign-in belongs to whoever just signed in
+    conn.execute(
+        "UPDATE shared_uploads SET user_id = %s WHERE claim_token = %s AND user_id IS NULL",
+        (session.get("user_id"), token)
+    )
+    conn.commit()
+    pending = conn.execute(
+        """
+        SELECT * FROM shared_uploads
+        WHERE claim_token = %s AND user_id = %s AND claimed_at IS NULL
+        ORDER BY id
+        """,
+        (token, session.get("user_id"))
+    ).fetchall()
+
+    if request.method == "POST":
+        if request.form.get("action") == "discard":
+            conn.execute(
+                "DELETE FROM shared_uploads WHERE claim_token = %s AND user_id = %s AND claimed_at IS NULL",
+                (token, session.get("user_id"))
+            )
+            conn.commit()
+            conn.close()
+            flash("Shared files discarded.")
+            return redirect(url_for("index"))
+
+        project_id = optional_int(request.form.get("project_id"))
+        folder_key = (request.form.get("folder_key") or "").strip()
+        folder_id = optional_int(request.form.get("folder_id"))
+        note = (request.form.get("description") or "").strip() or None
+        valid_keys = {f["key"] for f in all_project_file_folders(conn)}
+        if not project_id or not user_can_access_project(conn, project_id):
+            conn.close()
+            flash("Choose a project you have access to.")
+            return redirect(url_for("share_pending"))
+        if folder_key not in valid_keys:
+            conn.close()
+            flash("Choose a folder.")
+            return redirect(url_for("share_pending"))
+        target_dir = load_project_folder(conn, project_id, folder_id) if folder_id else None
+        if folder_id and (not target_dir or target_dir.get("folder_key") != folder_key):
+            folder_id = None
+
+        now = utc_now_iso()
+        moved = 0
+        for row in pending:
+            conn.execute(
+                """
+                INSERT INTO project_files
+                (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, description, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (project_id, folder_key, folder_id or None, row["storage_path"], row["original_filename"],
+                 row["file_size"], session.get("user_id"), note or row.get("shared_text"), now)
+            )
+            conn.execute("UPDATE shared_uploads SET claimed_at = %s WHERE id = %s", (now, row["id"]))
+            moved += 1
+        conn.commit()
+        conn.close()
+        flash(f"{moved} shared file(s) filed." if moved else "There was nothing left to file.")
+        return redirect(url_for("project_files", project_id=project_id, folder=folder_key,
+                                dir=folder_id or None))
+
+    if is_main_admin():
+        projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY lower(name)").fetchall()
+    else:
+        projects = conn.execute(
+            """
+            SELECT projects.id, projects.name, projects.customer_name FROM projects
+            JOIN project_permissions ON project_permissions.project_id = projects.id
+            WHERE project_permissions.user_id = %s
+            ORDER BY lower(projects.name)
+            """,
+            (session.get("user_id"),)
+        ).fetchall()
+    project_ids = [p["id"] for p in projects]
+    folders = []
+    if project_ids:
+        try:
+            folders = conn.execute(
+                "SELECT id, project_id, folder_key, name FROM project_folders WHERE project_id = ANY(%s) ORDER BY lower(name)",
+                (project_ids,)
+            ).fetchall()
+        except Exception as e:
+            conn.rollback()
+            print("Shared folder lookup failed:", e)
+    folder_options = all_project_file_folders(conn)
+    conn.close()
+    return render_template(
+        "share_pending.html",
+        pending=pending,
+        projects=projects,
+        folder_options=folder_options,
+        subfolders_json=json.dumps([
+            {"id": f["id"], "project_id": f["project_id"], "folder_key": f["folder_key"], "name": f["name"]}
+            for f in folders
+        ]),
+    )
 
 
 @app.route("/project/<int:project_id>/files", methods=["GET", "POST"])
