@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-20 V2"
+APP_BUILD = "2026-10-22 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -5266,7 +5266,9 @@ def dtools_project_preview(payload):
     company_phone = re.sub(r"\D+", "", company.get("company_phone") or "")
     company_address_key = normalize_lookup_key(company.get("company_address") or "")
     preview = {
-        "project_name": dtools_pick(payload, ["projectName", "name", "project", "jobName", "title"]),
+        # Same order as the search list, so the name shown in the picker is the
+        # name the import gives the project.
+        "project_name": dtools_pick(payload, ["name", "projectName", "title", "jobName", "project"]),
         "customer_name": dtools_pick(payload, ["customerName", "clientName", "accountName", "companyName", "contactName"]),
         "customer_email": dtools_pick(payload, ["customerEmail", "email", "contactEmail"]),
         "customer_phone": dtools_pick(payload, ["customerPhone", "phone", "contactPhone", "mobilePhone"]),
@@ -5811,6 +5813,13 @@ def create_project_from_dtools_preview(conn, project_info, locations, payload, e
                 project_id,
             )
         )
+        # The name is the one thing worth refreshing: a job renamed in D-Tools
+        # should not keep an old name here. The caller says so in its message.
+        renamed_from = ""
+        old_name = (existing_project.get("name") or "").strip()
+        if project_name and old_name and project_name != old_name:
+            conn.execute("UPDATE projects SET name = %s WHERE id = %s", (project_name, project_id))
+            renamed_from = old_name
         created_project = False
     else:
         row = conn.execute(
@@ -5835,6 +5844,7 @@ def create_project_from_dtools_preview(conn, project_info, locations, payload, e
         ).fetchone()
         project_id = row["id"]
         created_project = True
+        renamed_from = ""
 
     existing_rooms = conn.execute(
         "SELECT id, name FROM rooms WHERE project_id = %s",
@@ -5859,6 +5869,8 @@ def create_project_from_dtools_preview(conn, project_info, locations, payload, e
         "project_id": project_id,
         "created_project": created_project,
         "rooms_created": rooms_created,
+        "project_name": project_name,
+        "renamed_from": renamed_from,
     })
     return import_result
 
@@ -13432,6 +13444,7 @@ def dtools_import():
         "customer_phone": "",
         "customer_address": "",
         "project_name": "",
+        "dtools_picked_name": "",
         "public_proposal_url": "",
         "public_response_json": "",
         "project_endpoint_path": default_project_endpoint,
@@ -13454,6 +13467,7 @@ def dtools_import():
                 "dtools_project_id": request.form.get("dtools_project_id", "").strip(),
                 "dtools_proposal_id": request.form.get("dtools_proposal_id", "").strip(),
                 "dtools_proposal_number": request.form.get("dtools_proposal_number", "").strip(),
+                "dtools_picked_name": request.form.get("dtools_picked_name", "").strip(),
                 "customer_name": request.form.get("customer_name", "").strip(),
                 "customer_email": request.form.get("customer_email", "").strip(),
                 "customer_phone": request.form.get("customer_phone", "").strip(),
@@ -13513,6 +13527,10 @@ def dtools_import():
                                      ("customer_phone", "customer_phone"), ("address", "address")]:
                         if cust.get(src) and not (project_info.get(dst) or "").strip():
                             project_info[dst] = cust[src]
+                # The name on the row the user clicked in the search list is the
+                # one they expect to see afterwards, whatever the payload calls it.
+                if form_values.get("dtools_picked_name"):
+                    project_info["project_name"] = form_values["dtools_picked_name"]
                 project_info = apply_dtools_manual_preview_overrides(project_info, form_values)
                 message = f"Preview complete. Found {material_count} material item(s), {labor_count} labor item(s), and {room_count} location/room value(s)."
                 if not items:
@@ -13589,6 +13607,12 @@ def dtools_import():
                     )
                     conn.commit()
                     action_text = "created" if create_result.get("created_project") else "merged into existing project"
+                    named = create_result.get("project_name") or ""
+                    if create_result.get("renamed_from"):
+                        action_text += (f" and renamed from \"{create_result['renamed_from']}\" "
+                                        f"to \"{named}\" to match D-Tools")
+                    elif named:
+                        action_text += f": \"{named}\""
                     message = (
                         f"ProjectONus project {action_text}. "
                         f"{create_result.get('rooms_created', 0)} room(s) created. "
