@@ -328,14 +328,20 @@
     border:1px solid var(--border);border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.22);
     max-height:min(60vh,352px);overflow-y:auto}
 .permSuggest[hidden]{display:none}
+/* these are buttons, and buttons default to white text - say otherwise */
 .permSuggestOpt{display:flex!important;flex-direction:row;align-items:baseline;gap:8px;width:100%!important;
-    text-align:left!important;background:var(--card)!important;border:0!important;
-    border-bottom:1px solid var(--border)!important;border-radius:0!important;padding:7px 12px!important;
+    text-align:left!important;background:#fff!important;color:#0f172a!important;border:0!important;
+    border-bottom:1px solid #eef2f7!important;border-radius:0!important;padding:8px 12px!important;
     margin:0!important;min-height:0!important;cursor:pointer;white-space:nowrap;overflow:hidden}
 .permSuggestOpt:last-child{border-bottom:0!important}
-.permSuggestOpt:hover{background:rgba(37,99,235,.1)!important}
-.permSuggestName{font-weight:800;font-size:14px}
-.permSuggestWho{font-size:12.5px;color:var(--muted);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.permSuggestOpt:hover,.permSuggestOpt:focus{background:#e0ecff!important;color:#0f172a!important}
+.permSuggestName{font-weight:800;font-size:14px;color:#0f172a;overflow:hidden;text-overflow:ellipsis}
+.permSuggestWho{font-size:12.5px;color:#64748b;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+body.dark .permSuggest{background:#1e293b;border-color:#334155}
+body.dark .permSuggestOpt{background:#1e293b!important;color:#f1f5f9!important;border-bottom-color:#334155!important}
+body.dark .permSuggestOpt:hover,body.dark .permSuggestOpt:focus{background:#334155!important;color:#f1f5f9!important}
+body.dark .permSuggestName{color:#f1f5f9}
+body.dark .permSuggestWho{color:#94a3b8}
 .permHint{margin:6px 0 0;min-height:1.2em;font-size:13px}
 .permUserPanel[hidden]{display:none}
 .permCard{border:1px solid var(--border)}
