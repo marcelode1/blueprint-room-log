@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-22 V1"
+APP_BUILD = "2026-10-27 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2063,10 +2063,27 @@ def has_perm(permission):
     return bool(get_user_permissions().get(permission))
 
 
-def upsert_user_permissions(conn, user_id, values):
+def upsert_user_permissions(conn, user_id, values, only_keys=None):
     """Insert or replace a user's full permission row. `values` only needs to
     contain the keys that differ from False - any PERMISSION_KEYS left out
-    are saved as False."""
+    are saved as False.
+
+    Pass `only_keys` to touch just those columns and leave the rest of the row
+    as it is; used when one part of the page saves on its own."""
+    if only_keys:
+        keys = [k for k in only_keys if k in PERMISSION_KEYS]
+        if not keys:
+            return
+        sets = ", ".join(f"{k} = %s" for k in keys)
+        row = conn.execute("SELECT user_id FROM user_permissions WHERE user_id = %s", (user_id,)).fetchone()
+        if row:
+            conn.execute(
+                f"UPDATE user_permissions SET {sets} WHERE user_id = %s",
+                (*[bool(values.get(k, False)) for k in keys], user_id)
+            )
+        else:
+            upsert_user_permissions(conn, user_id, values)
+        return
     columns = ", ".join(PERMISSION_KEYS)
     placeholders = ", ".join(["%s"] * len(PERMISSION_KEYS))
     updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in PERMISSION_KEYS)
@@ -20728,32 +20745,81 @@ def settings():
             ).fetchall()
             accessible_project_ids = {row["project_id"] for row in accessible_project_rows}
             valid_folder_keys = valid_project_folder_keys(conn)
-            selected_file_access = []
-            if user and user.get("role") != "admin":
-                for project_id in accessible_project_ids:
-                    for folder_key in request.form.getlist(f"project_file_folders_{project_id}"):
-                        if folder_key in valid_folder_keys:
-                            selected_file_access.append((project_id, folder_key))
-            values = {k: (k in request.form) for k in PERMISSION_KEYS}
-            if "view_project_files" in values:
-                values["view_project_files"] = bool(selected_file_access)
-            upsert_user_permissions(conn, user_id, values)
-            conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
             now = utc_now_iso()
-            for project_id, folder_key in selected_file_access:
+            # The page saves one person, or one project's folders, at a time, so
+            # each save must leave everything it did not show alone.
+            scope = (request.form.get("scope") or "all").strip()
+
+            def has_any_folder_access():
+                row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM project_file_permissions WHERE user_id = %s AND can_view = TRUE",
+                    (user_id,)
+                ).fetchone()
+                return bool((row or {}).get("n"))
+
+            if scope == "project":
+                project_id = optional_int(request.form.get("project_id"))
+                if not project_id or project_id not in accessible_project_ids or (user and user.get("role") == "admin"):
+                    conn.close()
+                    flash("That project is not one this user can be given folders for.")
+                    return redirect(url_for("settings", tab="permissions"))
                 conn.execute(
-                    """
-                    INSERT INTO project_file_permissions
-                    (project_id, user_id, folder_key, can_view, created_at, updated_at)
-                    VALUES (%s, %s, %s, TRUE, %s, %s)
-                    ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
-                        can_view = TRUE,
-                        updated_at = EXCLUDED.updated_at
-                    """,
-                    (project_id, user_id, folder_key, now, now)
+                    "DELETE FROM project_file_permissions WHERE user_id = %s AND project_id = %s",
+                    (user_id, project_id)
                 )
-            conn.commit()
-            flash("User permissions and project file folder access updated.")
+                for folder_key in request.form.getlist(f"project_file_folders_{project_id}"):
+                    if folder_key not in valid_folder_keys:
+                        continue
+                    conn.execute(
+                        """
+                        INSERT INTO project_file_permissions
+                        (project_id, user_id, folder_key, can_view, created_at, updated_at)
+                        VALUES (%s, %s, %s, TRUE, %s, %s)
+                        ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
+                            can_view = TRUE,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        (project_id, user_id, folder_key, now, now)
+                    )
+                if "view_project_files" in PERMISSION_KEYS:
+                    upsert_user_permissions(conn, user_id, {"view_project_files": has_any_folder_access()},
+                                            only_keys=["view_project_files"])
+                conn.commit()
+                flash("Folder access updated for that project.")
+            elif scope == "global":
+                values = {k: (k in request.form) for k in PERMISSION_KEYS}
+                # folders are saved on their own, so keep the flag in step with them
+                if "view_project_files" in values:
+                    values["view_project_files"] = has_any_folder_access()
+                upsert_user_permissions(conn, user_id, values)
+                conn.commit()
+                flash("Permissions updated.")
+            else:
+                selected_file_access = []
+                if user and user.get("role") != "admin":
+                    for project_id in accessible_project_ids:
+                        for folder_key in request.form.getlist(f"project_file_folders_{project_id}"):
+                            if folder_key in valid_folder_keys:
+                                selected_file_access.append((project_id, folder_key))
+                values = {k: (k in request.form) for k in PERMISSION_KEYS}
+                if "view_project_files" in values:
+                    values["view_project_files"] = bool(selected_file_access)
+                upsert_user_permissions(conn, user_id, values)
+                conn.execute("DELETE FROM project_file_permissions WHERE user_id = %s", (user_id,))
+                for project_id, folder_key in selected_file_access:
+                    conn.execute(
+                        """
+                        INSERT INTO project_file_permissions
+                        (project_id, user_id, folder_key, can_view, created_at, updated_at)
+                        VALUES (%s, %s, %s, TRUE, %s, %s)
+                        ON CONFLICT (project_id, user_id, folder_key) DO UPDATE SET
+                            can_view = TRUE,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        (project_id, user_id, folder_key, now, now)
+                    )
+                conn.commit()
+                flash("User permissions and project file folder access updated.")
         elif action == "project_access":
             redirect_tab = "project_access"
             user_id = int(request.form.get("user_id"))
@@ -20853,6 +20919,23 @@ def settings():
         perm_map=perm_map,
         effective_perms=effective_perms,
         permission_grid_defs=PERMISSION_GRID_DEFS,
+        # what the two search boxes on the Permissions tab look through
+        permissions_json=json.dumps({
+            "users": [
+                {"id": u["id"], "name": u.get("name") or "", "email": u.get("email") or "",
+                 "role": u.get("role") or ""}
+                for u in users
+            ],
+            "projects": {
+                str(uid): [{"id": p["id"], "name": p.get("name") or ""} for p in rows]
+                for uid, rows in (file_project_map or {}).items()
+            },
+            "access": {
+                str(uid): {str(pid): list(keys) for pid, keys in (by_project or {}).items()}
+                for uid, by_project in (project_file_access_map or {}).items()
+            },
+            "folders": [{"key": f["key"], "label": f["label"]} for f in settings_file_folders],
+        }),
         project_access_map=project_access_map,
         project_file_access_map=project_file_access_map,
         file_project_map=file_project_map,

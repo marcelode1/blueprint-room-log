@@ -153,51 +153,195 @@
 
         <div class="card settingsPanel {% if active_tab == 'permissions' %}active{% endif %}" data-settings-panel="permissions">
             <h3>User Permissions</h3>
-            <p class="muted">Choose exactly what each user can see, add, edit, or delete.</p>
+            <p class="muted">Find the person first, then the project. Nothing else is in the way.</p>
+
+            {# 1. who #}
+            <div class="permStep">
+                <label for="permUserSearch">Person</label>
+                <div class="permCombo">
+                    <input type="text" id="permUserSearch" autocomplete="off" spellcheck="false"
+                           placeholder="Start typing a name or email">
+                    <div class="permSuggest" id="permUserSuggest" hidden></div>
+                </div>
+                <p class="muted permHint" id="permUserHint"></p>
+            </div>
+
+            {# 2. what that person may do anywhere - one small form per person #}
             {% for u in users %}
                 {% set eff = effective_perms.get(u.id, {}) %}
-                <div class="card">
-                    <h4>{{ u.name }} - {{ u.email }} <span class="muted">({{ u.role }})</span></h4>
-                    <form method="post">
-                        <input type="hidden" name="action" value="permissions">
-                        <input type="hidden" name="user_id" value="{{ u.id }}">
-                        <div class="grid">
-                            {% for d in permission_grid_defs %}
-                                <label><input type="checkbox" name="{{ d.key }}" {% if eff.get(d.key) %}checked{% endif %}> {{ d.label }}</label>
-                            {% endfor %}
-                        </div>
-                        <div class="fileAccessSection">
-                            <h5>Project Files Access</h5>
-                            <p class="muted">Choose which project folders this user can open. Add project access first if a project is not listed here.</p>
-                            {% if u.role == "admin" %}
-                                <p class="muted">Admin accounts can see every project file folder.</p>
-                            {% else %}
-                                {% set file_projects = file_project_map.get(u.id, []) %}
-                                {% set user_file_access = project_file_access_map.get(u.id, {}) %}
-                                {% if file_projects %}
-                                    {% for project in file_projects %}
-                                        {% set selected_folders = user_file_access.get(project.id, []) %}
-                                        <div class="fileAccessProject">
-                                            <h5>{{ project.name }}</h5>
-                                            <div class="fileAccessFolders">
-                                                {% for folder in project_file_folders %}
-                                                    <label>
-                                                        <input type="checkbox" name="project_file_folders_{{ project.id }}" value="{{ folder.key }}" {% if folder.key in selected_folders %}checked{% endif %}>
-                                                        {{ folder.label }}
-                                                    </label>
-                                                {% endfor %}
-                                            </div>
-                                        </div>
-                                    {% endfor %}
-                                {% else %}
-                                    <p class="muted">No project access yet. Add this user to a project under the Project Access section first.</p>
-                                {% endif %}
-                            {% endif %}
-                        </div>
-                        <button type="submit">Save Permissions for {{ u.name }}</button>
-                    </form>
+                <div class="permUserPanel" data-perm-user="{{ u.id }}" hidden>
+                    <div class="card permCard">
+                        <h4>{{ u.name }} <span class="muted">{{ u.email }} ({{ u.role }})</span></h4>
+                        <form method="post">
+                            <input type="hidden" name="action" value="permissions">
+                            <input type="hidden" name="scope" value="global">
+                            <input type="hidden" name="user_id" value="{{ u.id }}">
+                            <p class="muted">What {{ u.name }} may do on every project.</p>
+                            <div class="grid">
+                                {% for d in permission_grid_defs %}
+                                    <label><input type="checkbox" name="{{ d.key }}" {% if eff.get(d.key) %}checked{% endif %}> {{ d.label }}</label>
+                                {% endfor %}
+                            </div>
+                            <button type="submit">Save Permissions</button>
+                        </form>
+                    </div>
+
+                    {# 3. which project, then its folders #}
+                    <div class="card permCard">
+                        <h4>Project Files Access</h4>
+                        {% if u.role == "admin" %}
+                            <p class="muted">Admin accounts can see every project file folder.</p>
+                        {% elif not file_project_map.get(u.id, []) %}
+                            <p class="muted">No project access yet. Add {{ u.name }} to a project under Project Access first.</p>
+                        {% else %}
+                            <div class="permStep">
+                                <label for="permProjectSearch{{ u.id }}">Project</label>
+                                <div class="permCombo">
+                                    <input type="text" class="permProjectSearch" id="permProjectSearch{{ u.id }}"
+                                           data-perm-user="{{ u.id }}" autocomplete="off" spellcheck="false"
+                                           placeholder="Start typing a project name">
+                                    <div class="permSuggest" data-perm-project-suggest="{{ u.id }}" hidden></div>
+                                </div>
+                                <p class="muted permHint" data-perm-project-hint="{{ u.id }}"></p>
+                            </div>
+                            <form method="post" class="permFolderForm" data-perm-folder-form="{{ u.id }}" hidden>
+                                <input type="hidden" name="action" value="permissions">
+                                <input type="hidden" name="scope" value="project">
+                                <input type="hidden" name="user_id" value="{{ u.id }}">
+                                <input type="hidden" name="project_id" value="">
+                                <h5 class="permFolderTitle"></h5>
+                                <div class="fileAccessFolders permFolderBoxes"></div>
+                                <button type="submit">Save Folder Access</button>
+                            </form>
+                        {% endif %}
+                    </div>
                 </div>
             {% endfor %}
+
+            <script id="permissionsData" type="application/json">{{ permissions_json|safe }}</script>
+<script>
+// Two steps: pick the person, then the project. Nothing shows until it is asked for.
+(function(){
+    const data=JSON.parse(document.getElementById("permissionsData").textContent||"{}");
+    const users=data.users||[],projects=data.projects||{},access=data.access||{},folders=data.folders||[];
+    const search=document.getElementById("permUserSearch");
+    const box=document.getElementById("permUserSuggest");
+    const hint=document.getElementById("permUserHint");
+    if(!search)return;
+    const norm=v=>(v===null||v===undefined?"":String(v)).trim().toLowerCase();
+
+    // only the person panels, never the project box that sits inside one
+    function panel(id){return document.querySelector('.permUserPanel[data-perm-user="'+id+'"]');}
+    function showPerson(id){
+        document.querySelectorAll(".permUserPanel").forEach(p=>{p.hidden=true;});
+        const p=panel(id);
+        if(p){p.hidden=false;p.scrollIntoView({behavior:"smooth",block:"nearest"});}
+    }
+    function hideUsers(){box.hidden=true;box.replaceChildren();}
+    function renderUsers(typed){
+        const q=norm(typed);
+        if(!q){hideUsers();hint.textContent="";return;}
+        const hits=users.filter(u=>norm(u.name).includes(q)||norm(u.email).includes(q)).slice(0,10);
+        box.replaceChildren();
+        if(!hits.length){hideUsers();hint.textContent="Nobody matches that.";return;}
+        hint.textContent="";
+        hits.forEach(u=>{
+            const opt=document.createElement("button");
+            opt.type="button";opt.className="permSuggestOpt";
+            const name=document.createElement("span");
+            name.className="permSuggestName";name.textContent=u.name;
+            const who=document.createElement("span");
+            who.className="permSuggestWho";who.textContent=u.email+" ("+u.role+")";
+            opt.append(name,who);
+            opt.addEventListener("mousedown",e=>{
+                e.preventDefault();
+                search.value=u.name;hideUsers();showPerson(u.id);
+            });
+            box.append(opt);
+        });
+        box.hidden=false;
+    }
+    search.addEventListener("input",()=>renderUsers(search.value));
+    search.addEventListener("focus",()=>{if(search.value.trim())renderUsers(search.value);});
+    document.addEventListener("focusout",e=>{if(e.target===search)setTimeout(hideUsers,160);});
+
+    // the project step, one per person
+    document.querySelectorAll(".permProjectSearch").forEach(input=>{
+        const uid=input.dataset.permUser;
+        const sbox=document.querySelector('[data-perm-project-suggest="'+uid+'"]');
+        const shint=document.querySelector('[data-perm-project-hint="'+uid+'"]');
+        const form=document.querySelector('[data-perm-folder-form="'+uid+'"]');
+        const mine=projects[uid]||[];
+        const hideP=()=>{sbox.hidden=true;sbox.replaceChildren();};
+        function openProject(p){
+            form.querySelector('input[name="project_id"]').value=p.id;
+            form.querySelector(".permFolderTitle").textContent=p.name;
+            const chosen=((access[uid]||{})[p.id])||[];
+            const boxes=form.querySelector(".permFolderBoxes");
+            boxes.replaceChildren();
+            folders.forEach(f=>{
+                const label=document.createElement("label");
+                const cb=document.createElement("input");
+                cb.type="checkbox";
+                cb.name="project_file_folders_"+p.id;
+                cb.value=f.key;
+                cb.checked=chosen.indexOf(f.key)>=0;
+                label.append(cb,document.createTextNode(" "+f.label));
+                boxes.append(label);
+            });
+            form.hidden=false;
+            form.scrollIntoView({behavior:"smooth",block:"nearest"});
+        }
+        function renderProjects(typed){
+            const q=norm(typed);
+            if(!q){hideP();shint.textContent="";return;}
+            const hits=mine.filter(p=>norm(p.name).includes(q)).slice(0,10);
+            sbox.replaceChildren();
+            if(!hits.length){hideP();shint.textContent="No project of theirs matches that.";return;}
+            shint.textContent="";
+            hits.forEach(p=>{
+                const opt=document.createElement("button");
+                opt.type="button";opt.className="permSuggestOpt";
+                const name=document.createElement("span");
+                name.className="permSuggestName";name.textContent=p.name;
+                opt.append(name);
+                opt.addEventListener("mousedown",e=>{
+                    e.preventDefault();
+                    input.value=p.name;hideP();openProject(p);
+                });
+                sbox.append(opt);
+            });
+            sbox.hidden=false;
+        }
+        input.addEventListener("input",()=>renderProjects(input.value));
+        input.addEventListener("focus",()=>{if(input.value.trim())renderProjects(input.value);});
+        document.addEventListener("focusout",e=>{if(e.target===input)setTimeout(hideP,160);});
+    });
+})();
+</script>
+<style>
+.permStep{max-width:520px;margin:0 0 14px}
+.permStep label{display:block;margin:0 0 4px;font-size:13px;font-weight:750;color:var(--muted)}
+.permCombo{position:relative}
+.permCombo input{width:100%;margin:0}
+.permSuggest{position:absolute;z-index:60;left:0;right:0;top:calc(100% + 2px);background:var(--card);
+    border:1px solid var(--border);border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.22);
+    max-height:min(60vh,352px);overflow-y:auto}
+.permSuggest[hidden]{display:none}
+.permSuggestOpt{display:flex!important;flex-direction:row;align-items:baseline;gap:8px;width:100%!important;
+    text-align:left!important;background:var(--card)!important;border:0!important;
+    border-bottom:1px solid var(--border)!important;border-radius:0!important;padding:7px 12px!important;
+    margin:0!important;min-height:0!important;cursor:pointer;white-space:nowrap;overflow:hidden}
+.permSuggestOpt:last-child{border-bottom:0!important}
+.permSuggestOpt:hover{background:rgba(37,99,235,.1)!important}
+.permSuggestName{font-weight:800;font-size:14px}
+.permSuggestWho{font-size:12.5px;color:var(--muted);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.permHint{margin:6px 0 0;min-height:1.2em;font-size:13px}
+.permUserPanel[hidden]{display:none}
+.permCard{border:1px solid var(--border)}
+.permFolderForm[hidden]{display:none}
+.permFolderTitle{margin:0 0 8px}
+</style>
         </div>
 
         <div class="card settingsPanel desktop-only {% if active_tab == 'project_access' %}active{% endif %}" data-settings-panel="project_access">
