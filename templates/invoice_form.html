@@ -775,9 +775,26 @@ function openNewItemModal(select,prefillName){
     pendingItemSelect=select;
     newItemForm.reset();
     document.getElementById("newItemError").textContent="";
-    if(prefillName){
-        const nameField=newItemForm.querySelector('[name="item_name"]');
-        if(nameField)nameField.value=prefillName;
+    const set=(name,value)=>{
+        const field=newItemForm.querySelector('[name="'+name+'"]');
+        if(field&&value!==""&&value!==null&&value!==undefined)field.value=value;
+    };
+    if(prefillName)set("item_name",prefillName);
+    // Carry across everything already typed on the line. Without this the new
+    // item is saved blank and then written back over the line, losing the
+    // description and the price the user had entered.
+    const line=select?select.closest(".invoiceLine"):null;
+    if(line){
+        const description=(line.querySelector(".lineDescription")?.value||"").trim();
+        const typedPrice=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
+        const taxable=line.querySelector(".lineTaxable");
+        const type=line.querySelector(".lineItemType");
+        set("description",description);
+        if(typedPrice)set("unit_price",money(typedPrice));
+        const taxBox=newItemForm.querySelector('[name="taxable"]');
+        if(taxBox&&taxable)taxBox.checked=!!taxable.checked;
+        const typeField=newItemForm.querySelector('[name="item_type"]');
+        if(typeField&&type&&type.value)typeField.value=type.value;
     }
     newItemModal.hidden=false;
     const focusField=newItemForm.querySelector(prefillName?'[name="brand"]':'[name="item_name"]');
