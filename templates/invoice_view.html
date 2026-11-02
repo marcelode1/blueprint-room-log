@@ -71,7 +71,6 @@
             <h3>Job Name</h3>
             <p><strong>{{ invoice.project_name or invoice.customer_name or '-' }}</strong></p>
             {% if invoice.billing_address %}<p>{{ invoice.billing_address }}</p>{% endif %}
-            {% if invoice.job_reference %}<p><strong>Job / PO: {{ invoice.job_reference }}</strong></p>{% endif %}
             {% if invoice.due_date %}<p>Due: {{ format_date(invoice.due_date) }}</p>{% endif %}
         </div>
     </div>
