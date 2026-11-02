@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-10-29 V1"
+APP_BUILD = "2026-11-02 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2631,16 +2631,22 @@ def invoice_form_pairs():
 
 
 def invoice_email_body(invoice, company):
+    """The covering note only. The amount, the due date and the line items all
+    live in the attached PDF, so they are not repeated in the body of the mail."""
+    number = (invoice.get("invoice_number") or "").strip()
+    attachment_name = (secure_filename(number or "invoice") or "invoice") + ".pdf"
+    sender = company.get("company_name") or "ProjectONus"
     lines = [
         f"Hello {invoice.get('customer_name') or 'Customer'},",
         "",
-        f"Please find invoice {invoice.get('invoice_number')} from {company.get('company_name') or 'ProjectONus'}.",
-        f"Amount Due: {format_invoice_money(invoice.get('total'))}",
-        f"Due Date: {format_date(invoice.get('due_date')) if invoice.get('due_date') else '-'}",
+        f"Please find invoice {number} from {sender} attached to this email.",
+        "",
+        f"The attachment is a PDF, {attachment_name}, with the full invoice: "
+        "the work, the amounts and how to pay.",
+        "",
+        "Thank you.",
+        sender,
     ]
-    if invoice.get("id"):
-        lines.extend(["", f"View invoice: {external_url('invoice_view', invoice_id=invoice['id'])}"])
-    lines.extend(["", "Thank you.", company.get("company_name") or "ProjectONus"])
     return "\n".join(lines)
 
 
