@@ -1,4 +1,4 @@
-﻿from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify, g, has_request_context
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, jsonify, g, has_request_context
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from email.message import EmailMessage
@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-02 V1"
+APP_BUILD = "2026-11-02 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1277,6 +1277,8 @@ def init_db():
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        # how long this item takes to fit, in minutes - used for labour estimating
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS install_minutes INTEGER",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -4047,6 +4049,45 @@ def inventory_condition_label(value):
     return INVENTORY_CONDITION_LABELS.get(value or "", "New")
 
 
+def parse_install_minutes(value):
+    """How long an item takes to fit. Accepts "45", "45m", "1h30", "1.5h", "2 hours".
+    Returns whole minutes, or None when nothing usable was typed."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    hours_minutes = re.match(r"^(\d+)\s*h(?:ours?|rs?)?\s*(\d+)?\s*m?(?:in(?:utes?)?)?$", text)
+    if hours_minutes:
+        hours = int(hours_minutes.group(1))
+        minutes = int(hours_minutes.group(2) or 0)
+        total = hours * 60 + minutes
+        return total if 0 < total <= 60 * 24 * 30 else None
+    decimal_hours = re.match(r"^(\d+(?:\.\d+)?)\s*(?:h|hours?|hrs?)$", text)
+    if decimal_hours:
+        total = int(round(float(decimal_hours.group(1)) * 60))
+        return total if 0 < total <= 60 * 24 * 30 else None
+    plain = re.match(r"^(\d+(?:\.\d+)?)\s*(?:m|min(?:utes?)?)?$", text)
+    if plain:
+        total = int(round(float(plain.group(1))))
+        return total if 0 < total <= 60 * 24 * 30 else None
+    return None
+
+
+def format_install_minutes(value):
+    """Minutes shown the way a person would say them: 45m, 1h 30m, 2h."""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if minutes <= 0:
+        return ""
+    hours, rest = divmod(minutes, 60)
+    if hours and rest:
+        return f"{hours}h {rest}m"
+    if hours:
+        return f"{hours}h"
+    return f"{rest}m"
+
+
 def clean_catalog_description(value):
     text = (value or "").strip()
     if not text:
@@ -4087,6 +4128,8 @@ def ensure_part_catalog_tables(conn):
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS item_type TEXT NOT NULL DEFAULT 'part'",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS unit_measure TEXT NOT NULL DEFAULT 'UN'",
+        # how long this item takes to fit, in minutes - used for labour estimating
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS install_minutes INTEGER",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS catalog_opt_out BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
@@ -4101,7 +4144,7 @@ def ensure_part_catalog_tables(conn):
             print("Part catalog migration skipped:", e)
 
 
-def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None, unit_measure=""):
+def upsert_part_catalog(conn, item_name, item_model="", brand="", description="", unit_price=None, taxable=None, item_type="part", category="", part_number="", unit_cost=None, unit_measure="", install_minutes=None):
     item_name = (item_name or "").strip()
     if not item_name:
         return None
@@ -4135,21 +4178,22 @@ def upsert_part_catalog(conn, item_name, item_model="", brand="", description=""
                 taxable = COALESCE(%s, taxable),
                 item_type = COALESCE(NULLIF(%s, ''), item_type),
                 unit_measure = COALESCE(NULLIF(%s, ''), unit_measure, 'UN'),
+                install_minutes = COALESCE(%s, install_minutes),
                 is_active = TRUE,
                 updated_at = %s
             WHERE id = %s
             """,
-            (category, description, part_number, unit_price, unit_cost, taxable, item_type, unit_measure, now, existing["id"])
+            (category, description, part_number, unit_price, unit_cost, taxable, item_type, unit_measure, install_minutes, now, existing["id"])
         )
         return existing["id"]
     row = conn.execute(
         """
         INSERT INTO part_catalog
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, install_minutes, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
         RETURNING id
         """,
-        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure or "UN", now, now)
+        (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure or "UN", install_minutes, now, now)
     ).fetchone()
     return row["id"] if row else None
 
@@ -4218,7 +4262,7 @@ def part_catalog_options(conn):
     sync_part_catalog_sources(conn)
     rows = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
         ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
@@ -4539,7 +4583,7 @@ def dtools_auth_diagnostic():
     if not key:
         key_info = "NO API key is saved in Settings (the X-API-Key header is empty)"
     else:
-        key_info = f"API key sent (ends â€¦{key[-4:]}, {len(key)} chars)"
+        key_info = f"API key sent (ends …{key[-4:]}, {len(key)} chars)"
     auth = (config.get("auth_header") or "").strip() or DTOOLS_CLOUD_DEFAULT_AUTH
     auth_kind = "custom" if (config.get("auth_header") or "").strip() else "gateway default"
     return f" [Diagnostic: {key_info}; Authorization header sent ({auth_kind})]"
@@ -6452,6 +6496,7 @@ def utility_processor():
         inventory_status_label=inventory_status_label,
         inventory_location_label=inventory_location_label,
         inventory_fixed_location=inventory_fixed_location,
+        format_install_minutes=format_install_minutes,
         po_status_label=po_status_label,
         supplier_task_status_options=SUPPLIER_TASK_STATUS_LABELS,
         inventory_condition_label=inventory_condition_label,
@@ -10354,7 +10399,7 @@ def invoice_customers():
             entry["open_invoices"].append({
                 "id": inv["id"],
                 "number": inv.get("invoice_number"),
-                "label": f'{inv.get("invoice_number")} Â· {format_date(inv.get("invoice_date"))} Â· open {format_invoice_money(open_amount)}',
+                "label": f'{inv.get("invoice_number")} · {format_date(inv.get("invoice_date"))} · open {format_invoice_money(open_amount)}',
                 "open_raw": round(open_amount, 2),
                 "pay_url": url_for("add_invoice_payment", invoice_id=inv["id"]),
             })
@@ -12442,6 +12487,7 @@ def parts_catalog():
         if item_type not in ["part", "service"]:
             item_type = "part"
         unit_measure = clean_unit_measure(request.form.get("unit_measure")) or "UN"
+        install_minutes = parse_install_minutes(request.form.get("install_minutes"))
         taxable = request.form.get("taxable") == "1"
         now = utc_now_iso()
         duplicate_item = conn.execute(
@@ -12475,11 +12521,12 @@ def parts_catalog():
                     taxable = %s,
                     item_type = %s,
                     unit_measure = %s,
+                    install_minutes = %s,
                     is_active = TRUE,
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, now, part_id)
+                (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, install_minutes, now, part_id)
             )
             flash("Catalog item updated.")
         else:
@@ -12495,7 +12542,8 @@ def parts_catalog():
                 category,
                 part_number,
                 unit_cost,
-                unit_measure
+                unit_measure,
+                install_minutes
             )
             flash("Catalog item saved.")
         conn.commit()
@@ -12569,7 +12617,7 @@ def create_part_catalog_json():
         return jsonify({"ok": False, "error": "Item name is required."}), 400
     duplicate_item = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes
         FROM part_catalog
         WHERE COALESCE(is_active, TRUE) = TRUE
           AND lower(item_name) = lower(%s)
@@ -12600,11 +12648,13 @@ def create_part_catalog_json():
         request.form.get("item_type", "part") if request.form.get("item_type") in ["part", "service"] else "part",
         request.form.get("category", "").strip(),
         request.form.get("part_number", "").strip(),
-        unit_cost
+        unit_cost,
+        request.form.get("unit_measure", "").strip(),
+        parse_install_minutes(request.form.get("install_minutes")),
     )
     row = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes
         FROM part_catalog
         WHERE id = %s
         """,
@@ -12651,7 +12701,7 @@ def quick_update_part_catalog_json(part_id):
     )
     updated = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes
         FROM part_catalog
         WHERE id = %s
         """,
@@ -13318,7 +13368,7 @@ def dtools_unauthorized_hint(message):
     knows to fall back to pasting the Response JSON / public Request URL."""
     text = str(message or "")
     if "401" in text or "Unauthorized" in text or "403" in text or "Access denied" in text:
-        text += (" â€” D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
+        text += (" — D-Tools rejected the API key for this request. Re-copy the FULL key from D-Tools "
                  "(Settings > Integration > Developer) into ProjectONus Settings, and confirm your D-Tools "
                  "plan has Cloud API access enabled. Meanwhile you can import without the API: open the "
                  "proposal in Chrome, copy the GetProposalData Response JSON, and paste it into the "
@@ -14871,7 +14921,7 @@ def project_files(project_id):
         conn.commit()
         conn.close()
         if is_mobile_capture:
-            message = "Added to folder." if uploaded_count else "Nothing was captured â€” take a picture, record audio, or attach a file first."
+            message = "Added to folder." if uploaded_count else "Nothing was captured — take a picture, record audio, or attach a file first."
         else:
             message = "Project files updated."
             if uploaded_count:
@@ -21675,7 +21725,7 @@ def onedrive_backup_project(project_id):
             export = {"project": project["name"], "generated_at": utc_now_iso(), "comments": comments}
             onedrive_upload(folder_id, "comments.json", json.dumps(export, indent=2, default=str).encode("utf-8"), "application/json")
             readable = "\n\n".join(
-                f"[{c['date']}] {c['room'] or 'Project'} â€” {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
+                f"[{c['date']}] {c['room'] or 'Project'} — {c['by'] or 'Unknown'}\n{c['comment']}" for c in comments
             ) or "No comments yet."
             onedrive_upload(folder_id, "comments.txt", readable.encode("utf-8"), "text/plain")
         except Exception:

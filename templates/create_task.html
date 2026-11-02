@@ -217,6 +217,38 @@
     </div>
 </div>
 
+<div id="newCatalogItemModal" class="newSupplierModal" aria-hidden="true">
+    <div class="newSupplierDialog">
+        <h3 style="margin-top:0">New Catalog Item</h3>
+        <p class="catalogNewLead" id="catalogNewLead"></p>
+        <div class="grid">
+            <div><label>Material / Item</label><input id="catalogNewName"></div>
+            <div><label>Brand</label><input id="catalogNewBrand"></div>
+            <div><label>Model Number</label><input id="catalogNewModel"></div>
+            <div><label>Part #</label><input id="catalogNewPartNumber"></div>
+            <div><label>Price</label><input id="catalogNewPrice" inputmode="decimal" placeholder="0.00"></div>
+            <div><label>Time to Install</label><input id="catalogNewInstall" placeholder="45m, 1h 30m, 2h"></div>
+            <div><label>Category</label><input id="catalogNewCategory" placeholder="Speakers, cable, keypads"></div>
+            <div>
+                <label>Unit</label>
+                <select id="catalogNewUnit">
+                    <option value="UN">UN - Unit</option>
+                    <option value="PR">PR - Pair</option>
+                </select>
+            </div>
+        </div>
+        <label class="catalogNewCheck"><input type="checkbox" id="catalogNewTaxable" checked> Taxable</label>
+        <label>Description</label>
+        <textarea id="catalogNewDescription" rows="2" placeholder="What it is, where it is used, anything to remember"></textarea>
+        <p class="catalogNewError" id="catalogNewError" hidden></p>
+        <div class="catalogNewActions">
+            <button type="button" id="catalogNewSaveBtn">Save to Catalog &amp; Add</button>
+            <button type="button" class="btn-secondary" id="catalogNewSkipBtn">This Task Only</button>
+            <button type="button" class="btn-secondary" id="catalogNewCancelBtn">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <div class="matOverlay" id="matOverlay" hidden>
     <div class="matModal">
         <h3 style="margin-top:0" id="matModalTitle">Material</h3>
@@ -279,6 +311,13 @@
 .newSupplierModal.open{display:flex;align-items:flex-start;justify-content:center}
 .newSupplierDialog{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.32);max-width:780px;width:100%;padding:18px}
 .modalActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.catalogNewLead{margin:0 0 12px;color:var(--muted);font-weight:700}
+.catalogNewCheck{display:flex;align-items:center;gap:8px;margin:10px 0}
+.catalogNewCheck input{width:auto;min-height:auto;margin:0}
+.catalogNewError{margin:10px 0 0;padding:8px 10px;border-radius:8px;background:rgba(220,38,38,.12);color:#b91c1c;font-weight:800}
+body.dark .catalogNewError{background:rgba(248,113,113,.16);color:#fca5a5}
+.catalogNewActions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:10px;margin-top:14px}
+.catalogNewActions button{margin:0}
 .mainRoomField{display:block;margin:7px 0 12px}
 .realtimeVoiceTaskPanel{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:10px;background:rgba(14,165,233,.07)}
 .realtimeVoiceTaskActions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -286,7 +325,7 @@
 .realtimeVoiceTaskActions button.isListening{background:#16a34a!important}
 .realtimeVoiceTranscript,.realtimeVoiceTaskResult{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--card);white-space:pre-wrap}
 .realtimeVoiceTranscript{font-weight:800}
-@media(max-width:760px){.modalActions,.realtimeVoiceTaskActions{grid-template-columns:1fr}}
+@media(max-width:760px){.modalActions,.realtimeVoiceTaskActions,.catalogNewActions{grid-template-columns:1fr}}
 </style>
 <script>
 (function(){
@@ -391,6 +430,21 @@
         if(!select||select.selectedIndex<0)return "";
         return select.options[select.selectedIndex].textContent.trim();
     }
+    // What the new catalog entry recorded, built from numbers only so it is
+    // safe to drop straight into the row.
+    function catalogSummaryHtml(item){
+        if(item.save_to_catalog===false)return "";
+        const bits=[];
+        const price=Number(item.catalog_price);
+        if(item.catalog_price!==null&&item.catalog_price!==undefined&&!Number.isNaN(price)){
+            bits.push("$"+price.toFixed(2));
+        }
+        if(item.catalog_install)bits.push(item.catalog_install+" to install");
+        if(item.catalog_taxable===true)bits.push("taxable");
+        else if(item.catalog_taxable===false)bits.push("not taxable");
+        if(!bits.length)return "";
+        return "<br><em>Saved to catalog: "+bits.join(" | ")+"</em>";
+    }
     function renderSupplierItems(){
         if(supplierItemsJson)supplierItemsJson.value=JSON.stringify(supplierItems);
         if(!supplierItemList)return;
@@ -404,7 +458,8 @@
                 (item.brand?" | Brand: "+item.brand:"")+
                 (item.model?" | Model #: "+item.model:"")+
                 "<br>Pickup: "+item.pickup_date+(item.pickup_time?" "+item.pickup_time:"")+
-                (item.save_to_catalog===false?"<br><em>Not saved to catalog (this task only)</em>":"");
+                (item.save_to_catalog===false?"<br><em>Not saved to catalog (this task only)</em>":"")+
+                catalogSummaryHtml(item);
             const remove=document.createElement("button");
             remove.type="button";
             remove.className="btn-danger";
@@ -476,15 +531,20 @@
         if(taskField("title"))taskField("title").focus();
         return true;
     }
+    function submitTaskForm(){
+        if(!taskForm)return;
+        if(typeof taskForm.requestSubmit==="function")taskForm.requestSubmit();
+        else taskForm.submit();
+    }
     function materialInCatalog(name,model,brand){
         const rows=window.partCatalogData||[];
         const n=v=>(v||"").toString().trim().toLowerCase();
         return rows.some(p=>n(p.item_name)===n(name)&&n(p.item_model)===n(model)&&n(p.brand)===n(brand));
     }
-    function addSupplierItem(showAlert=true){
+    function currentSupplierItem(){
         const projectId=projectSelect?projectSelect.value:"";
         const roomId=roomSelect?roomSelect.value:"";
-        const item={
+        return {
             pickup_date:supplierItemFields.pickupDate?supplierItemFields.pickupDate.value:"",
             pickup_time:supplierItemFields.pickupTime?supplierItemFields.pickupTime.value:"",
             quantity:supplierItemFields.quantity?supplierItemFields.quantity.value:"",
@@ -497,30 +557,217 @@
             room_id:roomId,
             room_name:roomId?optionText(roomSelect):"Project general"
         };
-        if(!item.project_id||!item.item_name||!item.quantity){
-            if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
-            return false;
-        }
-        // New material? Ask whether it should also be saved to the parts/equipment catalog.
-        if(materialInCatalog(item.item_name,item.model,item.brand)){
-            item.save_to_catalog=true;
-        }else{
-            item.save_to_catalog=window.confirm(
-                '"'+item.item_name+'" is not in your material catalog yet.\n\n'+
-                'Press OK to also save it to the catalog for future use,\n'+
-                'or Cancel to use it for this task only.');
-        }
-        supplierItems.push(item);
-        renderSupplierItems();
+    }
+    // Clear the line so the next material can be typed straight in.
+    function clearSupplierItemLine(){
         if(supplierItemFields.quantity)supplierItemFields.quantity.value="";
         if(supplierItemFields.itemName)supplierItemFields.itemName.value="";
         if(supplierItemFields.brand)supplierItemFields.brand.value="";
         if(supplierItemFields.model)supplierItemFields.model.value="";
         if(supplierItemFields.unitMeasure)supplierItemFields.unitMeasure.value="UN";
         if(supplierItemFields.itemName)supplierItemFields.itemName.focus();
-        return true;
+    }
+    function commitSupplierItem(item){
+        supplierItems.push(item);
+        renderSupplierItems();
+        clearSupplierItemLine();
+    }
+    function addSupplierItem(showAlert=true,options={}){
+        const item=currentSupplierItem();
+        if(!item.project_id||!item.item_name||!item.quantity){
+            if(showAlert)alert("Choose the project, quantity, and material/item before adding it.");
+            return false;
+        }
+        // Already in the catalog: nothing to ask, just add it.
+        if(materialInCatalog(item.item_name,item.model,item.brand)){
+            item.save_to_catalog=true;
+            commitSupplierItem(item);
+            return true;
+        }
+        // New material: collect the price, install time and tax status so the
+        // catalog has it for next time.
+        openCatalogItemModal(item,options.onDone||null);
+        return false;
     }
     if(addSupplierItemBtn)addSupplierItemBtn.addEventListener("click",()=>addSupplierItem(true));
+
+    // ---- New catalog item box -------------------------------------------
+    const catalogModal=document.getElementById("newCatalogItemModal");
+    const catalogModalLead=document.getElementById("catalogNewLead");
+    const catalogModalError=document.getElementById("catalogNewError");
+    const catalogSaveBtn=document.getElementById("catalogNewSaveBtn");
+    const catalogSkipBtn=document.getElementById("catalogNewSkipBtn");
+    const catalogCancelBtn=document.getElementById("catalogNewCancelBtn");
+    const catalogModalFields={
+        name:document.getElementById("catalogNewName"),
+        brand:document.getElementById("catalogNewBrand"),
+        model:document.getElementById("catalogNewModel"),
+        partNumber:document.getElementById("catalogNewPartNumber"),
+        price:document.getElementById("catalogNewPrice"),
+        install:document.getElementById("catalogNewInstall"),
+        category:document.getElementById("catalogNewCategory"),
+        unit:document.getElementById("catalogNewUnit"),
+        taxable:document.getElementById("catalogNewTaxable"),
+        description:document.getElementById("catalogNewDescription")
+    };
+    let catalogModalItem=null;
+    let catalogModalDone=null;
+    let catalogModalBusy=false;
+
+    function catalogModalIsOpen(){
+        return Boolean(catalogModal&&catalogModal.classList.contains("open"));
+    }
+    function fieldValue(field){
+        return field?field.value.trim():"";
+    }
+    function showCatalogModalError(message){
+        if(!catalogModalError)return;
+        catalogModalError.textContent=message;
+        catalogModalError.hidden=false;
+    }
+    function hideCatalogModalError(){
+        if(!catalogModalError)return;
+        catalogModalError.textContent="";
+        catalogModalError.hidden=true;
+    }
+    function setCatalogModalBusy(busy){
+        catalogModalBusy=busy;
+        if(catalogSaveBtn){
+            catalogSaveBtn.disabled=busy;
+            catalogSaveBtn.textContent=busy?"Saving...":"Save to Catalog & Add";
+        }
+        if(catalogSkipBtn)catalogSkipBtn.disabled=busy;
+        if(catalogCancelBtn)catalogCancelBtn.disabled=busy;
+    }
+    // Mirrors format_install_minutes on the server: 45m, 1h 30m, 2h.
+    function installLabel(minutes){
+        const total=Math.round(Number(minutes)||0);
+        if(total<=0)return "";
+        const hours=Math.floor(total/60);
+        const mins=total%60;
+        if(hours&&mins)return hours+"h "+mins+"m";
+        if(hours)return hours+"h";
+        return mins+"m";
+    }
+    function openCatalogItemModal(item,onDone){
+        if(!catalogModal){
+            // No box on the page: keep the material for this task only.
+            item.save_to_catalog=false;
+            commitSupplierItem(item);
+            if(onDone)onDone();
+            return;
+        }
+        catalogModalItem=item;
+        catalogModalDone=onDone||null;
+        if(catalogModalLead){
+            catalogModalLead.textContent='"'+item.item_name+'" is not in your catalog yet. '+
+                'Fill in what you know and it will be ready the next time you need it.';
+        }
+        if(catalogModalFields.name)catalogModalFields.name.value=item.item_name;
+        if(catalogModalFields.brand)catalogModalFields.brand.value=item.brand||"";
+        if(catalogModalFields.model)catalogModalFields.model.value=item.model||"";
+        if(catalogModalFields.partNumber)catalogModalFields.partNumber.value="";
+        if(catalogModalFields.price)catalogModalFields.price.value="";
+        if(catalogModalFields.install)catalogModalFields.install.value="";
+        if(catalogModalFields.category)catalogModalFields.category.value="";
+        if(catalogModalFields.unit)catalogModalFields.unit.value=item.unit_measure||"UN";
+        if(catalogModalFields.taxable)catalogModalFields.taxable.checked=true;
+        if(catalogModalFields.description)catalogModalFields.description.value="";
+        hideCatalogModalError();
+        setCatalogModalBusy(false);
+        catalogModal.classList.add("open");
+        catalogModal.setAttribute("aria-hidden","false");
+        if(catalogModalFields.price)catalogModalFields.price.focus();
+    }
+    function closeCatalogItemModal(){
+        catalogModalItem=null;
+        catalogModalDone=null;
+        if(!catalogModal)return;
+        catalogModal.classList.remove("open");
+        catalogModal.setAttribute("aria-hidden","true");
+    }
+    function finishCatalogItemModal(item){
+        const done=catalogModalDone;
+        closeCatalogItemModal();
+        commitSupplierItem(item);
+        if(done)done();
+    }
+    function rememberCatalogRow(row){
+        if(!row||!row.item_name)return;
+        const rows=window.partCatalogData||(window.partCatalogData=[]);
+        const known=rows.some(p=>Number(p.id)===Number(row.id));
+        if(!known)rows.push(row);
+    }
+    async function saveCatalogItem(){
+        if(!catalogModalItem||catalogModalBusy)return;
+        const name=fieldValue(catalogModalFields.name)||catalogModalItem.item_name;
+        if(!name){
+            showCatalogModalError("The item needs a name.");
+            return;
+        }
+        const body=new URLSearchParams();
+        body.set("item_name",name);
+        body.set("brand",fieldValue(catalogModalFields.brand));
+        body.set("item_model",fieldValue(catalogModalFields.model));
+        body.set("part_number",fieldValue(catalogModalFields.partNumber));
+        body.set("category",fieldValue(catalogModalFields.category));
+        body.set("description",fieldValue(catalogModalFields.description));
+        body.set("unit_measure",catalogModalFields.unit?catalogModalFields.unit.value:"UN");
+        body.set("item_type","part");
+        const price=fieldValue(catalogModalFields.price);
+        if(price)body.set("unit_price",price);
+        const install=fieldValue(catalogModalFields.install);
+        if(install)body.set("install_minutes",install);
+        if(catalogModalFields.taxable&&catalogModalFields.taxable.checked)body.set("taxable","1");
+        hideCatalogModalError();
+        setCatalogModalBusy(true);
+        let data={};
+        try{
+            const response=await fetch("{{ url_for('create_part_catalog_json') }}",{
+                method:"POST",
+                headers:{"Content-Type":"application/x-www-form-urlencoded","X-Requested-With":"XMLHttpRequest"},
+                body:body.toString()
+            });
+            data=await response.json().catch(()=>({}));
+        }catch(err){
+            setCatalogModalBusy(false);
+            showCatalogModalError("The item could not be saved right now. Check your connection and try again.");
+            return;
+        }
+        setCatalogModalBusy(false);
+        // A duplicate means somebody added it in the meantime - use that one.
+        if(!data.ok&&!data.duplicate){
+            showCatalogModalError(data.error||"The item could not be saved. Try again.");
+            return;
+        }
+        const saved=data.item||{};
+        rememberCatalogRow(saved);
+        const item=catalogModalItem;
+        item.item_name=saved.item_name||name;
+        item.brand=saved.brand||body.get("brand")||"";
+        item.model=saved.item_model||body.get("item_model")||"";
+        item.unit_measure=saved.unit_measure||item.unit_measure||"UN";
+        item.save_to_catalog=true;
+        item.catalog_price=saved.unit_price;
+        item.catalog_install=installLabel(saved.install_minutes);
+        item.catalog_taxable=Boolean(saved.taxable);
+        finishCatalogItemModal(item);
+    }
+    if(catalogSaveBtn)catalogSaveBtn.addEventListener("click",saveCatalogItem);
+    if(catalogSkipBtn)catalogSkipBtn.addEventListener("click",()=>{
+        if(!catalogModalItem||catalogModalBusy)return;
+        const item=catalogModalItem;
+        item.save_to_catalog=false;
+        finishCatalogItemModal(item);
+    });
+    if(catalogCancelBtn)catalogCancelBtn.addEventListener("click",()=>{
+        if(catalogModalBusy)return;
+        closeCatalogItemModal();
+    });
+    if(catalogModal)catalogModal.addEventListener("keydown",event=>{
+        if(event.key==="Escape"&&!catalogModalBusy)closeCatalogItemModal();
+    });
+
     if(addTaskDraftBtn)addTaskDraftBtn.addEventListener("click",()=>addTaskDraft(true));
     if(projectSelect)projectSelect.addEventListener("change",()=>{
         if(taskDrafts.length){
@@ -549,7 +796,13 @@
         }
         const hasDraft=(supplierItemFields.itemName&&supplierItemFields.itemName.value.trim())||(supplierItemFields.quantity&&supplierItemFields.quantity.value);
         if((hasDraft&&!hadInitialSupplierItems)||!supplierItems.length){
-            addSupplierItem(false);
+            // A material that is new to the catalog opens the item box first;
+            // the task is saved once that box is answered.
+            addSupplierItem(false,{onDone:submitTaskForm});
+            if(catalogModalIsOpen()){
+                event.preventDefault();
+                return;
+            }
         }
         if(!supplierItems.length){
             event.preventDefault();

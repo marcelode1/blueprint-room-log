@@ -37,7 +37,9 @@
                     <option value="UN" {% if (edit_part.unit_measure or 'UN') != 'PR' %}selected{% endif %}>UN &mdash; Unit</option>
                     <option value="PR" {% if edit_part.unit_measure == 'PR' %}selected{% endif %}>PR &mdash; Pair</option>
                 </select>
-            </div>
+            </div>            <div><label>Time to Install</label>
+                <input name="install_minutes" value="{{ format_install_minutes(edit_part.install_minutes) }}"
+                       placeholder="45m, 1h 30m, 2h"></div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1" {% if edit_part.taxable %}checked{% endif %}> Taxable</label>
         <label>Description</label>
@@ -71,7 +73,8 @@
                     <option value="UN" selected>UN &mdash; Unit</option>
                     <option value="PR">PR &mdash; Pair</option>
                 </select>
-            </div>
+            </div>            <div><label>Time to Install</label>
+                <input name="install_minutes" placeholder="45m, 1h 30m, 2h"></div>
         </div>
         <label class="catalogCheck"><input type="checkbox" name="taxable" value="1"> Taxable</label>
         <label>Description</label>
@@ -124,7 +127,10 @@
                         {% if part.item_model %}<span class="catalogSmall">{{ part.item_model }}</span>{% endif %}
                     </td>
                     <td>{{ part.category or '-' }}</td>
-                    <td>{{ format_invoice_money(part.unit_price or 0) }}</td>
+                    <td>
+                        {{ format_invoice_money(part.unit_price or 0) }}
+                        {% if part.install_minutes %}<span class="catalogSmall">{{ format_install_minutes(part.install_minutes) }} to install</span>{% endif %}
+                    </td>
                     <td>{{ part.inventory_count }} inv. / {{ part.invoice_count }} invoice</td>
                     <td>
                         <div class="catalogActions">
