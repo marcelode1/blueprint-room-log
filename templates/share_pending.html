@@ -38,7 +38,7 @@
         <select name="project_id" id="shareProject" required>
             <option value="">Choose a project</option>
             {% for p in projects %}
-                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name and p.customer_name != p.name %} - {{ p.customer_name }}{% endif %}</option>
+                <option value="{{ p.id }}">{{ p.name }}{% if is_main_admin() and p.customer_name and p.customer_name != p.name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
 

@@ -1,0 +1,23 @@
+{# The project information block, used by the desktop and the phone alike.
+
+   Two different parties can stand behind one job. The customer is whoever we
+   deal with and bill - a contractor on a job they handed us, or the homeowner
+   when we take it on directly. The job is the place the work happens and the
+   person to ask for when you get there.
+
+   A mobile user sees only the job: its name, where it is, and who to ask for.
+   Who we bill, their address, their email and where the invoice goes are not
+   their business, so those lines are not rendered for them at all. #}
+{% set show_customer = is_main_admin() %}
+{% if show_customer %}
+    <p><strong>Customer Name:</strong> {{ project.customer_name or '-' }}</p>
+    <p><strong>Customer Address:</strong> {{ project.customer_address or '-' }}</p>
+{% endif %}
+<p><strong>Job Name:</strong> {{ project.name or '-' }}</p>
+<p><strong>Job Address:</strong> {{ project.job_address or project.customer_address or '-' }}</p>
+<p><strong>Point of Contact:</strong> {{ project.point_of_contact_name or '-' }}</p>
+<p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(project.point_of_contact_phone) or '-' }}</p>
+{% if show_customer %}
+    <p><strong>Email:</strong> {{ project.customer_email or '-' }}</p>
+    <p><strong>Billing Address:</strong> {{ project.billing_address or project.customer_address or '-' }}</p>
+{% endif %}

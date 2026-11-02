@@ -63,7 +63,7 @@
                 <select name="project_id" class="inventoryProjectSelect" data-room-target="addRoomSelect">
                     <option value="">No project yet</option>
                     {% for p in projects %}
-                        <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                        <option value="{{ p.id }}">{{ p.name }}{% if is_main_admin() and p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
                     {% endfor %}
                 </select>
             </div>

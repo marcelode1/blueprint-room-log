@@ -100,8 +100,8 @@
     </div>
 
     <div class="pgInfoStrip">
-        <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('folder') }}</span><div><span>Project:</span><strong>{{ project.customer_name or project.name }}</strong></div></div>
-        <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('pin') }}</span><div><span>Location:</span><strong>{{ project.customer_city or project.customer_address or '-' }}</strong></div></div>
+        <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('folder') }}</span><div><span>Project:</span><strong>{{ project.name }}</strong></div></div>
+        <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('pin') }}</span><div><span>Location:</span><strong>{{ project.job_city or project.job_address or project.customer_city or project.customer_address or '-' }}</strong></div></div>
         <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('worker') }}</span><div><span>Manager:</span><strong>{{ manager_name or '-' }}</strong></div></div>
         <div class="pgInfoItem"><span class="pgInfoIcon">{{ ic('calendar') }}</span><div><span>Update:</span><strong>{{ today_label }}</strong></div></div>
     </div>

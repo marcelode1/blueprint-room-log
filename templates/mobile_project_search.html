@@ -14,8 +14,9 @@
     {% for p in projects %}
         <div class="card">
             <h3>{{ p.name }}</h3>
-            <p><strong>Customer:</strong> {{ p.customer_name or '-' }}</p>
-            <p><strong>Address:</strong> {{ p.customer_address or '-' }}</p>
+            {# A mobile user gets the job, not who we bill for it. #}
+            {% if is_main_admin() %}<p><strong>Customer Name:</strong> {{ p.customer_name or '-' }}</p>{% endif %}
+            <p><strong>Job Address:</strong> {{ p.job_address or p.customer_address or '-' }}</p>
             <a class="btn-link" href="{{ url_for('mobile_project', project_id=p.id) }}">Open Project</a>
         </div>
     {% else %}

@@ -35,7 +35,7 @@
                 <select name="project_id" onchange="this.form.submit()">
                     <option value="">All Projects</option>
                     {% for p in projects %}
-                        <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                        <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if is_main_admin() and p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -128,9 +128,8 @@
         {% set t = tasks[0] %}
         {% set address = task_project_address(t) %}
         <div id="task-{{ t.id }}" class="notificationTaskSummary">
-            <p><strong>Project name:</strong> {{ t.project_name or '-' }}</p>
-            <p><strong>Customer Name:</strong> {{ t.customer_name or '-' }}</p>
-            <p><strong>Address:</strong> {{ address or '-' }}</p>
+            <p><strong>Job Name:</strong> {{ t.project_name or '-' }}</p>
+            <p><strong>Job Address:</strong> {{ address or '-' }}</p>
             {% if address %}
                 <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(address) }}">Open Route in Google Maps</a>
             {% endif %}

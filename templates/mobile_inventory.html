@@ -10,7 +10,7 @@
         <select name="project_id">
             <option value="">All Projects</option>
             {% for p in projects %}
-                <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                <option value="{{ p.id }}" {% if selected_project_id == p.id %}selected{% endif %}>{{ p.name }}{% if is_main_admin() and p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
         <label>Choose a Room</label>
@@ -75,7 +75,7 @@
         <select name="project_id">
             <option value="">No project yet</option>
             {% for p in projects %}
-                <option value="{{ p.id }}">{{ p.name }}{% if p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
+                <option value="{{ p.id }}">{{ p.name }}{% if is_main_admin() and p.customer_name %} - {{ p.customer_name }}{% endif %}</option>
             {% endfor %}
         </select>
         <label>Room Allocation</label>

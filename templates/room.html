@@ -48,9 +48,10 @@
         <div class="card taskCard {% if task_is_completed(t) %}taskDone{% endif %}">
             <strong>{{ task_display_name(t) }}</strong>
             <p class="muted">{{ task_schedule_text(t) }} - Assigned to {{ t.assigned_user_name or 'Unknown user' }} - {{ task_status_label(t) }}</p>
-            {% if project.customer_address %}
-                <p><strong>Address:</strong> {{ project.customer_address }}</p>
-                <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(project.customer_address) }}">Open Route in Google Maps</a>
+            {% set job_site = project.job_address or project.customer_address %}
+            {% if job_site %}
+                <p><strong>Job Address:</strong> {{ job_site }}</p>
+                <a class="btn-link btn-secondary" target="_blank" href="{{ maps_directions_url(job_site) }}">Open Route in Google Maps</a>
             {% endif %}
             {% if t.accepted_at %}<p class="muted">Received {{ format_datetime(t.accepted_at) }}</p>{% endif %}
             {% set task_info = task_instruction_text(t) %}

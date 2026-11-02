@@ -4,8 +4,6 @@
 <div class="card">
     <h2>New Project</h2>
     <form method="post" enctype="multipart/form-data">
-        <label>Project Name</label>
-        <input name="name" required>
         <label>Project Type <span class="muted" style="font-weight:400">(loads the phase checklist for the Progress page)</span></label>
         <select name="trade_template">
             {% for key, tpl in phase_templates.items() %}
@@ -13,9 +11,9 @@
             {% endfor %}
             <option value="">No template</option>
         </select>
-        <label>Customer Name</label>
+        <label>Customer Name <span class="muted" style="font-weight:400">(the contractor, or the customer when we deal with them directly)</span></label>
         <input name="customer_name" autocomplete="name">
-        <label>Street Address</label>
+        <label>Customer Street Address</label>
         <input id="customerStreet" name="customer_address" autocomplete="street-address" placeholder="Start typing the street address">
         <div class="grid">
             <div>
@@ -31,6 +29,25 @@
                 <input id="customerZip" name="customer_zip" autocomplete="postal-code" inputmode="numeric">
             </div>
         </div>
+        <div class="jobBlock">
+            <h3>The Job</h3>
+            <p class="jobLead">This is all a mobile user sees.</p>
+            <label>Job Name</label>
+            <input name="name" required placeholder="The contractor's customer, or our own">
+            <label>Job Street Address</label>
+            <input name="job_address" autocomplete="street-address" placeholder="Leave blank to use the customer address">
+            <div class="grid">
+                <div><label>City</label><input name="job_city"></div>
+                <div><label>State</label><input name="job_state" maxlength="2" placeholder="FL"></div>
+                <div><label>ZIP Code</label><input name="job_zip" inputmode="numeric"></div>
+            </div>
+            <label>Point of Contact</label>
+            <input name="point_of_contact_name" autocomplete="name">
+            <label>Point of Contact Phone Number</label>
+            <input name="point_of_contact_phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
+        </div>
+        <label>Email</label>
+        <input name="customer_email" type="email" autocomplete="email">
         <div class="billingAddressBlock">
             <h3>Billing Address</h3>
             <label class="inlineCheck">
@@ -54,14 +71,6 @@
                 </div>
             </div>
         </div>
-        <label>Customer Phone Number</label>
-        <input name="customer_phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
-        <label>Point of Contact</label>
-        <input name="point_of_contact_name" autocomplete="name">
-        <label>Point of Contact Phone Number</label>
-        <input name="point_of_contact_phone" type="tel" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
-        <label>Customer Email</label>
-        <input name="customer_email" type="email" autocomplete="email">
         <label>Upload PDF Blueprint / Image (optional)</label>
         <input name="blueprint" type="file" accept=".pdf,image/*">
         <p style="font-size:13px;">You can create the project now and upload or replace the blueprint later.</p>
@@ -69,7 +78,9 @@
     </form>
 </div>
 <style>
-.billingAddressBlock{border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin:16px 0;background:#f8fafc}
+.billingAddressBlock,.jobBlock{border:1px solid var(--border);border-radius:8px;padding:14px;margin:16px 0;background:rgba(14,165,233,.07)}
+.jobBlock h3{margin-top:0}
+.jobLead{margin:0 0 12px;color:var(--muted);font-weight:700}
 .billingAddressBlock h3{margin-top:0}
 .inlineCheck{display:flex;gap:10px;align-items:center;margin:8px 0 14px;font-weight:800}
 .inlineCheck input{width:auto}

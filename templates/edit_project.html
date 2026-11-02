@@ -8,11 +8,9 @@
 <div class="card">
     <h2>Edit Project</h2>
     <form method="post">
-        <label>Project Name</label>
-        <input name="name" value="{{ project.name }}" required>
-        <label>Customer Name</label>
+        <label>Customer Name <span class="muted" style="font-weight:400">(the contractor, or the customer when we deal with them directly)</span></label>
         <input name="customer_name" value="{{ project.customer_name or '' }}" autocomplete="name">
-        <label>Street Address</label>
+        <label>Customer Street Address</label>
         <input id="customerStreet" name="customer_address" value="{{ project.customer_street or project.customer_address or '' }}" autocomplete="street-address" placeholder="Start typing the street address">
         <div class="grid">
             <div>
@@ -28,6 +26,25 @@
                 <input id="customerZip" name="customer_zip" value="{{ project.customer_zip or '' }}" autocomplete="postal-code" inputmode="numeric">
             </div>
         </div>
+        <div class="jobBlock">
+            <h3>The Job</h3>
+            <p class="jobLead">This is all a mobile user sees.</p>
+            <label>Job Name</label>
+            <input name="name" value="{{ project.name }}" required placeholder="The contractor's customer, or our own">
+            <label>Job Street Address</label>
+            <input name="job_address" value="{{ project.job_street or project.job_address or '' }}" autocomplete="street-address" placeholder="Leave blank to use the customer address">
+            <div class="grid">
+                <div><label>City</label><input name="job_city" value="{{ project.job_city or '' }}"></div>
+                <div><label>State</label><input name="job_state" maxlength="2" placeholder="FL" value="{{ project.job_state or '' }}"></div>
+                <div><label>ZIP Code</label><input name="job_zip" inputmode="numeric" value="{{ project.job_zip or '' }}"></div>
+            </div>
+            <label>Point of Contact</label>
+            <input name="point_of_contact_name" value="{{ project.point_of_contact_name or '' }}" autocomplete="name">
+            <label>Point of Contact Phone Number</label>
+            <input name="point_of_contact_phone" type="tel" value="{{ format_us_phone(project.point_of_contact_phone) }}" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
+        </div>
+        <label>Email</label>
+        <input name="customer_email" type="email" value="{{ project.customer_email or '' }}" autocomplete="email">
         <div class="billingAddressBlock">
             <h3>Billing Address</h3>
             <label class="inlineCheck">
@@ -51,19 +68,13 @@
                 </div>
             </div>
         </div>
-        <label>Customer Phone Number</label>
-        <input name="customer_phone" type="tel" value="{{ format_us_phone(project.customer_phone) }}" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
-        <label>Point of Contact</label>
-        <input name="point_of_contact_name" value="{{ project.point_of_contact_name or '' }}" autocomplete="name">
-        <label>Point of Contact Phone Number</label>
-        <input name="point_of_contact_phone" type="tel" value="{{ format_us_phone(project.point_of_contact_phone) }}" autocomplete="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone>
-        <label>Customer Email</label>
-        <input name="customer_email" type="email" value="{{ project.customer_email or '' }}" autocomplete="email">
         <button type="submit">Save Project</button>
     </form>
 </div>
 <style>
-.billingAddressBlock{border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin:16px 0;background:#f8fafc}
+.billingAddressBlock,.jobBlock{border:1px solid var(--border);border-radius:8px;padding:14px;margin:16px 0;background:rgba(14,165,233,.07)}
+.jobBlock h3{margin-top:0}
+.jobLead{margin:0 0 12px;color:var(--muted);font-weight:700}
 .billingAddressBlock h3{margin-top:0}
 .inlineCheck{display:flex;gap:10px;align-items:center;margin:8px 0 14px;font-weight:800}
 .inlineCheck input{width:auto}

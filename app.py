@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-02 V5"
+APP_BUILD = "2026-11-02 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -333,6 +333,20 @@ def project_address_from_form():
         request.form.get("customer_state", "").strip().upper(),
         request.form.get("customer_zip", "").strip()
     )
+
+
+def job_address_from_form():
+    """Where the work is. Left blank, it falls back to the customer's address,
+    which is right for a job we take on directly."""
+    parts = build_full_address(
+        request.form.get("job_address", "").strip(),
+        request.form.get("job_city", "").strip(),
+        request.form.get("job_state", "").strip().upper(),
+        request.form.get("job_zip", "").strip()
+    )
+    if any((value or "").strip() for value in parts):
+        return parts
+    return project_address_from_form()
 
 
 def supplier_address_from_form(prefix="supplier_"):
@@ -1116,6 +1130,14 @@ def init_db():
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS customer_email TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS point_of_contact_name TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS point_of_contact_phone TEXT",
+        # Where the work actually is. The customer_* address is who we deal
+        # with and bill - on a contractor job that is the contractor's office,
+        # not the house - so the job site needs an address of its own.
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_street TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_address TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_city TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_state TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_zip TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN NOT NULL DEFAULT FALSE",
@@ -1335,6 +1357,18 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print("Inventory location table skipped:", e)
+
+    try:
+        moved = backfill_job_address(conn)
+        if moved:
+            print(f"Job address backfill: {moved} project(s) carried across.")
+        phones = backfill_point_of_contact_phone(conn)
+        if phones:
+            print(f"Point of contact phone backfill: {phones} project(s).")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Job address backfill skipped:", e)
 
     conn.close()
 
@@ -4649,24 +4683,16 @@ def fetch_visible_projects(conn, q=""):
     where_sql = ""
     if q:
         like = f"%{q}%"
-        where_sql = """
-        WHERE projects.name ILIKE %s
-           OR projects.customer_name ILIKE %s
-           OR projects.customer_address ILIKE %s
-           OR projects.customer_street ILIKE %s
-           OR projects.customer_city ILIKE %s
-           OR projects.customer_state ILIKE %s
-           OR projects.customer_zip ILIKE %s
-           OR projects.billing_address ILIKE %s
-           OR projects.billing_street ILIKE %s
-           OR projects.billing_city ILIKE %s
-           OR projects.billing_state ILIKE %s
-           OR projects.billing_zip ILIKE %s
-           OR projects.customer_phone ILIKE %s
-           OR projects.point_of_contact_name ILIKE %s
-           OR projects.point_of_contact_phone ILIKE %s
-        """
-        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like, like, like])
+        # Everybody searches the job. Only the admin can also find a project by
+        # the customer or billing details, which a mobile user never sees.
+        columns = ["name", "job_address", "job_street", "job_city", "job_state", "job_zip",
+                   "point_of_contact_name", "point_of_contact_phone"]
+        if is_main_admin():
+            columns += ["customer_name", "customer_address", "customer_street", "customer_city",
+                        "customer_state", "customer_zip", "billing_address", "billing_street",
+                        "billing_city", "billing_state", "billing_zip", "customer_phone"]
+        where_sql = "WHERE " + " OR ".join(f"projects.{column} ILIKE %s" for column in columns)
+        params.extend([like] * len(columns))
 
     return conn.execute(
         f"SELECT projects.* FROM projects {join_sql} {where_sql} ORDER BY projects.created_at DESC",
@@ -6173,6 +6199,49 @@ def task_calendar_ics(task):
     return "\r\n".join(ics_fold(line) for line in lines) + "\r\n"
 
 
+def backfill_job_address(conn):
+    """Until now the customer's address doubled as the job site, because on a
+    job we take on directly they are the same place. Carry it across so every
+    existing project has a job address, then the two can part company."""
+    rows = conn.execute(
+        """
+        UPDATE projects
+        SET job_street = customer_street,
+            job_address = customer_address,
+            job_city = customer_city,
+            job_state = customer_state,
+            job_zip = customer_zip
+        WHERE COALESCE(btrim(job_address), '') = ''
+          AND COALESCE(btrim(customer_address), '') <> ''
+        RETURNING id
+        """
+    ).fetchall()
+    return len(rows or [])
+
+
+def backfill_point_of_contact_phone(conn):
+    """The project form used to carry a customer phone number as well as the
+    point of contact's. Only the point of contact is kept now, so any number
+    that would otherwise have nowhere to show moves across. The old column is
+    left untouched in case anyone wants it back."""
+    rows = conn.execute(
+        """
+        UPDATE projects
+        SET point_of_contact_phone = customer_phone
+        WHERE COALESCE(btrim(point_of_contact_phone), '') = ''
+          AND COALESCE(btrim(customer_phone), '') <> ''
+        RETURNING id
+        """
+    ).fetchall()
+    return len(rows or [])
+
+
+def project_job_address(project):
+    """The address a worker drives to."""
+    source = project or {}
+    return (source.get("job_address") or source.get("customer_address") or "").strip()
+
+
 def maps_directions_url(address):
     address = (address or "").strip()
     if not address:
@@ -6182,7 +6251,8 @@ def maps_directions_url(address):
 
 def task_project_address(task, project=None):
     source = project or task or {}
-    return (source.get("customer_address") or source.get("project_address") or "").strip()
+    return (source.get("job_address") or source.get("customer_address")
+            or source.get("project_address") or "").strip()
 
 
 def duration_text(start_value, end_value):
@@ -8359,6 +8429,7 @@ def new_project():
         customer_name = request.form.get("customer_name", "").strip()
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
+        job_street, job_address, job_city, job_state, job_zip = job_address_from_form()
         billing_same_as_customer, billing_street, billing_address, billing_city, billing_state, billing_zip = billing_address_from_form(customer_address_parts)
         customer_phone = format_us_phone(request.form.get("customer_phone"))
         customer_email = request.form.get("customer_email", "").strip()
@@ -8380,8 +8451,8 @@ def new_project():
         cur.execute(
             """
             INSERT INTO projects
-            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, job_street, job_address, job_city, job_state, job_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
@@ -8392,6 +8463,11 @@ def new_project():
                 customer_city,
                 customer_state,
                 customer_zip,
+                job_street,
+                job_address,
+                job_city,
+                job_state,
+                job_zip,
                 billing_street,
                 billing_address,
                 billing_city,
@@ -8437,6 +8513,7 @@ def edit_project(project_id):
             return redirect(url_for("edit_project", project_id=project_id))
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
+        job_street, job_address, job_city, job_state, job_zip = job_address_from_form()
         billing_same_as_customer, billing_street, billing_address, billing_city, billing_state, billing_zip = billing_address_from_form(customer_address_parts)
 
         conn.execute(
@@ -8449,13 +8526,17 @@ def edit_project(project_id):
                 customer_city = %s,
                 customer_state = %s,
                 customer_zip = %s,
+                job_street = %s,
+                job_address = %s,
+                job_city = %s,
+                job_state = %s,
+                job_zip = %s,
                 billing_street = %s,
                 billing_address = %s,
                 billing_city = %s,
                 billing_state = %s,
                 billing_zip = %s,
                 billing_same_as_customer = %s,
-                customer_phone = %s,
                 customer_email = %s,
                 point_of_contact_name = %s,
                 point_of_contact_phone = %s
@@ -8469,13 +8550,17 @@ def edit_project(project_id):
                 customer_city,
                 customer_state,
                 customer_zip,
+                job_street,
+                job_address,
+                job_city,
+                job_state,
+                job_zip,
                 billing_street,
                 billing_address,
                 billing_city,
                 billing_state,
                 billing_zip,
                 billing_same_as_customer,
-                format_us_phone(request.form.get("customer_phone")),
                 request.form.get("customer_email", "").strip(),
                 request.form.get("point_of_contact_name", "").strip(),
                 format_us_phone(request.form.get("point_of_contact_phone")),
@@ -9817,7 +9902,7 @@ def order_print(po_id):
         SELECT purchase_orders.*, suppliers.name AS supplier_name, suppliers.email AS supplier_email,
                suppliers.phone AS supplier_phone, suppliers.address AS supplier_address,
                suppliers.contact_name AS supplier_contact, projects.name AS project_name,
-               projects.customer_address AS project_address
+               COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address
         FROM purchase_orders
         LEFT JOIN suppliers ON purchase_orders.supplier_id = suppliers.id
         LEFT JOIN projects ON purchase_orders.project_id = projects.id
@@ -9894,7 +9979,9 @@ def order_view(po_id):
     ).fetchall()
     suppliers = fetch_suppliers(conn)
     catalog = part_catalog_options(conn)
-    projects = conn.execute("SELECT id, name, customer_address FROM projects ORDER BY name").fetchall()
+    projects = conn.execute(
+        "SELECT id, name, COALESCE(NULLIF(job_address, ''), customer_address) AS customer_address FROM projects ORDER BY name"
+    ).fetchall()
     project_address = ""
     if po.get("project_id"):
         match = next((p for p in projects if p["id"] == po["project_id"]), None)
@@ -10182,7 +10269,7 @@ def update_order(po_id):
         lines = conn.execute("SELECT * FROM purchase_order_lines WHERE po_id = %s ORDER BY id", (po_id,)).fetchall()
         company = account_info()
         project_address_row = conn.execute(
-            "SELECT customer_address FROM projects WHERE id = %s", (po.get("project_id"),)
+            "SELECT COALESCE(NULLIF(job_address, ''), customer_address) AS customer_address FROM projects WHERE id = %s", (po.get("project_id"),)
         ).fetchone() if po.get("project_id") else None
         ship_label, ship_address = po_ship_to(
             po, company, (project_address_row or {}).get("customer_address") or ""
@@ -18161,7 +18248,7 @@ def receive_task(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address,
+        SELECT tasks.*, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                projects.customer_phone AS customer_phone,
                projects.point_of_contact_name AS point_of_contact_name,
                projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18217,7 +18304,7 @@ def task_calendar_file(task_id):
     conn = db()
     task = conn.execute(
         """
-        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+        SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                projects.customer_phone AS customer_phone,
                projects.point_of_contact_name AS point_of_contact_name,
                projects.point_of_contact_phone AS point_of_contact_phone
@@ -18255,8 +18342,8 @@ def worker_today_task_rows(conn, user_id=None, target_date=None, target_project_
     rows = conn.execute(
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
-               projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
+               COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS customer_address, projects.customer_phone AS customer_phone,
                projects.point_of_contact_name AS point_of_contact_name,
                projects.point_of_contact_phone AS point_of_contact_phone,
                users.name AS assigned_user_name
@@ -18288,8 +18375,8 @@ def worker_assignment_task_rows(conn, source_task):
         rows = conn.execute(
             """
             SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
-                   projects.customer_name AS customer_name, projects.customer_address AS project_address,
-                   projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+                   projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
+                   COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS customer_address, projects.customer_phone AS customer_phone,
                    projects.point_of_contact_name AS point_of_contact_name,
                    projects.point_of_contact_phone AS point_of_contact_phone,
                    users.name AS assigned_user_name
@@ -18312,8 +18399,8 @@ def worker_assignment_task_rows(conn, source_task):
             inferred_rows = conn.execute(
                 """
                 SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
-                       projects.customer_name AS customer_name, projects.customer_address AS project_address,
-                       projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+                       projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
+                       COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS customer_address, projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
                        users.name AS assigned_user_name
@@ -18380,10 +18467,11 @@ def worker_day_groups(tasks):
                 phone = (supplier or {}).get("phone") or ""
                 contact_name = (supplier or {}).get("contact_name") or ""
             else:
-                title = task.get("customer_name") or task.get("project_name") or "Project"
-                address = task.get("customer_address") or task.get("project_address") or ""
-                subtitle = task.get("project_name") or ""
-                phone = task.get("customer_phone") or ""
+                # A worker gets the job and who to ask for, never who we bill.
+                title = task.get("project_name") or "Project"
+                address = task.get("project_address") or ""
+                subtitle = ""
+                phone = task.get("point_of_contact_phone") or ""
                 contact_name = task.get("point_of_contact_name") or ""
             group = {
                 "kind": kind,
@@ -18397,7 +18485,6 @@ def worker_day_groups(tasks):
                 "point_of_contact_phone": task.get("point_of_contact_phone") or "",
                 "project_id": task.get("project_id"),
                 "project_name": task.get("project_name") or "",
-                "customer_name": task.get("customer_name") or "",
                 "tasks": [],
             }
             groups[key] = group
@@ -18497,8 +18584,8 @@ def assignment_tasks(task_id):
     source_task = conn.execute(
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
-               projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
+               COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS customer_address, projects.customer_phone AS customer_phone,
                projects.point_of_contact_name AS point_of_contact_name,
                projects.point_of_contact_phone AS point_of_contact_phone,
                users.name AS assigned_user_name
@@ -18537,8 +18624,8 @@ def open_task_workspace(task_id):
     task = conn.execute(
         """
         SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name,
-               projects.customer_name AS customer_name, projects.customer_address AS project_address,
-               projects.customer_address AS customer_address, projects.customer_phone AS customer_phone,
+               projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
+               COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS customer_address, projects.customer_phone AS customer_phone,
                projects.point_of_contact_name AS point_of_contact_name,
                projects.point_of_contact_phone AS point_of_contact_phone,
                users.name AS assigned_user_name
@@ -18719,7 +18806,7 @@ def my_tasks():
         if selected_task_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                        projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18754,7 +18841,7 @@ def my_tasks():
             where_sql = " AND ".join(where) if where else "1=1"
             tasks = conn.execute(
                 f"""
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                        projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18798,7 +18885,7 @@ def my_tasks():
         if selected_task_id:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                        projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18835,7 +18922,7 @@ def my_tasks():
                         notification_task_day = notification_source_task.get("task_day") or ""
                 tasks = conn.execute(
                     """
-                    SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, projects.customer_address AS project_address,
+                    SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_name AS customer_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                            projects.customer_phone AS customer_phone,
                            projects.point_of_contact_name AS point_of_contact_name,
                            projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18866,7 +18953,7 @@ def my_tasks():
             add_task_status_filter(where, params)
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                        projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
@@ -18888,7 +18975,7 @@ def my_tasks():
         else:
             tasks = conn.execute(
                 """
-                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, projects.customer_address AS project_address,
+                SELECT tasks.*, rooms.name AS room_name, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                        projects.customer_phone AS customer_phone,
                        projects.point_of_contact_name AS point_of_contact_name,
                        projects.point_of_contact_phone AS point_of_contact_phone,
@@ -21103,7 +21190,7 @@ def open_notification(notification_id):
     if event.get("event_type") == "task_assigned" and event.get("task_id") and not is_main_admin():
         task = conn.execute(
             """
-            SELECT tasks.*, projects.name AS project_name, projects.customer_address AS project_address,
+            SELECT tasks.*, projects.name AS project_name, COALESCE(NULLIF(projects.job_address, ''), projects.customer_address) AS project_address,
                    projects.customer_phone AS customer_phone,
                    projects.point_of_contact_name AS point_of_contact_name,
                    projects.point_of_contact_phone AS point_of_contact_phone,
@@ -22232,7 +22319,7 @@ def tools_shades():
         {
             "id": r["id"],
             "name": r.get("name") or "",
-            "customer_name": r.get("customer_name") or "",
+            "customer_name": (r.get("customer_name") or "") if is_main_admin() else "",
             "started": r["id"] in saved_by_project,
             "url": url_for("shade_editor.editor", project_id=r["id"]),
         }
@@ -22244,7 +22331,7 @@ def tools_shades():
             {
                 "id": r["id"],
                 "name": r.get("name") or "",
-                "customer_name": r.get("customer_name") or "",
+                "customer_name": (r.get("customer_name") or "") if is_main_admin() else "",
                 "updated_at": (saved_by_project[r["id"]].get("updated_at") or ""),
                 "url": url_for("shade_editor.editor", project_id=r["id"]),
             }
