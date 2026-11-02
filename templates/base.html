@@ -569,6 +569,9 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
         }catch(e){}
     }
 
+    const MAX_UPLOAD_ATTEMPTS=5;
+    const UPLOAD_MAX_AGE_MS=7*24*60*60*1000;
+
     async function sendEntry(entry){
         const response=await fetch(entry.url,{
             method:entry.method||"POST",
@@ -576,8 +579,21 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
             credentials:"same-origin",
             redirect:"follow"
         });
-        if(!response.ok)throw new Error("Upload failed");
+        if(!response.ok){
+            const failure=new Error("Upload failed with "+response.status);
+            // A 4xx means the server read it and said no - too large, not
+            // allowed, no longer there. Sending the same thing again will get
+            // the same answer, so it must not sit in the queue forever.
+            failure.permanent=response.status>=400&&response.status<500;
+            throw failure;
+        }
         return response;
+    }
+
+    function uploadIsStale(entry){
+        if(!entry||!entry.createdAt)return false;
+        const age=Date.now()-new Date(entry.createdAt).getTime();
+        return isFinite(age)&&age>UPLOAD_MAX_AGE_MS;
     }
 
     async function processUploadQueue(){
@@ -588,17 +604,39 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
             if(!uploads.length)return;
             showUploadStatus("Sending "+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+"...");
             let sent=0;
+            let dropped=0;
             for(const entry of uploads){
                 if(uploadSignalIsWeak())break;
+                if(uploadIsStale(entry)){
+                    await deleteUpload(entry.id);
+                    dropped++;
+                    continue;
+                }
                 try{
                     await sendEntry(entry);
                     await deleteUpload(entry.id);
                     sent++;
                 }catch(e){
-                    break;
+                    // One upload that can never succeed used to stop the whole
+                    // queue and come back every thirty seconds for ever. Let it
+                    // go instead, and say so, so the rest can get through.
+                    const attempts=(entry.attempts||0)+1;
+                    if(e&&e.permanent||attempts>=MAX_UPLOAD_ATTEMPTS){
+                        await deleteUpload(entry.id);
+                        dropped++;
+                        continue;
+                    }
+                    entry.attempts=attempts;
+                    try{await storeUpload(entry);}catch(ignored){}
+                    break;  // the network is the problem: try the lot again later
                 }
             }
-            if(sent)showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
+            if(sent){
+                showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
+            }else if(dropped){
+                showUploadStatus(dropped+" upload"+(dropped===1?" could not be sent and was":"s could not be sent and were")+
+                    " removed from the queue. Please add "+(dropped===1?"it":"them")+" again.");
+            }
         }finally{
             processing=false;
         }
@@ -613,9 +651,11 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
         const submitter=event.submitter;
         if(submitter)submitter.disabled=true;
         try{
+            // What was typed stays on screen either way. The upload is safely
+            // in the queue, and clearing the form made it look as though the
+            // work had been thrown away.
             if(uploadSignalIsWeak()){
                 await queueForm(form,navigator.onLine?"Signal is too weak for upload right now.":"No signal right now.");
-                form.reset();
                 return;
             }
             try{
@@ -624,7 +664,6 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
                 window.location.href=response.url||form.action||window.location.href;
             }catch(e){
                 await queueForm(form,"Upload could not reach the cloud right now.");
-                form.reset();
             }
         }finally{
             if(submitter)submitter.disabled=false;

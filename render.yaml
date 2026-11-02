@@ -3,7 +3,14 @@ services:
     name: blueprint-room-log-v2
     runtime: python
     buildCommand: python -m pip install --upgrade pip setuptools wheel && python -m pip install --no-cache-dir --only-binary=:all: -r requirements.txt && python -m playwright install --with-deps chromium
-    startCommand: gunicorn app:app
+    # One worker, but several threads in it. Gunicorn's bare default is a
+    # single worker handling one request at a time, so any slow request - a
+    # photo going up to Supabase, a PDF being built, a D-Tools call - blocked
+    # everybody else until it finished. The work is nearly all waiting on the
+    # network, so threads fix that without the memory a second worker costs.
+    # The default 30s timeout also killed large uploads from a phone mid-flight;
+    # 120s lets them finish.
+    startCommand: gunicorn app:app --workers 1 --threads 8 --timeout 120 --graceful-timeout 30 --keep-alive 5 --access-logfile - --error-logfile -
     envVars:
       - key: SECRET_KEY
         generateValue: true
