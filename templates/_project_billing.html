@@ -1,0 +1,129 @@
+{# Who is paying for this project, and the button that hands it over.
+   Needs `project`, `site_customer`, `bill_to_customer`, `billing_history`
+   and `other_customers`. #}
+{% set paid_by_other = site_customer and bill_to_customer.id != site_customer.id %}
+<div class="billingPanel {{ 'billingPanelThirdParty' if paid_by_other else '' }}">
+    <div class="billingNow">
+        <div>
+            <span class="billingLabel">Invoices go to</span>
+            <strong class="billingWho">{{ bill_to_customer.name }}</strong>
+            {% if paid_by_other %}
+                <span class="billingTag">Contractor</span>
+                <div class="billingSub">The work is for {{ site_customer.name if site_customer else 'the customer' }},
+                    who does not receive the bill.</div>
+            {% else %}
+                <div class="billingSub">We bill the customer directly.</div>
+            {% endif %}
+            {% if project.contractor_job_ref %}
+                <div class="billingSub">Their job / PO number: <strong>{{ project.contractor_job_ref }}</strong></div>
+            {% endif %}
+            {% if project.payment_terms %}
+                <div class="billingSub">Terms: {{ project.payment_terms }}</div>
+            {% endif %}
+        </div>
+        <button type="button" class="btn-secondary projectSmallButton" id="billingChangeBtn">Change Who Pays</button>
+    </div>
+
+    <form method="post" action="{{ url_for('change_project_billing', project_id=project.id) }}"
+          class="billingForm" id="billingForm" hidden>
+        <p class="billingNote">Invoices already raised keep naming whoever owed them.
+            Only invoices from today on will change.</p>
+        {% if paid_by_other and site_customer %}
+            <label class="billingChoice">
+                <input type="radio" name="bill_to" value="customer" checked>
+                <span><strong>{{ site_customer.name }} pays us directly from now on</strong><br>
+                    <span class="billingSub">{{ bill_to_customer.name }} steps out of the picture.</span></span>
+            </label>
+        {% endif %}
+        <label class="billingChoice">
+            <input type="radio" name="bill_to" value="company" {% if not paid_by_other %}checked{% endif %}>
+            <span><strong>Another company pays from now on</strong></span>
+        </label>
+        <div class="billingCompany" id="billingCompany">
+            <label>Which Company</label>
+            <select name="bill_to_customer_id" id="billingCompanyId">
+                <option value="">Add a new one...</option>
+                {% for c in other_customers or [] %}
+                    {% if not site_customer or c.id != site_customer.id %}
+                        <option value="{{ c.id }}" {% if paid_by_other and c.id == bill_to_customer.id %}selected{% endif %}>{{ c.name }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+            <div id="billingCompanyNew" hidden>
+                <label>Company Name</label>
+                <input name="bill_to_name" placeholder="Ealing Construction">
+            </div>
+        </div>
+        <label>Why (optional)</label>
+        <input name="note" placeholder="Contractor finished their part, customer carries on with us">
+        <div class="billingActions">
+            <button type="submit">Save Who Pays</button>
+            <button type="button" class="btn-secondary" id="billingCancelBtn">Cancel</button>
+        </div>
+    </form>
+
+    {% if billing_history and billing_history|length > 1 %}
+        <details class="billingHistory">
+            <summary>Billing history</summary>
+            <ul>
+                {% for h in billing_history %}
+                    <li>
+                        <strong>{{ h.customer_name or 'Unknown' }}</strong>
+                        from {{ h.started_on }}{% if h.ended_on %} to {{ h.ended_on }}{% else %} (current){% endif %}
+                        {% if h.note %}<span class="billingSub">{{ h.note }}</span>{% endif %}
+                        {% if h.changed_by_name %}<span class="billingSub">Changed by {{ h.changed_by_name }}</span>{% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        </details>
+    {% endif %}
+</div>
+<style>
+.billingPanel{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:14px 0;background:rgba(14,165,233,.07)}
+.billingPanelThirdParty{background:rgba(245,158,11,.1)}
+.billingNow{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+.billingNow button{margin:0}
+.billingLabel{display:block;font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.billingWho{font-size:17px}
+.billingTag{display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:#b45309;color:#fff;font-size:11px;font-weight:800;vertical-align:middle}
+.billingSub{display:block;color:var(--muted);font-weight:650;font-size:13px;margin-top:2px}
+.billingForm{border-top:1px solid var(--border);margin-top:12px;padding-top:12px}
+.billingNote{margin:0 0 10px;color:var(--muted);font-weight:700}
+.billingChoice{display:flex;gap:10px;align-items:flex-start;margin:0 0 8px;font-weight:400}
+.billingChoice input{width:auto;min-height:auto;margin:3px 0 0}
+.billingCompany{margin:0 0 8px 26px}
+.billingActions{display:flex;gap:10px;flex-wrap:wrap}
+.billingActions button{margin:0}
+.billingHistory{margin-top:12px}
+.billingHistory summary{cursor:pointer;font-weight:800;color:var(--muted)}
+.billingHistory ul{margin:8px 0 0;padding-left:20px}
+.billingHistory li{margin-bottom:8px}
+</style>
+<script>
+(function(){
+    const panel=document.getElementById("billingForm");
+    const open=document.getElementById("billingChangeBtn");
+    const cancel=document.getElementById("billingCancelBtn");
+    const picker=document.getElementById("billingCompanyId");
+    const fresh=document.getElementById("billingCompanyNew");
+    const company=document.getElementById("billingCompany");
+    function chosen(){
+        const picked=document.querySelector('input[name="bill_to"]:checked');
+        return picked?picked.value:"company";
+    }
+    function sync(){
+        const other=chosen()==="company";
+        if(company)company.hidden=!other;
+        if(fresh)fresh.hidden=!(other&&picker&&!picker.value);
+    }
+    document.querySelectorAll('input[name="bill_to"]').forEach(r=>r.addEventListener("change",sync));
+    if(picker)picker.addEventListener("change",sync);
+    if(open)open.addEventListener("click",()=>{
+        if(!panel)return;
+        panel.hidden=!panel.hidden;
+        if(!panel.hidden)sync();
+    });
+    if(cancel)cancel.addEventListener("click",()=>{if(panel)panel.hidden=true;});
+    sync();
+})();
+</script>

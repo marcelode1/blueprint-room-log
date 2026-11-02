@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-02 V2"
+APP_BUILD = "2026-11-02 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1335,6 +1335,17 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print("Inventory location table skipped:", e)
+
+    try:
+        ensure_invoice_tables(conn)
+        ensure_customer_tables(conn)
+        moved = backfill_customers_from_projects(conn)
+        if moved:
+            print(f"Customer backfill: {moved} project(s) now point at a customer record.")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Customer table setup skipped:", e)
 
     conn.close()
 
@@ -2901,6 +2912,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     if invoice.get("customer_phone"):
         text(left, customer_y, invoice.get("customer_phone"), 8.4)
         customer_y += 10
+    if invoice.get("job_reference"):
+        # The contractor's own job or PO number. They match the bill to their
+        # job by this, not by our invoice number.
+        text(330, job_y, "Job / PO: " + str(invoice.get("job_reference")), 8.4, bold=True)
+        job_y += 10
     if invoice.get("due_date"):
         text(330, job_y, ("Valid until: " if is_proposal_doc else "Due: ") + format_date(invoice.get("due_date")), 8.4)
         job_y += 10
@@ -3118,16 +3134,20 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
     invoice_number = next_invoice_number(conn, invoice_date)
     due_date = request.form.get("due_date", "").strip()
     terms = invoice_terms_for_due_date(due_date, request.form.get("terms", ""))
+    project_id = request.form.get("project_id", type=int)
+    # Who this one was billed to, written down now. If the billing moves later
+    # this invoice still names the party that owed it.
+    bill_to_id, site_id = invoice_parties_at_time(conn, project_id)
     row = conn.execute(
         """
         INSERT INTO invoices
-        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, created_by, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (invoice_number, project_id, customer_name, customer_email, customer_phone, billing_address, invoice_date, due_date, status, subtotal, tax_rate, tax_total, total, notes, terms, bill_to_customer_id, site_customer_id, job_reference, created_by, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
             invoice_number,
-            request.form.get("project_id", type=int),
+            project_id,
             request.form.get("customer_name", "").strip(),
             request.form.get("customer_email", "").strip(),
             format_us_phone(request.form.get("customer_phone")),
@@ -3141,6 +3161,9 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
             total,
             request.form.get("notes", "").strip(),
             terms,
+            bill_to_id,
+            site_id,
+            request.form.get("job_reference", "").strip(),
             session.get("user_id"),
             utc_now_iso(),
             utc_now_iso(),
@@ -3182,6 +3205,7 @@ def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None,
             total = %s,
             notes = %s,
             terms = %s,
+            job_reference = %s,
             updated_at = %s
         WHERE id = %s
         """,
@@ -3200,6 +3224,7 @@ def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None,
             total,
             request.form.get("notes", "").strip(),
             terms,
+            request.form.get("job_reference", "").strip(),
             utc_now_iso(),
             invoice_id,
         )
@@ -4100,6 +4125,442 @@ def clean_catalog_description(value):
             continue
         cleaned_lines.append(stripped)
     return "\n".join(cleaned_lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# Customers, and who actually pays
+#
+# Two parties can stand behind one job. There is the customer the work is for -
+# whose house it is, who we photograph, who we sometimes email - and there is
+# whoever settles the bill. On a job that came through a general contractor
+# those are different people: we answer to the contractor, the contractor pays
+# us, and the homeowner may never see an invoice. On a direct job they are the
+# same party. A contractor job can also turn into a direct one later, when the
+# contractor steps out and the customer starts paying us themselves.
+#
+# So a project points at two customers, and an invoice keeps its own copy of
+# whoever it was billed to at the time it was raised. Moving the billing
+# changes what the NEXT invoice says; everything already issued keeps naming
+# the party that owed it, which is what makes the handover safe.
+# ---------------------------------------------------------------------------
+
+def ensure_customer_tables(conn):
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS customers (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            contact_name TEXT,
+            email TEXT,
+            phone TEXT,
+            street TEXT,
+            address TEXT,
+            city TEXT,
+            state TEXT,
+            zip TEXT,
+            is_contractor BOOLEAN NOT NULL DEFAULT FALSE,
+            payment_terms TEXT,
+            notes TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT
+        )
+        """,
+        # Who was paying for this project, and when. One open row per project:
+        # the current payer has no ended_on.
+        """
+        CREATE TABLE IF NOT EXISTS project_billing_history (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+            customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+            customer_name TEXT,
+            started_on TEXT NOT NULL,
+            ended_on TEXT,
+            note TEXT,
+            changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS site_customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS bill_to_customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL",
+        # The contractor's own job or purchase-order number, which they expect
+        # to see on every invoice we send them.
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS contractor_job_ref TEXT",
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS payment_terms TEXT",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS bill_to_customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS site_customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL",
+        "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS job_reference TEXT",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Customer migration skipped:", e)
+
+
+CUSTOMER_FIELDS = ["name", "contact_name", "email", "phone", "street", "address",
+                   "city", "state", "zip", "payment_terms", "notes"]
+
+
+def customer_match_key(name):
+    """Two spellings of the same company should not become two customers."""
+    return " ".join((name or "").strip().lower().split())
+
+
+def find_customer_by_name(conn, name):
+    key = customer_match_key(name)
+    if not key:
+        return None
+    return conn.execute(
+        """
+        SELECT * FROM customers
+        WHERE COALESCE(is_active, TRUE) = TRUE
+          AND lower(btrim(name)) = %s
+        LIMIT 1
+        """,
+        (key,)
+    ).fetchone()
+
+
+def load_customer(conn, customer_id):
+    if not customer_id:
+        return None
+    return conn.execute("SELECT * FROM customers WHERE id = %s", (customer_id,)).fetchone()
+
+
+def upsert_customer(conn, name, is_contractor=None, **fields):
+    """Find the customer by name, or create them. Only the details actually
+    supplied are written, so filling in a project never blanks out what someone
+    already recorded about that customer elsewhere."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    now = utc_now_iso()
+    existing = find_customer_by_name(conn, name)
+    values = {k: (fields.get(k) or "").strip() for k in CUSTOMER_FIELDS if k != "name"}
+    if existing:
+        sets, params = [], []
+        for key, value in values.items():
+            if value:
+                sets.append(f"{key} = %s")
+                params.append(value)
+        if is_contractor is not None:
+            sets.append("is_contractor = %s")
+            params.append(bool(is_contractor))
+        if not sets:
+            return existing["id"]
+        sets.append("updated_at = %s")
+        params.extend([now, existing["id"]])
+        conn.execute(f"UPDATE customers SET {', '.join(sets)} WHERE id = %s", tuple(params))
+        return existing["id"]
+    row = conn.execute(
+        """
+        INSERT INTO customers
+        (name, contact_name, email, phone, street, address, city, state, zip,
+         is_contractor, payment_terms, notes, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+        RETURNING id
+        """,
+        (name, values["contact_name"], values["email"], values["phone"], values["street"],
+         values["address"], values["city"], values["state"], values["zip"],
+         bool(is_contractor), values["payment_terms"], values["notes"], now, now)
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def customer_address_block(customer):
+    """The address as it belongs on an invoice, one line per line."""
+    if not customer:
+        return ""
+    street = (customer.get("street") or "").strip()
+    town = " ".join(p for p in [(customer.get("city") or "").strip(),
+                                (customer.get("state") or "").strip()] if p).strip()
+    if town and (customer.get("zip") or "").strip():
+        town = f"{town} {customer['zip'].strip()}"
+    lines = [p for p in [street, town] if p]
+    if lines:
+        return "\n".join(lines)
+    return (customer.get("address") or "").strip()
+
+
+def project_billing_parties(conn, project):
+    """Who the work is for, and who pays. On a direct job they are one and the
+    same row, and the caller can tell by comparing the ids."""
+    if not project:
+        return None, None
+    site = load_customer(conn, project.get("site_customer_id"))
+    bill_to = load_customer(conn, project.get("bill_to_customer_id")) or site
+    return site, bill_to
+
+
+def set_project_billing(conn, project_id, customer_id, note="", changed_by=None):
+    """Point a project at whoever is paying from now on, and write down when it
+    changed. Invoices already raised are not touched."""
+    today = local_now().date().isoformat()
+    now = utc_now_iso()
+    current = conn.execute(
+        """
+        SELECT * FROM project_billing_history
+        WHERE project_id = %s AND ended_on IS NULL
+        ORDER BY id DESC LIMIT 1
+        """,
+        (project_id,)
+    ).fetchone()
+    if current and current.get("customer_id") == customer_id:
+        return False
+    if current:
+        conn.execute(
+            "UPDATE project_billing_history SET ended_on = %s WHERE id = %s",
+            (today, current["id"])
+        )
+    customer = load_customer(conn, customer_id)
+    conn.execute(
+        """
+        INSERT INTO project_billing_history
+        (project_id, customer_id, customer_name, started_on, note, changed_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (project_id, customer_id, (customer or {}).get("name") or "", today,
+         (note or "").strip(), changed_by, now)
+    )
+    conn.execute(
+        "UPDATE projects SET bill_to_customer_id = %s WHERE id = %s",
+        (customer_id, project_id)
+    )
+    sync_project_billing_columns(conn, project_id)
+    return True
+
+
+def sync_project_billing_columns(conn, project_id):
+    """Keep the older projects.* columns saying what they have always said, so
+    every page that reads them straight off the project keeps working without
+    knowing about the customers table.
+
+    The project's own customer_* address stays put: that is the job site, and
+    the team map and the room pages read it as such. What follows the customer
+    record is the identity - name, email, phone - and the billing address,
+    which belongs to whoever is paying. When the customer pays for their own
+    job the bill follows the site address, exactly as before; when a contractor
+    pays, it goes to the contractor.
+    """
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        return
+    site, bill_to = project_billing_parties(conn, project)
+    same_party = bool(site and bill_to and site["id"] == bill_to["id"])
+    sets, params = [], []
+    if site:
+        sets += ["customer_name = %s", "customer_email = %s", "customer_phone = %s"]
+        params += [site.get("name") or "", site.get("email") or "", site.get("phone") or ""]
+    if same_party or not bill_to:
+        sets += ["billing_street = %s", "billing_city = %s", "billing_state = %s",
+                 "billing_zip = %s", "billing_address = %s", "billing_same_as_customer = TRUE"]
+        params += [project.get("customer_street") or "", project.get("customer_city") or "",
+                   project.get("customer_state") or "", project.get("customer_zip") or "",
+                   project.get("customer_address") or ""]
+    else:
+        sets += ["billing_street = %s", "billing_city = %s", "billing_state = %s",
+                 "billing_zip = %s", "billing_address = %s", "billing_same_as_customer = FALSE"]
+        params += [bill_to.get("street") or "", bill_to.get("city") or "",
+                   bill_to.get("state") or "", bill_to.get("zip") or "",
+                   customer_address_block(bill_to)]
+    if not sets:
+        return
+    params.append(project_id)
+    conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id = %s", tuple(params))
+
+
+def save_project_customers(conn, project_id, is_new=False):
+    """Read the customer and Billed To part of the project form, keep the
+    customers table in step with it, and point the project at both parties.
+
+    The form has two halves. The top half is the customer the work is for,
+    which is the same set of fields it has always been. The bottom half says
+    who pays: the customer themselves, or a contractor standing in front of
+    them. Picking a contractor also records when the billing started, so a
+    later handover reads as a change rather than as if it had always been so.
+    """
+    street, full_address, city, state, zip_code = project_address_from_form()
+    site_customer_id = upsert_customer(
+        conn,
+        request.form.get("customer_name", ""),
+        email=request.form.get("customer_email", ""),
+        phone=format_us_phone(request.form.get("customer_phone")),
+        street=street,
+        address=full_address,
+        city=city,
+        state=state,
+        zip=zip_code,
+    )
+
+    mode = request.form.get("bill_to_mode", "same")
+    bill_to_customer_id = site_customer_id
+    if mode == "contractor":
+        chosen = request.form.get("bill_to_customer_id", type=int)
+        if chosen and load_customer(conn, chosen):
+            bill_to_customer_id = chosen
+            # A contractor typed into the box when they were already on file
+            # updates their details rather than making a second record.
+            upsert_customer(
+                conn,
+                (load_customer(conn, chosen) or {}).get("name"),
+                is_contractor=True,
+                contact_name=request.form.get("bill_to_contact_name", ""),
+                email=request.form.get("bill_to_email", ""),
+                phone=format_us_phone(request.form.get("bill_to_phone")),
+            )
+        else:
+            typed = request.form.get("bill_to_name", "").strip()
+            if typed:
+                bill_to_street, bill_to_full, bill_to_city, bill_to_state, bill_to_zip = build_full_address(
+                    request.form.get("bill_to_street", "").strip(),
+                    request.form.get("bill_to_city", "").strip(),
+                    request.form.get("bill_to_state", "").strip().upper(),
+                    request.form.get("bill_to_zip", "").strip(),
+                )
+                bill_to_customer_id = upsert_customer(
+                    conn,
+                    typed,
+                    is_contractor=True,
+                    contact_name=request.form.get("bill_to_contact_name", ""),
+                    email=request.form.get("bill_to_email", ""),
+                    phone=format_us_phone(request.form.get("bill_to_phone")),
+                    street=bill_to_street,
+                    address=bill_to_full,
+                    city=bill_to_city,
+                    state=bill_to_state,
+                    zip=bill_to_zip,
+                ) or site_customer_id
+
+    conn.execute(
+        """
+        UPDATE projects
+        SET site_customer_id = %s,
+            contractor_job_ref = %s,
+            payment_terms = %s
+        WHERE id = %s
+        """,
+        (site_customer_id,
+         request.form.get("contractor_job_ref", "").strip(),
+         request.form.get("payment_terms", "").strip(),
+         project_id)
+    )
+    note = "Set when the project was created." if is_new else "Changed on the project form."
+    set_project_billing(conn, project_id, bill_to_customer_id, note, session.get("user_id"))
+    sync_project_billing_columns(conn, project_id)
+    return site_customer_id, bill_to_customer_id
+
+
+def invoice_project_options(conn):
+    """Projects for the invoice form's picker, each carrying the party the
+    invoice should be addressed to. On a contractor job that is the contractor,
+    not the customer whose house it is."""
+    try:
+        return conn.execute(
+            """
+            SELECT projects.*,
+                   bill_to.name  AS bill_to_name,
+                   bill_to.email AS bill_to_email,
+                   bill_to.phone AS bill_to_phone,
+                   site.name     AS site_customer_name
+            FROM projects
+            LEFT JOIN customers AS bill_to ON projects.bill_to_customer_id = bill_to.id
+            LEFT JOIN customers AS site ON projects.site_customer_id = site.id
+            ORDER BY projects.name
+            """
+        ).fetchall()
+    except Exception:
+        # A deployment that has not run the customer migration yet.
+        conn.rollback()
+        return conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+
+
+def invoice_parties_at_time(conn, project_id):
+    """The two customer ids an invoice should record: who it is billed to, and
+    whose job it is. Returns (None, None) when the project has not been linked
+    to customer records, which keeps older deployments working."""
+    if not project_id:
+        return None, None
+    try:
+        project = conn.execute(
+            "SELECT site_customer_id, bill_to_customer_id FROM projects WHERE id = %s",
+            (project_id,)
+        ).fetchone()
+    except Exception:
+        conn.rollback()
+        return None, None
+    if not project:
+        return None, None
+    site_id = project.get("site_customer_id")
+    return project.get("bill_to_customer_id") or site_id, site_id
+
+
+def invoice_project(conn, project_id):
+    """One project, carrying the party its invoices are addressed to."""
+    if not project_id:
+        return None
+    return next((p for p in invoice_project_options(conn) if p["id"] == project_id), None)
+
+
+def customer_directory(conn, contractors_only=False):
+    where = "WHERE COALESCE(is_active, TRUE) = TRUE"
+    if contractors_only:
+        where += " AND COALESCE(is_contractor, FALSE) = TRUE"
+    return conn.execute(
+        f"SELECT * FROM customers {where} ORDER BY lower(name)"
+    ).fetchall()
+
+
+def backfill_customers_from_projects(conn):
+    """Older projects carry their customer as loose text. Turn each distinct
+    name into a real customer and point the project at it, for the site and for
+    the billing both - those projects were all direct work."""
+    rows = conn.execute(
+        """
+        SELECT * FROM projects
+        WHERE site_customer_id IS NULL
+          AND COALESCE(btrim(customer_name), '') <> ''
+        ORDER BY id
+        """
+    ).fetchall()
+    for project in rows:
+        customer_id = upsert_customer(
+            conn,
+            project.get("customer_name"),
+            email=project.get("customer_email"),
+            phone=project.get("customer_phone"),
+            street=project.get("customer_street"),
+            address=project.get("customer_address"),
+            city=project.get("customer_city"),
+            state=project.get("customer_state"),
+            zip=project.get("customer_zip"),
+        )
+        if not customer_id:
+            continue
+        conn.execute(
+            "UPDATE projects SET site_customer_id = %s, bill_to_customer_id = COALESCE(bill_to_customer_id, %s) WHERE id = %s",
+            (customer_id, customer_id, project["id"])
+        )
+        already = conn.execute(
+            "SELECT id FROM project_billing_history WHERE project_id = %s LIMIT 1",
+            (project["id"],)
+        ).fetchone()
+        if not already:
+            conn.execute(
+                """
+                INSERT INTO project_billing_history
+                (project_id, customer_id, customer_name, started_on, note, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (project["id"], customer_id, project.get("customer_name") or "",
+                 (project.get("created_at") or local_now().date().isoformat())[:10],
+                 "Carried over from the project record.", utc_now_iso())
+            )
+    if rows:
+        conn.commit()
+    return len(rows)
 
 
 def ensure_part_catalog_tables(conn):
@@ -8408,6 +8869,8 @@ def new_project():
             )
         )
         project_id = cur.fetchone()["id"]
+        ensure_customer_tables(conn)
+        save_project_customers(conn, project_id, is_new=True)
         template_key = request.form.get("trade_template", "")
         if template_key in PHASE_TEMPLATES:
             seed_project_template(conn, project_id, template_key)
@@ -8415,8 +8878,13 @@ def new_project():
         conn.close()
         return redirect(url_for("project", project_id=project_id))
 
+    conn = db()
+    ensure_customer_tables(conn)
+    contractors = customer_directory(conn, contractors_only=True)
+    conn.close()
     default_trade = company_trades()[0]
-    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES, default_trade=default_trade)
+    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES,
+                           default_trade=default_trade, contractors=contractors)
 
 
 @app.route("/project/<int:project_id>/edit", methods=["GET", "POST"])
@@ -8482,13 +8950,19 @@ def edit_project(project_id):
                 project_id
             )
         )
+        ensure_customer_tables(conn)
+        save_project_customers(conn, project_id)
         conn.commit()
         conn.close()
         flash("Project updated.")
         return redirect(url_for("project", project_id=project_id))
 
+    ensure_customer_tables(conn)
+    site_customer, bill_to_customer = project_billing_parties(conn, project)
+    contractors = customer_directory(conn, contractors_only=True)
     conn.close()
-    return render_template("edit_project.html", project=project)
+    return render_template("edit_project.html", project=project, contractors=contractors,
+                           site_customer=site_customer, bill_to_customer=bill_to_customer)
 
 
 INVOICE_STATUS_VALUES = ["draft", "sent", "paid", "overdue", "canceled"]
@@ -10340,9 +10814,13 @@ def invoice_customers():
     customers = {}
     for inv in rows:
         display_name = (inv.get("customer_name") or "").strip() or "No customer name"
-        key = display_name.lower()
+        # Group by the customer record when the invoice has one, so a rename or
+        # a typo does not split somebody's account in two. Invoices raised
+        # before the customers table existed still group by the name on them.
+        key = f"id:{inv['bill_to_customer_id']}" if inv.get("bill_to_customer_id") else display_name.lower()
         entry = customers.setdefault(key, {
             "key": key,
+            "customer_id": inv.get("bill_to_customer_id"),
             "name": display_name,
             "email": "",
             "phone": "",
@@ -10437,6 +10915,100 @@ def invoice_customers():
     )
 
 
+@app.route("/customers", methods=["GET", "POST"])
+@admin_required
+def customers_directory():
+    """Everyone we bill or build for, kept once and reused. A contractor we
+    subcontract under is a customer like any other - they are simply the one
+    paying on jobs where the homeowner does not."""
+    conn = db()
+    ensure_customer_tables(conn)
+
+    if request.method == "POST":
+        customer_id = request.form.get("customer_id", type=int)
+        name = request.form.get("name", "").strip()
+        if not name:
+            conn.close()
+            flash("A customer needs a name.")
+            return redirect(url_for("customers_directory"))
+        street, full_address, city, state, zip_code = build_full_address(
+            request.form.get("street", "").strip(),
+            request.form.get("city", "").strip(),
+            request.form.get("state", "").strip().upper(),
+            request.form.get("zip", "").strip(),
+        )
+        details = dict(
+            contact_name=request.form.get("contact_name", ""),
+            email=request.form.get("email", ""),
+            phone=format_us_phone(request.form.get("phone")),
+            street=street,
+            address=full_address,
+            city=city,
+            state=state,
+            zip=zip_code,
+            payment_terms=request.form.get("payment_terms", ""),
+            notes=request.form.get("notes", ""),
+        )
+        is_contractor = request.form.get("is_contractor") == "on"
+        if customer_id and load_customer(conn, customer_id):
+            # An edit may also be clearing a field, so write every one of them.
+            conn.execute(
+                """
+                UPDATE customers
+                SET name = %s, contact_name = %s, email = %s, phone = %s,
+                    street = %s, address = %s, city = %s, state = %s, zip = %s,
+                    is_contractor = %s, payment_terms = %s, notes = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (name, details["contact_name"].strip(), details["email"].strip(),
+                 details["phone"], street, full_address, city, state, zip_code,
+                 is_contractor, details["payment_terms"].strip(),
+                 details["notes"].strip(), utc_now_iso(), customer_id)
+            )
+            for project in conn.execute(
+                "SELECT id FROM projects WHERE site_customer_id = %s OR bill_to_customer_id = %s",
+                (customer_id, customer_id)
+            ).fetchall():
+                sync_project_billing_columns(conn, project["id"])
+            flash(f"{name} updated.")
+        else:
+            customer_id = upsert_customer(conn, name, is_contractor=is_contractor, **details)
+            flash(f"{name} added.")
+        conn.commit()
+        conn.close()
+        return redirect(url_for("customers_directory", edit_id=customer_id))
+
+    rows = customer_directory(conn)
+    project_counts = {}
+    try:
+        for row in conn.execute(
+            """
+            SELECT customer_id, COUNT(*) AS projects FROM (
+                SELECT site_customer_id AS customer_id FROM projects WHERE site_customer_id IS NOT NULL
+                UNION ALL
+                SELECT bill_to_customer_id FROM projects
+                WHERE bill_to_customer_id IS NOT NULL
+                  AND bill_to_customer_id <> COALESCE(site_customer_id, -1)
+            ) AS linked
+            GROUP BY customer_id
+            """
+        ).fetchall():
+            project_counts[row["customer_id"]] = row["projects"]
+    except Exception:
+        conn.rollback()
+
+    edit_id = request.args.get("edit_id", type=int)
+    edit_customer = load_customer(conn, edit_id) if edit_id else None
+    conn.close()
+    return render_template(
+        "customers.html",
+        customers=rows,
+        project_counts=project_counts,
+        edit_customer=edit_customer,
+        q=(request.args.get("q") or "").strip(),
+    )
+
+
 @app.route("/invoices")
 @admin_required
 def invoices():
@@ -10518,14 +11090,14 @@ def new_invoice():
     selected_project = None
     invoice_rooms = []
     if selected_project_id:
-        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        selected_project = invoice_project(conn, selected_project_id)
         if not selected_project:
             conn.close()
             flash("Project not found.")
             return redirect(url_for("invoices"))
         invoice_rooms = invoice_room_options(conn, selected_project_id)
 
-    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    projects = invoice_project_options(conn)
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     rooms_by_project = invoice_rooms_by_project(conn)
@@ -10576,13 +11148,13 @@ def restore_invoice_preview():
     ensure_invoice_tables(conn)
     ensure_part_catalog_tables(conn)
     invoice, lines = preview_invoice_from_form(conn)
-    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    projects = invoice_project_options(conn)
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     selected_project = None
     invoice_rooms = []
     if invoice.get("project_id"):
-        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone()
+        selected_project = invoice_project(conn, invoice["project_id"])
         invoice_rooms = invoice_room_options(conn, invoice["project_id"])
     rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
@@ -10779,10 +11351,10 @@ def edit_invoice(invoice_id):
         conn.commit()
         conn.close()
         return redirect(url_for("invoice_view", invoice_id=invoice_id))
-    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    projects = invoice_project_options(conn)
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
-    selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (invoice["project_id"],)).fetchone() if invoice.get("project_id") else None
+    selected_project = invoice_project(conn, invoice["project_id"]) if invoice.get("project_id") else None
     invoice_rooms = invoice_room_options(conn, invoice["project_id"]) if invoice.get("project_id") else []
     rooms_by_project = invoice_rooms_by_project(conn)
     edit_invoice_paid_total = invoice_paid_total(conn, invoice_id)
@@ -11707,13 +12279,13 @@ def new_estimate():
     selected_project = None
     invoice_rooms = []
     if selected_project_id:
-        selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (selected_project_id,)).fetchone()
+        selected_project = invoice_project(conn, selected_project_id)
         if not selected_project:
             conn.close()
             flash("Project not found.")
             return redirect(url_for("estimates"))
         invoice_rooms = invoice_room_options(conn, selected_project_id)
-    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    projects = invoice_project_options(conn)
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
     rooms_by_project = invoice_rooms_by_project(conn)
@@ -11831,10 +12403,10 @@ def edit_estimate(estimate_id):
         conn.close()
         return redirect(url_for("estimate_view", estimate_id=estimate_id))
 
-    projects = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+    projects = invoice_project_options(conn)
     saved_items = conn.execute("SELECT * FROM invoice_saved_items ORDER BY item_name").fetchall()
     catalog = part_catalog_options(conn)
-    selected_project = conn.execute("SELECT * FROM projects WHERE id = %s", (estimate["project_id"],)).fetchone() if estimate.get("project_id") else None
+    selected_project = invoice_project(conn, estimate.get("project_id"))
     invoice_rooms = invoice_room_options(conn, estimate["project_id"]) if estimate.get("project_id") else []
     rooms_by_project = invoice_rooms_by_project(conn)
     conn.close()
@@ -14086,6 +14658,26 @@ def project(project_id):
             ).fetchone()
         except Exception:
             conn.rollback()
+    site_customer = bill_to_customer = None
+    billing_history = []
+    other_customers = []
+    try:
+        ensure_customer_tables(conn)
+        site_customer, bill_to_customer = project_billing_parties(conn, project)
+        billing_history = conn.execute(
+            """
+            SELECT project_billing_history.*, users.name AS changed_by_name
+            FROM project_billing_history
+            LEFT JOIN users ON project_billing_history.changed_by = users.id
+            WHERE project_id = %s
+            ORDER BY started_on DESC, id DESC
+            """,
+            (project_id,)
+        ).fetchall()
+        if is_main_admin():
+            other_customers = customer_directory(conn)
+    except Exception:
+        conn.rollback()
     conn.close()
     return render_template(
         "project.html",
@@ -14096,8 +14688,59 @@ def project(project_id):
         duplicate_room=duplicate_room,
         onedrive_configured=onedrive_configured(),
         onedrive_connected=onedrive_connected(),
-        onedrive_folder=onedrive_folder
+        onedrive_folder=onedrive_folder,
+        site_customer=site_customer,
+        bill_to_customer=bill_to_customer,
+        billing_history=billing_history,
+        other_customers=other_customers
     )
+
+
+@app.route("/project/<int:project_id>/billing", methods=["POST"])
+@admin_required
+def change_project_billing(project_id):
+    """Hand the billing over. Ealing steps out, the customer starts paying us
+    directly - or the other way round. Invoices already raised keep naming
+    whoever owed them."""
+    conn = db()
+    ensure_customer_tables(conn)
+    project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
+    if not project:
+        conn.close()
+        flash("Project not found.")
+        return redirect(url_for("index"))
+
+    target = request.form.get("bill_to", "")
+    note = request.form.get("note", "").strip()
+    if target == "customer":
+        customer_id = project.get("site_customer_id")
+        if not customer_id:
+            conn.close()
+            flash("This project has no customer on file yet. Add one on the project form first.")
+            return redirect(url_for("project", project_id=project_id))
+    else:
+        customer_id = request.form.get("bill_to_customer_id", type=int)
+        if not customer_id:
+            typed = request.form.get("bill_to_name", "").strip()
+            if not typed:
+                conn.close()
+                flash("Choose who pays, or type the name of the company.")
+                return redirect(url_for("project", project_id=project_id))
+            customer_id = upsert_customer(conn, typed, is_contractor=True)
+        if not load_customer(conn, customer_id):
+            conn.close()
+            flash("That company could not be found.")
+            return redirect(url_for("project", project_id=project_id))
+
+    changed = set_project_billing(conn, project_id, customer_id, note, session.get("user_id"))
+    conn.commit()
+    name = (load_customer(conn, customer_id) or {}).get("name") or "the customer"
+    conn.close()
+    if changed:
+        flash(f"Invoices from today on go to {name}. Invoices already raised are unchanged.")
+    else:
+        flash(f"{name} was already the one being billed.")
+    return redirect(url_for("project", project_id=project_id))
 
 
 @app.route("/project/<int:project_id>/gallery")

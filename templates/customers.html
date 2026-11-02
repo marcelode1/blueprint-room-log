@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h2>Customers</h2>
+    <p class="customersLead">Everyone we build for or bill, kept once and reused on every
+        project. A contractor we subcontract under belongs here too - they are the one
+        paying on the jobs they hand us.</p>
+
+    <div class="customerSearchRow">
+        <input id="customerFilter" value="{{ q }}" placeholder="Type a name to find someone">
+        <a class="btn-link btn-secondary" href="{{ url_for('customers_directory') }}">Add a Customer</a>
+    </div>
+
+    <table class="customerTable">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Contact</th>
+                <th>Phone</th>
+                <th>Email</th>
+                <th>Projects</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="customerRows">
+            {% for c in customers %}
+                <tr data-name="{{ (c.name ~ ' ' ~ (c.contact_name or '') ~ ' ' ~ (c.email or ''))|lower }}">
+                    <td>
+                        <strong>{{ c.name }}</strong>
+                        {% if c.is_contractor %}<span class="customerTag">Contractor</span>{% endif %}
+                        {% if c.payment_terms %}<span class="customerSmall">{{ c.payment_terms }}</span>{% endif %}
+                    </td>
+                    <td>{{ c.contact_name or '-' }}</td>
+                    <td>{{ format_us_phone(c.phone) or '-' }}</td>
+                    <td>{{ c.email or '-' }}</td>
+                    <td>{{ project_counts.get(c.id, 0) }}</td>
+                    <td>
+                        <a class="btn-link" href="{{ url_for('customers_directory', edit_id=c.id) }}">Edit</a>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="6" class="customerEmpty">No customers yet. Add the first one below,
+                    or create a project and the customer on it will be saved here.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="customerEmpty" id="customerNoMatch" hidden>Nobody by that name.</p>
+</div>
+
+<div class="card">
+    <h3>{{ ('Edit ' ~ edit_customer.name) if edit_customer else 'Add a Customer' }}</h3>
+    <form method="post">
+        {% if edit_customer %}<input type="hidden" name="customer_id" value="{{ edit_customer.id }}">{% endif %}
+        <div class="grid">
+            <div><label>Name</label><input name="name" value="{{ edit_customer.name if edit_customer else '' }}" required></div>
+            <div><label>Contact Person</label><input name="contact_name" value="{{ edit_customer.contact_name if edit_customer else '' }}"></div>
+            <div><label>Email</label><input name="email" type="email" value="{{ edit_customer.email if edit_customer else '' }}"></div>
+            <div><label>Phone</label><input name="phone" type="tel" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone value="{{ format_us_phone(edit_customer.phone) if edit_customer else '' }}"></div>
+        </div>
+        <label>Where the Bill Goes</label>
+        <input name="street" value="{{ edit_customer.street if edit_customer else '' }}" placeholder="Street address">
+        <div class="grid">
+            <div><label>City</label><input name="city" value="{{ edit_customer.city if edit_customer else '' }}"></div>
+            <div><label>State</label><input name="state" maxlength="2" placeholder="FL" value="{{ edit_customer.state if edit_customer else '' }}"></div>
+            <div><label>ZIP Code</label><input name="zip" inputmode="numeric" value="{{ edit_customer.zip if edit_customer else '' }}"></div>
+            <div><label>Payment Terms</label><input name="payment_terms" placeholder="Net 30, Net 60, due on receipt" value="{{ edit_customer.payment_terms if edit_customer else '' }}"></div>
+        </div>
+        <label class="customerCheck">
+            <input type="checkbox" name="is_contractor" {% if edit_customer and edit_customer.is_contractor %}checked{% endif %}>
+            They are a contractor or company we subcontract under
+        </label>
+        <label>Notes</label>
+        <textarea name="notes" rows="2">{{ edit_customer.notes if edit_customer else '' }}</textarea>
+        <div class="customerActions">
+            <button type="submit">{{ 'Save Changes' if edit_customer else 'Add Customer' }}</button>
+            {% if edit_customer %}
+                <a class="btn-link btn-secondary" href="{{ url_for('customers_directory') }}">Cancel</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+<style>
+.customersLead{color:var(--muted);font-weight:700;margin-top:0}
+.customerSearchRow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.customerSearchRow input{max-width:360px;margin:0}
+.customerSearchRow .btn-link{margin:0}
+.customerTable{width:100%;border-collapse:collapse}
+.customerTable th,.customerTable td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.customerTag{display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:#b45309;color:#fff;font-size:11px;font-weight:800}
+.customerSmall{display:block;color:var(--muted);font-size:12px;font-weight:700}
+.customerEmpty{color:var(--muted);font-weight:700}
+.customerCheck{display:flex;gap:10px;align-items:center;margin:10px 0;font-weight:750}
+.customerCheck input{width:auto;min-height:auto;margin:0}
+.customerActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.customerActions button,.customerActions .btn-link{margin:0}
+@media(max-width:760px){.customerTable th:nth-child(2),.customerTable td:nth-child(2),
+    .customerTable th:nth-child(5),.customerTable td:nth-child(5){display:none}}
+</style>
+<script>
+(function(){
+    const box=document.getElementById("customerFilter");
+    const rows=Array.from(document.querySelectorAll("#customerRows tr[data-name]"));
+    const none=document.getElementById("customerNoMatch");
+    function filter(){
+        const needle=(box.value||"").trim().toLowerCase();
+        let shown=0;
+        rows.forEach(row=>{
+            const hit=!needle||row.dataset.name.includes(needle);
+            row.hidden=!hit;
+            if(hit)shown++;
+        });
+        if(none)none.hidden=!(rows.length&&!shown);
+    }
+    if(box){box.addEventListener("input",filter);filter();}
+})();
+</script>
+{% endblock %}
