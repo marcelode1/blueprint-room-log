@@ -1,4 +1,4 @@
-const CACHE_NAME = "projectonus-v9-cache";
+const CACHE_NAME = "projectonus-v10-cache";
 const OFFLINE_URL = "/static/offline.html";
 const CORE_ASSETS = [
     "/static/offline.html",
@@ -114,21 +114,13 @@ async function storePendingUpload(entry) {
     });
 }
 
-// Must match the page's own queue rules in base.html. This copy runs in the
-// background, where nobody is watching, so an upload that can never succeed
-// has to be let go rather than retried for ever.
-const MAX_UPLOAD_ATTEMPTS = 5;
-const UPLOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
+// Must match the page's own queue rules in base.html. A queued upload may be the
+// only copy of a job photo, so nothing is ever deleted here unless it was sent.
 async function processPendingUploads() {
     const uploads = await listPendingUploads();
     for (const entry of uploads) {
-        const age = entry.createdAt ? Date.now() - new Date(entry.createdAt).getTime() : 0;
-        if (isFinite(age) && age > UPLOAD_MAX_AGE_MS) {
-            await deletePendingUpload(entry.id);
-            continue;
-        }
-        let permanent = false;
+        if (entry.held) continue;  // waiting for a person to retry or discard it
+        let needsPerson = false;
         let reason = "";
         try {
             const response = await fetch(entry.url, {
@@ -137,26 +129,31 @@ async function processPendingUploads() {
                 credentials: "include",
                 redirect: "follow"
             });
-            if (response.ok) {
+            // A signed-out upload lands on the login page with a 200.
+            const landedOnLogin = response.redirected && /\/login$/.test(new URL(response.url).pathname);
+            if (response.ok && !landedOnLogin) {
                 await deletePendingUpload(entry.id);
                 continue;
             }
-            // The server answered and refused it; asking again changes nothing.
-            permanent = response.status >= 400 && response.status < 500;
-            reason = "The site answered " + response.status + ".";
+            needsPerson = landedOnLogin || (response.status >= 400 && response.status < 500);
+            if (landedOnLogin || response.status === 401 || response.status === 403) {
+                reason = "You were signed out. Sign in, then press Try Now.";
+            } else if (response.status === 413) {
+                reason = "The file is too large for the site to accept.";
+            } else if (response.status === 404) {
+                reason = "The page it belongs to is no longer there.";
+            } else {
+                reason = "The site answered " + response.status + ".";
+            }
         } catch (e) {
             reason = "Could not reach the site.";
         }
-        const attempts = (entry.attempts || 0) + 1;
-        if (permanent || attempts >= MAX_UPLOAD_ATTEMPTS) {
-            await deletePendingUpload(entry.id);
-            continue;
-        }
-        entry.attempts = attempts;
+        entry.attempts = (entry.attempts || 0) + 1;
         entry.lastError = reason;
         entry.lastTriedAt = new Date().toISOString();
+        entry.held = needsPerson;
         try { await storePendingUpload(entry); } catch (ignored) {}
-        break;  // network trouble: leave the rest for the next round
+        if (!needsPerson) break;  // network trouble: leave the rest for the next round
     }
 }
 
