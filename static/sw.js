@@ -1,4 +1,4 @@
-const CACHE_NAME = "projectonus-v8-cache";
+const CACHE_NAME = "projectonus-v9-cache";
 const OFFLINE_URL = "/static/offline.html";
 const CORE_ASSETS = [
     "/static/offline.html",
@@ -104,17 +104,59 @@ function formDataFromUpload(entry) {
     return formData;
 }
 
+async function storePendingUpload(entry) {
+    const db = await openUploadDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(UPLOAD_STORE_NAME, "readwrite");
+        tx.objectStore(UPLOAD_STORE_NAME).put(entry);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+// Must match the page's own queue rules in base.html. This copy runs in the
+// background, where nobody is watching, so an upload that can never succeed
+// has to be let go rather than retried for ever.
+const MAX_UPLOAD_ATTEMPTS = 5;
+const UPLOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function processPendingUploads() {
     const uploads = await listPendingUploads();
     for (const entry of uploads) {
-        const response = await fetch(entry.url, {
-            method: entry.method || "POST",
-            body: formDataFromUpload(entry),
-            credentials: "include",
-            redirect: "follow"
-        });
-        if (!response.ok) throw new Error("Pending upload failed");
-        await deletePendingUpload(entry.id);
+        const age = entry.createdAt ? Date.now() - new Date(entry.createdAt).getTime() : 0;
+        if (isFinite(age) && age > UPLOAD_MAX_AGE_MS) {
+            await deletePendingUpload(entry.id);
+            continue;
+        }
+        let permanent = false;
+        let reason = "";
+        try {
+            const response = await fetch(entry.url, {
+                method: entry.method || "POST",
+                body: formDataFromUpload(entry),
+                credentials: "include",
+                redirect: "follow"
+            });
+            if (response.ok) {
+                await deletePendingUpload(entry.id);
+                continue;
+            }
+            // The server answered and refused it; asking again changes nothing.
+            permanent = response.status >= 400 && response.status < 500;
+            reason = "The site answered " + response.status + ".";
+        } catch (e) {
+            reason = "Could not reach the site.";
+        }
+        const attempts = (entry.attempts || 0) + 1;
+        if (permanent || attempts >= MAX_UPLOAD_ATTEMPTS) {
+            await deletePendingUpload(entry.id);
+            continue;
+        }
+        entry.attempts = attempts;
+        entry.lastError = reason;
+        entry.lastTriedAt = new Date().toISOString();
+        try { await storePendingUpload(entry); } catch (ignored) {}
+        break;  // network trouble: leave the rest for the next round
     }
 }
 

@@ -585,9 +585,18 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
             // allowed, no longer there. Sending the same thing again will get
             // the same answer, so it must not sit in the queue forever.
             failure.permanent=response.status>=400&&response.status<500;
+            failure.reason=uploadFailureReason(response.status);
             throw failure;
         }
         return response;
+    }
+
+    function uploadFailureReason(status){
+        if(status===413)return "The file is too large for the site to accept.";
+        if(status===401||status===403)return "You were signed out, so it was refused.";
+        if(status===404)return "The page it belongs to is no longer there.";
+        if(status>=500)return "The site hit an error (" + status + ").";
+        return "The site refused it (" + status + ").";
     }
 
     function uploadIsStale(entry){
@@ -605,6 +614,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
             showUploadStatus("Sending "+uploads.length+" pending ProjectONus upload"+(uploads.length===1?"":"s")+"...");
             let sent=0;
             let dropped=0;
+            let lastFailure="";
             for(const entry of uploads){
                 if(uploadSignalIsWeak())break;
                 if(uploadIsStale(entry)){
@@ -621,12 +631,15 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
                     // queue and come back every thirty seconds for ever. Let it
                     // go instead, and say so, so the rest can get through.
                     const attempts=(entry.attempts||0)+1;
+                    lastFailure=(e&&e.reason)||"Could not reach the site.";
                     if(e&&e.permanent||attempts>=MAX_UPLOAD_ATTEMPTS){
                         await deleteUpload(entry.id);
                         dropped++;
                         continue;
                     }
                     entry.attempts=attempts;
+                    entry.lastError=lastFailure;
+                    entry.lastTriedAt=new Date().toISOString();
                     try{await storeUpload(entry);}catch(ignored){}
                     break;  // the network is the problem: try the lot again later
                 }
@@ -635,11 +648,85 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
                 showUploadStatus(sent+" pending upload"+(sent===1?"":"s")+" sent to the cloud.");
             }else if(dropped){
                 showUploadStatus(dropped+" upload"+(dropped===1?" could not be sent and was":"s could not be sent and were")+
-                    " removed from the queue. Please add "+(dropped===1?"it":"them")+" again.");
+                    " removed. "+(lastFailure||"")+" Please add "+(dropped===1?"it":"them")+" again.");
+            }else if(lastFailure){
+                showUploadStatus(lastFailure+" Tap to see what is waiting.");
             }
+            refreshPendingPanel();
         }finally{
             processing=false;
         }
+    }
+
+    // ---- What is still waiting, and why -----------------------------------
+    // The queue used to be invisible: a file could sit in it for days with no
+    // way to look at it or throw it away. Tapping the message opens this.
+    function describeEntry(entry){
+        const files=(entry.entries||[]).filter(item=>item.kind==="file");
+        const names=files.map(item=>item.filename||"file").join(", ");
+        let page="";
+        try{page=new URL(entry.pageUrl||entry.url,window.location.href).pathname;}catch(e){}
+        return {
+            title:names||"Form with no file",
+            page:page,
+            when:entry.createdAt?new Date(entry.createdAt).toLocaleString():"",
+            why:entry.lastError||"",
+            attempts:entry.attempts||0
+        };
+    }
+
+    async function refreshPendingPanel(){
+        const panel=document.getElementById("projectonusPendingPanel");
+        const list=document.getElementById("projectonusPendingList");
+        if(!panel||!list)return;
+        let uploads=[];
+        try{uploads=await listUploads();}catch(e){uploads=[];}
+        if(!uploads.length){
+            panel.hidden=true;   // nothing waiting: close it if it was open
+            list.innerHTML="";
+            return;
+        }
+        list.innerHTML="";
+        uploads.forEach(entry=>{
+            const info=describeEntry(entry);
+            const row=document.createElement("div");
+            row.className="pendingUploadRow";
+            const text=document.createElement("div");
+            const bits=[];
+            if(info.page)bits.push("For "+info.page);
+            if(info.when)bits.push(info.when);
+            if(info.attempts)bits.push("tried "+info.attempts+" time"+(info.attempts===1?"":"s"));
+            text.innerHTML="<strong></strong>";
+            text.querySelector("strong").textContent=info.title;
+            const sub=document.createElement("div");
+            sub.className="pendingUploadSub";
+            sub.textContent=bits.join(" | ");
+            text.appendChild(sub);
+            if(info.why){
+                const why=document.createElement("div");
+                why.className="pendingUploadWhy";
+                why.textContent=info.why;
+                text.appendChild(why);
+            }
+            const discard=document.createElement("button");
+            discard.type="button";
+            discard.className="btn-danger";
+            discard.textContent="Discard";
+            discard.addEventListener("click",async()=>{
+                await deleteUpload(entry.id);
+                refreshPendingPanel();
+            });
+            row.appendChild(text);
+            row.appendChild(discard);
+            list.appendChild(row);
+        });
+        return uploads.length;
+    }
+
+    async function openPendingPanel(){
+        const waiting=await refreshPendingPanel();
+        const panel=document.getElementById("projectonusPendingPanel");
+        if(panel&&waiting)panel.hidden=false;
     }
 
     document.addEventListener("submit",async event=>{
@@ -670,6 +757,32 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
         }
     },true);
 
+    // The toast and the panel sit further down the page than this script, so
+    // they do not exist yet. Listen on the document instead of on them.
+    document.addEventListener("click",async event=>{
+        const target=event.target;
+        if(!target||!target.closest)return;
+        if(target.closest("#projectonusUploadStatus")){
+            openPendingPanel();
+            return;
+        }
+        if(target.closest("#projectonusPendingClose")){
+            const panel=document.getElementById("projectonusPendingPanel");
+            if(panel)panel.hidden=true;
+            return;
+        }
+        const retry=target.closest("#projectonusPendingRetry");
+        if(retry){
+            retry.disabled=true;
+            retry.textContent="Trying...";
+            try{await processUploadQueue();}finally{
+                retry.disabled=false;
+                retry.textContent="Try Now";
+                refreshPendingPanel();
+            }
+        }
+    });
+
     window.addEventListener("online",()=>setTimeout(processUploadQueue,1000));
     document.addEventListener("visibilitychange",()=>{if(!document.hidden)processUploadQueue();});
     window.addEventListener("focus",processUploadQueue);
@@ -680,7 +793,8 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
 })();
 </script>
 <style>
-.projectonusPermissionPrompt{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPermissionPrompt[hidden]{display:none}.projectonusPermissionCard{width:min(440px,100%);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPermissionCard h3{margin:0 0 8px}.projectonusPermissionCard p{line-height:1.4}.projectonusPermissionActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.projectonusPermissionActions button{margin:0}.projectonusPermissionStatus{min-height:20px;margin:10px 0 0;color:var(--muted);font-size:14px}.projectonusUploadStatus{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1850;max-width:min(520px,calc(100% - 24px));background:#0f172a;color:white;border:1px solid #334155;border-radius:999px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 16px;text-align:center;font-weight:800}.projectonusUploadStatus[hidden]{display:none}
+.projectonusPermissionPrompt{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPermissionPrompt[hidden]{display:none}.projectonusPermissionCard{width:min(440px,100%);background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPermissionCard h3{margin:0 0 8px}.projectonusPermissionCard p{line-height:1.4}.projectonusPermissionActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.projectonusPermissionActions button{margin:0}.projectonusPermissionStatus{min-height:20px;margin:10px 0 0;color:var(--muted);font-size:14px}.projectonusUploadStatus{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1850;max-width:min(520px,calc(100% - 24px));background:#0f172a;color:white;border:1px solid #334155;border-radius:999px;box-shadow:0 12px 32px rgba(0,0,0,.28);padding:12px 16px;text-align:center;font-weight:800}.projectonusUploadStatus[hidden]{display:none}.projectonusUploadStatus{cursor:pointer}
+.projectonusPendingPanel{position:fixed;inset:0;z-index:1900;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:18px}.projectonusPendingPanel[hidden]{display:none}.projectonusPendingCard{width:min(520px,100%);max-height:80vh;overflow-y:auto;overflow-x:hidden;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:16px;box-shadow:0 18px 58px rgba(0,0,0,.32);padding:20px}.projectonusPendingCard h3{margin:0 0 8px}.pendingUploadLead{margin:0 0 12px;color:var(--muted);font-weight:700}.pendingUploadRow{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--bg)}.pendingUploadRow>div:first-child{flex:1 1 auto;min-width:0;word-break:break-word}.pendingUploadRow button{margin:0!important;flex:0 0 auto;width:auto!important;min-width:0!important;padding:7px 12px!important;min-height:34px!important}.pendingUploadSub{color:var(--muted);font-size:12px;font-weight:700;margin-top:2px}.pendingUploadWhy{color:#b45309;font-size:13px;font-weight:800;margin-top:4px}body.dark .pendingUploadWhy{color:#fcd34d}.pendingUploadActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.pendingUploadActions button{margin:0}
 .mobileMediaPicker{margin:12px 0}.mobileMediaNativeInputs{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mobileMediaCommentLabel{margin-top:10px}.mobileMediaPicker textarea{border-radius:18px;min-height:74px}.mobileMediaBar{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:999px;background:var(--card);box-shadow:0 8px 22px rgba(15,23,42,.12);max-width:360px;margin:10px 0 0 auto}.mobileMediaIconButton{width:50px!important;height:50px!important;min-width:50px!important;min-height:50px!important;border-radius:50%!important;padding:0!important;margin:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;background:transparent!important;color:var(--text)!important;border:0!important;box-shadow:none!important}.mobileMediaIconButton svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.mobileMediaCameraButton{background:var(--primary)!important;color:#fff!important}.mobileMediaPreview{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:rgba(14,165,233,.07)}.mobileMediaPreviewBody{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center}.mobileMediaPreview p{margin:2px 0 0;word-break:break-word}.mobileMediaThumb{width:64px;height:64px;border-radius:10px;background:#e2e8f0;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#334155;font-weight:900}.mobileMediaThumb img{width:100%;height:100%;object-fit:cover}.mobileMediaThumb audio{width:58px}.mobileMediaPreviewSave{width:auto!important;min-width:92px!important;margin:10px 0 0 auto!important;display:flex!important}.attachmentCommentEditor{margin-top:8px}.attachmentCommentEditor summary{font-weight:800;cursor:pointer}.attachmentCommentEditor form{margin-top:8px}.globalPictureMarkActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}.globalPictureMarkActions button{margin:0!important;width:auto!important}.globalPictureMarkActions #globalPictureMarkSave{margin-left:auto!important}
 #globalPictureMarkModal{display:none;position:fixed;inset:0;z-index:1700;background:rgba(15,23,42,.94);padding:12px}
 #globalPictureMarkCanvas{width:100%;max-height:72vh;background:white;touch-action:none;border-radius:10px}
@@ -698,6 +812,18 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
     </div>
 </div>
 <div id="projectonusUploadStatus" class="projectonusUploadStatus" hidden></div>
+<div id="projectonusPendingPanel" class="projectonusPendingPanel" hidden>
+    <div class="projectonusPendingCard">
+        <h3>Waiting to Upload</h3>
+        <p class="pendingUploadLead">These are saved on this phone and have not reached the
+            cloud yet. Discard anything you no longer need - it will stop trying.</p>
+        <div id="projectonusPendingList"></div>
+        <div class="pendingUploadActions">
+            <button type="button" id="projectonusPendingRetry">Try Now</button>
+            <button type="button" class="btn-secondary" id="projectonusPendingClose">Close</button>
+        </div>
+    </div>
+</div>
 <div id="globalPictureMarkModal">
     <canvas id="globalPictureMarkCanvas"></canvas>
     <div class="globalPictureMarkActions">
