@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block content %}
 <div class="card">
     <h2>Project BOM</h2>
@@ -64,11 +64,11 @@
 {% if can_edit_inventory() and task_cart %}
 <div class="card taskCartCard">
     <h3>Task Cart <span class="taskCartCount">{{ task_cart|length }} item{{ '' if task_cart|length == 1 else 's' }}</span></h3>
-    <p class="muted" style="margin-top:0">Pick materials as you browse â€” they wait here until you're ready to create the task.</p>
+    <p class="muted" style="margin-top:0">Pick materials as you browse — they wait here until you're ready to create the task.</p>
     {% for c in task_cart %}
         <div class="taskCartRow">
             <div>
-                <strong>{{ c.item_name }}</strong> â€” {{ c.quantity }} {{ c.unit_measure }}
+                <strong>{{ c.item_name }}</strong> — {{ c.quantity }} {{ c.unit_measure }}
                 {% if c.brand %} | {{ c.brand }}{% endif %}{% if c.item_model %} | {{ c.item_model }}{% endif %}
                 {% if c.room_name %}<br><span class="muted">Room: {{ c.room_name }}</span>{% endif %}
                 {% if c.comment %}<p class="muted taskCartComment">{{ c.comment }}</p>{% endif %}

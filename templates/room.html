@@ -1,4 +1,4 @@
-﻿
+
 {% extends "base.html" %}
 {% block content %}
 {% set show_inventory = can_view_inventory() %}
@@ -179,7 +179,7 @@
 
     {% for n in notes %}
         <div class="card">
-            <strong>{{ n.note_date }}</strong> â€” {{ n.user_name or "Unknown user" }}
+            <strong>{{ n.note_date }}</strong> — {{ n.user_name or "Unknown user" }}
             {% if has_perm("see_comments") %}<p>{{ n.comment }}</p>{% endif %}
             {% if n.photo_file and has_perm("see_pictures") %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
             {% if n.audio_file and has_perm("see_audio") %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
@@ -195,7 +195,7 @@
 </section>
 
 {% if can_add_notes() %}
-<button type="button" id="floatingCameraBtn" title="Take Picture">ðŸ“·</button>
+<button type="button" id="floatingCameraBtn" title="Take Picture">📷</button>
 {% endif %}
 
 {% if show_inventory %}{% include "_inventory_actions.html" %}{% endif %}

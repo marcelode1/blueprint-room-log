@@ -1,4 +1,4 @@
-﻿
+
 {% extends "base.html" %}
 {% block content %}
 {% set show_inventory = can_view_inventory() %}
@@ -42,11 +42,11 @@
         <div class="mTimelineItem mTimeline-{{ e.kind }}">
             {% if e.kind == "note" %}
                 {% set n = e.row %}
-                <strong>{% if n.photo_file %}Picture{% elif n.audio_file %}Audio{% else %}Comment{% endif %}</strong> â€” {{ n.user_name or 'Unknown user' }}
+                <strong>{% if n.photo_file %}Picture{% elif n.audio_file %}Audio{% else %}Comment{% endif %}</strong> — {{ n.user_name or 'Unknown user' }}
                 {% if n.comment %}<p>{{ n.comment }}</p>{% endif %}
             {% else %}
                 {% set t = e.row %}
-                <strong>Task: {{ task_display_name(t) }}</strong> â€” {{ task_status_label(t) }}
+                <strong>Task: {{ task_display_name(t) }}</strong> — {{ task_status_label(t) }}
                 <p class="muted">Assigned to {{ t.assigned_user_name or 'Unknown user' }}</p>
             {% endif %}
         </div>
@@ -120,7 +120,7 @@
     <h3>Comments &amp; Pictures</h3>
     {% for n in notes %}
         <div class="card">
-            <strong>{{ n.note_date }}</strong> â€” {{ n.user_name or 'Unknown user' }}
+            <strong>{{ n.note_date }}</strong> — {{ n.user_name or 'Unknown user' }}
             <p>{{ n.comment }}</p>
             {% if n.photo_file %}<img class="photo" src="{{ url_for('storage_file', storage_path=n.photo_file) }}">{% endif %}
             {% if n.audio_file %}<audio controls style="width:100%;margin-top:8px;"><source src="{{ url_for('storage_file', storage_path=n.audio_file) }}"></audio>{% endif %}
