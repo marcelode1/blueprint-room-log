@@ -9,7 +9,9 @@
     <h2>Edit Project</h2>
     <form method="post">
         <label>Customer Name <span class="muted" style="font-weight:400">(the contractor, or the customer when we deal with them directly)</span></label>
-        <input name="customer_name" value="{{ project.customer_name or '' }}" autocomplete="name">
+        <input name="customer_name" value="{{ project.customer_name or '' }}" list="customerNameOptions" autocomplete="off">
+        <datalist id="customerNameOptions">{% for option in customer_options %}<option value="{{ option }}"></option>{% endfor %}</datalist>
+        <datalist id="jobNameOptions">{% for option in job_options %}<option value="{{ option }}"></option>{% endfor %}</datalist>
         <label>Customer Street Address</label>
         <input id="customerStreet" name="customer_address" value="{{ project.customer_street or project.customer_address or '' }}" autocomplete="street-address" placeholder="Start typing the street address">
         <div class="grid">
@@ -30,7 +32,9 @@
             <h3>The Job</h3>
             <p class="jobLead">This is all a mobile user sees.</p>
             <label>Job Name</label>
-            <input name="name" value="{{ project.name }}" required placeholder="The contractor's customer, or our own">
+            <input name="job_name" value="{{ project.job_name or project.name }}" list="jobNameOptions" autocomplete="off" required placeholder="The contractor's customer, or our own">
+            <label>Project Name <span class="muted" style="font-weight:400">(leave blank to use the job name)</span></label>
+            <input name="name" value="{{ project.name }}">
             <label>Job Street Address</label>
             <input name="job_address" value="{{ project.job_street or project.job_address or '' }}" autocomplete="street-address" placeholder="Leave blank to use the customer address">
             <div class="grid">

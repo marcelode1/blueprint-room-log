@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-02 V7"
+APP_BUILD = "2026-11-02 V8"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1133,6 +1133,9 @@ def init_db():
         # Where the work actually is. The customer_* address is who we deal
         # with and bill - on a contractor job that is the contractor's office,
         # not the house - so the job site needs an address of its own.
+        # One job can hold several projects, so it needs a name of its own. Left
+        # empty, the project is its own job and the job name is the project name.
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_name TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_street TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_address TEXT",
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS job_city TEXT",
@@ -4685,7 +4688,7 @@ def fetch_visible_projects(conn, q=""):
         like = f"%{q}%"
         # Everybody searches the job. Only the admin can also find a project by
         # the customer or billing details, which a mobile user never sees.
-        columns = ["name", "job_address", "job_street", "job_city", "job_state", "job_zip",
+        columns = ["name", "job_name", "job_address", "job_street", "job_city", "job_state", "job_zip",
                    "point_of_contact_name", "point_of_contact_phone"]
         if is_main_admin():
             columns += ["customer_name", "customer_address", "customer_street", "customer_city",
@@ -8425,7 +8428,11 @@ def add_paystub_expense(stub_id):
 @admin_required
 def new_project():
     if request.method == "POST":
-        name = request.form["name"].strip()
+        job_name = request.form.get("job_name", "").strip()
+        name = request.form.get("name", "").strip() or job_name
+        if not name:
+            flash("Job name is required.")
+            return redirect(url_for("new_project"))
         customer_name = request.form.get("customer_name", "").strip()
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
@@ -8451,12 +8458,13 @@ def new_project():
         cur.execute(
             """
             INSERT INTO projects
-            (name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, job_street, job_address, job_city, job_state, job_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (name, job_name, customer_name, customer_street, customer_address, customer_city, customer_state, customer_zip, job_street, job_address, job_city, job_state, job_zip, billing_street, billing_address, billing_city, billing_state, billing_zip, billing_same_as_customer, customer_phone, customer_email, point_of_contact_name, point_of_contact_phone, blueprint_file, blueprint_preview_file, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 name,
+                job_name,
                 customer_name,
                 customer_street,
                 customer_address,
@@ -8492,7 +8500,11 @@ def new_project():
         return redirect(url_for("project", project_id=project_id))
 
     default_trade = company_trades()[0]
-    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES, default_trade=default_trade)
+    conn = db()
+    customer_options, job_options = customer_and_job_options(conn)
+    conn.close()
+    return render_template("new_project.html", phase_templates=PHASE_TEMPLATES, default_trade=default_trade,
+                           customer_options=customer_options, job_options=job_options)
 
 
 @app.route("/project/<int:project_id>/edit", methods=["GET", "POST"])
@@ -8506,10 +8518,11 @@ def edit_project(project_id):
         return redirect(url_for("index"))
 
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
+        job_name = request.form.get("job_name", "").strip()
+        name = request.form.get("name", "").strip() or job_name
         if not name:
             conn.close()
-            flash("Project name is required.")
+            flash("Job name is required.")
             return redirect(url_for("edit_project", project_id=project_id))
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
@@ -8520,6 +8533,7 @@ def edit_project(project_id):
             """
             UPDATE projects
             SET name = %s,
+                job_name = %s,
                 customer_name = %s,
                 customer_street = %s,
                 customer_address = %s,
@@ -8544,6 +8558,7 @@ def edit_project(project_id):
             """,
             (
                 name,
+                job_name,
                 request.form.get("customer_name", "").strip(),
                 customer_street,
                 customer_address,
@@ -8572,8 +8587,180 @@ def edit_project(project_id):
         flash("Project updated.")
         return redirect(url_for("project", project_id=project_id))
 
+    customer_options, job_options = customer_and_job_options(conn)
     conn.close()
-    return render_template("edit_project.html", project=project)
+    return render_template("edit_project.html", project=project,
+                           customer_options=customer_options, job_options=job_options)
+
+
+NO_CUSTOMER_NAME = "No customer name"
+RECENT_CUSTOMER_COUNT = 10
+estimate_tables_checked = False
+
+
+def customer_group_key(name):
+    """Customers are not a table of their own: a customer is every project with
+    the same customer name, whatever its capitals or stray spaces."""
+    return " ".join((name or "").split()).lower()
+
+
+def project_job_name(project):
+    return (project.get("job_name") or "").strip() or (project.get("name") or "").strip()
+
+
+def customer_and_job_options(conn):
+    """The names already in use, offered on the project form. A customer and a
+    job are grouped by name, so a retyped name that differs would split them."""
+    rows = conn.execute("SELECT name, job_name, customer_name FROM projects").fetchall()
+    customers = {}
+    jobs = {}
+    for row in rows:
+        customer = " ".join((row.get("customer_name") or "").split())
+        if customer:
+            customers.setdefault(customer.lower(), customer)
+        job = project_job_name(row)
+        jobs.setdefault(job.lower(), job)
+    return sorted(customers.values(), key=str.lower), sorted(jobs.values(), key=str.lower)
+
+
+def project_last_activity(conn):
+    """The newest thing that happened on each project: a task, a clock-in, a
+    note, a file, an order, an invoice or a proposal. Dates are stored as ISO
+    text, so the newest is also the largest."""
+    global estimate_tables_checked
+    if not estimate_tables_checked:
+        # Unlike the others, this table is only made when it is first needed.
+        ensure_estimate_tables(conn)
+        estimate_tables_checked = True
+    rows = conn.execute(
+        """
+        SELECT project_id, MAX(happened_at) AS happened_at FROM (
+            SELECT project_id, CAST(created_at AS TEXT) AS happened_at FROM tasks
+            UNION ALL SELECT project_id, CAST(completion_at AS TEXT) FROM tasks
+            UNION ALL SELECT project_id, CAST(created_at AS TEXT) FROM attendance_events
+            UNION ALL SELECT rooms.project_id, CAST(notes.created_at AS TEXT)
+                FROM notes JOIN rooms ON notes.room_id = rooms.id
+            UNION ALL SELECT project_id, CAST(created_at AS TEXT) FROM project_files
+            UNION ALL SELECT project_id, CAST(created_at AS TEXT) FROM purchase_orders
+            UNION ALL SELECT project_id, CAST(created_at AS TEXT) FROM invoices
+            UNION ALL SELECT project_id, CAST(updated_at AS TEXT) FROM invoices
+            UNION ALL SELECT project_id, CAST(created_at AS TEXT) FROM estimates
+            UNION ALL SELECT project_id, CAST(updated_at AS TEXT) FROM estimates
+        ) AS activity
+        WHERE project_id IS NOT NULL AND happened_at IS NOT NULL
+        GROUP BY project_id
+        """
+    ).fetchall()
+    return {row["project_id"]: row["happened_at"] for row in rows}
+
+
+def usual_spelling(spellings):
+    """One project typed in lower case should not rename the customer or job."""
+    return max(spellings, key=lambda name: (spellings[name], not name.islower()))
+
+
+def build_customer_directory(conn):
+    """Customer > job > project, the most recently worked with first at every level."""
+    projects = conn.execute(
+        """
+        SELECT id, name, job_name, customer_name, customer_address, customer_email,
+               billing_address, job_address, point_of_contact_name, point_of_contact_phone, created_at
+        FROM projects
+        """
+    ).fetchall()
+    activity = project_last_activity(conn)
+    for project in projects:
+        project["last_activity"] = max(str(project.get("created_at") or ""), activity.get(project["id"]) or "")
+    projects.sort(key=lambda project: project["last_activity"], reverse=True)
+
+    customers = {}
+    for project in projects:
+        name = " ".join((project.get("customer_name") or "").split())
+        customer = customers.setdefault(customer_group_key(name) or NO_CUSTOMER_NAME.lower(), {
+            "key": customer_group_key(name) or NO_CUSTOMER_NAME.lower(),
+            "name": name or NO_CUSTOMER_NAME,
+            "unnamed": not name,
+            "last_activity": project["last_activity"],
+            "address": "",
+            "email": "",
+            "billing_address": "",
+            "spellings": {},
+            "jobs": {},
+        })
+        customer["spellings"][name] = customer["spellings"].get(name, 0) + 1
+        # Each project keeps its own copy of these. The newest one filled in wins.
+        customer["address"] = customer["address"] or (project.get("customer_address") or "").strip()
+        customer["email"] = customer["email"] or (project.get("customer_email") or "").strip()
+        customer["billing_address"] = customer["billing_address"] or (project.get("billing_address") or "").strip()
+
+        job_name = project_job_name(project)
+        job = customer["jobs"].setdefault(job_name.lower(), {
+            "key": job_name.lower(),
+            "name": job_name,
+            "last_activity": project["last_activity"],
+            "address": "",
+            "spellings": {},
+            "projects": [],
+        })
+        job["spellings"][job_name] = job["spellings"].get(job_name, 0) + 1
+        job["address"] = job["address"] or (project.get("job_address") or "").strip() or (project.get("customer_address") or "").strip()
+        job["projects"].append(project)
+
+    directory = list(customers.values())
+    for customer in directory:
+        customer["jobs"] = list(customer["jobs"].values())
+        if not customer["unnamed"]:
+            customer["name"] = usual_spelling(customer["spellings"])
+        for job in customer["jobs"]:
+            job["name"] = usual_spelling(job["spellings"])
+    return directory
+
+
+@app.route("/customers/list-json")
+@admin_required
+def customers_list():
+    conn = db()
+    directory = build_customer_directory(conn)
+    conn.close()
+    return jsonify({
+        "ok": True,
+        "recent_count": RECENT_CUSTOMER_COUNT,
+        "customers": [
+            {
+                "key": customer["key"],
+                "name": customer["name"],
+                "unnamed": customer["unnamed"],
+                "jobs": [
+                    {
+                        "key": job["key"],
+                        "name": job["name"],
+                        "projects": [project["name"] for project in job["projects"]],
+                    }
+                    for job in customer["jobs"]
+                ],
+            }
+            for customer in directory
+        ],
+    })
+
+
+@app.route("/customers")
+@admin_required
+def customers_page():
+    conn = db()
+    directory = build_customer_directory(conn)
+    conn.close()
+    customer_key = customer_group_key(request.args.get("c"))
+    job_key = (request.args.get("j") or "").strip().lower()
+    customer = next((row for row in directory if row["key"] == customer_key), None)
+    job = None
+    if customer:
+        job = next((row for row in customer["jobs"] if row["key"] == job_key), None)
+        # Nothing to choose between when there is only the one.
+        if not job and len(customer["jobs"]) == 1:
+            job = customer["jobs"][0]
+    template = "_customer_panel.html" if request.args.get("panel") else "customers.html"
+    return render_template(template, customer=customer, job=job)
 
 
 INVOICE_STATUS_VALUES = ["draft", "sent", "paid", "overdue", "canceled"]

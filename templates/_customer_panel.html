@@ -1,0 +1,66 @@
+{# The right side of the Customers page: the customer, their jobs, and the
+   projects under the job that was picked. Swapped in place by _customers_nav.html. #}
+<div id="customerPanel">
+{% if not customer %}
+    <div class="card">
+        <h2>Customers</h2>
+        <p class="muted">Pick a customer from the list to see their information and jobs.</p>
+    </div>
+{% else %}
+    <div class="card">
+        <div class="customerHead">
+            <h2>Customer Information</h2>
+        </div>
+        <dl class="customerFacts" style="margin:0">
+            <div><dt>Customer Name</dt><dd>{{ customer.name }}</dd></div>
+            <div><dt>Email</dt><dd>{% if customer.email %}<a href="mailto:{{ customer.email }}">{{ customer.email }}</a>{% else %}-{% endif %}</dd></div>
+            <div><dt>Customer Address</dt><dd>{{ customer.address or '-' }}</dd></div>
+            <div><dt>Billing Address</dt><dd>{{ customer.billing_address or customer.address or '-' }}</dd></div>
+        </dl>
+        <p class="customerLinks">
+            {% if customer.address %}
+                <a href="https://www.google.com/maps/search/?api=1&query={{ customer.address|urlencode }}" target="_blank" rel="noopener">Map</a>
+                <a href="https://www.google.com/maps/dir/?api=1&destination={{ customer.address|urlencode }}" target="_blank" rel="noopener">Directions</a>
+            {% endif %}
+            {% if not customer.unnamed %}<a href="{{ url_for('invoice_customers', c=customer.key) }}">Invoices</a>{% endif %}
+        </p>
+    </div>
+
+    <div class="card">
+        <h3>Jobs</h3>
+        <table class="customerTable">
+            <thead><tr><th>Job Name</th><th>Job Address</th><th class="count">Projects</th><th>Last Activity</th></tr></thead>
+            <tbody>
+            {% for row in customer.jobs %}
+                <tr data-row-link {% if job and job.key == row.key %}class="selected"{% endif %}>
+                    <td><a data-customer-link href="{{ url_for('customers_page', c=customer.key, j=row.key) }}">{{ row.name }}</a></td>
+                    <td data-label="Job Address">{{ row.address or '-' }}</td>
+                    <td class="count" data-label="Projects">{{ row.projects|length }}</td>
+                    <td data-label="Last Activity">{{ format_date(row.last_activity) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if job %}
+    <div class="card">
+        <h3>Projects under {{ job.name }}</h3>
+        <table class="customerTable">
+            <thead><tr><th>Project</th><th>Job Address</th><th>Point of Contact</th><th>Phone</th><th>Last Activity</th></tr></thead>
+            <tbody>
+            {% for row in job.projects %}
+                <tr>
+                    <td><a href="{{ url_for('project', project_id=row.id) }}">{{ row.name }}</a></td>
+                    <td data-label="Job Address">{{ row.job_address or row.customer_address or '-' }}</td>
+                    <td data-label="Point of Contact">{{ row.point_of_contact_name or '-' }}</td>
+                    <td data-label="Phone">{{ format_us_phone(row.point_of_contact_phone) or '-' }}</td>
+                    <td data-label="Last Activity">{{ format_date(row.last_activity) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+{% endif %}
+</div>

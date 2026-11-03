@@ -13,7 +13,7 @@
     <p><strong>Customer Name:</strong> {{ project.customer_name or '-' }}</p>
     <p><strong>Customer Address:</strong> {{ project.customer_address or '-' }}</p>
 {% endif %}
-<p><strong>Job Name:</strong> {{ project.name or '-' }}</p>
+<p><strong>Job Name:</strong> {{ project.job_name or project.name or '-' }}</p>
 <p><strong>Job Address:</strong> {{ project.job_address or project.customer_address or '-' }}</p>
 <p><strong>Point of Contact:</strong> {{ project.point_of_contact_name or '-' }}</p>
 <p><strong>Point of Contact Phone Number:</strong> {{ format_us_phone(project.point_of_contact_phone) or '-' }}</p>

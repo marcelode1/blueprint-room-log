@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+{# The phone has no menu column to hold the list, so it sits above the information. #}
+<details class="customersPageList card" {% if not customer %}open{% endif %}>
+    <summary>Customers</summary>
+    {% include "_customer_list.html" %}
+</details>
+{% include "_customer_panel.html" %}
+<style>
+.customersPageList summary{font-weight:800;cursor:pointer;padding:4px 0 10px}
+@media(min-width:761px){.customersPageList{display:none}}
+.customerHead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:12px}
+.customerHead h2{margin:0}
+.customerFacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 28px}
+.customerFacts div{display:grid;grid-template-columns:130px 1fr;gap:10px;padding:3px 0}
+.customerFacts dt{color:var(--muted);font-size:13px;margin:0}
+.customerFacts dd{margin:0;overflow-wrap:anywhere}
+.customerLinks{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 0}
+.customerTable{width:100%;border-collapse:collapse}
+.customerTable th{text-align:left;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;padding:6px 10px;border-bottom:1px solid var(--border)}
+.customerTable td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.customerTable tr[data-row-link]{cursor:pointer}
+.customerTable tr[data-row-link]:hover td{background:rgba(148,163,184,.12)}
+.customerTable tr.selected td{background:rgba(34,197,94,.18)}
+.customerTable a{font-weight:700}
+.customerTable .count{text-align:right}
+@media(max-width:760px){
+    .customerFacts{grid-template-columns:1fr}
+    .customerFacts div{grid-template-columns:110px 1fr}
+    .customerTable thead{display:none}
+    .customerTable,.customerTable tbody,.customerTable tr,.customerTable td{display:block;width:100%}
+    .customerTable tr{padding:8px 0;border-bottom:1px solid var(--border)}
+    .customerTable td{border:0;padding:2px 8px}
+    .customerTable td[data-label]::before{content:attr(data-label) ": ";color:var(--muted);font-size:13px}
+    .customerTable .count{text-align:left}
+}
+</style>
+{% endblock %}

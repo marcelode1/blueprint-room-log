@@ -56,6 +56,7 @@
             <span class="desktop-only">{{ session.get("name") }}</span>
             <a href="{{ url_for('index') }}">Home</a>
             <a href="{{ url_for('index') }}">Projects</a>
+            {% if is_main_admin() %}{% include "_customers_nav.html" %}{% endif %}
             {% if is_main_admin() %}
                 <div class="navDropdown">
                     <div class="navDropdownButton" tabindex="0">Tasks</div>
@@ -136,6 +137,7 @@
     {% else %}
         <a href="{{ url_for('index') }}">Home</a>
         <a href="{{ url_for('index') }}">Projects</a>
+        <a href="{{ url_for('customers_page') }}">Customers</a>
         <details class="mobileMenuGroup">
             <summary>Tasks</summary>
             <a href="{{ url_for('create_global_task') }}">Create a Task</a>
