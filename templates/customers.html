@@ -1,14 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
-{# The phone has no menu column to hold the list, so it sits above the information. #}
-<details class="customersPageList card" {% if not customer %}open{% endif %}>
-    <summary>Customers</summary>
-    {% include "_customer_list.html" %}
-</details>
-{% include "_customer_panel.html" %}
+<div class="customersLayout">
+    <aside class="card customersPane {% if customer %}collapsed{% endif %}" id="customersPane">
+        <h2>Customers</h2>
+        <button type="button" class="btn-secondary customersPaneToggle" id="customersPaneToggle">Change customer</button>
+        <div class="customersPaneBody">
+            <input type="search" id="customerFilter" class="customerFilter" placeholder="Customer or job name" aria-label="Filter by customer or job name" autocomplete="off">
+            <div class="customerListHint" id="customerHint">Loading customers...</div>
+            <div class="customerRows" id="customerRows"></div>
+        </div>
+    </aside>
+    {% include "_customer_panel.html" %}
+</div>
 <style>
-.customersPageList summary{font-weight:800;cursor:pointer;padding:4px 0 10px}
-@media(min-width:761px){.customersPageList{display:none}}
+.customersLayout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start}
+.customersPaneToggle{display:none}
+#customerPanel{min-width:0;scroll-margin-top:76px}
+.customerFilter{width:100%;max-width:none;margin:0 0 6px}
+.customerListHint{font-size:12px;line-height:1.3;padding:2px 2px 8px;color:var(--muted)}
+.customerRows a{display:block;padding:8px 10px;border-radius:6px;font-size:14px;font-weight:600;line-height:1.25;text-decoration:none;color:var(--text);overflow-wrap:anywhere}
+.customerRows a:hover{background:rgba(148,163,184,.18)}
+.customerRows a.active{background:#1f8a7a;color:#fff}
+.customerRows a.unnamed{font-style:italic;font-weight:400}
+.customerRows .customerRowJob{display:block;font-weight:400;font-size:12px;opacity:.82}
 .customerHead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:12px}
 .customerHead h2{margin:0}
 .customerFacts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 28px}
@@ -24,8 +38,11 @@
 .customerTable tr.selected td{background:rgba(34,197,94,.18)}
 .customerTable a{font-weight:700}
 .customerTable .count{text-align:right}
+@media(max-width:1000px){.customerFacts{grid-template-columns:1fr}}
 @media(max-width:760px){
-    .customerFacts{grid-template-columns:1fr}
+    .customersLayout{grid-template-columns:minmax(0,1fr)}
+    .customersPane.collapsed .customersPaneToggle{display:inline-flex}
+    .customersPane.collapsed .customersPaneBody{display:none}
     .customerFacts div{grid-template-columns:110px 1fr}
     .customerTable thead{display:none}
     .customerTable,.customerTable tbody,.customerTable tr,.customerTable td{display:block;width:100%}
@@ -35,4 +52,131 @@
     .customerTable .count{text-align:left}
 }
 </style>
+<script>
+(function(){
+    const listUrl="{{ url_for('customers_list') }}";
+    const pageUrl="{{ url_for('customers_page') }}";
+    const MAX_FILTER_ROWS=50;
+    const pane=document.getElementById("customersPane");
+    const filter=document.getElementById("customerFilter");
+    const hint=document.getElementById("customerHint");
+    const list=document.getElementById("customerRows");
+    const onPhone=window.matchMedia("(max-width:760px)");
+    let directory=null;
+    let recentCount=10;
+    let panelTicket=0;
+
+    function current(){
+        const params=new URLSearchParams(location.search);
+        return {customer:(params.get("c")||"").trim().toLowerCase(),job:(params.get("j")||"").trim().toLowerCase()};
+    }
+
+    function linkFor(customer,job){
+        return pageUrl+"?c="+encodeURIComponent(customer.key)+(job?"&j="+encodeURIComponent(job.key):"");
+    }
+
+    function rowsFor(query){
+        if(!query){
+            const named=directory.filter(customer=>!customer.unnamed);
+            const rows=named.slice(0,recentCount).map(customer=>({customer:customer}));
+            // Projects with no customer name would otherwise be out of reach.
+            directory.filter(customer=>customer.unnamed).forEach(customer=>rows.push({customer:customer}));
+            return {rows:rows,total:named.length};
+        }
+        const rows=[];
+        directory.forEach(customer=>{
+            if(customer.name.toLowerCase().includes(query))rows.push({customer:customer});
+            customer.jobs.forEach(job=>{
+                const hit=job.name.toLowerCase().includes(query)
+                    ||job.projects.some(name=>(name||"").toLowerCase().includes(query));
+                if(hit)rows.push({customer:customer,job:job});
+            });
+        });
+        return {rows:rows,total:rows.length};
+    }
+
+    function renderList(){
+        if(!directory)return;
+        const query=filter.value.trim().toLowerCase();
+        const found=rowsFor(query);
+        if(query){
+            hint.textContent=found.total?(found.total>MAX_FILTER_ROWS?"Showing the first "+MAX_FILTER_ROWS+" of "+found.total+" matches.":""):"No customer or job matches.";
+        }else{
+            hint.textContent=found.total?(found.total>recentCount?"The last "+recentCount+" of "+found.total+" customers. Type to find the rest.":"Most recently worked with first."):"No customers yet.";
+        }
+        const selected=current();
+        list.textContent="";
+        found.rows.slice(0,MAX_FILTER_ROWS).forEach(row=>{
+            const link=document.createElement("a");
+            link.href=linkFor(row.customer,row.job);
+            link.setAttribute("data-customer-link","");
+            link.textContent=row.customer.name;
+            if(row.customer.unnamed)link.classList.add("unnamed");
+            if(row.job){
+                const job=document.createElement("span");
+                job.className="customerRowJob";
+                job.textContent=row.job.name;
+                link.appendChild(job);
+            }
+            if(row.customer.key===selected.customer&&(!row.job||row.job.key===selected.job))link.classList.add("active");
+            list.appendChild(link);
+        });
+    }
+
+    async function loadDirectory(){
+        try{
+            const res=await fetch(listUrl,{credentials:"same-origin",headers:{"Accept":"application/json"}});
+            const isJson=(res.headers.get("Content-Type")||"").includes("application/json");
+            const data=isJson?await res.json():null;
+            if(!res.ok||!data)throw new Error((data&&data.error)||"The site could not load the customers (error "+res.status+").");
+            directory=data.customers;
+            recentCount=data.recent_count;
+            renderList();
+        }catch(e){
+            hint.textContent=(e&&e.message)||"Could not load the customers. Check the connection and open this page again.";
+        }
+    }
+
+    // Swap the information only, so the list and what was typed in it stay put.
+    async function showPanel(href,addToHistory){
+        const ticket=++panelTicket;
+        const url=new URL(href,location.href);
+        url.searchParams.set("panel","1");
+        try{
+            const res=await fetch(url,{credentials:"same-origin",headers:{"X-Requested-With":"XMLHttpRequest"}});
+            if(!res.ok)throw new Error("Panel answered "+res.status);
+            const html=await res.text();
+            if(ticket!==panelTicket)return;
+            document.getElementById("customerPanel").outerHTML=html;
+            if(addToHistory)history.pushState({},"",href);
+            renderList();
+            pane.classList.add("collapsed");
+            if(onPhone.matches)document.getElementById("customerPanel").scrollIntoView({block:"start"});
+        }catch(e){
+            location.href=href;  // loading the whole page also shows any sign-in problem
+        }
+    }
+
+    filter.addEventListener("input",renderList);
+    document.getElementById("customersPaneToggle").addEventListener("click",()=>{
+        pane.classList.remove("collapsed");
+        filter.focus();
+    });
+    document.addEventListener("click",event=>{
+        // A job row can be clicked anywhere along it, not only on its name.
+        let link=event.target.closest("a[data-customer-link]");
+        if(!link&&!event.target.closest("a")){
+            const row=event.target.closest("[data-row-link]");
+            if(row)link=row.querySelector("a[data-customer-link]");
+        }
+        if(link&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey){
+            event.preventDefault();
+            showPanel(link.href,true);
+        }
+    });
+    window.addEventListener("popstate",()=>showPanel(location.href,false));
+    if(!onPhone.matches)filter.focus();
+    loadDirectory();
+})();
+</script>
 {% endblock %}
