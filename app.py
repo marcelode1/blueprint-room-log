@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V1"
+APP_BUILD = "2026-11-16 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1366,6 +1366,14 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print("Blueprint mark tables skipped:", e)
+    # Parts marked before the BOM followed the plan: bring their BOMs up to date.
+    try:
+        for row in conn.execute("SELECT DISTINCT project_id FROM blueprint_marks").fetchall():
+            sync_plan_marks_bom(conn, row["project_id"])
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Plan marks BOM catch-up skipped:", e)
 
     try:
         moved = backfill_job_address(conn)
@@ -14866,6 +14874,8 @@ def ensure_blueprint_mark_tables(conn):
         """,
         "CREATE INDEX IF NOT EXISTS blueprint_marks_blueprint_idx ON blueprint_marks(blueprint_id)",
         "CREATE INDEX IF NOT EXISTS blueprint_marks_project_idx ON blueprint_marks(project_id)",
+        # A BOM line kept up to date from the parts marked on the plan.
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_plan_marks BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     for statement in statements:
         try:
@@ -14874,6 +14884,131 @@ def ensure_blueprint_mark_tables(conn):
         except Exception as e:
             conn.rollback()
             print("Blueprint mark migration skipped:", e)
+
+
+def plan_points(text):
+    points = []
+    for pair in (text or "").split():
+        try:
+            x, y = pair.split(",")
+            points.append((float(x), float(y)))
+        except ValueError:
+            continue
+    return points
+
+
+def plan_area(points):
+    total = 0.0
+    for i in range(len(points)):
+        x1, y1 = points[i - 1]
+        x2, y2 = points[i]
+        total += (x1 + x2) * (y1 - y2)
+    return abs(total / 2)
+
+
+def plan_inside(x, y, points):
+    hit = False
+    for i in range(len(points)):
+        xi, yi = points[i]
+        xj, yj = points[i - 1]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            hit = not hit
+    return hit
+
+
+def sync_plan_marks_bom(conn, project_id):
+    """Keep the project's BOM equal to the parts marked on its plans: one line
+    per part per room, the quantity being the number of marks.
+
+    A mark belongs to the smallest traced room around it on its sheet, the
+    same rule the plan page counts by. A line someone has already moved on
+    from "needs purchase" (ordered, received, used) is left as it is, and only
+    what the plan holds beyond it stays on the open line."""
+    # One sync at a time per project, so two quick clicks cannot both add a line.
+    conn.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+    rooms = []
+    for room in conn.execute(
+        "SELECT id, name, blueprint_id, polygon_points FROM rooms WHERE project_id = %s",
+        (project_id,)
+    ).fetchall():
+        points = plan_points(room.get("polygon_points"))
+        if len(points) >= 3:
+            rooms.append({"id": room["id"], "name": room["name"], "blueprint_id": room["blueprint_id"],
+                          "points": points, "area": plan_area(points)})
+    rooms.sort(key=lambda room: room["area"])
+
+    wanted = {}
+    for mark in conn.execute(
+        "SELECT blueprint_id, part_catalog_id, item_name, x, y FROM blueprint_marks WHERE project_id = %s",
+        (project_id,)
+    ).fetchall():
+        room = next((r for r in rooms
+                     if r["blueprint_id"] in (None, mark["blueprint_id"]) and plan_inside(mark["x"], mark["y"], r["points"])),
+                    None)
+        key = (room["id"] if room else None, mark["part_catalog_id"],
+               "" if mark["part_catalog_id"] else (mark["item_name"] or "").strip().lower())
+        entry = wanted.setdefault(key, {"count": 0, "name": mark["item_name"], "room": room})
+        entry["count"] += 1
+
+    def key_of(line):
+        return (line["room_id"], line["part_catalog_id"],
+                "" if line["part_catalog_id"] else (line["item_name"] or "").strip().lower())
+
+    open_lines = {}
+    settled = {}
+    now = utc_now_iso()
+    for line in conn.execute(
+        """
+        SELECT id, room_id, part_catalog_id, item_name, quantity, status
+        FROM inventory_items
+        WHERE project_id = %s AND source_plan_marks = TRUE
+        ORDER BY id
+        """,
+        (project_id,)
+    ).fetchall():
+        key = key_of(line)
+        if line["status"] != "needs_purchase":
+            settled[key] = settled.get(key, 0) + float(line["quantity"] or 0)
+        elif key in open_lines:
+            conn.execute("DELETE FROM inventory_items WHERE id = %s", (line["id"],))
+        else:
+            open_lines[key] = line
+
+    catalog = {}
+    part_ids = {key[1] for key in wanted if key[1]}
+    if part_ids:
+        for part in conn.execute(
+            "SELECT id, brand, item_model FROM part_catalog WHERE id = ANY(%s)",
+            (list(part_ids),)
+        ).fetchall():
+            catalog[part["id"]] = part
+
+    for key in set(wanted) | set(open_lines):
+        entry = wanted.get(key)
+        quantity = max((entry["count"] if entry else 0) - settled.get(key, 0), 0)
+        line = open_lines.get(key)
+        if line and quantity <= 0:
+            conn.execute("DELETE FROM inventory_items WHERE id = %s", (line["id"],))
+        elif line:
+            if float(line["quantity"] or 0) != quantity:
+                conn.execute("UPDATE inventory_items SET quantity = %s, updated_at = %s WHERE id = %s",
+                             (quantity, now, line["id"]))
+        elif quantity > 0:
+            part = catalog.get(key[1]) or {}
+            room = entry["room"]
+            conn.execute(
+                """
+                INSERT INTO inventory_items
+                (item_date, quantity, item_name, item_model, brand, item_condition, location_type,
+                 location_detail, project_id, room_id, status, added_by, part_catalog_id,
+                 source_plan_marks, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, 'new', 'warehouse', %s, %s, %s, 'needs_purchase', %s, %s, TRUE, %s, %s)
+                """,
+                (local_now().date().isoformat(), quantity, entry["name"] or "Item",
+                 part.get("item_model") or "", part.get("brand") or "",
+                 room["name"] if room else "", project_id, key[0],
+                 session.get("user_id") if has_request_context() else None, key[1], now, now)
+            )
 
 
 def blueprint_mark_data(conn, project_id, blueprint_id):
@@ -14933,6 +15068,16 @@ def blueprint_mark_data(conn, project_id, blueprint_id):
     }
 
 
+def resync_plan_marks_bom(conn, project_id):
+    """After a room changes, on its own: the room is saved whatever happens here."""
+    try:
+        sync_plan_marks_bom(conn, project_id)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print("Plan marks BOM sync skipped:", e)
+
+
 @app.route("/project/<int:project_id>/blueprint/<int:blueprint_id>/marks-json", methods=["POST"])
 @admin_required
 def add_blueprint_mark(project_id, blueprint_id):
@@ -14962,6 +15107,7 @@ def add_blueprint_mark(project_id, blueprint_id):
         """,
         (project_id, blueprint_id, part["id"], part["item_name"], x, y, session.get("user_id"), utc_now_iso())
     ).fetchone()
+    sync_plan_marks_bom(conn, project_id)
     conn.commit()
     conn.close()
     return jsonify({"ok": True, "mark": {"id": row["id"], "part_id": part["id"], "name": part["item_name"], "x": x, "y": y}})
@@ -14971,7 +15117,9 @@ def add_blueprint_mark(project_id, blueprint_id):
 @admin_required
 def delete_blueprint_mark(mark_id):
     conn = db()
-    row = conn.execute("DELETE FROM blueprint_marks WHERE id = %s RETURNING id", (mark_id,)).fetchone()
+    row = conn.execute("DELETE FROM blueprint_marks WHERE id = %s RETURNING id, project_id", (mark_id,)).fetchone()
+    if row:
+        sync_plan_marks_bom(conn, row["project_id"])
     conn.commit()
     conn.close()
     if not row:
@@ -16065,6 +16213,7 @@ def add_room(project_id):
             )
         )
         conn.commit()
+        resync_plan_marks_bom(conn, project_id)
         conn.close()
         flash(f"Trace linked to existing room: {existing_room['name']}.")
         if blueprint_id:
@@ -16098,6 +16247,7 @@ def add_room(project_id):
         )
     )
     conn.commit()
+    resync_plan_marks_bom(conn, project_id)
     conn.close()
 
     flash("Room added.")

@@ -288,7 +288,7 @@ async function renderPdfBlueprint(){
         const ctx = canvas.getContext("2d", { alpha:false });
         ctx.fillStyle = "white";
         ctx.fillRect(0,0,canvas.width,canvas.height);
-        await pdfPageCached.render({canvasContext:ctx, viewport:viewportPdf}).promise;
+        await pdfPageCached.render({canvasContext:ctx, viewport:viewportPdf, useRequestAnimationFrame:true}).promise;
         pdfBaseScale = quality;
         if(status) status.textContent = "PDF preview loaded.";
         resizeSvg();
@@ -301,7 +301,12 @@ async function renderPdfBlueprint(){
     }
 }
 
-function applyTransform(){if(wrap)wrap.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;scheduleDetail();}
+function applyTransform(){
+    if(wrap)wrap.style.transform=`translate(${panX}px,${panY}px) scale(${scale})`;
+    // Moving again: drop any sharp copy still being drawn, it is for the old view.
+    if(detailTask){detailTicket++;detailTask.cancel();detailTask=null;}
+    scheduleDetail();
+}
 function hideDetail(){
     detailTicket++;
     if(detailTask){detailTask.cancel();detailTask=null;}
@@ -338,7 +343,8 @@ async function renderDetail(){
     detailTask=pdfPageCached.render({
         canvasContext:ctx,
         viewport:pdfPageCached.getViewport({scale:pdfBaseScale*k}),
-        transform:[1,0,0,1,-x0*k,-y0*k]
+        transform:[1,0,0,1,-x0*k,-y0*k],
+        useRequestAnimationFrame:true
     });
     try{await detailTask.promise;}catch(e){return;}  // replaced by a newer zoom
     if(ticket!==detailTicket)return;
@@ -389,7 +395,7 @@ function redrawTrace(){
 function updateStatus(){if(!drawingMode||!drawStatus)return;drawStatus.innerHTML=drawingMode.checked?`<strong>${points.length?points.length+" point(s) placed":"Drawing mode is on"}</strong>`:"<strong>Drawing mode is off</strong>";}
 if(drawingMode){drawingMode.addEventListener("change",updateStatus);}
 if(viewport){
-    viewport.addEventListener("wheel",e=>{hideRoomContextMenu();e.preventDefault();const delta=e.deltaY<0?1.1:.9;scale=Math.max(.15,Math.min(6,scale*delta));applyTransform();});
+    viewport.addEventListener("wheel",e=>{hideRoomContextMenu();e.preventDefault();const delta=e.deltaY<0?1.1:.9;const rect=viewport.getBoundingClientRect(),mx=e.clientX-rect.left,my=e.clientY-rect.top;const next=Math.max(.15,Math.min(6,scale*delta));panX=mx-(mx-panX)*next/scale;panY=my-(my-panY)*next/scale;scale=next;applyTransform();});
     viewport.addEventListener("mousedown",e=>{if(roomContextMenu&&roomContextMenu.contains(e.target))return;if(e.target&&e.target.classList&&e.target.classList.contains("savedRoom"))return;hideRoomContextMenu();if(e.button===2){e.preventDefault();points.pop();redrawTrace();updateStatus();return;}isDragging=true;didDrag=false;dragStart={x:e.clientX,y:e.clientY};panStart={x:panX,y:panY};});
     window.addEventListener("mousemove",e=>{if(!isDragging)return;const dx=e.clientX-dragStart.x,dy=e.clientY-dragStart.y;if(Math.abs(dx)>3||Math.abs(dy)>3)didDrag=true;panX=panStart.x+dx;panY=panStart.y+dy;applyTransform();});
     window.addEventListener("mouseup",()=>{isDragging=false;});
