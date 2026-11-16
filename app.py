@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-12 V1"
+APP_BUILD = "2026-11-16 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1360,6 +1360,12 @@ def init_db():
     except Exception as e:
         conn.rollback()
         print("Inventory location table skipped:", e)
+
+    try:
+        ensure_blueprint_mark_tables(conn)
+    except Exception as e:
+        conn.rollback()
+        print("Blueprint mark tables skipped:", e)
 
     try:
         moved = backfill_job_address(conn)
@@ -14827,6 +14833,7 @@ def project_blueprint(project_id):
             "SELECT * FROM rooms WHERE project_id = %s ORDER BY id",
             (project_id,)
         ).fetchall()
+    mark_data = blueprint_mark_data(conn, project_id, active_blueprint["id"] if active_blueprint else None)
     conn.close()
     return render_template(
         "project_blueprint.html",
@@ -14834,7 +14841,167 @@ def project_blueprint(project_id):
         rooms=rooms,
         blueprints=blueprints,
         active_blueprint=active_blueprint,
+        can_mark=is_main_admin(),
+        **mark_data,
     )
+
+
+def ensure_blueprint_mark_tables(conn):
+    """Parts marked on a plan sheet, one row per click."""
+    statements = [
+        # The picture each mark of this item is drawn with.
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS symbol_file TEXT",
+        """
+        CREATE TABLE IF NOT EXISTS blueprint_marks (
+            id SERIAL PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            blueprint_id INTEGER NOT NULL REFERENCES project_blueprints(id) ON DELETE CASCADE,
+            part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL,
+            item_name TEXT NOT NULL,
+            x DOUBLE PRECISION NOT NULL,
+            y DOUBLE PRECISION NOT NULL,
+            created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS blueprint_marks_blueprint_idx ON blueprint_marks(blueprint_id)",
+        "CREATE INDEX IF NOT EXISTS blueprint_marks_project_idx ON blueprint_marks(project_id)",
+    ]
+    for statement in statements:
+        try:
+            conn.execute(statement)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("Blueprint mark migration skipped:", e)
+
+
+def blueprint_mark_data(conn, project_id, blueprint_id):
+    """The marks on one sheet, the parts they are of, and what the project's
+    other sheets hold, for counting. Rooms are worked out in the page, from the
+    traced outlines, so a room traced after the marks still counts them."""
+    if not blueprint_id:
+        return {"marks": [], "mark_parts": [], "other_sheet_counts": []}
+    marks = conn.execute(
+        "SELECT id, part_catalog_id, item_name, x, y FROM blueprint_marks WHERE blueprint_id = %s ORDER BY id",
+        (blueprint_id,)
+    ).fetchall()
+    others = conn.execute(
+        """
+        SELECT part_catalog_id, item_name, COUNT(*) AS count
+        FROM blueprint_marks
+        WHERE project_id = %s AND blueprint_id <> %s
+        GROUP BY part_catalog_id, item_name
+        """,
+        (project_id, blueprint_id)
+    ).fetchall()
+    # The admin picks from the whole catalog. Everyone else only needs the
+    # parts already on the plan, to draw them.
+    catalog_filter = "COALESCE(is_active, TRUE) = TRUE OR " if is_main_admin() else ""
+    parts = conn.execute(
+        f"""
+        SELECT id, item_name, item_model, brand, part_number, category, symbol_file,
+               COALESCE(is_active, TRUE) AS is_active
+        FROM part_catalog
+        WHERE {catalog_filter}id IN (SELECT part_catalog_id FROM blueprint_marks WHERE project_id = %s)
+        ORDER BY lower(item_name), lower(COALESCE(brand, '')), lower(COALESCE(item_model, ''))
+        """,
+        (project_id,)
+    ).fetchall()
+    return {
+        "marks": [
+            {"id": m["id"], "part_id": m["part_catalog_id"], "name": m["item_name"], "x": m["x"], "y": m["y"]}
+            for m in marks
+        ],
+        "mark_parts": [
+            {
+                "id": p["id"],
+                "item_name": p["item_name"],
+                "item_model": p["item_model"],
+                "brand": p["brand"],
+                "part_number": p["part_number"],
+                "category": p["category"],
+                "is_active": bool(p["is_active"]),
+                "symbol_url": url_for("storage_file", storage_path=p["symbol_file"]) if p["symbol_file"] else None,
+            }
+            for p in parts
+        ],
+        "other_sheet_counts": [
+            {"part_id": o["part_catalog_id"], "name": o["item_name"], "count": o["count"]}
+            for o in others
+        ],
+    }
+
+
+@app.route("/project/<int:project_id>/blueprint/<int:blueprint_id>/marks-json", methods=["POST"])
+@admin_required
+def add_blueprint_mark(project_id, blueprint_id):
+    payload = request.get_json(silent=True) or {}
+    part_id = optional_int(payload.get("part_catalog_id"))
+    try:
+        x = float(payload.get("x"))
+        y = float(payload.get("y"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "The mark has no position."}), 400
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return jsonify({"ok": False, "error": "The mark has no position."}), 400
+    conn = db()
+    sheet = conn.execute(
+        "SELECT id FROM project_blueprints WHERE id = %s AND project_id = %s",
+        (blueprint_id, project_id)
+    ).fetchone()
+    part = conn.execute("SELECT id, item_name FROM part_catalog WHERE id = %s", (part_id,)).fetchone() if part_id else None
+    if not sheet or not part:
+        conn.close()
+        return jsonify({"ok": False, "error": "That plan sheet or part no longer exists. Reload the page."}), 404
+    row = conn.execute(
+        """
+        INSERT INTO blueprint_marks (project_id, blueprint_id, part_catalog_id, item_name, x, y, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (project_id, blueprint_id, part["id"], part["item_name"], x, y, session.get("user_id"), utc_now_iso())
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "mark": {"id": row["id"], "part_id": part["id"], "name": part["item_name"], "x": x, "y": y}})
+
+
+@app.route("/blueprint-marks/<int:mark_id>/delete-json", methods=["POST"])
+@admin_required
+def delete_blueprint_mark(mark_id):
+    conn = db()
+    row = conn.execute("DELETE FROM blueprint_marks WHERE id = %s RETURNING id", (mark_id,)).fetchone()
+    conn.commit()
+    conn.close()
+    if not row:
+        return jsonify({"ok": False, "error": "That mark was already removed."}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/parts-catalog/<int:part_id>/symbol-json", methods=["POST"])
+@login_required
+def part_symbol_json(part_id):
+    if not (is_main_admin() or can_edit_inventory()):
+        return jsonify({"ok": False, "error": "You do not have permission to change catalog items."}), 403
+    upload = request.files.get("symbol")
+    if not upload or not upload.filename:
+        return jsonify({"ok": False, "error": "Choose a picture for the symbol."}), 400
+    ext = file_ext(upload.filename)
+    if ext not in {"png", "jpg", "jpeg", "webp", "gif"}:
+        return jsonify({"ok": False, "error": "Use a PNG, JPG, WEBP or GIF picture."}), 400
+    raw = upload.read()
+    if len(raw) > 2 * 1024 * 1024:
+        return jsonify({"ok": False, "error": "That picture is too large. Use one under 2 MB."}), 400
+    conn = db()
+    if not conn.execute("SELECT id FROM part_catalog WHERE id = %s", (part_id,)).fetchone():
+        conn.close()
+        return jsonify({"ok": False, "error": "Catalog item not found."}), 404
+    path = upload_bytes_to_storage(raw, f"symbol_{part_id}.{ext}", upload_content_type(upload.filename, upload.content_type))
+    conn.execute("UPDATE part_catalog SET symbol_file = %s, updated_at = %s WHERE id = %s", (path, utc_now_iso(), part_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "symbol_url": url_for("storage_file", storage_path=path)})
 
 
 def custom_file_folder_rows(conn):

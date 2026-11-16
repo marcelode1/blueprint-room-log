@@ -1,0 +1,569 @@
+{# The parts marked on this sheet: drawn on the plan, and counted by room.
+   Uses viewport, svg, scale, didDrag and screenToSvg from the plan script above. #}
+<div class="card blueprintDesktopOnly" id="partCountsCard">
+    <h3>Parts Count</h3>
+    <div id="partCountsBody"></div>
+</div>
+
+<style>
+.partPickRow{display:grid;grid-template-columns:minmax(260px,480px) 160px max-content;gap:12px;align-items:end}
+.partPickRow button{margin:4px 0 10px}
+.partPickBox{position:relative}
+.partPickList{position:absolute;left:0;right:0;top:100%;z-index:300;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);max-height:320px;overflow-y:auto}
+.partPickList[hidden]{display:none}
+.partPickOpt{display:flex!important;align-items:center;gap:10px;width:100%!important;text-align:left!important;background:transparent!important;color:var(--text)!important;border:0!important;border-bottom:1px solid var(--border)!important;border-radius:0!important;padding:8px 10px!important;margin:0!important;min-height:0!important;font-size:13px!important;font-weight:600!important;justify-content:flex-start!important}
+.partPickOpt:last-child{border-bottom:0!important}
+.partPickOpt:hover,.partPickOpt.hl{background:rgba(37,99,235,.12)!important}
+.partPickOpt.create{color:var(--primary)!important;font-weight:800!important}
+.partThumb{flex:0 0 auto;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:#fff;border:1px solid var(--border);overflow:hidden}
+.partThumb img{width:100%;height:100%;object-fit:contain}
+.partThumb svg{width:100%;height:100%}
+.partActive{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;padding:8px 10px;border-radius:8px;background:rgba(31,138,122,.12);border:1px solid rgba(31,138,122,.35)}
+.partActive[hidden]{display:none}
+.partActive button{margin:0}
+.partMarkHelp{margin:8px 0 0}
+#viewport.placingParts{cursor:crosshair}
+#viewport.placingParts .savedRoom{pointer-events:none}
+.partMark{cursor:context-menu}
+.partNewOverlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.partNewOverlay[hidden]{display:none}
+.partNewDialog{background:var(--card);color:var(--text);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.35);max-width:760px;width:100%;max-height:92vh;overflow-y:auto;padding:20px}
+.partNewCheck{display:flex;align-items:center;gap:8px;margin:10px 0}
+.partNewCheck input{width:auto;min-height:auto;margin:0}
+.partNewSymbolRow{display:flex;align-items:center;gap:12px}
+.partNewSymbolRow img{width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:6px;background:#fff}
+.partNewError{margin:10px 0 0;padding:8px 10px;border-radius:8px;background:rgba(220,38,38,.12);color:#b91c1c;font-weight:800}
+.partNewActions{display:flex;gap:10px;margin-top:14px}
+.partCountsTable{width:100%;max-width:760px;border-collapse:collapse;margin-bottom:16px}
+.partCountsTable th{text-align:left;font-size:12px;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--border)}
+.partCountsTable td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.partCountsTable td.num,.partCountsTable th.num{text-align:right;width:110px}
+.partCountsTable tr.roomRow td{font-weight:800;background:rgba(148,163,184,.12)}
+.partCountsTable .itemCell{display:flex;align-items:center;gap:8px}
+</style>
+
+<script>
+(function(){
+    const marks={{ marks|tojson }};
+    const parts={{ mark_parts|tojson }};
+    const otherSheets={{ other_sheet_counts|tojson }};
+    const canMark={{ 'true' if can_mark else 'false' }};
+    const addUrl="{{ url_for('add_blueprint_mark', project_id=project.id, blueprint_id=active_blueprint.id) }}";
+    const deleteUrlTemplate="{{ url_for('delete_blueprint_mark', mark_id=987654321) }}";
+    const createUrl="{{ url_for('create_part_catalog_json') }}";
+    const symbolUrlTemplate="{{ url_for('part_symbol_json', part_id=987654321) }}";
+    const SVG_NS="http://www.w3.org/2000/svg";
+    const defs=document.getElementById("markDefs");
+    const group=document.getElementById("markGroup");
+    const partsById=new Map(parts.map(p=>[p.id,p]));
+    let markSize=28;
+    try{markSize=parseInt(localStorage.getItem("projectonus_mark_size")||"28",10)||28;}catch(e){}
+
+    // ---- what a mark looks like ---------------------------------------------
+    function initials(name){
+        return (name||"?").split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?";
+    }
+    function colorFor(text){
+        let h=0;
+        for(const ch of String(text))h=(h*31+ch.charCodeAt(0))%360;
+        return `hsl(${h},65%,40%)`;
+    }
+    function partKey(mark){return mark.part_id?("p"+mark.part_id):("n"+(mark.name||"").toLowerCase());}
+    function symbolId(mark){return "partSym-"+partKey(mark).replace(/[^a-z0-9]/gi,"_");}
+    function partFor(mark){return (mark.part_id&&partsById.get(mark.part_id))||{item_name:mark.name};}
+
+    // One symbol per part, used by every mark of it.
+    function ensureSymbol(mark,replace){
+        const id=symbolId(mark);
+        let symbol=document.getElementById(id);
+        if(symbol&&!replace)return id;
+        if(symbol)symbol.remove();
+        const part=partFor(mark);
+        symbol=document.createElementNS(SVG_NS,"symbol");
+        symbol.setAttribute("id",id);
+        symbol.setAttribute("viewBox","0 0 100 100");
+        if(part.symbol_url){
+            const image=document.createElementNS(SVG_NS,"image");
+            image.setAttribute("href",part.symbol_url);
+            image.setAttribute("width","100");
+            image.setAttribute("height","100");
+            image.setAttribute("preserveAspectRatio","xMidYMid meet");
+            symbol.appendChild(image);
+        }else{
+            const circle=document.createElementNS(SVG_NS,"circle");
+            circle.setAttribute("cx","50");circle.setAttribute("cy","50");circle.setAttribute("r","46");
+            circle.setAttribute("fill",colorFor(part.item_name||mark.name));
+            circle.setAttribute("stroke","#fff");circle.setAttribute("stroke-width","6");
+            const text=document.createElementNS(SVG_NS,"text");
+            text.setAttribute("x","50");text.setAttribute("y","50");
+            text.setAttribute("text-anchor","middle");text.setAttribute("dominant-baseline","central");
+            text.setAttribute("font-size","40");text.setAttribute("font-weight","700");
+            text.setAttribute("font-family","Arial,sans-serif");text.setAttribute("fill","#fff");
+            text.textContent=initials(part.item_name||mark.name);
+            symbol.appendChild(circle);symbol.appendChild(text);
+        }
+        defs.appendChild(symbol);
+        return id;
+    }
+
+    function thumbFor(part){
+        const span=document.createElement("span");
+        span.className="partThumb";
+        if(part&&part.symbol_url){
+            const img=document.createElement("img");
+            img.src=part.symbol_url;img.alt="";
+            span.appendChild(img);
+        }else{
+            const svgEl=document.createElementNS(SVG_NS,"svg");
+            svgEl.setAttribute("viewBox","0 0 100 100");
+            const use=document.createElementNS(SVG_NS,"use");
+            use.setAttribute("href","#"+ensureSymbol({part_id:part&&part.id,name:part&&part.item_name}));
+            use.setAttribute("width","100");use.setAttribute("height","100");
+            svgEl.appendChild(use);
+            span.appendChild(svgEl);
+        }
+        return span;
+    }
+
+    function drawMark(mark){
+        const use=document.createElementNS(SVG_NS,"use");
+        use.setAttribute("href","#"+ensureSymbol(mark));
+        use.setAttribute("class","partMark");
+        use.setAttribute("x",mark.x-markSize/2);
+        use.setAttribute("y",mark.y-markSize/2);
+        use.setAttribute("width",markSize);
+        use.setAttribute("height",markSize);
+        const title=document.createElementNS(SVG_NS,"title");
+        title.textContent=mark.name;
+        use.appendChild(title);
+        use.markData=mark;
+        mark.element=use;
+        group.appendChild(use);
+    }
+    function redrawMarks(){
+        group.textContent="";
+        marks.forEach(drawMark);
+    }
+
+    // ---- counting, room by room -----------------------------------------------
+    function parsePoints(text){
+        return (text||"").trim().split(/\s+/).map(pair=>pair.split(",").map(Number)).filter(p=>p.length===2&&p.every(Number.isFinite));
+    }
+    function area(points){
+        let a=0;
+        for(let i=0,j=points.length-1;i<points.length;j=i++)a+=(points[j][0]+points[i][0])*(points[j][1]-points[i][1]);
+        return Math.abs(a/2);
+    }
+    function inside(x,y,points){
+        let hit=false;
+        for(let i=0,j=points.length-1;i<points.length;j=i++){
+            const [xi,yi]=points[i],[xj,yj]=points[j];
+            if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)hit=!hit;
+        }
+        return hit;
+    }
+    // The smallest room around a mark wins, so a closet inside a bedroom counts as the closet.
+    const rooms=Array.from(document.querySelectorAll(".savedRoom")).map(poly=>{
+        const points=parsePoints(poly.getAttribute("points"));
+        return {id:poly.dataset.roomId,name:poly.dataset.roomName||"Room",points:points,area:area(points)};
+    }).filter(room=>room.points.length>=3).sort((a,b)=>a.area-b.area);
+    function roomFor(mark){
+        return rooms.find(room=>inside(mark.x,mark.y,room.points))||null;
+    }
+
+    function cell(text,className){
+        const td=document.createElement("td");
+        if(className)td.className=className;
+        if(text instanceof Node)td.appendChild(text);else td.textContent=text;
+        return td;
+    }
+    function itemCell(part,name){
+        const wrap=document.createElement("span");
+        wrap.className="itemCell";
+        wrap.appendChild(thumbFor(part||{item_name:name}));
+        wrap.appendChild(document.createTextNode(name));
+        return wrap;
+    }
+    function table(headers){
+        const t=document.createElement("table");
+        t.className="partCountsTable";
+        const tr=document.createElement("tr");
+        headers.forEach(([label,cls])=>{const th=document.createElement("th");th.textContent=label;if(cls)th.className=cls;tr.appendChild(th);});
+        const thead=document.createElement("thead");thead.appendChild(tr);t.appendChild(thead);
+        t.appendChild(document.createElement("tbody"));
+        return t;
+    }
+
+    function renderCounts(){
+        const body=document.getElementById("partCountsBody");
+        body.textContent="";
+        const saved=marks.filter(m=>m.id);
+        const sheet=new Map();   // part key -> {part, name, count}
+        const byRoom=new Map();  // room name -> Map(part key -> entry)
+        saved.forEach(mark=>{
+            const key=partKey(mark);
+            const part=mark.part_id?partsById.get(mark.part_id):null;
+            if(!sheet.has(key))sheet.set(key,{part:part,name:mark.name,count:0});
+            sheet.get(key).count++;
+            const room=roomFor(mark);
+            const roomName=room?room.name:"Not in a room";
+            if(!byRoom.has(roomName))byRoom.set(roomName,new Map());
+            const items=byRoom.get(roomName);
+            if(!items.has(key))items.set(key,{part:part,name:mark.name,count:0});
+            items.get(key).count++;
+        });
+        const other=new Map();
+        otherSheets.forEach(row=>{
+            const key=row.part_id?("p"+row.part_id):("n"+(row.name||"").toLowerCase());
+            other.set(key,row);
+        });
+        if(!saved.length&&!other.size){
+            const p=document.createElement("p");
+            p.className="muted";
+            p.textContent=canMark?"Nothing marked yet. Pick a part above and click the plan.":"Nothing marked on this plan yet.";
+            body.appendChild(p);
+            return;
+        }
+
+        const h4a=document.createElement("h4");h4a.textContent="This sheet, room by room";body.appendChild(h4a);
+        const roomTable=table([["Room / Part"],["Count","num"]]);
+        const roomNames=Array.from(byRoom.keys()).sort((a,b)=>a==="Not in a room"?1:b==="Not in a room"?-1:a.localeCompare(b));
+        roomNames.forEach(name=>{
+            const items=byRoom.get(name);
+            let total=0;items.forEach(e=>total+=e.count);
+            const tr=document.createElement("tr");tr.className="roomRow";
+            tr.appendChild(cell(name));tr.appendChild(cell(String(total),"num"));
+            roomTable.tBodies[0].appendChild(tr);
+            Array.from(items.values()).sort((a,b)=>a.name.localeCompare(b.name)).forEach(entry=>{
+                const row=document.createElement("tr");
+                row.appendChild(cell(itemCell(entry.part,entry.name)));
+                row.appendChild(cell(String(entry.count),"num"));
+                roomTable.tBodies[0].appendChild(row);
+            });
+        });
+        if(!roomNames.length){
+            const tr=document.createElement("tr");tr.appendChild(cell("Nothing marked on this sheet yet."));tr.appendChild(cell(""));
+            roomTable.tBodies[0].appendChild(tr);
+        }
+        body.appendChild(roomTable);
+
+        const h4b=document.createElement("h4");h4b.textContent="Totals";body.appendChild(h4b);
+        const totals=table([["Part"],["This sheet","num"],["Other sheets","num"],["Whole project","num"]]);
+        const keys=new Set([...sheet.keys(),...other.keys()]);
+        Array.from(keys).map(key=>{
+            const here=sheet.get(key), there=other.get(key);
+            const part=(here&&here.part)||(there&&there.part_id&&partsById.get(there.part_id))||null;
+            return {part:part,name:(here&&here.name)||(there&&there.name)||"",here:here?here.count:0,there:there?there.count:0};
+        }).sort((a,b)=>a.name.localeCompare(b.name)).forEach(entry=>{
+            const tr=document.createElement("tr");
+            tr.appendChild(cell(itemCell(entry.part,entry.name)));
+            tr.appendChild(cell(String(entry.here),"num"));
+            tr.appendChild(cell(String(entry.there),"num"));
+            tr.appendChild(cell(String(entry.here+entry.there),"num"));
+            totals.tBodies[0].appendChild(tr);
+        });
+        body.appendChild(totals);
+    }
+
+    async function postJson(url,payload){
+        const res=await fetch(url,{
+            method:"POST",
+            credentials:"same-origin",
+            headers:{"Content-Type":"application/json","Accept":"application/json"},
+            body:JSON.stringify(payload||{})
+        });
+        const isJson=(res.headers.get("Content-Type")||"").includes("application/json");
+        const data=isJson?await res.json():null;
+        if(!res.ok||!data||!data.ok)throw new Error((data&&data.error)||("The site answered "+res.status+"."));
+        return data;
+    }
+
+    async function removeMark(mark){
+        if(!mark.id)return;
+        try{
+            await postJson(deleteUrlTemplate.replace("987654321",mark.id));
+        }catch(e){
+            alert("Could not remove it: "+e.message);
+            return;
+        }
+        const i=marks.indexOf(mark);
+        if(i>=0)marks.splice(i,1);
+        if(mark.element)mark.element.remove();
+        const s=sessionMarks.indexOf(mark);
+        if(s>=0)sessionMarks.splice(s,1);
+        updateUndo();
+        renderCounts();
+    }
+
+    redrawMarks();
+    renderCounts();
+    if(!canMark)return;
+
+    // ---- marking -----------------------------------------------------------------
+    const pickInput=document.getElementById("partPickInput");
+    const pickList=document.getElementById("partPickList");
+    const activeBar=document.getElementById("partActive");
+    const activeName=document.getElementById("partActiveName");
+    const activeThumb=document.getElementById("partActiveThumb");
+    const undoBtn=document.getElementById("partUndoBtn");
+    const sizeSelect=document.getElementById("partMarkSize");
+    const symbolBtn=document.getElementById("partSymbolBtn");
+    const symbolInput=document.getElementById("partSymbolInput");
+    let active=null;
+    let pickRows=[];
+    let pickIndex=-1;
+    const sessionMarks=[];
+
+    sizeSelect.value=String(markSize);
+    if(sizeSelect.value!==String(markSize)){markSize=28;sizeSelect.value="28";}
+    sizeSelect.addEventListener("change",()=>{
+        markSize=parseInt(sizeSelect.value,10)||28;
+        try{localStorage.setItem("projectonus_mark_size",String(markSize));}catch(e){}
+        redrawMarks();
+    });
+    function updateUndo(){undoBtn.disabled=!sessionMarks.length;}
+    undoBtn.addEventListener("click",()=>{
+        const last=sessionMarks[sessionMarks.length-1];
+        if(last)removeMark(last);
+    });
+
+    function partLabel(part){
+        return [part.item_name,part.brand,part.item_model].filter(Boolean).join(" - ");
+    }
+    function closePick(){pickList.hidden=true;pickList.textContent="";pickRows=[];pickIndex=-1;}
+    function showPick(){
+        const query=pickInput.value.trim().toLowerCase();
+        pickList.textContent="";
+        pickRows=[];pickIndex=-1;
+        if(!query){closePick();return;}
+        const starts=[],contains=[];
+        parts.forEach(part=>{
+            if(part.is_active===false)return;
+            const name=(part.item_name||"").toLowerCase();
+            const hay=[part.item_name,part.brand,part.item_model,part.part_number,part.category].filter(Boolean).join(" ").toLowerCase();
+            if(name.startsWith(query))starts.push(part);
+            else if(hay.includes(query))contains.push(part);
+        });
+        starts.concat(contains).slice(0,12).forEach(part=>pickRows.push({part:part}));
+        pickRows.push({create:pickInput.value.trim()});
+        pickRows.forEach((row,i)=>{
+            const b=document.createElement("button");
+            b.type="button";
+            b.className="partPickOpt"+(row.create!==undefined?" create":"");
+            b.dataset.index=i;
+            if(row.part){
+                b.appendChild(thumbFor(row.part));
+                b.appendChild(document.createTextNode(partLabel(row.part)));
+            }else{
+                b.textContent="+ Create \u201c"+row.create+"\u201d as a new item";
+            }
+            pickList.appendChild(b);
+        });
+        pickList.hidden=false;
+    }
+    function highlight(){
+        Array.from(pickList.children).forEach((el,i)=>el.classList.toggle("hl",i===pickIndex));
+        if(pickList.children[pickIndex])pickList.children[pickIndex].scrollIntoView({block:"nearest"});
+    }
+    function choose(i){
+        const row=pickRows[i];
+        if(!row)return;
+        closePick();
+        if(row.part)startMarking(row.part);
+        else openNewItem(row.create);
+    }
+    pickInput.addEventListener("input",showPick);
+    pickInput.addEventListener("focus",()=>{if(pickInput.value.trim())showPick();});
+    pickInput.addEventListener("keydown",e=>{
+        if(pickList.hidden)return;
+        if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+            e.preventDefault();
+            pickIndex=(pickIndex+(e.key==="ArrowDown"?1:-1)+pickRows.length)%pickRows.length;
+            highlight();
+        }else if(e.key==="Enter"){
+            e.preventDefault();
+            choose(pickIndex>=0?pickIndex:0);
+        }else if(e.key==="Escape"){
+            e.stopPropagation();
+            closePick();
+        }
+    });
+    pickList.addEventListener("mousedown",e=>{
+        const opt=e.target.closest(".partPickOpt");
+        if(!opt)return;
+        e.preventDefault();
+        choose(Number(opt.dataset.index));
+    });
+    pickInput.addEventListener("blur",()=>setTimeout(closePick,150));
+
+    function startMarking(part){
+        active=part;
+        pickInput.value=partLabel(part);
+        activeName.textContent=partLabel(part);
+        activeThumb.replaceWith(Object.assign(thumbFor(part),{id:"partActiveThumb"}));
+        activeBar.hidden=false;
+        viewport.classList.add("placingParts");
+        // Tracing a room and marking parts share the same clicks, so only one at a time.
+        const drawing=document.getElementById("drawingMode");
+        if(drawing&&drawing.checked){drawing.checked=false;drawing.dispatchEvent(new Event("change"));}
+    }
+    function stopMarking(){
+        active=null;
+        activeBar.hidden=true;
+        viewport.classList.remove("placingParts");
+    }
+    document.getElementById("partStopBtn").addEventListener("click",stopMarking);
+    document.addEventListener("keydown",e=>{
+        if(e.key==="Escape"&&active&&document.getElementById("partNewOverlay").hidden)stopMarking();
+    });
+    const drawing=document.getElementById("drawingMode");
+    if(drawing)drawing.addEventListener("change",()=>{if(drawing.checked)stopMarking();});
+
+    viewport.addEventListener("click",async e=>{
+        if(!active||didDrag||e.button!==0)return;
+        if(e.target.closest&&e.target.closest("#roomContextMenu"))return;
+        e.preventDefault();
+        const p=screenToSvg(e);
+        const mark={id:null,part_id:active.id,name:active.item_name,x:Math.round(p.x*10)/10,y:Math.round(p.y*10)/10};
+        marks.push(mark);
+        drawMark(mark);
+        try{
+            const data=await postJson(addUrl,{part_catalog_id:mark.part_id,x:mark.x,y:mark.y});
+            mark.id=data.mark.id;
+            sessionMarks.push(mark);
+            updateUndo();
+            renderCounts();
+        }catch(err){
+            marks.splice(marks.indexOf(mark),1);
+            mark.element.remove();
+            alert("That mark was not saved: "+err.message);
+        }
+    });
+    group.addEventListener("contextmenu",e=>{
+        const use=e.target.closest(".partMark");
+        if(!use||!use.markData)return;
+        e.preventDefault();
+        e.stopPropagation();
+        if(confirm("Remove this "+use.markData.name+" from the plan?"))removeMark(use.markData);
+    });
+    // A right-click on a mark is for removing it, not for undoing a trace point.
+    group.addEventListener("mousedown",e=>{if(e.button===2&&e.target.closest(".partMark"))e.stopPropagation();});
+
+    // ---- symbols ---------------------------------------------------------------
+    // Shrink the picture in the browser: a mark is small, and a phone photo is not.
+    async function symbolBlob(file){
+        const url=URL.createObjectURL(file);
+        try{
+            const img=new Image();
+            await new Promise((resolve,reject)=>{
+                img.onload=resolve;
+                img.onerror=()=>reject(new Error("That picture could not be read. Use a PNG or JPG."));
+                img.src=url;
+            });
+            const k=Math.min(1,256/Math.max(img.naturalWidth,img.naturalHeight));
+            const canvas=document.createElement("canvas");
+            canvas.width=Math.max(1,Math.round(img.naturalWidth*k));
+            canvas.height=Math.max(1,Math.round(img.naturalHeight*k));
+            canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+            return await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
+        }finally{
+            URL.revokeObjectURL(url);
+        }
+    }
+    async function uploadSymbol(part,file){
+        const form=new FormData();
+        form.append("symbol",await symbolBlob(file),"symbol.png");
+        const res=await fetch(symbolUrlTemplate.replace("987654321",part.id),{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"},body:form});
+        const isJson=(res.headers.get("Content-Type")||"").includes("application/json");
+        const data=isJson?await res.json():null;
+        if(!res.ok||!data||!data.ok)throw new Error((data&&data.error)||("The site answered "+res.status+"."));
+        part.symbol_url=data.symbol_url;
+        ensureSymbol({part_id:part.id,name:part.item_name},true);
+        renderCounts();
+    }
+    symbolBtn.addEventListener("click",()=>symbolInput.click());
+    symbolInput.addEventListener("change",async()=>{
+        const file=symbolInput.files[0];
+        symbolInput.value="";
+        if(!file||!active)return;
+        try{
+            await uploadSymbol(active,file);
+            startMarking(active);
+        }catch(e){
+            alert("The symbol was not saved: "+e.message);
+        }
+    });
+
+    // ---- a part that is not in the catalog yet --------------------------------------
+    const overlay=document.getElementById("partNewOverlay");
+    const errorBox=document.getElementById("partNewError");
+    const fields={
+        item_name:document.getElementById("partNewName"),
+        brand:document.getElementById("partNewBrand"),
+        item_model:document.getElementById("partNewModel"),
+        part_number:document.getElementById("partNewPartNumber"),
+        unit_price:document.getElementById("partNewPrice"),
+        install_minutes:document.getElementById("partNewInstall"),
+        category:document.getElementById("partNewCategory"),
+        unit_measure:document.getElementById("partNewUnit"),
+        description:document.getElementById("partNewDescription")
+    };
+    const taxable=document.getElementById("partNewTaxable");
+    const symbolFile=document.getElementById("partNewSymbol");
+    const symbolPreview=document.getElementById("partNewSymbolPreview");
+    const saveBtn=document.getElementById("partNewSaveBtn");
+    function showError(text){errorBox.textContent=text;errorBox.hidden=!text;}
+    function openNewItem(name){
+        Object.values(fields).forEach(f=>{if(f.tagName!=="SELECT")f.value="";});
+        fields.unit_measure.value="UN";
+        taxable.checked=true;
+        symbolFile.value="";
+        symbolPreview.hidden=true;
+        showError("");
+        fields.item_name.value=name||"";
+        overlay.hidden=false;
+        (name?fields.brand:fields.item_name).focus();
+    }
+    function closeNewItem(){overlay.hidden=true;}
+    document.getElementById("partNewCancelBtn").addEventListener("click",closeNewItem);
+    overlay.addEventListener("keydown",e=>{if(e.key==="Escape")closeNewItem();});
+    symbolFile.addEventListener("change",()=>{
+        const file=symbolFile.files[0];
+        if(symbolPreview.src)URL.revokeObjectURL(symbolPreview.src);
+        if(file){symbolPreview.src=URL.createObjectURL(file);symbolPreview.hidden=false;}
+        else symbolPreview.hidden=true;
+    });
+    saveBtn.addEventListener("click",async()=>{
+        if(!fields.item_name.value.trim()){showError("Give the item a name.");fields.item_name.focus();return;}
+        showError("");
+        saveBtn.disabled=true;
+        try{
+            const form=new FormData();
+            Object.entries(fields).forEach(([key,input])=>form.append(key,input.value.trim()));
+            form.append("taxable",taxable.checked?"1":"0");
+            form.append("item_type","part");
+            const res=await fetch(createUrl,{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"},body:form});
+            const isJson=(res.headers.get("Content-Type")||"").includes("application/json");
+            const data=isJson?await res.json():null;
+            // Already in the catalog under the same name, brand and model: use that one.
+            if(!data||!data.item||!data.item.id||(!data.ok&&!data.duplicate))throw new Error((data&&data.error)||("The site answered "+res.status+"."));
+            let part=partsById.get(data.item.id);
+            if(!part){
+                part={id:data.item.id,item_name:data.item.item_name,brand:data.item.brand,item_model:data.item.item_model,part_number:data.item.part_number,category:data.item.category,symbol_url:null,is_active:true};
+                parts.push(part);
+                partsById.set(part.id,part);
+            }
+            if(symbolFile.files[0]){
+                try{await uploadSymbol(part,symbolFile.files[0]);}
+                catch(e){alert("The item was saved, but the symbol was not: "+e.message);}
+            }
+            closeNewItem();
+            startMarking(part);
+        }catch(e){
+            showError(e.message);
+        }finally{
+            saveBtn.disabled=false;
+        }
+    });
+})();
+</script>

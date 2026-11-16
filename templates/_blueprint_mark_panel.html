@@ -1,0 +1,64 @@
+{# Pick a part, then click the plan to mark each one. Admin only. #}
+<div class="card blueprintDesktopOnly" id="partMarkPanel">
+    <h3>Mark Parts on the Plan</h3>
+    <div class="partPickRow">
+        <div class="partPickBox">
+            <label for="partPickInput">Part</label>
+            <input id="partPickInput" placeholder="Start typing a part, e.g. load circuit" autocomplete="off">
+            <div class="partPickList" id="partPickList" hidden></div>
+        </div>
+        <div>
+            <label for="partMarkSize">Symbol Size</label>
+            <select id="partMarkSize">
+                <option value="18">Small</option>
+                <option value="28" selected>Medium</option>
+                <option value="42">Large</option>
+            </select>
+        </div>
+        <button type="button" class="btn-secondary" id="partUndoBtn" disabled>Undo Last Mark</button>
+    </div>
+    <div class="partActive" id="partActive" hidden>
+        <span class="partThumb" id="partActiveThumb"></span>
+        <span>Marking <strong id="partActiveName"></strong>: click the plan to add one.</span>
+        <button type="button" class="btn-secondary" id="partSymbolBtn">Change Symbol</button>
+        <input type="file" id="partSymbolInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        <button type="button" id="partStopBtn">Stop Marking</button>
+    </div>
+    <p class="muted partMarkHelp">Drag to move around the plan and scroll to zoom, as usual. Right-click a mark to remove it. Esc stops marking.</p>
+</div>
+
+<div class="partNewOverlay" id="partNewOverlay" hidden>
+    <div class="partNewDialog" role="dialog" aria-labelledby="partNewTitle">
+        <h3 id="partNewTitle" style="margin-top:0">New Catalog Item</h3>
+        <p class="muted" style="margin-top:0">It is saved to the catalog, so it is there next time too.</p>
+        <div class="grid">
+            <div><label>Material / Item</label><input id="partNewName"></div>
+            <div><label>Brand</label><input id="partNewBrand"></div>
+            <div><label>Model Number</label><input id="partNewModel"></div>
+            <div><label>Part #</label><input id="partNewPartNumber"></div>
+            <div><label>Price</label><input id="partNewPrice" inputmode="decimal" placeholder="0.00"></div>
+            <div><label>Time to Install</label><input id="partNewInstall" placeholder="45m, 1h 30m, 2h"></div>
+            <div><label>Category</label><input id="partNewCategory" placeholder="Lighting, receptacles, low voltage"></div>
+            <div>
+                <label>Unit</label>
+                <select id="partNewUnit">
+                    <option value="UN">UN - Unit</option>
+                    <option value="PR">PR - Pair</option>
+                </select>
+            </div>
+        </div>
+        <label class="partNewCheck"><input type="checkbox" id="partNewTaxable" checked> Taxable</label>
+        <label>Description</label>
+        <textarea id="partNewDescription" rows="2" placeholder="What it is, where it is used, anything to remember"></textarea>
+        <label>Symbol Picture <span class="muted" style="font-weight:400">(what each mark on the plan looks like)</span></label>
+        <div class="partNewSymbolRow">
+            <input type="file" id="partNewSymbol" accept="image/png,image/jpeg,image/webp,image/gif">
+            <img id="partNewSymbolPreview" alt="" hidden>
+        </div>
+        <p class="partNewError" id="partNewError" hidden></p>
+        <div class="partNewActions">
+            <button type="button" id="partNewSaveBtn">Save and Start Marking</button>
+            <button type="button" class="btn-secondary" id="partNewCancelBtn">Cancel</button>
+        </div>
+    </div>
+</div>

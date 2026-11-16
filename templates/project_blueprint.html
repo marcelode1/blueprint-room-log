@@ -37,7 +37,7 @@
                 <button type="button" class="miniDelete" onclick="showBlueprintDelete('{{ bp.id }}')">Delete</button>
                 <div class="deleteBox" id="bpDelete{{ bp.id }}">
                     <strong>Delete this blueprint?</strong>
-                    <p>Rooms will NOT be deleted. They will stay in the project.</p>
+                    <p>Rooms will NOT be deleted. They will stay in the project. Parts marked on this sheet will be removed.</p>
                     <div class="confirmRow">
                         <form method="post" action="{{ url_for('delete_project_blueprint', project_id=project.id, blueprint_id=bp.id) }}">
                             <button type="submit" class="btn-danger">Yes</button>
@@ -148,6 +148,8 @@
 </div>
 {% endif %}
 
+{% if active_blueprint and can_mark %}{% include "_blueprint_mark_panel.html" %}{% endif %}
+
 <div class="card blueprintDesktopOnly">
     <div id="viewport" style="width:100%; height:850px; overflow:hidden; border:1px solid #ddd; background:#eee; position:relative; touch-action:none;">
         <div id="blueprintWrap" style="position:absolute; left:0; top:0; display:inline-block; background:white; transform-origin:0 0;">
@@ -179,6 +181,8 @@
                         <text x="{{ (r.x or 0) + 6 }}" y="{{ (r.y or 0) + 18 }}" class="roomText">{{ r.name }}</text>
                     {% endif %}
                 {% endfor %}
+                <defs id="markDefs"></defs>
+                <g id="markGroup"></g>
                 <polyline id="currentLine" points="" class="currentLine"></polyline>
                 <polygon id="currentPolygon" points="" class="currentPolygon"></polygon>
                 <g id="pointGroup"></g>
@@ -458,4 +462,5 @@ if(showBlueprintTraceBtn){
 }
 window.addEventListener("load",async()=>{await renderPdfBlueprint();resizeSvg();applyTransform();updateStatus();});
 </script>
+{% if active_blueprint %}{% include "_blueprint_marks.html" %}{% endif %}
 {% endblock %}
