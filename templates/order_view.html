@@ -139,7 +139,7 @@
             <p class="muted shipToPreview" id="shipToProjectPreview">{{ project_address or 'This order has no project address - pick the office or type an address.' }}</p>
             <div id="shipToCustomWrap">
                 <label>Delivery Address</label>
-                <textarea name="ship_to_address" id="shipToAddress" rows="3" placeholder="Street, city, state, ZIP">{{ po.ship_to_address or '' }}</textarea>
+                <textarea name="ship_to_address" id="shipToAddress" data-address rows="3" placeholder="Street, city, state, ZIP">{{ po.ship_to_address or '' }}</textarea>
             </div>
         </div>
 

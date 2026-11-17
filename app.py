@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V1"
+APP_BUILD = "2026-11-17 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -12864,6 +12864,282 @@ def part_picture_public(token):
     response = Response(data, mimetype=mimetypes.guess_type(path)[0] or "image/jpeg")
     response.headers["Cache-Control"] = "private, max-age=86400"
     return response
+
+
+# ---------------------------------------------------------------------------
+# Address suggestions while typing. Every address box on the site asks
+# /address-suggest as the user types and fills the street, city, state and ZIP
+# from the one they pick. With GOOGLE_MAPS_API_KEY (or GOOGLE_PLACES_API_KEY)
+# in the environment it asks Google Places, which knows every house number;
+# without one it asks Photon (OpenStreetMap), free and keyless, which in much
+# of the US knows the streets but not the house numbers, so the number the
+# user typed is kept in front of the street it finds.
+# ---------------------------------------------------------------------------
+US_STATE_CODES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "district of columbia": "DC",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "puerto rico": "PR", "guam": "GU", "u.s. virgin islands": "VI", "united states virgin islands": "VI",
+}
+ADDRESS_CACHE = {}
+ADDRESS_CACHE_LOCK = threading.Lock()
+ADDRESS_CACHE_SECONDS = 600
+
+
+def address_google_key():
+    return (os.environ.get("GOOGLE_MAPS_API_KEY") or os.environ.get("GOOGLE_PLACES_API_KEY") or "").strip()
+
+
+def address_cached(key, make, seconds=ADDRESS_CACHE_SECONDS):
+    now = datetime.now().timestamp()
+    with ADDRESS_CACHE_LOCK:
+        hit = ADDRESS_CACHE.get(key)
+        if hit and now - hit[0] < seconds:
+            return hit[1]
+    value = make()
+    with ADDRESS_CACHE_LOCK:
+        if len(ADDRESS_CACHE) > 2000:
+            for old in sorted(ADDRESS_CACHE, key=lambda k: ADDRESS_CACHE[k][0])[:500]:
+                ADDRESS_CACHE.pop(old, None)
+        ADDRESS_CACHE[key] = (now, value)
+    return value
+
+
+def address_fetch_json(url, body=None, headers=None, timeout=6):
+    all_headers = {"User-Agent": "ProjectONus address lookup", "Accept": "application/json"}
+    all_headers.update(headers or {})
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        all_headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=all_headers, method="POST" if data else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def address_state_code(state):
+    state = (state or "").strip()
+    if len(state) == 2:
+        return state.upper()
+    return US_STATE_CODES.get(state.lower(), state)
+
+
+def address_label(street, city, state, zip_code):
+    return build_full_address(street, city, state, zip_code)[1]
+
+
+def address_bias_point():
+    """Where the company is, so suggestions near it come first."""
+    city = (get_app_setting("company_city") or "").strip()
+    state = (get_app_setting("company_state") or "").strip()
+    zip_code = (get_app_setting("company_zip_code") or "").strip()
+    if not (city or state or zip_code):
+        # No company address yet: the newest project's customer is the next best guess.
+        try:
+            conn = db()
+            row = conn.execute(
+                "SELECT customer_city, customer_state FROM projects WHERE COALESCE(customer_city, '') <> '' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            conn.close()
+            if row:
+                city, state = row["customer_city"] or "", row["customer_state"] or ""
+        except Exception:
+            pass
+    place = " ".join(part for part in [city, state, zip_code] if part)
+    if not place:
+        return None
+
+    def find():
+        try:
+            data = address_fetch_json("https://photon.komoot.io/api/?" + urllib.parse.urlencode({"q": place, "limit": 1, "lang": "en"}))
+            coords = (data.get("features") or [{}])[0].get("geometry", {}).get("coordinates")
+            if coords and len(coords) == 2:
+                return (float(coords[1]), float(coords[0]))
+        except Exception as exc:
+            app.logger.warning("Address bias lookup failed: %s", exc)
+        return None
+
+    return address_cached(("bias", place.lower()), find, seconds=86400)
+
+
+ADDRESS_FILLER_WORDS = {
+    "north", "south", "east", "west", "street", "avenue", "ave", "road", "drive", "blvd", "boulevard",
+    "lane", "court", "way", "place", "circle", "cir", "highway", "hwy", "parkway", "pkwy", "terrace",
+    "trail", "apt", "unit", "suite", "ste", "the", "and", "usa",
+}
+
+
+def address_key_words(query):
+    """The words that name the street or town, so a result that shares none of
+    them (the same house number on some other street) can be left out."""
+    skip = ADDRESS_FILLER_WORDS | set(ADDRESS_SUFFIXES) | {name.lower() for name in ADDRESS_SUFFIXES.values()}
+
+
+ADDRESS_SUFFIXES = {
+    "ave": "Avenue", "av": "Avenue", "blvd": "Boulevard", "rd": "Road", "dr": "Drive", "ln": "Lane",
+    "ct": "Court", "pl": "Place", "hwy": "Highway", "pkwy": "Parkway", "cir": "Circle", "ter": "Terrace",
+    "trl": "Trail", "cv": "Cove", "sq": "Square", "pt": "Point", "xing": "Crossing", "expy": "Expressway",
+    "fwy": "Freeway", "tpke": "Turnpike", "aly": "Alley", "bnd": "Bend", "crk": "Creek", "hts": "Heights",
+    "lk": "Lake", "mnr": "Manor", "plz": "Plaza", "rdg": "Ridge", "sta": "Station", "vw": "View", "vlg": "Village",
+}
+ADDRESS_DIRECTIONS = {
+    "n": "North", "s": "South", "e": "East", "w": "West",
+    "ne": "Northeast", "nw": "Northwest", "se": "Southeast", "sw": "Southwest",
+}
+
+
+def address_spelled_out(query):
+    """'2511 W Swann Ave' -> '2511 West Swann Avenue': OpenStreetMap spells
+    street names out and its search misses most abbreviations."""
+    tokens = (query or "").replace(",", " , ").split()
+    words = [i for i, token in enumerate(tokens) if token != ","]
+    out = []
+    for i, token in enumerate(tokens):
+        key = token.lower().rstrip(".")
+        position = words.index(i) if i in words else -1
+        following = tokens[i + 1] if i + 1 < len(tokens) else ""
+        if key in ADDRESS_SUFFIXES and position > 0:
+            token = ADDRESS_SUFFIXES[key]
+        elif key == "st" and position > 0 and (not following or following == "," or following.lower().rstrip(".") in ADDRESS_DIRECTIONS):
+            token = "Street"
+        elif key in ADDRESS_DIRECTIONS and (position <= 1 or not following or following == ","):
+            token = ADDRESS_DIRECTIONS[key]
+        out.append(token)
+    return " ".join(out).replace(" , ", ", ").replace(" ,", ",")
+
+
+def address_typed_number(query):
+    match = re.match(r"\s*(\d+[A-Za-z]?(?:-\d+)?)\s+\S", query or "")
+    return match.group(1) if match else ""
+
+
+def photon_address_suggestions(query, bias):
+    params = {"q": address_spelled_out(query), "limit": 15, "lang": "en"}
+    if bias:
+        params.update({"lat": f"{bias[0]:.4f}", "lon": f"{bias[1]:.4f}"})
+    data = address_fetch_json("https://photon.komoot.io/api/?" + urllib.parse.urlencode(params))
+    typed_number = address_typed_number(query)
+    key_words = address_key_words(params["q"])
+    found = []
+    for feature in data.get("features") or []:
+        p = feature.get("properties") or {}
+        kind = p.get("type") or ""
+        if p.get("housenumber"):
+            street = f"{p.get('housenumber')} {p.get('street') or p.get('name') or ''}".strip()
+        elif kind == "street" and p.get("name"):
+            street = f"{typed_number} {p['name']}".strip() if typed_number else p["name"]
+        elif kind == "house" and p.get("street"):
+            street = f"{typed_number} {p['street']}".strip() if typed_number else p["street"]
+        else:
+            continue
+        country = (p.get("countrycode") or "").upper()
+        if country != "US":
+            continue
+        city = p.get("city") or p.get("town") or p.get("village") or p.get("district") or p.get("county") or ""
+        state = address_state_code(p.get("state"))
+        zip_code = p.get("postcode") or ""
+        label = address_label(street, city, state, zip_code)
+        if key_words:
+            words = re.findall(r"[a-z]+", label.lower())
+            if not any(word.startswith(key) for key in key_words for word in words):
+                continue
+        found.append({"label": label, "street": street, "city": city, "state": state, "zip": zip_code})
+    results, seen = [], set()
+    for item in found:
+        if item["label"].lower() in seen:
+            continue
+        seen.add(item["label"].lower())
+        results.append(item)
+    return results[:6]
+
+
+def google_address_suggestions(query, token, bias, key):
+    body = {"input": query, "includedRegionCodes": ["us"], "languageCode": "en"}
+    if token:
+        body["sessionToken"] = token
+    if bias:
+        body["locationBias"] = {"circle": {"center": {"latitude": bias[0], "longitude": bias[1]}, "radius": 50000.0}}
+    data = address_fetch_json("https://places.googleapis.com/v1/places:autocomplete", body=body, headers={"X-Goog-Api-Key": key})
+    results = []
+    for suggestion in data.get("suggestions") or []:
+        prediction = suggestion.get("placePrediction") or {}
+        place_id = prediction.get("placeId")
+        label = ((prediction.get("text") or {}).get("text") or "").strip()
+        if not place_id or not label:
+            continue
+        label = re.sub(r",\s*(USA|United States)$", "", label)
+        results.append({"label": label, "id": place_id})
+    return results[:6]
+
+
+def google_address_details(place_id, token, key, typed_number=""):
+    url = "https://places.googleapis.com/v1/places/" + urllib.parse.quote(place_id, safe="")
+    if token:
+        url += "?" + urllib.parse.urlencode({"sessionToken": token})
+    data = address_fetch_json(url, headers={"X-Goog-Api-Key": key, "X-Goog-FieldMask": "addressComponents,formattedAddress"})
+    parts = {}
+    for component in data.get("addressComponents") or []:
+        for kind in component.get("types") or []:
+            parts.setdefault(kind, component)
+
+    def text(kind, short=False):
+        component = parts.get(kind) or {}
+        return (component.get("shortText" if short else "longText") or "").strip()
+
+    number = text("street_number") or typed_number
+    street = " ".join(part for part in [number, text("route", short=True)] if part)
+    if text("subpremise"):
+        street = f"{street} #{text('subpremise')}".strip()
+    if not street:
+        street = ((data.get("formattedAddress") or "").split(",")[0]).strip()
+    city = text("locality") or text("postal_town") or text("sublocality") or text("administrative_area_level_3") or text("neighborhood")
+    state = text("administrative_area_level_1", short=True)
+    zip_code = text("postal_code")
+    return {"label": address_label(street, city, state, zip_code), "street": street, "city": city, "state": state, "zip": zip_code}
+
+
+@app.route("/address-suggest")
+@login_required
+def address_suggest():
+    query = re.sub(r"\s+", " ", request.args.get("q") or "").strip()[:160]
+    if len(query) < 4:
+        return jsonify({"results": []})
+    key = address_google_key()
+    provider = "google" if key else "osm"
+    try:
+        bias = address_bias_point()
+        if key:
+            token = (request.args.get("s") or "")[:64]
+            results = google_address_suggestions(query, token, bias, key)
+        else:
+            results = address_cached(("osm", query.lower(), bias), lambda: photon_address_suggestions(query, bias))
+    except Exception as exc:
+        app.logger.warning("Address suggestions failed (%s): %s", provider, exc)
+        return jsonify({"results": [], "provider": provider, "error": "Address lookup is not answering right now."})
+    return jsonify({"results": results, "provider": provider})
+
+
+@app.route("/address-details")
+@login_required
+def address_details():
+    key = address_google_key()
+    place_id = (request.args.get("id") or "").strip()[:300]
+    if not key or not place_id:
+        return jsonify({"error": "Nothing to look up."}), 400
+    typed_number = address_typed_number(request.args.get("q") or "")
+    try:
+        return jsonify(google_address_details(place_id, (request.args.get("s") or "")[:64], key, typed_number))
+    except Exception as exc:
+        app.logger.warning("Address details failed: %s", exc)
+        return jsonify({"error": "Address lookup is not answering right now."}), 502
 
 
 @app.route("/parts-catalog", methods=["GET", "POST"])

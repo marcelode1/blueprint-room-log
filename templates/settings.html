@@ -414,7 +414,7 @@ body.dark .permSuggestWho{color:#94a3b8}
                 <div class="grid">
                     <div>
                         <label>Street Name and Number</label>
-                        <input name="company_street_address" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
+                        <input name="company_street_address" data-address data-address-city="company_city" data-address-state="company_state" data-address-zip="company_zip_code" value="{{ get_app_setting('company_street_address', get_app_setting('company_address')) }}">
                     </div>
                     <div>
                         <label>City</label>

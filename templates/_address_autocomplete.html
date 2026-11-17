@@ -1,0 +1,181 @@
+{# Address suggestions while typing, for every box marked data-address.
+   data-address-city / -state / -zip name the boxes (by name or #id, looked
+   for in the same form first) that the picked address fills; a box without
+   them gets the whole address on one line. In a textarea only the line being
+   typed is looked up and replaced. #}
+<style>
+.addrSuggest{position:fixed;z-index:6000;background:var(--card,#fff);color:var(--text,#0f172a);border:1px solid var(--border,#cbd5e1);border-radius:8px;box-shadow:0 10px 28px rgba(15,23,42,.18);overflow:hidden;max-height:320px;overflow-y:auto}
+.addrSuggest[hidden]{display:none!important}
+.addrSuggestItem{display:block;width:100%;min-height:0;margin:0;padding:9px 12px;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;font-size:14px;font-weight:600;text-align:left;cursor:pointer;white-space:normal;line-height:1.3}
+.addrSuggestItem small{display:block;font-weight:400;color:var(--muted,#64748b);font-size:12px}
+.addrSuggestItem:hover,.addrSuggestItem.active{background:rgba(14,165,233,.14)}
+.addrSuggestNote{padding:6px 12px;font-size:11px;color:var(--muted,#64748b);border-top:1px solid var(--border,#e2e8f0)}
+</style>
+<script>
+(function(){
+    if(window.addressSuggestReady)return;
+    window.addressSuggestReady=true;
+    const box=document.createElement("div");
+    box.className="addrSuggest";
+    box.hidden=true;
+    box.setAttribute("role","listbox");
+    let field=null,items=[],active=-1,timer=null,lastQuery="",provider="",session="",asked=0,filling=false;
+    const newSession=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2);
+
+    function lineRange(el){
+        if(el.tagName!=="TEXTAREA")return [0,el.value.length];
+        const pos=el.selectionStart==null?el.value.length:el.selectionStart;
+        const start=el.value.lastIndexOf("\n",pos-1)+1;
+        let end=el.value.indexOf("\n",pos);
+        if(end<0)end=el.value.length;
+        return [start,end];
+    }
+    function queryOf(el){
+        const [a,b]=lineRange(el);
+        return el.value.slice(a,b).trim();
+    }
+    function target(el,which){
+        const ref=el.getAttribute("data-address-"+which);
+        if(!ref)return null;
+        const scope=el.form||el.closest("[data-address-scope]")||document;
+        const find=root=>ref.startsWith("#")?root.querySelector(ref):root.querySelector('[name="'+ref+'"]')||root.querySelector("#"+CSS.escape(ref));
+        return find(scope)||find(document);
+    }
+    function place(){
+        if(!field||box.hidden)return;
+        const r=field.getBoundingClientRect();
+        if(r.bottom<0||r.top>innerHeight){hide();return;}
+        box.style.left=Math.max(4,r.left)+"px";
+        box.style.width=Math.max(r.width,280)+"px";
+        const below=innerHeight-r.bottom;
+        if(below<200&&r.top>below){
+            box.style.top="";
+            box.style.bottom=(innerHeight-r.top+2)+"px";
+        }else{
+            box.style.bottom="";
+            box.style.top=(r.bottom+2)+"px";
+        }
+    }
+    function hide(){box.hidden=true;items=[];active=-1;}
+    function setActive(i){
+        active=i;
+        box.querySelectorAll(".addrSuggestItem").forEach((b,n)=>b.classList.toggle("active",n===i));
+    }
+    function show(list){
+        box.textContent="";
+        items=list;
+        active=-1;
+        if(!list.length){hide();return;}
+        list.forEach((item,i)=>{
+            const b=document.createElement("button");
+            b.type="button";
+            b.className="addrSuggestItem";
+            b.setAttribute("role","option");
+            const cut=item.label.indexOf(", ");
+            b.textContent=cut>0?item.label.slice(0,cut):item.label;
+            if(cut>0){const s=document.createElement("small");s.textContent=item.label.slice(cut+2);b.appendChild(s);}
+            b.addEventListener("mousedown",e=>e.preventDefault());
+            b.addEventListener("click",()=>pick(i));
+            box.appendChild(b);
+        });
+        const note=document.createElement("div");
+        note.className="addrSuggestNote";
+        note.textContent=provider==="google"?"Powered by Google":"Addresses © OpenStreetMap contributors — check the house number";
+        box.appendChild(note);
+        if(!box.parentNode)document.body.appendChild(box);
+        box.hidden=false;
+        place();
+    }
+    function set(el,value){
+        if(!el||value==null)return;
+        el.value=value;
+        el.dispatchEvent(new Event("input",{bubbles:true}));
+        el.dispatchEvent(new Event("change",{bubbles:true}));
+    }
+    async function pick(i){
+        const el=field,item=items[i];
+        if(!el||!item)return;
+        hide();
+        let full=item;
+        if(item.id&&!item.street){
+            try{
+                const url="/address-details?"+new URLSearchParams({id:item.id,s:session,q:queryOf(el)});
+                const res=await fetch(url,{credentials:"same-origin"});
+                const data=await res.json();
+                if(res.ok&&!data.error)full=data;
+            }catch(err){}
+            session=newSession();
+        }
+        const city=target(el,"city"),state=target(el,"state"),zip=target(el,"zip");
+        const split=city||state||zip;
+        const text=split?(full.street||full.label):full.label;
+        lastQuery=text;
+        filling=true;
+        if(el.tagName==="TEXTAREA"){
+            const [a,b]=lineRange(el);
+            el.value=el.value.slice(0,a)+text+el.value.slice(b);
+            el.selectionStart=el.selectionEnd=a+text.length;
+            el.dispatchEvent(new Event("input",{bubbles:true}));
+            el.dispatchEvent(new Event("change",{bubbles:true}));
+        }else{
+            set(el,text);
+        }
+        if(full.street||!item.id){
+            set(city,full.city||"");
+            set(state,full.state||"");
+            set(zip,full.zip||"");
+        }
+        filling=false;
+        el.focus();
+    }
+    async function lookup(el){
+        const q=queryOf(el);
+        if(q.length<4||!/[a-z]/i.test(q)){hide();return;}
+        if(q===lastQuery&&!box.hidden)return;
+        lastQuery=q;
+        const ticket=++asked;
+        try{
+            const res=await fetch("/address-suggest?"+new URLSearchParams({q,s:session}),{credentials:"same-origin"});
+            if(!res.ok)return;
+            const data=await res.json();
+            if(ticket!==asked||field!==el)return;
+            provider=data.provider||"";
+            show(data.results||[]);
+        }catch(err){}
+    }
+    function attach(el){
+        if(el.dataset.addressReady)return;
+        el.dataset.addressReady="1";
+        // The browser's own saved-address list would sit on top of ours.
+        el.setAttribute("autocomplete","off");
+    }
+    document.addEventListener("focusin",e=>{
+        const el=e.target;
+        if(!el.matches||!el.matches("[data-address]"))return;
+        attach(el);
+        if(field!==el){field=el;session=newSession();lastQuery="";}
+    });
+    document.addEventListener("input",e=>{
+        const el=e.target;
+        if(!el.matches||!el.matches("[data-address]")||el.readOnly)return;
+        if(field!==el){attach(el);field=el;session=newSession();lastQuery="";}
+        if(filling)return;
+        clearTimeout(timer);
+        timer=setTimeout(()=>lookup(el),280);
+    });
+    document.addEventListener("keydown",e=>{
+        if(box.hidden||e.target!==field)return;
+        if(e.key==="ArrowDown"){e.preventDefault();setActive((active+1)%items.length);}
+        else if(e.key==="ArrowUp"){e.preventDefault();setActive(active<=0?items.length-1:active-1);}
+        else if(e.key==="Enter"&&active>=0){e.preventDefault();pick(active);}
+        else if(e.key==="Escape"){e.preventDefault();hide();}
+        else if(e.key==="Tab"){hide();}
+    });
+    document.addEventListener("focusout",e=>{
+        if(e.target===field)setTimeout(()=>{if(document.activeElement!==field)hide();},150);
+    });
+    addEventListener("scroll",place,true);
+    addEventListener("resize",place);
+    document.querySelectorAll("[data-address]").forEach(attach);
+})();
+</script>

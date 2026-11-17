@@ -13,7 +13,7 @@
         <datalist id="customerNameOptions">{% for option in customer_options %}<option value="{{ option }}"></option>{% endfor %}</datalist>
         <datalist id="jobNameOptions">{% for option in job_options %}<option value="{{ option }}"></option>{% endfor %}</datalist>
         <label>Customer Street Address</label>
-        <input id="customerStreet" name="customer_address" value="{{ project.customer_street or project.customer_address or '' }}" autocomplete="street-address" placeholder="Start typing the street address">
+        <input id="customerStreet" name="customer_address" data-address data-address-city="customer_city" data-address-state="customer_state" data-address-zip="customer_zip" value="{{ project.customer_street or project.customer_address or '' }}" autocomplete="street-address" placeholder="Start typing the street address">
         <div class="grid">
             <div>
                 <label>City</label>
@@ -36,7 +36,7 @@
             <label>Project Name <span class="muted" style="font-weight:400">(leave blank to use the job name)</span></label>
             <input name="name" value="{{ project.name }}">
             <label>Job Street Address</label>
-            <input name="job_address" value="{{ project.job_street or project.job_address or '' }}" autocomplete="street-address" placeholder="Leave blank to use the customer address">
+            <input name="job_address" data-address data-address-city="job_city" data-address-state="job_state" data-address-zip="job_zip" value="{{ project.job_street or project.job_address or '' }}" autocomplete="street-address" placeholder="Leave blank to use the customer address">
             <div class="grid">
                 <div><label>City</label><input name="job_city" value="{{ project.job_city or '' }}"></div>
                 <div><label>State</label><input name="job_state" maxlength="2" placeholder="FL" value="{{ project.job_state or '' }}"></div>
@@ -56,7 +56,7 @@
                 Billing address is the same as customer address
             </label>
             <label>Billing Street Address</label>
-            <input id="billingStreet" name="billing_street" value="{{ (project.customer_street or project.customer_address or '') if billing_same else (project.billing_street or '') }}" autocomplete="billing street-address" placeholder="Billing street address">
+            <input id="billingStreet" name="billing_street" data-address data-address-city="billing_city" data-address-state="billing_state" data-address-zip="billing_zip" value="{{ (project.customer_street or project.customer_address or '') if billing_same else (project.billing_street or '') }}" autocomplete="billing street-address" placeholder="Billing street address">
             <div class="grid">
                 <div>
                     <label>Billing City</label>

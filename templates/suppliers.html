@@ -13,7 +13,7 @@
             <div><label>Contact Name</label><input name="contact_name"></div>
             <div><label>Phone</label><input name="phone" type="tel"></div>
             <div><label>Email</label><input name="email" type="email"></div>
-            <div><label>Street Address</label><input name="address"></div>
+            <div><label>Street Address</label><input name="address" data-address data-address-city="city" data-address-state="state" data-address-zip="zip"></div>
             <div><label>City</label><input name="city"></div>
             <div><label>State</label><input name="state" maxlength="2"></div>
             <div><label>ZIP</label><input name="zip"></div>
@@ -37,7 +37,7 @@
                     <div><label>Contact Name</label><input name="contact_name" value="{{ s.contact_name or '' }}"></div>
                     <div><label>Phone</label><input name="phone" type="tel" value="{{ s.phone or '' }}"></div>
                     <div><label>Email</label><input name="email" type="email" value="{{ s.email or '' }}"></div>
-                    <div><label>Street Address</label><input name="address" value="{{ s.street or '' }}"></div>
+                    <div><label>Street Address</label><input name="address" data-address data-address-city="city" data-address-state="state" data-address-zip="zip" value="{{ s.street or '' }}"></div>
                     <div><label>City</label><input name="city" value="{{ s.city or '' }}"></div>
                     <div><label>State</label><input name="state" maxlength="2" value="{{ s.state or '' }}"></div>
                     <div><label>ZIP</label><input name="zip" value="{{ s.zip or '' }}"></div>
