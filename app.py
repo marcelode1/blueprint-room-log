@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V4"
+APP_BUILD = "2026-11-16 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -14876,6 +14876,10 @@ def ensure_blueprint_mark_tables(conn):
         "CREATE INDEX IF NOT EXISTS blueprint_marks_project_idx ON blueprint_marks(project_id)",
         # A BOM line kept up to date from the parts marked on the plan.
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_plan_marks BOOLEAN NOT NULL DEFAULT FALSE",
+        # Where a room's name sits on the plan, and how big. Empty: the top-left corner, 14px.
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS label_x DOUBLE PRECISION",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS label_y DOUBLE PRECISION",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS label_size DOUBLE PRECISION",
     ]
     for statement in statements:
         try:
@@ -15076,6 +15080,79 @@ def resync_plan_marks_bom(conn, project_id):
     except Exception as e:
         conn.rollback()
         print("Plan marks BOM sync skipped:", e)
+
+
+@app.route("/parts-catalog/<int:part_id>/plan-info-json")
+@login_required
+def part_plan_info_json(part_id):
+    """The details shown when a part's symbol is clicked on a plan."""
+    project_id = request.args.get("project_id", type=int)
+    conn = db()
+    if not is_main_admin():
+        # Others see only parts marked on a plan of a project they work on.
+        allowed = project_id and user_can_access_project(conn, project_id) and conn.execute(
+            "SELECT 1 FROM blueprint_marks WHERE project_id = %s AND part_catalog_id = %s LIMIT 1",
+            (project_id, part_id)
+        ).fetchone()
+        if not allowed:
+            conn.close()
+            return jsonify({"ok": False, "error": "Not found."}), 404
+    part = conn.execute("SELECT * FROM part_catalog WHERE id = %s", (part_id,)).fetchone()
+    conn.close()
+    if not part:
+        return jsonify({"ok": False, "error": "That part is no longer in the catalog."}), 404
+    info = {
+        "description": part.get("description") or "",
+        "unit_measure": part.get("unit_measure") or "",
+        "install_minutes": part.get("install_minutes"),
+        "item_type": part.get("item_type") or "",
+    }
+    if is_main_admin():
+        info["unit_price"] = part.get("unit_price")
+    return jsonify({"ok": True, "part": info})
+
+
+@app.route("/rooms/<int:room_id>/label-json", methods=["POST"])
+@login_required
+def room_label_json(room_id):
+    """Move a room's name on the plan, or change its size."""
+    if not (is_main_admin() or has_perm("create_rooms")):
+        return jsonify({"ok": False, "error": "You do not have permission to change rooms."}), 403
+    payload = request.get_json(silent=True) or {}
+    sets, values = [], []
+    if "x" in payload or "y" in payload:
+        if payload.get("x") is None and payload.get("y") is None:
+            sets += ["label_x = NULL", "label_y = NULL"]  # back to the room's corner
+        else:
+            try:
+                x = float(payload.get("x"))
+                y = float(payload.get("y"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "The name has no position."}), 400
+            if not (math.isfinite(x) and math.isfinite(y)) or abs(x) > 1e6 or abs(y) > 1e6:
+                return jsonify({"ok": False, "error": "The name has no position."}), 400
+            sets += ["label_x = %s", "label_y = %s"]
+            values += [x, y]
+    if "size" in payload:
+        try:
+            size = float(payload.get("size"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "That is not a size."}), 400
+        if not math.isfinite(size):
+            return jsonify({"ok": False, "error": "That is not a size."}), 400
+        sets.append("label_size = %s")
+        values.append(min(max(size, 4.0), 400.0))
+    if not sets:
+        return jsonify({"ok": False, "error": "Nothing to change."}), 400
+    conn = db()
+    room = conn.execute("SELECT id, project_id FROM rooms WHERE id = %s", (room_id,)).fetchone()
+    if not room or not user_can_access_project(conn, room["project_id"]):
+        conn.close()
+        return jsonify({"ok": False, "error": "That room no longer exists. Reload the page."}), 404
+    conn.execute(f"UPDATE rooms SET {', '.join(sets)} WHERE id = %s", (*values, room_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/project/<int:project_id>/blueprint/<int:blueprint_id>/marks-json", methods=["POST"])

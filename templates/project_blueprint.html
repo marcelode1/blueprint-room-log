@@ -131,7 +131,11 @@
                             <a href="{{ url_for('room', room_id=r.id) }}">
                                 <polygon points="{{ r.polygon_points }}" class="savedRoom {{ r.room_color or 'blue' }}" data-room-id="{{ r.id }}" data-room-name="{{ r.name }}" data-delete-url="{{ url_for('delete_room', room_id=r.id) }}"></polygon>
                             </a>
-                            <text x="{{ (r.x or 0) + 6 }}" y="{{ (r.y or 0) + 18 }}" class="roomText">{{ r.name }}</text>
+                            {% set lsize = r.label_size if r.label_size is number else 14 %}
+                            <text x="{{ r.label_x if r.label_x is number else (r.x or 0) + 6 }}" y="{{ r.label_y if r.label_y is number else (r.y or 0) + 4 + lsize }}"
+                                  class="roomText{% if can_rooms %} roomLabelEdit{% endif %}" data-room-id="{{ r.id }}" data-size="{{ lsize }}"
+                                  data-label-url="{{ url_for('room_label_json', room_id=r.id) }}"
+                                  style="font-size:{{ lsize }}px; stroke-width:{{ [3, lsize * 0.28]|max }}px">{{ r.name }}</text>
                         {% endif %}
                     {% endfor %}
                     <defs id="markDefs"></defs>
@@ -167,6 +171,24 @@
             </div>
             {% endif %}
 
+            {% if can_rooms %}
+            <div class="labelBox" id="labelBox" hidden>
+                <div class="labelBoxTitle" id="labelBoxTitle"></div>
+                <label class="labelBoxLabel" for="labelSize">Font Size</label>
+                <div class="labelBoxRow">
+                    <button type="button" class="labelStep" id="labelSmaller" title="Smaller">A&minus;</button>
+                    <input type="number" id="labelSize" min="4" max="400" step="1">
+                    <button type="button" class="labelStep" id="labelBigger" title="Bigger">A+</button>
+                </div>
+                <input type="range" id="labelSizeRange" min="6" max="160" step="1" aria-label="Font size">
+                <div class="labelBoxRow">
+                    <button type="button" class="btn-secondary" id="labelReset" title="Put the name back in the room's corner">Reset Position</button>
+                    <button type="button" id="labelDone">Done</button>
+                </div>
+                <p class="labelBoxHelp">Drag the name to move it anywhere.</p>
+            </div>
+            {% endif %}
+
             <div class="planHint" id="planHint"></div>
         </div>
 
@@ -180,6 +202,9 @@
                 {% if active_blueprint %}
                 <section class="drawerPanel" data-panel="count" data-title="Parts Count" hidden>
                     <div id="partCountsBody"></div>
+                </section>
+                <section class="drawerPanel" data-panel="part" data-title="Part on the Plan" hidden>
+                    <div id="partInfoBody"></div>
                 </section>
                 {% endif %}
 
@@ -271,6 +296,22 @@
 .green{fill:rgba(34,197,94,.22);stroke:#16a34a}.yellow{fill:rgba(234,179,8,.28);stroke:#ca8a04}
 .purple{fill:rgba(168,85,247,.22);stroke:#9333ea}.orange{fill:rgba(249,115,22,.24);stroke:#ea580c}.gray{fill:rgba(107,114,128,.20);stroke:#4b5563}
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
+.roomLabelEdit{pointer-events:auto}
+.planViewport:not(.placingParts):not(.spaceHand)[data-tool=hand] .roomLabelEdit,
+.planViewport:not(.placingParts):not(.spaceHand)[data-tool=pick] .roomLabelEdit{cursor:move}
+.planViewport:not(.placingParts):not(.spaceHand)[data-tool=hand] .roomLabelEdit:hover,
+.planViewport:not(.placingParts):not(.spaceHand)[data-tool=pick] .roomLabelEdit:hover,
+.roomLabelEdit.labelActive{fill:#1d4ed8}
+.labelBox{position:absolute;z-index:58;width:230px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(15,23,42,.28);padding:10px 12px;cursor:default}
+.labelBox[hidden]{display:none}
+.labelBoxTitle{font-weight:800;margin-bottom:6px;word-break:break-word}
+.labelBoxLabel{display:block;font-size:12px;font-weight:700;color:var(--muted);margin:0 0 4px}
+.labelBoxRow{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.labelBoxRow button{min-height:32px!important;padding:4px 10px!important;margin:0!important;font-size:13px!important;width:auto!important}
+.labelStep{background:transparent!important;color:var(--text)!important;border:1px solid var(--border)!important;font-weight:800!important}
+#labelSize{width:70px!important;min-height:32px!important;height:32px;margin:0!important;padding:3px 6px!important;text-align:center}
+#labelSizeRange{width:100%;margin:0 0 10px;padding:0;min-height:0}
+.labelBoxHelp{margin:0;font-size:12px;color:var(--muted)}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
 .tracePoint{fill:#2563eb;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke;pointer-events:none}
 .currentLine,.currentPolygon{vector-effect:non-scaling-stroke}
@@ -391,6 +432,7 @@ const snapToggle=document.getElementById("snapToggle"),snapSizeInput=document.ge
 const roomContextMenu=document.getElementById("roomContextMenu"),roomContextTitle=document.getElementById("roomContextTitle"),roomContextDeleteForm=document.getElementById("roomContextDeleteForm");
 const planHint=document.getElementById("planHint"),zoomInput=document.getElementById("zoomInput");
 const traceBar=document.getElementById("traceBar");
+const LABEL_EDIT={{ 'true' if can_rooms else 'false' }};
 const CAN_MARK={{ 'true' if (active_blueprint and can_mark) else 'false' }};
 const VIEW_KEY="projectonus_plan_view_{{ active_blueprint.id if active_blueprint else 0 }}";
 const MIN_SCALE=.05,MAX_SCALE=12;
@@ -612,7 +654,7 @@ function updateHint(){
     if(!planHint)return;
     const t=planTool();
     let text;
-    if(t==="hand")text=spaceHand?"Moving: drag the plan":"Move: drag the plan · the mouse wheel zooms";
+    if(t==="hand")text=spaceHand?"Moving: drag the plan":"Move: drag the plan · the mouse wheel zooms"+(LABEL_EDIT?" · drag a room name to move it, click it to resize":"");
     else if(t==="trace")text="Trace: click to add corners · drag a corner to move it · click a line to add a corner on it · right-click a corner to remove it";
     else if(window.planActivePart)text="Marking "+window.planActivePart+": click to place one · right-click a mark to remove it · Esc stops";
     else if(CAN_MARK)text="Pick: choose a part in Mark Parts to place it · or click a room to open it";
@@ -907,6 +949,110 @@ if(traceBar){
     });
 }
 
+// ---- room names: drag to move, click for the size ------------------------------------
+const labelBox=document.getElementById("labelBox");
+let labelDrag=null,labelBoxFor=null,labelSizeTimer=null;
+function labelsActive(){
+    const t=planTool();
+    return LABEL_EDIT&&!spaceHand&&(t==="hand"||t==="pick")&&!viewport.classList.contains("placingParts");
+}
+async function saveLabel(el,payload){
+    try{
+        const res=await fetch(el.dataset.labelUrl,{method:"POST",credentials:"same-origin",
+            headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(payload)});
+        const data=(res.headers.get("Content-Type")||"").includes("application/json")?await res.json():null;
+        if(!res.ok||!data||!data.ok)throw new Error((data&&data.error)||("The site answered "+res.status+"."));
+    }catch(e){alert("The room name was not saved: "+e.message);}
+}
+function setLabelSize(el,size,save){
+    size=Math.max(4,Math.min(400,Math.round(size)));
+    el.dataset.size=size;
+    el.style.fontSize=size+"px";
+    el.style.strokeWidth=Math.max(3,size*.28)+"px";
+    if(labelBoxFor===el){
+        const box=document.getElementById("labelSize"),range=document.getElementById("labelSizeRange");
+        if(document.activeElement!==box)box.value=size;
+        range.value=Math.min(size,160);
+    }
+    if(save){clearTimeout(labelSizeTimer);labelSizeTimer=setTimeout(()=>saveLabel(el,{size:size}),350);}
+}
+function closeLabelBox(){
+    if(!labelBox)return;
+    labelBox.hidden=true;
+    if(labelBoxFor)labelBoxFor.classList.remove("labelActive");
+    labelBoxFor=null;
+}
+function openLabelBox(el){
+    if(!labelBox)return;
+    closeLabelBox();
+    labelBoxFor=el;
+    el.classList.add("labelActive");
+    document.getElementById("labelBoxTitle").textContent=el.textContent;
+    setLabelSize(el,parseFloat(el.dataset.size)||14,false);
+    document.getElementById("labelSize").value=parseFloat(el.dataset.size)||14;
+    labelBox.hidden=false;
+    const r=el.getBoundingClientRect(),v=viewport.getBoundingClientRect();
+    labelBox.style.left=Math.max(8,Math.min(r.left-v.left,v.width-labelBox.offsetWidth-8))+"px";
+    let top=r.bottom-v.top+8;
+    if(top+labelBox.offsetHeight>v.height-8)top=Math.max(8,r.top-v.top-labelBox.offsetHeight-8);
+    labelBox.style.top=top+"px";
+}
+document.querySelectorAll(".roomLabelEdit").forEach(el=>{
+    el.addEventListener("mousedown",e=>{
+        if(e.button!==0||!labelsActive())return;  // otherwise the plan gets the click as usual
+        e.preventDefault();
+        e.stopPropagation();
+        hideRoomContextMenu();
+        labelDrag={el:el,sx:e.clientX,sy:e.clientY,ox:parseFloat(el.getAttribute("x"))||0,oy:parseFloat(el.getAttribute("y"))||0,moved:false};
+    });
+    el.addEventListener("click",e=>{if(labelsActive()){e.preventDefault();e.stopPropagation();}});
+});
+window.addEventListener("mousemove",e=>{
+    if(!labelDrag)return;
+    const dx=e.clientX-labelDrag.sx,dy=e.clientY-labelDrag.sy;
+    if(!labelDrag.moved&&Math.abs(dx)<=3&&Math.abs(dy)<=3)return;
+    if(!labelDrag.moved){labelDrag.moved=true;closeLabelBox();}
+    labelDrag.el.setAttribute("x",Math.round(labelDrag.ox+dx/scale));
+    labelDrag.el.setAttribute("y",Math.round(labelDrag.oy+dy/scale));
+});
+window.addEventListener("mouseup",()=>{
+    if(!labelDrag)return;
+    const d=labelDrag;
+    labelDrag=null;
+    if(d.moved)saveLabel(d.el,{x:parseFloat(d.el.getAttribute("x")),y:parseFloat(d.el.getAttribute("y"))});
+    else if(labelBoxFor===d.el)closeLabelBox();
+    else openLabelBox(d.el);
+});
+if(labelBox){
+    labelBox.addEventListener("mousedown",e=>e.stopPropagation());
+    labelBox.addEventListener("click",e=>e.stopPropagation());
+    labelBox.addEventListener("wheel",e=>e.stopPropagation());
+    const sizeInput=document.getElementById("labelSize"),range=document.getElementById("labelSizeRange");
+    document.getElementById("labelSmaller").addEventListener("click",()=>{if(labelBoxFor)setLabelSize(labelBoxFor,(parseFloat(labelBoxFor.dataset.size)||14)/1.2,true);});
+    document.getElementById("labelBigger").addEventListener("click",()=>{if(labelBoxFor)setLabelSize(labelBoxFor,(parseFloat(labelBoxFor.dataset.size)||14)*1.2,true);});
+    sizeInput.addEventListener("input",()=>{const v=parseFloat(sizeInput.value);if(labelBoxFor&&v>=4)setLabelSize(labelBoxFor,v,true);});
+    sizeInput.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();closeLabelBox();}});
+    range.addEventListener("input",()=>{if(labelBoxFor)setLabelSize(labelBoxFor,parseFloat(range.value),true);});
+    document.getElementById("labelDone").addEventListener("click",closeLabelBox);
+    document.getElementById("labelReset").addEventListener("click",()=>{
+        const el=labelBoxFor;
+        if(!el)return;
+        const poly=svg.querySelector(`.savedRoom[data-room-id="${el.dataset.roomId}"]`);
+        if(poly){
+            const pts=poly.getAttribute("points").trim().split(/\s+/).map(p=>p.split(",").map(Number)).filter(p=>p.length===2&&p.every(Number.isFinite));
+            if(pts.length){
+                el.setAttribute("x",Math.min(...pts.map(p=>p[0]))+6);
+                el.setAttribute("y",Math.min(...pts.map(p=>p[1]))+4+(parseFloat(el.dataset.size)||14));
+            }
+        }
+        saveLabel(el,{x:null,y:null});
+        openLabelBox(el);
+    });
+    document.addEventListener("mousedown",e=>{if(labelBoxFor&&!e.target.closest(".roomLabelEdit"))closeLabelBox();});
+    document.addEventListener("keydown",e=>{if(e.key==="Escape")closeLabelBox();});
+}
+document.addEventListener("plantool",()=>{if(!labelsActive())closeLabelBox();});
+
 // ---- the side panel ----------------------------------------------------------------------
 const drawer=document.getElementById("planDrawer");
 function openDrawer(name){
@@ -917,11 +1063,13 @@ function openDrawer(name){
     drawer.hidden=false;
     drawer.dataset.panel=name;
     document.querySelectorAll("[data-drawer]").forEach(b=>b.classList.toggle("active",b.dataset.drawer===name));
+    document.dispatchEvent(new CustomEvent("plandrawer",{detail:name}));
 }
 function closeDrawer(){
     drawer.hidden=true;
     drawer.dataset.panel="";
     document.querySelectorAll("[data-drawer]").forEach(b=>b.classList.remove("active"));
+    document.dispatchEvent(new CustomEvent("plandrawer",{detail:""}));
 }
 document.querySelectorAll("[data-drawer]").forEach(b=>b.addEventListener("click",()=>{
     if(!drawer.hidden&&drawer.dataset.panel===b.dataset.drawer)closeDrawer();else openDrawer(b.dataset.drawer);
