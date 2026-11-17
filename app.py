@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V6"
+APP_BUILD = "2026-11-17 V7"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -6603,7 +6603,16 @@ def back_project_id():
         (as_int(args.get("room_id")), "SELECT project_id FROM rooms WHERE id = %s"),
         (as_int(args.get("note_id")), "SELECT rooms.project_id FROM notes JOIN rooms ON notes.room_id = rooms.id WHERE notes.id = %s"),
         (as_int(args.get("task_id")), "SELECT project_id FROM tasks WHERE id = %s"),
+        (as_int(args.get("estimate_id")), "SELECT project_id FROM estimates WHERE id = %s"),
+        (as_int(args.get("invoice_id")), "SELECT project_id FROM invoices WHERE id = %s"),
     ]
+    # One customer's proposal list: the job of their newest proposal.
+    customer = re.sub(r"\s+", " ", request.args.get("customer") or "").strip() if request.endpoint == "estimates" else ""
+    if customer:
+        lookups.append((customer,
+                        "SELECT project_id FROM estimates WHERE project_id IS NOT NULL AND "
+                        "lower(btrim(regexp_replace(COALESCE(customer_name, ''), '\\s+', ' ', 'g'))) = lower(%s) "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1"))
     conn = None
     try:
         if not project_id:
