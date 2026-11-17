@@ -83,6 +83,7 @@
                                 <button type="button" class="roomsGo" data-room-id="{{ r.id }}" data-url="{{ url_for('room', room_id=r.id) }}" title="{% if r.polygon_points %}Show it on the plan{% else %}Not traced on the plan: opens the room{% endif %}">
                                     <span class="roomsDot {{ r.room_color or 'blue' }}Dot"></span>{{ r.name }}{% if not r.polygon_points %} <small>not traced</small>{% endif %}
                                 </button>
+                                {% if can_rooms and active_blueprint %}{% if r.polygon_points %}<button type="button" class="roomsTrace" data-edit-room="{{ r.id }}" title="Change this room's outline on the plan">Edit</button>{% else %}<button type="button" class="roomsTrace" data-room-id="{{ r.id }}" data-room-name="{{ r.name }}" title="Draw this room's outline on the plan">Trace</button>{% endif %}{% endif %}
                                 <a class="roomsOpen" href="{{ url_for('room', room_id=r.id) }}">Open</a>
                             </div>
                             {% endfor %}
@@ -158,6 +159,7 @@
             {% if is_main_admin() %}
             <div id="roomContextMenu" class="roomContextMenu" hidden>
                 <div class="roomContextTitle" id="roomContextTitle"></div>
+                <button type="button" class="btn-secondary roomContextDeleteButton" id="roomContextEditBtn" style="margin-bottom:6px!important">Edit Outline</button>
                 <form method="post" id="roomContextDeleteForm" onsubmit="return confirm('Send a 6-digit delete PIN to your admin email?');">
                     <input type="hidden" name="next" value="{{ request.full_path }}">
                     <button type="submit" class="btn-danger roomContextDeleteButton">Delete Room</button>
@@ -270,7 +272,9 @@
 .purple{fill:rgba(168,85,247,.22);stroke:#9333ea}.orange{fill:rgba(249,115,22,.24);stroke:#ea580c}.gray{fill:rgba(107,114,128,.20);stroke:#4b5563}
 .roomText{font-size:14px;font-weight:bold;fill:#111;paint-order:stroke;stroke:white;stroke-width:4px;stroke-linejoin:round;pointer-events:none}
 .currentLine{fill:none;stroke:#2563eb;stroke-width:3;stroke-dasharray:6 4;pointer-events:none}.currentPolygon{fill:rgba(37,99,235,.15);stroke:#2563eb;stroke-width:2;pointer-events:none}
-.tracePoint{fill:#2563eb;stroke:white;stroke-width:2;pointer-events:none}
+.tracePoint{fill:#2563eb;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke;pointer-events:none}
+.currentLine,.currentPolygon{vector-effect:non-scaling-stroke}
+.editingRoom{opacity:.18;pointer-events:none!important}
 .roomFlash{animation:roomFlash 1.8s ease-out}
 @keyframes roomFlash{0%,45%{fill-opacity:.75;stroke-width:9}100%{fill-opacity:1;stroke-width:2}}
 
@@ -316,6 +320,8 @@ button.planTextLink.active{background:rgba(11,115,185,.12)!important}
 .roomsRow[hidden]{display:none}
 .roomsGo{flex:1;display:flex!important;align-items:center;gap:8px;justify-content:flex-start!important;text-align:left;background:none!important;color:var(--text)!important;border:0!important;padding:7px 8px!important;margin:0!important;min-height:0!important;font-weight:600!important;font-size:13px!important;box-shadow:none!important;width:auto!important}
 .roomsGo small{color:var(--muted);font-weight:500}
+.roomsTrace{font-size:12px!important;font-weight:700!important;padding:4px 8px!important;margin:0!important;min-height:0!important;width:auto!important;background:transparent!important;color:#1f8a7a!important;border:0!important;box-shadow:none!important;cursor:pointer}
+.roomsTrace:hover{background:rgba(31,138,122,.14)!important}
 .roomsOpen{font-size:12px;font-weight:700;padding:4px 8px;text-decoration:none;color:var(--primary)}
 @media(max-width:1440px){
     .tbGroup{padding:0 5px}
@@ -390,6 +396,8 @@ const VIEW_KEY="projectonus_plan_view_{{ active_blueprint.id if active_blueprint
 const MIN_SCALE=.05,MAX_SCALE=12;
 let points=[],scale=1,panX=0,panY=0,isDragging=false,didDrag=false,dragStart={x:0,y:0},panStart={x:0,y:0};
 let downAt=null;
+let dragCorner=-1;      // index of the trace corner being dragged
+let editingRoom=null;   // the saved room whose outline is being changed
 // "pick": click to place the chosen part, or open a room. "hand": drag to move. "trace": click room corners.
 let tool="hand";
 let spaceHand=false;  // Space held: move the plan whatever the tool
@@ -488,6 +496,7 @@ function applyTransform(){
     scheduleDetail();
     showZoom();
     saveView();
+    if(pointGroup&&points.length)pointGroup.querySelectorAll("circle").forEach(c=>c.setAttribute("r",cornerR()));
 }
 function zoomTo(next,mx,my){
     next=clampScale(next);
@@ -604,7 +613,7 @@ function updateHint(){
     const t=planTool();
     let text;
     if(t==="hand")text=spaceHand?"Moving: drag the plan":"Move: drag the plan · the mouse wheel zooms";
-    else if(t==="trace")text="Trace: click each corner of the room · right-click takes the last corner back";
+    else if(t==="trace")text="Trace: click to add corners · drag a corner to move it · click a line to add a corner on it · right-click a corner to remove it";
     else if(window.planActivePart)text="Marking "+window.planActivePart+": click to place one · right-click a mark to remove it · Esc stops";
     else if(CAN_MARK)text="Pick: choose a part in Mark Parts to place it · or click a room to open it";
     else text="Pick: click a room to open it";
@@ -630,11 +639,20 @@ if(viewport){
         if(onPlanChrome(e.target))return;
         hideRoomContextMenu();
         if(e.button===2){
-            if(planTool()==="trace"){e.preventDefault();points.pop();redrawTrace();updateTraceBar();}
+            if(planTool()==="trace"){
+                e.preventDefault();
+                const i=cornerAt(e);
+                if(i>=0)points.splice(i,1);else points.pop();
+                redrawTrace();updateTraceBar();
+            }
             return;
         }
         didDrag=false;
         downAt={x:e.clientX,y:e.clientY};
+        if(e.button===0&&planTool()==="trace"){
+            const i=cornerAt(e);
+            if(i>=0){e.preventDefault();dragCorner=i;return;}
+        }
         // Move with the hand, with Space held, or with the middle button in any tool.
         if(e.button!==1&&planTool()!=="hand")return;
         e.preventDefault();
@@ -645,12 +663,22 @@ if(viewport){
     });
     window.addEventListener("mousemove",e=>{
         if(downAt&&(Math.abs(e.clientX-downAt.x)>3||Math.abs(e.clientY-downAt.y)>3))didDrag=true;
+        if(dragCorner>=0){
+            const p=screenToSvg(e);
+            points[dragCorner]={x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))};
+            redrawTrace();
+            return;
+        }
+        if(planTool()==="trace"&&!isDragging&&e.target&&viewport.contains(e.target))
+            viewport.style.cursor=cornerAt(e)>=0?"move":"";
+        else if(viewport.style.cursor)viewport.style.cursor="";
         if(!isDragging)return;
         panX=panStart.x+e.clientX-dragStart.x;
         panY=panStart.y+e.clientY-dragStart.y;
         applyTransform();
     });
     window.addEventListener("mouseup",()=>{
+        if(dragCorner>=0){dragCorner=-1;updateTraceBar();}
         isDragging=false;
         downAt=null;
         viewport.classList.remove("panning");
@@ -663,7 +691,10 @@ if(viewport){
         if(planTool()!=="trace"||didDrag||e.button!==0)return;
         e.preventDefault();
         const p=screenToSvg(e);
-        points.push({x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))});
+        const corner={x:snapValue(Math.round(p.x)),y:snapValue(Math.round(p.y))};
+        // On a line of the outline: a new corner there. Anywhere else: the next corner.
+        const edge=edgeAt(p);
+        if(edge>=0)points.splice(edge+1,0,corner);else points.push(corner);
         redrawTrace();
         updateTraceBar();
     });
@@ -730,6 +761,8 @@ function showRoomContextMenu(e,roomShape){
     e.stopPropagation();
     if(roomContextTitle)roomContextTitle.textContent=roomShape.dataset.roomName||"Room";
     roomContextDeleteForm.action=roomShape.dataset.deleteUrl||"";
+    const editBtn=document.getElementById("roomContextEditBtn");
+    if(editBtn)editBtn.dataset.roomId=roomShape.dataset.roomId;
     const r=viewport.getBoundingClientRect();
     roomContextMenu.style.left=Math.max(8,Math.min(e.clientX-r.left,r.width-198))+"px";
     roomContextMenu.style.top=Math.max(8,Math.min(e.clientY-r.top,r.height-110))+"px";
@@ -789,20 +822,44 @@ document.querySelectorAll(".roomsGo").forEach(b=>b.addEventListener("click",()=>
 
 // ---- tracing a room --------------------------------------------------------------------
 function snapValue(v){if(!snapToggle||!snapToggle.checked)return v;const g=parseInt(snapSizeInput.value||"15");return Math.round(v/g)*g;}
+function cornerR(){return 6/Math.max(scale,.02);}
+function cornerAt(e){
+    const p=screenToSvg(e),tol=10/scale;
+    let best=-1,bestD=tol;
+    points.forEach((q,i)=>{const d=Math.hypot(q.x-p.x,q.y-p.y);if(d<=bestD){bestD=d;best=i;}});
+    return best;
+}
+function edgeAt(p){
+    const n=points.length;
+    if(n<2)return -1;
+    const tol=7/scale;
+    const edges=n>=3?n:n-1;
+    for(let i=0;i<edges;i++){
+        const a=points[i],b=points[(i+1)%n];
+        const dx=b.x-a.x,dy=b.y-a.y,len=dx*dx+dy*dy;
+        if(!len)continue;
+        const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/len));
+        if(Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy))<=tol)return i;
+    }
+    return -1;
+}
 function redrawTrace(){
     const pts=points.map(p=>`${p.x},${p.y}`).join(" ");
     if(currentLine)currentLine.setAttribute("points",pts);
     if(currentPolygon)currentPolygon.setAttribute("points",pts);
     if(pointGroup){
         pointGroup.innerHTML="";
-        const r=Math.max(3,5/Math.max(scale,.2));
+        const r=cornerR();
         points.forEach(p=>{const c=document.createElementNS("http://www.w3.org/2000/svg","circle");c.setAttribute("cx",p.x);c.setAttribute("cy",p.y);c.setAttribute("r",r);c.setAttribute("class","tracePoint");pointGroup.appendChild(c);});
     }
+    // The outline on the plan is what Save Room sends, finished or not.
+    setTraceFields(points.length>=3?points:[]);
 }
 function updateTraceBar(){
     if(!traceBar)return;
     traceBar.hidden=tool!=="trace";
-    document.getElementById("traceCount").textContent=points.length?`${points.length} corner${points.length===1?"":"s"} placed`:"Click each corner of the room";
+    const who=editingRoom?(editingRoom.dataset.roomName||"room")+": ":"";
+    document.getElementById("traceCount").textContent=who+(points.length?`${points.length} corner${points.length===1?"":"s"}`:"click each corner of the room");
     document.getElementById("traceFinishBtn").disabled=points.length<3;
     document.getElementById("traceUndoBtn").disabled=!points.length;
     document.getElementById("traceClearBtn").disabled=!points.length;
@@ -839,7 +896,15 @@ if(traceBar){
     document.getElementById("traceUndoBtn").addEventListener("click",()=>{points.pop();redrawTrace();updateTraceBar();});
     document.getElementById("traceClearBtn").addEventListener("click",clearTrace);
     document.getElementById("traceFinishBtn").addEventListener("click",finishTrace);
-    document.getElementById("traceCloseBtn").addEventListener("click",()=>{clearTrace();setTool("hand");});
+    document.getElementById("traceCloseBtn").addEventListener("click",()=>{
+        clearTrace();
+        if(editingRoom||roomActionSelect&&roomActionSelect.value==="link"){
+            endEditing();
+            if(roomActionSelect){roomActionSelect.value="create";updateRoomAction();updateRoomTraceNote();}
+            closeDrawer();
+        }
+        setTool("hand");
+    });
 }
 
 // ---- the side panel ----------------------------------------------------------------------
@@ -894,7 +959,9 @@ function updateRoomTraceNote(){
     roomTraceNote.textContent="";
     roomTraceNote.classList.toggle("traced",!!count);
     const text=document.createElement("div");
-    text.textContent=count?`Outline attached: ${count} corners on this sheet.`
+    const linking=roomActionSelect&&roomActionSelect.value==="link";
+    text.textContent=count?`Outline attached: ${count} corners on this sheet. Save Room keeps it.`
+        :linking?"No outline yet. Trace the room on the plan, then Save Room."
         :(traceBar?"No outline yet. The room is saved without one, or draw it first with Trace Room.":"No outline: the room is saved without one.");
     roomTraceNote.appendChild(text);
     if(traceBar){
@@ -906,7 +973,59 @@ function updateRoomTraceNote(){
         roomTraceNote.appendChild(b);
     }
 }
-if(roomActionSelect)roomActionSelect.addEventListener("change",updateRoomAction);
+if(roomActionSelect)roomActionSelect.addEventListener("change",()=>{updateRoomAction();updateRoomTraceNote();});
+const roomForm=document.getElementById("roomForm");
+if(roomForm)roomForm.addEventListener("submit",e=>{
+    const outline=document.getElementById("polygon_points").value;
+    if(points.length&&points.length<3){
+        e.preventDefault();
+        alert("The outline has only "+points.length+" corner"+(points.length===1?"":"s")+". Click at least 3 corners, or Clear it to save the room without one.");
+        setTool("trace");
+        return;
+    }
+    if(roomActionSelect&&roomActionSelect.value==="link"&&!outline){
+        e.preventDefault();
+        alert("Trace the room on the plan first: linking gives an existing room its outline.");
+        if(traceBar)setTool("trace");
+    }
+});
+// Give an existing room an outline, or change the one it has: the trace is
+// saved to that room (Link to Existing Room) when Save Room is pressed.
+function endEditing(){if(editingRoom){editingRoom.classList.remove("editingRoom");editingRoom=null;}}
+function traceExistingRoom(id,name,startPoints){
+    if(!traceBar||!roomActionSelect)return;
+    closeRoomsMenu();
+    hideRoomContextMenu();
+    endEditing();
+    roomActionSelect.value="link";
+    if(existingRoomSelect)existingRoomSelect.value=id;
+    updateRoomAction();
+    points=startPoints||[];
+    redrawTrace();
+    if(!points.length)setTraceFields([]);
+    openDrawer("room");
+    document.getElementById("drawerTitle").textContent=(startPoints?"Edit Outline: ":"Trace: ")+name;
+    setTool("trace");
+}
+function editRoomOutline(id){
+    const poly=svg&&svg.querySelector(`.savedRoom[data-room-id="${id}"]`);
+    if(!poly)return;
+    const pts=poly.getAttribute("points").trim().split(/\s+/).map(p=>p.split(",").map(Number))
+        .filter(p=>p.length===2&&p.every(Number.isFinite)).map(p=>({x:p[0],y:p[1]}));
+    traceExistingRoom(id,poly.dataset.roomName||"Room",pts);
+    editingRoom=poly;
+    poly.classList.add("editingRoom");
+    updateTraceBar();
+}
+document.querySelectorAll(".roomsTrace").forEach(b=>b.addEventListener("click",()=>{
+    if(b.dataset.editRoom)editRoomOutline(b.dataset.editRoom);
+    else traceExistingRoom(b.dataset.roomId,b.dataset.roomName||"Room",null);
+}));
+const roomContextEditBtn=document.getElementById("roomContextEditBtn");
+if(roomContextEditBtn){
+    if(!traceBar)roomContextEditBtn.remove();
+    else roomContextEditBtn.addEventListener("click",()=>editRoomOutline(roomContextEditBtn.dataset.roomId));
+}
 if(existingRoomSelect)existingRoomSelect.addEventListener("change",updateRoomAction);
 updateRoomAction();
 updateRoomTraceNote();

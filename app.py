@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V3"
+APP_BUILD = "2026-11-16 V4"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -16182,6 +16182,13 @@ def add_room(project_id):
         conn.close()
         flash("You do not have access to this project.")
         return redirect(url_for("index"))
+    if room_action == "link" and not polygon_points:
+        # Linking with no outline would wipe the room's outline, not add one.
+        conn.close()
+        flash("Trace the room on the plan before linking it to an existing room.")
+        if blueprint_id:
+            return redirect(room_return_url(project_id, blueprint_id))
+        return redirect(url_for("project", project_id=project_id))
     if room_action == "link":
         existing_room = conn.execute(
             "SELECT id, name FROM rooms WHERE id = %s AND project_id = %s",
@@ -16222,7 +16229,7 @@ def add_room(project_id):
         conn.commit()
         resync_plan_marks_bom(conn, project_id)
         conn.close()
-        flash(f"Trace linked to existing room: {existing_room['name']}.")
+        flash(f"Outline saved for {existing_room['name']}.")
         if blueprint_id:
             return redirect(room_return_url(project_id, blueprint_id))
         return redirect(url_for("project", project_id=project_id))
