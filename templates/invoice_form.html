@@ -127,6 +127,13 @@
             </div>
         </div>
 
+        {% if is_estimate %}
+            {# Above the item lines: the line panel is sticky and a screen tall, so
+               anything after it scrolls underneath it and is never seen. #}
+            {% from "_payment_schedule.html" import payment_schedule_editor with context %}
+            {{ payment_schedule_editor(estimate_schedule_for_form(invoice)) }}
+        {% endif %}
+
         <div class="invoiceLinePanel">
             <div class="invoiceLineToolbar">
                 <h3>{{ doc_word }} Item Lines</h3>
@@ -242,10 +249,6 @@
                 <p class="invoiceLiveBalance"><span>{{ (proposal_word ~ ' Total') if is_estimate else 'Balance Due' }}</span><strong id="liveBalanceDue">$0.00</strong></p>
             </div>
         </div>
-        {% if is_estimate %}
-            {% from "_payment_schedule.html" import payment_schedule_editor with context %}
-            {{ payment_schedule_editor(estimate_schedule_for_form(invoice)) }}
-        {% endif %}
 
         <template id="invoiceLineTemplate">
             <tr class="invoiceLine">

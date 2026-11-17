@@ -58,7 +58,8 @@
 .scheduleSum.off{color:#b91c1c}
 </style>
 <script>
-(function(){
+// Waits for the whole page: the proposal total it shares out comes after it.
+document.addEventListener("DOMContentLoaded",function(){
     const rowsBox=document.getElementById("scheduleRows");
     const template=document.getElementById("scheduleRowTemplate");
     const sumLine=document.getElementById("scheduleSum");
@@ -109,7 +110,7 @@
     rowsBox.addEventListener("input",refresh);
     if(totalBox)new MutationObserver(refresh).observe(totalBox,{childList:true,characterData:true,subtree:true});
     refresh();
-})();
+});
 </script>
 {%- endmacro %}
 
