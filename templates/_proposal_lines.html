@@ -1,0 +1,76 @@
+{# A proposal's items laid out room by room: the picture, then the item with
+   its description under it, then quantity, unit price and total price.
+   Import "with context" (format_invoice_money comes from the context).
+   formatted=True when the prices are already money strings (the PDF page). #}
+{% macro proposal_lines(lines, formatted=False) -%}
+{% set groups = proposal_location_groups(lines) %}
+<div class="propLines">
+    {% if groups|selectattr("title")|list %}<h2 class="propLocTitle">Locations</h2>{% endif %}
+    {% for group in groups %}
+    <div class="propRoomBlock">
+        {% if group.title %}<div class="propRoom">{{ group.title }}</div>{% endif %}
+        <table class="propTable">
+            <thead>
+                <tr>
+                    <th class="propItemHead" colspan="2">Item</th>
+                    <th class="propNum propQty">Qty</th>
+                    <th class="propNum">Unit Price</th>
+                    <th class="propNum">Total Price</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for line in group.lines %}
+                <tr>
+                    <td class="propPic">{% if line.picture_file %}<img src="{{ line.picture_src or part_picture_src(line.picture_file) }}" alt="">{% endif %}</td>
+                    <td class="propItem">
+                        <div class="propName">{{ line.item_name }}</div>
+                        {% if line.description %}<div class="propDesc">{{ line.description }}</div>{% endif %}
+                    </td>
+                    <td class="propNum propQty">{{ format_proposal_qty(line.quantity) }}</td>
+                    <td class="propNum">{{ line.unit_price if formatted else format_invoice_money(line.unit_price) }}</td>
+                    <td class="propNum propTotal">{{ line.line_total if formatted else format_invoice_money(line.line_total) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endfor %}
+</div>
+<style>
+.propLines{color:#172033}
+.propLocTitle{font-size:26px;font-weight:800;margin:6px 0 0;padding:0 0 10px;border-bottom:1px solid #d7dee9;text-transform:none;letter-spacing:0;color:#172033}
+.propRoom{font-size:21px;font-weight:500;padding:12px 0 10px;border-bottom:1px solid #d7dee9}
+.propRoomBlock{margin-bottom:14px}
+.propTable{width:100%;border-collapse:collapse}
+.propTable th{background:transparent;text-align:left;font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:#94a3b8;padding:16px 8px 10px;border-bottom:1px solid #d7dee9}
+.propTable th:first-child,.propTable td:first-child{padding-left:0}
+.propTable th:last-child,.propTable td:last-child{padding-right:0}
+.propTable td{padding:18px 8px;border-bottom:1px solid #e5e9f0;vertical-align:top}
+.propTable tbody tr{page-break-inside:avoid;break-inside:avoid}
+.propPic{width:120px}
+.propPic img{display:block;width:110px;height:110px;object-fit:contain;background:#fff}
+.propName{font-weight:700;font-size:15px;white-space:pre-line}
+.propDesc{font-size:14px;margin-top:3px;white-space:pre-line}
+.propNum{text-align:right!important;white-space:nowrap;font-size:15px;width:1%}
+.propQty{text-align:center!important;padding-left:18px!important;padding-right:18px!important}
+.propTotal{font-weight:700}
+@media(max-width:640px){
+    .propPic{width:64px}
+    .propPic img{width:58px;height:58px}
+    .propName{font-size:13.5px}
+    .propDesc{font-size:12.5px}
+    .propNum{font-size:13px}
+    .propQty{padding-left:6px!important;padding-right:6px!important}
+    .propTable td{padding:12px 5px}
+    .propRoom{font-size:18px}
+    .propLocTitle{font-size:22px}
+}
+@media print{
+    .propPic{width:92px}
+    .propPic img{width:84px;height:84px}
+    .propName,.propNum{font-size:12.5px}
+    .propDesc{font-size:11.5px}
+    .propTable td{padding:12px 8px}
+}
+</style>
+{%- endmacro %}

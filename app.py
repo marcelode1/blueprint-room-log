@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V2"
+APP_BUILD = "2026-11-17 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2959,6 +2959,74 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         job_y += 10
 
     y = max(customer_y, job_y, divider_y + 104) + 18
+    pictures = {}
+
+    def line_picture(line):
+        path = line.get("picture_file")
+        if not path:
+            return None
+        if path not in pictures:
+            pictures[path] = download_storage_file(path)
+        return pictures.get(path)
+
+    if is_proposal_doc:
+        # A proposal reads room by room: the picture, the item with its
+        # description under it, then quantity, unit price and total price.
+        headers = [
+            ("ITEM", left, 200, fitz.TEXT_ALIGN_LEFT),
+            ("QTY", 366, 40, fitz.TEXT_ALIGN_CENTER),
+            ("UNIT PRICE", 414, 82, fitz.TEXT_ALIGN_RIGHT),
+            ("TOTAL PRICE", 500, 88, fitz.TEXT_ALIGN_RIGHT),
+        ]
+        pic = 50
+        name_x = left + pic + 14
+        name_w = 356 - name_x
+        groups = proposal_location_groups(lines)
+        if any(group["title"] for group in groups):
+            text(left, y + 4, "Locations", 15, bold=True)
+            y += 14
+            page.draw_line((left, y), (right, y), color=grid_color, width=0.6)
+            y += 22
+        for group in groups:
+            first_height = max(pic, 30) + 16
+            if y + (32 if group["title"] else 0) + 21 + first_height > footer_top - 8:
+                page = doc.new_page(width=page_width, height=page_height)
+                y = 56
+            if group["title"]:
+                text(left, y, group["title"], 12.5)
+                y += 9
+                page.draw_line((left, y), (right, y), color=grid_color, width=0.6)
+                y += 24
+            y = draw_table_header(y)
+            for line in group["lines"]:
+                name_lines = wrapped_lines(line.get("item_name"), name_w, 8.8)
+                desc_lines = wrapped_lines(line.get("description"), name_w, 8) if line.get("description") else []
+                picture = line_picture(line)
+                text_height = len(name_lines) * 11 + len(desc_lines) * 10 + 4
+                row_height = max(text_height, pic if picture else 0, 18) + 16
+                if y + row_height > footer_top - 8:
+                    page = doc.new_page(width=page_width, height=page_height)
+                    y = draw_table_header(44)
+                row_top = y
+                if picture:
+                    try:
+                        page.insert_image(fitz.Rect(left, y - 2, left + pic, y - 2 + pic), stream=picture, keep_proportion=True)
+                    except Exception:
+                        pass
+                line_y = y + 8
+                for value in name_lines:
+                    box_text(name_x, line_y, name_w, value, 8.8, bold=True)
+                    line_y += 11
+                for value in desc_lines:
+                    text(name_x, line_y, value, 8)
+                    line_y += 10
+                box_text(366, y + 8, 40, format_proposal_qty(line.get("quantity")), 8.8, align=fitz.TEXT_ALIGN_CENTER)
+                box_text(414, y + 8, 82, format_invoice_money(line.get("unit_price")), 8.8, align=fitz.TEXT_ALIGN_RIGHT)
+                box_text(500, y + 8, 88, format_invoice_money(line.get("line_total")), 8.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
+                y = row_top + row_height
+                page.draw_line((left, y - 4), (right, y - 4), color=grid_color, width=0.45)
+                y += 6
+            y += 12
     headers = [
         ("LINE #", 34, 26, fitz.TEXT_ALIGN_LEFT),
         ("QTY", 66, 26, fitz.TEXT_ALIGN_LEFT),
@@ -2968,19 +3036,16 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         ("UNIT PRICE", 466, 54, fitz.TEXT_ALIGN_RIGHT),
         ("TOTAL", 524, 64, fitz.TEXT_ALIGN_RIGHT),
     ]
-    y = draw_table_header(y)
-    pictures = {}
+    if not is_proposal_doc:
+        y = draw_table_header(y)
     picture_size = 40
-    for index, line in enumerate(lines, start=1):
+    for index, line in enumerate([] if is_proposal_doc else lines, start=1):
         item_lines = wrapped_lines(line.get("item_name"), 82, 6.8)
         desc_lines = wrapped_lines(line.get("description"), 198, 6.8)
         loc_lines = wrapped_lines(line.get("location"), 62, 6.8)
         line_gap = 7.6
         # The catalog picture, under the item name.
-        picture_path = line.get("picture_file")
-        if picture_path and picture_path not in pictures:
-            pictures[picture_path] = download_storage_file(picture_path)
-        picture = pictures.get(picture_path) if picture_path else None
+        picture = line_picture(line)
         item_height = len(item_lines) * line_gap + (picture_size + 4 if picture else 0)
         row_height = max(15, item_height, len(desc_lines) * line_gap, len(loc_lines) * line_gap) + 8
         if y + row_height > footer_top - 8:
@@ -12844,6 +12909,39 @@ def part_picture_src(path, embed=False):
 
 
 app.jinja_env.globals["part_picture_src"] = part_picture_src
+
+
+def format_proposal_qty(value):
+    """3.0 reads 3, 2.5 stays 2.5."""
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return str(value or "")
+    return str(int(number)) if number == int(number) else f"{number:g}"
+
+
+def proposal_location_groups(lines):
+    """A proposal's lines by location, rooms in the order they first appear and
+    lines without a location last. Each group has the room name as its title;
+    when no line has a location there is one untitled group."""
+    groups, by_key = [], {}
+    for line in lines or []:
+        name = str((line.get("location") if hasattr(line, "get") else "") or "").strip()
+        key = name.lower()
+        if key not in by_key:
+            by_key[key] = {"name": name, "title": name, "lines": []}
+            groups.append(by_key[key])
+        by_key[key]["lines"].append(line)
+    groups.sort(key=lambda group: group["name"] == "")
+    if any(group["name"] for group in groups):
+        for group in groups:
+            if not group["name"]:
+                group["title"] = "Other Items"
+    return groups
+
+
+app.jinja_env.globals["format_proposal_qty"] = format_proposal_qty
+app.jinja_env.globals["proposal_location_groups"] = proposal_location_groups
 
 
 @app.route("/part-picture/<token>")

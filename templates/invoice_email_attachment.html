@@ -1,4 +1,5 @@
 <!doctype html>
+{% from "_proposal_lines.html" import proposal_lines with context %}
 <html>
 <head>
     <meta charset="utf-8">
@@ -78,6 +79,9 @@
             </div>
         </div>
 
+        {% if (doc_label or "Invoice")|lower != "invoice" %}
+        {{ proposal_lines(lines, formatted=True) }}
+        {% else %}
         <table class="invoiceLinesTable">
             <thead>
                 <tr>
@@ -104,6 +108,7 @@
             {% endfor %}
             </tbody>
         </table>
+        {% endif %}
 
         <div class="invoiceSummary">
             <div class="invoiceNotes">
