@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V7"
+APP_BUILD = "2026-11-17 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2600,7 +2600,7 @@ def load_invoice(conn, invoice_id):
         return None, []
     lines = conn.execute(
         """
-        SELECT invoice_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type
+        SELECT invoice_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
         FROM invoice_lines
         LEFT JOIN part_catalog ON invoice_lines.part_catalog_id = part_catalog.id
         WHERE invoice_id = %s
@@ -2747,6 +2747,8 @@ def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_
             "index": idx,
             "quantity": line.get("quantity", ""),
             "item_name": line.get("item_name", ""),
+            "picture_file": line.get("picture_file") or "",
+            "picture_src": part_picture_src(line.get("picture_file"), embed=True) if line.get("picture_file") else "",
             "description": line.get("description", ""),
             "location": line.get("location", ""),
             "unit_price": format_invoice_money(line.get("unit_price")),
@@ -2967,12 +2969,20 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         ("TOTAL", 524, 64, fitz.TEXT_ALIGN_RIGHT),
     ]
     y = draw_table_header(y)
+    pictures = {}
+    picture_size = 40
     for index, line in enumerate(lines, start=1):
         item_lines = wrapped_lines(line.get("item_name"), 82, 6.8)
         desc_lines = wrapped_lines(line.get("description"), 198, 6.8)
         loc_lines = wrapped_lines(line.get("location"), 62, 6.8)
         line_gap = 7.6
-        row_height = max(15, len(item_lines) * line_gap, len(desc_lines) * line_gap, len(loc_lines) * line_gap) + 8
+        # The catalog picture, under the item name.
+        picture_path = line.get("picture_file")
+        if picture_path and picture_path not in pictures:
+            pictures[picture_path] = download_storage_file(picture_path)
+        picture = pictures.get(picture_path) if picture_path else None
+        item_height = len(item_lines) * line_gap + (picture_size + 4 if picture else 0)
+        row_height = max(15, item_height, len(desc_lines) * line_gap, len(loc_lines) * line_gap) + 8
         if y + row_height > footer_top - 8:
             page = doc.new_page(width=page_width, height=page_height)
             y = draw_table_header(44)
@@ -2981,6 +2991,13 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         text(66, y, line.get("quantity"), 6.8)
         for offset, value in enumerate(item_lines):
             text(96, y + offset * line_gap, value, 6.8)
+        if picture:
+            picture_top = y + len(item_lines) * line_gap - 3
+            try:
+                page.insert_image(fitz.Rect(96, picture_top, 96 + picture_size, picture_top + picture_size),
+                                  stream=picture, keep_proportion=True)
+            except Exception:
+                pass
         for offset, value in enumerate(desc_lines):
             text(188, y + offset * line_gap, value, 6.8)
         for offset, value in enumerate(loc_lines):
@@ -11422,7 +11439,7 @@ def load_estimate(conn, estimate_id):
         return None, []
     lines = conn.execute(
         """
-        SELECT estimate_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type
+        SELECT estimate_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
         FROM estimate_lines
         LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
         WHERE estimate_id = %s
@@ -12574,7 +12591,13 @@ def load_estimate_by_token(conn, token):
     if not estimate:
         return None, []
     lines = conn.execute(
-        "SELECT * FROM estimate_lines WHERE estimate_id = %s ORDER BY position, id",
+        """
+        SELECT estimate_lines.*, part_catalog.picture_file
+        FROM estimate_lines
+        LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
+        WHERE estimate_id = %s
+        ORDER BY position, estimate_lines.id
+        """,
         (estimate["id"],)
     ).fetchall()
     return estimate, lines
@@ -12737,6 +12760,112 @@ def estimate_sign_decline(token):
     return render_estimate_sign_page(declined_estimate, declined_lines, "Thank you. We have let the office know.")
 
 
+# ---- catalog pictures: one for proposals and invoices, one symbol for plans ----
+PART_IMAGE_KINDS = {
+    # form field: (column, longest side in pixels, always PNG)
+    "picture": ("picture_file", 600, False),
+    "symbol": ("symbol_file", 256, True),
+}
+
+
+def prepare_part_image(upload, max_side, keep_png):
+    """An uploaded catalog picture, checked and made no bigger than it needs
+    to be. Returns (bytes, extension, error). The page turns WEBP and other
+    kinds into PNG before sending, since the PDF tools here only read PNG/JPG."""
+    if not upload or not upload.filename:
+        return None, None, ""
+    ext = file_ext(upload.filename)
+    if ext not in {"png", "jpg", "jpeg"}:
+        return None, None, "Use a PNG or JPG picture."
+    raw = upload.read()
+    if not raw:
+        return None, None, ""
+    if len(raw) > 12 * 1024 * 1024:
+        return None, None, "That picture is too large. Use one under 12 MB."
+    if fitz is None:
+        return raw, ext, ""
+    try:
+        src = fitz.open(stream=raw, filetype="jpeg" if ext in ("jpg", "jpeg") else "png")
+        page = src[0]
+        k = min(1.0, max_side / max(page.rect.width, page.rect.height, 1))
+        pix = page.get_pixmap(matrix=fitz.Matrix(k, k), alpha=True)
+        src.close()
+    except Exception:
+        return None, None, "That picture could not be read. Use a PNG or JPG."
+    alpha = bytes(pix.samples[3::4])
+    if keep_png or alpha.count(255) != len(alpha):
+        return pix.tobytes("png"), "png", ""  # keeps a see-through background
+    return fitz.Pixmap(pix, 0).tobytes("jpg", jpg_quality=85), "jpg", ""
+
+
+def save_part_images(conn, part_id):
+    """Store the picture and symbol sent with a catalog form, or remove them.
+    Returns a list of problems to show; the rest of the item is saved anyway."""
+    problems = []
+    if not part_id:
+        return problems
+    for field, (column, max_side, keep_png) in PART_IMAGE_KINDS.items():
+        if request.form.get(f"remove_{field}") == "1":
+            conn.execute(f"UPDATE part_catalog SET {column} = NULL, updated_at = %s WHERE id = %s", (utc_now_iso(), part_id))
+            continue
+        data, ext, error = prepare_part_image(request.files.get(field), max_side, keep_png)
+        if error:
+            problems.append(f"{'Picture' if field == 'picture' else 'Symbol'}: {error}")
+            continue
+        if not data:
+            continue
+        try:
+            path = upload_bytes_to_storage(data, f"{field}_{part_id}.{ext}", "image/png" if ext == "png" else "image/jpeg")
+        except Exception as e:
+            print("Catalog picture upload failed:", e)
+            problems.append(f"{'Picture' if field == 'picture' else 'Symbol'}: it could not be stored. Try again.")
+            continue
+        conn.execute(f"UPDATE part_catalog SET {column} = %s, updated_at = %s WHERE id = %s", (path, utc_now_iso(), part_id))
+    return problems
+
+
+def part_picture_serializer():
+    from itsdangerous import URLSafeSerializer
+    return URLSafeSerializer(app.secret_key, salt="part-picture")
+
+
+def part_picture_src(path, embed=False):
+    """Where a page finds a catalog picture. A signed link works without
+    signing in (the customer's proposal page); embed=True puts the picture in
+    the page itself, for the PDF made from HTML."""
+    if not path:
+        return ""
+    if embed:
+        cache = g.setdefault("part_picture_data", {}) if has_request_context() else {}
+        if path not in cache:
+            cache[path] = storage_image_data_uri(path)
+        return cache[path]
+    return url_for("part_picture_public", token=part_picture_serializer().dumps(path))
+
+
+app.jinja_env.globals["part_picture_src"] = part_picture_src
+
+
+@app.route("/part-picture/<token>")
+def part_picture_public(token):
+    from itsdangerous import BadSignature
+    try:
+        path = part_picture_serializer().loads(token)
+    except BadSignature:
+        return "Not found.", 404
+    conn = db()
+    known = conn.execute("SELECT 1 FROM part_catalog WHERE picture_file = %s LIMIT 1", (path,)).fetchone()
+    conn.close()
+    if not known:
+        return "Not found.", 404
+    data = download_storage_file(path)
+    if not data:
+        return "Not found.", 404
+    response = Response(data, mimetype=mimetypes.guess_type(path)[0] or "image/jpeg")
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return response
+
+
 @app.route("/parts-catalog", methods=["GET", "POST"])
 @admin_required
 def parts_catalog():
@@ -12816,9 +12945,10 @@ def parts_catalog():
                 """,
                 (item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, unit_measure, install_minutes, now, part_id)
             )
+            saved_id = part_id
             flash("Catalog item updated.")
         else:
-            upsert_part_catalog(
+            saved_id = upsert_part_catalog(
                 conn,
                 item_name,
                 item_model,
@@ -12834,6 +12964,8 @@ def parts_catalog():
                 install_minutes
             )
             flash("Catalog item saved.")
+        for problem in save_part_images(conn, saved_id):
+            flash(problem)
         conn.commit()
         conn.close()
         return redirect(url_for("parts_catalog"))
@@ -12940,9 +13072,10 @@ def create_part_catalog_json():
         request.form.get("unit_measure", "").strip(),
         parse_install_minutes(request.form.get("install_minutes")),
     )
+    problems = save_part_images(conn, part_id)
     row = conn.execute(
         """
-        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes
+        SELECT id, item_name, item_model, part_number, brand, category, description, unit_price, unit_cost, taxable, item_type, COALESCE(unit_measure, 'UN') AS unit_measure, install_minutes, picture_file, symbol_file
         FROM part_catalog
         WHERE id = %s
         """,
@@ -12950,7 +13083,10 @@ def create_part_catalog_json():
     ).fetchone()
     conn.commit()
     conn.close()
-    return jsonify({"ok": True, "item": dict(row) if row else {}})
+    item = dict(row) if row else {}
+    item["picture_url"] = url_for("storage_file", storage_path=item["picture_file"]) if item.get("picture_file") else None
+    item["symbol_url"] = url_for("storage_file", storage_path=item["symbol_file"]) if item.get("symbol_file") else None
+    return jsonify({"ok": True, "item": item, "warning": " ".join(problems)})
 
 
 @app.route("/parts-catalog/<int:part_id>/quick-update-json", methods=["POST"])
@@ -15258,6 +15394,8 @@ def ensure_blueprint_mark_tables(conn):
     statements = [
         # The picture each mark of this item is drawn with.
         "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS symbol_file TEXT",
+        # The product picture shown on proposals and invoices.
+        "ALTER TABLE part_catalog ADD COLUMN IF NOT EXISTS picture_file TEXT",
         """
         CREATE TABLE IF NOT EXISTS blueprint_marks (
             id SERIAL PRIMARY KEY,
@@ -15438,7 +15576,7 @@ def blueprint_mark_data(conn, project_id, blueprint_id):
     catalog_filter = "COALESCE(is_active, TRUE) = TRUE OR " if is_main_admin() else ""
     parts = conn.execute(
         f"""
-        SELECT id, item_name, item_model, brand, part_number, category, symbol_file,
+        SELECT id, item_name, item_model, brand, part_number, category, symbol_file, picture_file,
                COALESCE(is_active, TRUE) AS is_active
         FROM part_catalog
         WHERE {catalog_filter}id IN (SELECT part_catalog_id FROM blueprint_marks WHERE project_id = %s)
@@ -15461,6 +15599,7 @@ def blueprint_mark_data(conn, project_id, blueprint_id):
                 "category": p["category"],
                 "is_active": bool(p["is_active"]),
                 "symbol_url": url_for("storage_file", storage_path=p["symbol_file"]) if p["symbol_file"] else None,
+                "picture_url": url_for("storage_file", storage_path=p["picture_file"]) if p.get("picture_file") else None,
             }
             for p in parts
         ],

@@ -30,6 +30,7 @@
 .partInfoHead{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .partInfoHead .partThumb{width:52px;height:52px;border-radius:10px}
 .partInfoName{font-size:17px;font-weight:800;line-height:1.2}
+.partInfoPicture{display:block;width:100%;max-height:200px;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:8px;margin:0 0 12px;padding:6px}
 .partInfoSub{color:var(--muted);font-size:13px;margin-top:2px}
 .partInfoStats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
 .partInfoStat{border:1px solid var(--border);border-radius:8px;padding:8px 8px 7px;text-align:center}
@@ -332,6 +333,13 @@
         if(subText){const sub=document.createElement("div");sub.className="partInfoSub";sub.textContent=subText;titles.appendChild(sub);}
         head.appendChild(titles);
         body.appendChild(head);
+        if(part.picture_url){
+            const pic=document.createElement("img");
+            pic.className="partInfoPicture";
+            pic.src=part.picture_url;
+            pic.alt="";
+            body.appendChild(pic);
+        }
 
         const stats=document.createElement("div");stats.className="partInfoStats";
         if(stillThere){
@@ -686,16 +694,14 @@
         description:document.getElementById("partNewDescription")
     };
     const taxable=document.getElementById("partNewTaxable");
-    const symbolFile=document.getElementById("partNewSymbol");
-    const symbolPreview=document.getElementById("partNewSymbolPreview");
+    const imageInputs=overlay.querySelectorAll("input[data-part-image]");
     const saveBtn=document.getElementById("partNewSaveBtn");
     function showError(text){errorBox.textContent=text;errorBox.hidden=!text;}
     function openNewItem(name){
         Object.values(fields).forEach(f=>{if(f.tagName!=="SELECT")f.value="";});
         fields.unit_measure.value="UN";
         taxable.checked=true;
-        symbolFile.value="";
-        symbolPreview.hidden=true;
+        imageInputs.forEach(input=>{input.value="";input.dispatchEvent(new Event("change",{bubbles:true}));});
         showError("");
         fields.item_name.value=name||"";
         overlay.hidden=false;
@@ -704,12 +710,6 @@
     function closeNewItem(){overlay.hidden=true;}
     document.getElementById("partNewCancelBtn").addEventListener("click",closeNewItem);
     overlay.addEventListener("keydown",e=>{if(e.key==="Escape")closeNewItem();});
-    symbolFile.addEventListener("change",()=>{
-        const file=symbolFile.files[0];
-        if(symbolPreview.src)URL.revokeObjectURL(symbolPreview.src);
-        if(file){symbolPreview.src=URL.createObjectURL(file);symbolPreview.hidden=false;}
-        else symbolPreview.hidden=true;
-    });
     saveBtn.addEventListener("click",async()=>{
         if(!fields.item_name.value.trim()){showError("Give the item a name.");fields.item_name.focus();return;}
         showError("");
@@ -719,6 +719,8 @@
             Object.entries(fields).forEach(([key,input])=>form.append(key,input.value.trim()));
             form.append("taxable",taxable.checked?"1":"0");
             form.append("item_type","part");
+            // The picture and symbol go with the item, and are stored with it.
+            imageInputs.forEach(input=>{if(input.files[0])form.append(input.name,input.files[0]);});
             const res=await fetch(createUrl,{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"},body:form});
             const isJson=(res.headers.get("Content-Type")||"").includes("application/json");
             const data=isJson?await res.json():null;
@@ -726,14 +728,17 @@
             if(!data||!data.item||!data.item.id||(!data.ok&&!data.duplicate))throw new Error((data&&data.error)||("The site answered "+res.status+"."));
             let part=partsById.get(data.item.id);
             if(!part){
-                part={id:data.item.id,item_name:data.item.item_name,brand:data.item.brand,item_model:data.item.item_model,part_number:data.item.part_number,category:data.item.category,symbol_url:null,is_active:true};
+                part={id:data.item.id,item_name:data.item.item_name,brand:data.item.brand,item_model:data.item.item_model,part_number:data.item.part_number,category:data.item.category,symbol_url:data.item.symbol_url||null,picture_url:data.item.picture_url||null,is_active:true};
                 parts.push(part);
                 partsById.set(part.id,part);
             }
-            if(symbolFile.files[0]){
-                try{await uploadSymbol(part,symbolFile.files[0]);}
-                catch(e){alert("The item was saved, but the symbol was not: "+e.message);}
+            // An item that was already in the catalog was not changed: give it the new symbol here.
+            const symbolInput=overlay.querySelector('input[data-part-image="symbol"]');
+            if(data.duplicate&&symbolInput&&symbolInput.files[0]){
+                try{await uploadSymbol(part,symbolInput.files[0]);}
+                catch(e){alert("The symbol was not saved: "+e.message);}
             }
+            if(data.warning)alert("The item was saved, but: "+data.warning);
             closeNewItem();
             startMarking(part);
         }catch(e){

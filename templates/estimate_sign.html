@@ -8,7 +8,7 @@
 :root{--ink:#172033;--muted:#64748b;--border:#d7dee9;--accent:#2563eb;--good:#16a34a;--bad:#dc2626}
 *{box-sizing:border-box}
 /* Keep the line breaks the user typed in Item and Description. */
-.lineText{white-space:pre-line}
+.lineText{white-space:pre-line}.linePicture{display:block;width:64px;height:64px;object-fit:contain;margin:0 0 4px;border-radius:4px;background:#fff}
 body{margin:0;padding:0;background:#eef2f7;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.45}
 .wrap{max-width:920px;margin:0 auto;padding:18px 14px 60px}
 .paper{background:#fff;border-radius:14px;padding:26px;box-shadow:0 10px 30px rgba(15,23,42,.10);margin-bottom:18px}
@@ -142,7 +142,7 @@ button[disabled]{opacity:.55;cursor:not-allowed}
                 <tr>
                     <td>{{ loop.index }}</td>
                     <td>{{ line.quantity }}</td>
-                    <td class="lineText">{{ line.item_name }}</td>
+                    <td class="lineText">{% if line.picture_file %}<img class="linePicture" src="{{ line.picture_src or part_picture_src(line.picture_file) }}" alt="">{% endif %}{{ line.item_name }}</td>
                     <td class="lineText">{{ line.description or '' }}</td>
                     <td>{{ line.location or '' }}</td>
                     <td>{{ format_invoice_money(line.unit_price) }}</td>

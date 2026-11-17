@@ -1,4 +1,5 @@
 {# The part picker in the plan toolbar: choose a part, then click the plan with Pick to mark each one. Admin only. #}
+{% from "_part_image_fields.html" import part_image_fields, part_image_script with context %}
 <div class="tbGroup tbStack tbParts" id="partMarkPanel">
     <div class="tbRow">
         <span class="partThumb" id="partActiveThumb" hidden></span>
@@ -10,7 +11,7 @@
             <button type="button" class="tbIcon" id="partSymbolBtn" title="Change this part's symbol picture">
                 <svg class="tbSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
             </button>
-            <input type="file" id="partSymbolInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            <input type="file" id="partSymbolInput" accept=".png,.jpg,.jpeg,.webp,.gif" hidden>
             <button type="button" class="tbIcon" id="partStopBtn" title="Stop marking (Esc or right-click the plan)">
                 <svg class="tbSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
@@ -50,11 +51,7 @@
         <label class="partNewCheck"><input type="checkbox" id="partNewTaxable" checked> Taxable</label>
         <label>Description</label>
         <textarea id="partNewDescription" rows="2" placeholder="What it is, where it is used, anything to remember"></textarea>
-        <label>Symbol Picture <span class="muted" style="font-weight:400">(what each mark on the plan looks like)</span></label>
-        <div class="partNewSymbolRow">
-            <input type="file" id="partNewSymbol" accept="image/png,image/jpeg,image/webp,image/gif">
-            <img id="partNewSymbolPreview" alt="" hidden>
-        </div>
+        {{ part_image_fields() }}
         <p class="partNewError" id="partNewError" hidden></p>
         <div class="partNewActions">
             <button type="button" id="partNewSaveBtn">Save and Start Marking</button>
@@ -62,3 +59,4 @@
         </div>
     </div>
 </div>
+{{ part_image_script() }}

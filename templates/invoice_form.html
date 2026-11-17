@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_part_image_fields.html" import part_image_fields, part_image_script with context %}
 {% block content %}
 {# This form is shared by invoices and estimates. The posted field names stay the
    same for both (invoice_date, due_date, line_*) so the line-grid JS, catalog
@@ -351,6 +352,7 @@
             </div>
             <label>Description</label>
             <textarea name="description" rows="3"></textarea>
+            {{ part_image_fields() }}
             <div class="invoiceItemOptions">
                 <label class="invoiceToggle"><input type="checkbox" name="taxable" value="1"><span>Taxable</span></label>
                 <label>
@@ -966,6 +968,7 @@ newItemForm.addEventListener("submit",async event=>{
         appendCatalogOption(payload.item,pendingItemSelect);
         newItemModal.hidden=true;
         runPendingAddLine();
+        if(payload.warning)alert("The item was created, but: "+payload.warning);
     }catch(err){
         error.textContent=err.message||"Could not create item.";
     }
@@ -1290,4 +1293,5 @@ window.addEventListener("resize",()=>{if(combo)positionSuggestFloat(combo.input)
 .lineSuggestOpt:last-child{border-bottom:none!important}
 .lineSuggestOpt:hover,.lineSuggestOpt.hl{background:#e0ecff!important}
 </style>
+{{ part_image_script() }}
 {% endblock %}

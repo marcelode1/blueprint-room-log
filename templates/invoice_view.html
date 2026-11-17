@@ -92,7 +92,7 @@
             <tr>
                 <td>{{ loop.index }}</td>
                 <td>{{ line.quantity }}</td>
-                <td class="lineText">{{ line.item_name }}</td>
+                <td class="lineText">{% if line.picture_file %}<img class="linePicture" src="{{ line.picture_src or part_picture_src(line.picture_file) }}" alt="">{% endif %}{{ line.item_name }}</td>
                 <td class="lineText">{{ line.description or '' }}</td>
                 <td>{{ line.location or '' }}</td>
                 <td>{{ format_invoice_money(line.unit_price) }}</td>
@@ -212,7 +212,7 @@
 
 <style>
 /* Keep the line breaks the user typed in Item and Description. */
-.lineText{white-space:pre-line}
+.lineText{white-space:pre-line}.linePicture{display:block;width:64px;height:64px;object-fit:contain;margin:0 0 4px;border-radius:4px;background:#fff}
 .invoicePaper{position:relative}
 .paidStamp{position:absolute;top:84px;left:50%;transform:translateX(-50%) rotate(-12deg);display:flex;flex-direction:column;align-items:center;color:#1f2937;opacity:.82;pointer-events:none;z-index:5;font-family:"Arial Black","Segoe UI",Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .paidStampWord{font-size:62px;font-weight:900;letter-spacing:8px;line-height:.9;text-transform:uppercase}

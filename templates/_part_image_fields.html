@@ -1,0 +1,125 @@
+{# The two pictures a catalog item can have: a product picture for proposals
+   and invoices, and a symbol for the plans. Inside any catalog form; the
+   form must send multipart/form-data (FormData does). #}
+{% macro part_image_fields(part=None) -%}
+<div class="partImageFields">
+    {% for field, title, note, column in [
+        ("picture", "Product Picture", "Shown next to the item on proposals and invoices", "picture_file"),
+        ("symbol", "Plan Symbol", "Drawn on the plans each time the part is marked", "symbol_file")] %}
+    {% set current = part[column] if part and part[column] else "" %}
+    <div class="partImageField">
+        <div class="partImageTitle">{{ title }}</div>
+        <div class="partImageNote">{{ note }}</div>
+        <div class="partImageRow">
+            <span class="partImagePreview{% if field == 'symbol' %} symbol{% endif %}" data-empty="{{ 'No picture' if field == 'picture' else 'No symbol' }}">
+                {%- if current %}<img src="{{ url_for('storage_file', storage_path=current) }}" alt="">{% else %}<span>{{ 'No picture' if field == 'picture' else 'No symbol' }}</span>{% endif -%}
+            </span>
+            <div class="partImageControls">
+                <label class="partImagePick">
+                    <input type="file" name="{{ field }}" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.avif" data-part-image="{{ field }}">
+                    <span>{{ 'Change' if current else 'Upload' }} {{ 'Picture' if field == 'picture' else 'Symbol' }}</span>
+                </label>
+                {% if current %}<label class="partImageRemove"><input type="checkbox" name="remove_{{ field }}" value="1"> Remove</label>{% endif %}
+                <div class="partImageName" hidden></div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{%- endmacro %}
+
+{% macro part_image_script() -%}
+<style>
+.partImageFields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:12px 0}
+.partImageField{border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.partImageTitle{font-weight:800}
+.partImageNote{font-size:12px;color:var(--muted);margin:2px 0 8px}
+.partImageRow{display:flex;align-items:center;gap:12px}
+.partImagePreview{flex:0 0 auto;width:72px;height:72px;border:1px solid var(--border);border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.partImagePreview.symbol{width:52px;height:52px;border-radius:50%}
+.partImagePreview img{width:100%;height:100%;object-fit:contain}
+.partImagePreview span{font-size:11px;color:#94a3b8;text-align:center;padding:4px}
+.partImageControls{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.partImagePick{position:relative;display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:6px 12px;border-radius:6px;background:var(--primary);color:#fff;font-weight:700;font-size:13px;cursor:pointer;margin:0}
+.partImagePick input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%!important;min-height:0!important;margin:0!important}
+.partImageRemove{display:flex;align-items:center;gap:6px;font-size:13px;margin:0;font-weight:600}
+.partImageRemove input{width:auto!important;min-height:0!important;margin:0!important}
+.partImageName{font-size:12px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+<script>
+(function(){
+    if(window.partImageFieldsReady)return;
+    window.partImageFieldsReady=true;
+    // accept lists file types, not "image/*", so the photo markup editor in
+    // base.html leaves these alone: a product picture is not a job photo.
+    // Pictures from a website are often WEBP, which the PDF tools cannot read,
+    // so anything that is not PNG or JPG goes up as PNG. Very big pictures are
+    // made smaller here first; the server makes the final size.
+    async function asUploadable(file){
+        const plain=/^image\/(png|jpe?g)$/i.test(file.type);
+        if(plain&&file.size<=8*1024*1024)return file;
+        const url=URL.createObjectURL(file);
+        try{
+            const img=new Image();
+            await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error("That picture could not be read."));img.src=url;});
+            const k=Math.min(1,2000/Math.max(img.naturalWidth,img.naturalHeight));
+            const canvas=document.createElement("canvas");
+            canvas.width=Math.max(1,Math.round(img.naturalWidth*k));
+            canvas.height=Math.max(1,Math.round(img.naturalHeight*k));
+            canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);
+            const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
+            const stem=(file.name||"picture").replace(/\.[^.]+$/,"");
+            return new File([blob],stem+".png",{type:"image/png"});
+        }finally{
+            URL.revokeObjectURL(url);
+        }
+    }
+    function showPreview(input,file){
+        const field=input.closest(".partImageField");
+        const preview=field.querySelector(".partImagePreview");
+        const name=field.querySelector(".partImageName");
+        preview.textContent="";
+        if(file){
+            const img=document.createElement("img");
+            img.src=URL.createObjectURL(file);
+            img.alt="";
+            preview.appendChild(img);
+            name.textContent=file.name;
+            name.hidden=false;
+            const remove=field.querySelector('input[name^="remove_"]');
+            if(remove)remove.checked=false;
+        }else{
+            const span=document.createElement("span");
+            span.textContent=preview.dataset.empty||"";
+            preview.appendChild(span);
+            name.hidden=true;
+        }
+    }
+    document.addEventListener("change",async e=>{
+        const input=e.target;
+        if(!input.matches||!input.matches("input[data-part-image]"))return;
+        const file=input.files&&input.files[0];
+        if(!file){showPreview(input,null);return;}
+        try{
+            const ready=await asUploadable(file);
+            if(ready!==file){
+                const box=new DataTransfer();
+                box.items.add(ready);
+                input.files=box.files;
+            }
+            showPreview(input,ready);
+        }catch(err){
+            input.value="";
+            showPreview(input,null);
+            alert(err.message+" Use a PNG or JPG.");
+        }
+    });
+    // A form cleared for the next item clears its pictures too.
+    document.addEventListener("reset",e=>{
+        setTimeout(()=>e.target.querySelectorAll&&e.target.querySelectorAll("input[data-part-image]").forEach(input=>{
+            if(!input.closest(".partImageField").querySelector('input[name^="remove_"]'))showPreview(input,null);
+        }),0);
+    },true);
+})();
+</script>
+{%- endmacro %}
