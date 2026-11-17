@@ -582,9 +582,11 @@
         syncPlacing();
         if(window.planRefresh)window.planRefresh();
     }
-    document.getElementById("partStopBtn").addEventListener("click",stopMarking);
+    // Done marking: back to moving the plan, so the next click does not open a room.
+    function finishMarking(){stopMarking();setPlanTool("hand");}
+    document.getElementById("partStopBtn").addEventListener("click",finishMarking);
     document.addEventListener("keydown",e=>{
-        if(e.key==="Escape"&&active&&document.getElementById("partNewOverlay").hidden)stopMarking();
+        if(e.key==="Escape"&&active&&document.getElementById("partNewOverlay").hidden)finishMarking();
     });
 
     viewport.addEventListener("click",async e=>{
@@ -607,6 +609,13 @@
             alert("That mark was not saved: "+err.message);
         }
     });
+    // While marking, a right-click anywhere on the plan stops marking.
+    viewport.addEventListener("contextmenu",e=>{
+        if(!active||planTool()==="trace")return;
+        e.preventDefault();
+        e.stopPropagation();
+        finishMarking();
+    },true);
     group.addEventListener("contextmenu",e=>{
         const use=e.target.closest(".partMark");
         if(!use||!use.markData)return;

@@ -656,7 +656,7 @@ function updateHint(){
     let text;
     if(t==="hand")text=spaceHand?"Moving: drag the plan":"Move: drag the plan · the mouse wheel zooms"+(LABEL_EDIT?" · drag a room name to move it, click it to resize":"");
     else if(t==="trace")text="Trace: click to add corners · drag a corner to move it · click a line to add a corner on it · right-click a corner to remove it";
-    else if(window.planActivePart)text="Marking "+window.planActivePart+": click to place one · right-click a mark to remove it · Esc stops";
+    else if(window.planActivePart)text="Marking "+window.planActivePart+": click to place one · right-click or Esc to stop · click a symbol to see it";
     else if(CAN_MARK)text="Pick: choose a part in Mark Parts to place it · or click a room to open it";
     else text="Pick: click a room to open it";
     if(t!=="hand")text+=" · hold Space to move";
