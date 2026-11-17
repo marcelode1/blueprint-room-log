@@ -3,7 +3,7 @@
 {% block content %}
 <div class="card noPrint">
     <h2>{{ proposal_word }} {{ estimate.estimate_number }}</h2>
-    <a class="btn-link btn-secondary" href="{{ url_for('estimates') }}">Back to {{ proposal_word }}s</a>
+    <a class="btn-link btn-secondary" href="{{ estimate_list_url(estimate) }}">Back to {{ proposal_word }}s{% if estimate.customer_name %} for {{ estimate.customer_name }}{% endif %}</a>
     {% if not estimate.signed_at %}
         <a class="btn-link btn-secondary" href="{{ url_for('edit_estimate', estimate_id=estimate.id) }}">Edit</a>
     {% endif %}

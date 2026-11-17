@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V4"
+APP_BUILD = "2026-11-17 V5"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -12009,6 +12009,21 @@ def convert_estimate_to_invoice(conn, estimate, lines):
     return invoice_id, invoice_number
 
 
+def estimate_list_url(estimate):
+    """Where "back" goes from a proposal: that customer's proposals, else its
+    project's, else all of them."""
+    estimate = estimate or {}
+    customer = (estimate.get("customer_name") or "").strip()
+    if customer:
+        return url_for("estimates", customer=customer)
+    if estimate.get("project_id"):
+        return url_for("estimates", project_id=estimate["project_id"])
+    return url_for("estimates")
+
+
+app.jinja_env.globals["estimate_list_url"] = estimate_list_url
+
+
 @app.route("/proposals")
 @admin_required
 def estimates():
@@ -12018,8 +12033,13 @@ def estimates():
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "").strip()
     project_id = request.args.get("project_id", type=int)
+    customer = re.sub(r"\s+", " ", request.args.get("customer", "")).strip()
     where = []
     params = []
+    if customer:
+        # One customer's proposals, whichever of their jobs they are for.
+        where.append("lower(btrim(regexp_replace(COALESCE(estimates.customer_name, ''), '\\s+', ' ', 'g'))) = lower(%s)")
+        params.append(customer)
     if q:
         like = f"%{q}%"
         where.append("(estimates.estimate_number ILIKE %s OR estimates.customer_name ILIKE %s OR estimates.customer_email ILIKE %s OR projects.name ILIKE %s)")
@@ -12044,7 +12064,9 @@ def estimates():
         tuple(params)
     ).fetchall()
     conn.close()
-    return render_template("estimates.html", estimates=rows, q=q, status=status, selected_project=selected_project)
+    customer_project_id = next((row["project_id"] for row in rows if row.get("project_id")), None) if customer else None
+    return render_template("estimates.html", estimates=rows, q=q, status=status, selected_project=selected_project,
+                           selected_customer=customer, customer_project_id=customer_project_id)
 
 
 @app.route("/proposals/new", methods=["GET", "POST"])
@@ -12365,7 +12387,7 @@ def confirm_delete_estimate(estimate_id):
         conn.commit()
         conn.close()
         flash(f"{PROPOSAL_WORD} deleted.")
-        return redirect(url_for("estimates", project_id=project_id) if project_id else url_for("estimates"))
+        return redirect(estimate_list_url(estimate))
     conn.close()
     return render_template("delete_estimate_confirm.html", estimate=estimate)
 

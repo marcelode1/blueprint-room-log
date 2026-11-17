@@ -34,7 +34,9 @@
     <h2>{{ ('Edit ' if is_edit else 'Create ') ~ doc_word }}</h2>
     {% if selected_project %}<p><strong>Project:</strong> {{ selected_project.name }}</p>{% endif %}
     <div class="invoiceHeaderActions">
-        {% if selected_project %}
+        {% if is_estimate and is_edit and invoice.customer_name %}
+            <a class="btn-link btn-secondary" href="{{ estimate_list_url(invoice) }}">Back to {{ doc_word }}s for {{ invoice.customer_name }}</a>
+        {% elif selected_project %}
             <a class="btn-link btn-secondary" href="{{ url_for(list_endpoint, project_id=selected_project.id) }}">{{ doc_word }}s</a>
         {% else %}
             <a class="btn-link btn-secondary" href="{{ url_for(list_endpoint) }}">Back to {{ doc_word }}s</a>

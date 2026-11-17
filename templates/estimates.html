@@ -1,8 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h2>{% if selected_project %}{{ proposal_word }}s - {{ selected_project.name }}{% else %}{{ proposal_word }}s{% endif %}</h2>
-    {% if selected_project %}
+    <h2>{% if selected_customer %}{{ proposal_word }}s - {{ selected_customer }}{% elif selected_project %}{{ proposal_word }}s - {{ selected_project.name }}{% else %}{{ proposal_word }}s{% endif %}</h2>
+    {% if selected_customer %}
+        <a class="btn-link" href="{{ url_for('new_estimate', project_id=customer_project_id) if customer_project_id else url_for('new_estimate') }}">Create {{ proposal_word }}</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('estimates') }}">All {{ proposal_word }}s</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('invoice_customers') }}">Back to Customers</a>
+    {% elif selected_project %}
         <p><strong>Customer:</strong> {{ selected_project.customer_name or '-' }}</p>
         <a class="btn-link" href="{{ url_for('new_estimate', project_id=selected_project.id) }}">Create {{ proposal_word }}</a>
     {% else %}
@@ -14,6 +18,7 @@
 <div class="card">
     <form method="get">
         {% if selected_project %}<input type="hidden" name="project_id" value="{{ selected_project.id }}">{% endif %}
+        {% if selected_customer %}<input type="hidden" name="customer" value="{{ selected_customer }}">{% endif %}
         <div class="grid">
             <div>
                 <label>Search</label>
@@ -30,7 +35,7 @@
             </div>
         </div>
         <button type="submit">Show {{ proposal_word }}s</button>
-        <a class="btn-link btn-secondary" href="{{ url_for('estimates', project_id=selected_project.id) if selected_project else url_for('estimates') }}">Clear</a>
+        <a class="btn-link btn-secondary" href="{{ url_for('estimates', customer=selected_customer) if selected_customer else (url_for('estimates', project_id=selected_project.id) if selected_project else url_for('estimates')) }}">Clear</a>
     </form>
 </div>
 
@@ -55,7 +60,7 @@
             {% for est in estimates %}
                 <tr>
                     <td><a href="{{ url_for('estimate_view', estimate_id=est.id) }}">{{ est.estimate_number }}</a></td>
-                    <td>{{ est.customer_name or '-' }}<br><span class="muted">{{ est.customer_email or '' }}</span></td>
+                    <td>{% if est.customer_name and not selected_customer %}<a href="{{ url_for('estimates', customer=est.customer_name) }}">{{ est.customer_name }}</a>{% else %}{{ est.customer_name or '-' }}{% endif %}<br><span class="muted">{{ est.customer_email or '' }}</span></td>
                     <td>{{ est.project_name or '-' }}</td>
                     <td>{{ format_date(est.estimate_date) }}</td>
                     <td>{{ format_date(est.valid_until) if est.valid_until else '-' }}</td>
