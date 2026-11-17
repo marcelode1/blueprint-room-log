@@ -1,5 +1,6 @@
 <!doctype html>
 {% from "_proposal_lines.html" import proposal_lines with context %}
+{% from "_payment_schedule.html" import payment_schedule_view with context %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -130,6 +131,8 @@ button[disabled]{opacity:.55;cursor:not-allowed}
         <div>
             <h3>Job</h3>
             <p><strong>{{ estimate.project_name or estimate.customer_name or '-' }}</strong></p>
+            {% if estimate.job_address %}<p>{{ estimate.job_address }}</p>{% endif %}
+            {% if estimate.job_contact %}<p>Contact: {{ estimate.job_contact }}</p>{% endif %}
         </div>
     </div>
 
@@ -147,6 +150,8 @@ button[disabled]{opacity:.55;cursor:not-allowed}
             <p class="grand"><span>{{ proposal_word }} Total</span><strong>{{ format_invoice_money(totals_breakdown.balance_due) }}</strong></p>
         </div>
     </div>
+
+    {{ payment_schedule_view(estimate_payment_schedule(estimate)) }}
 
     {% if estimate.signed_at %}
     <div class="signed">

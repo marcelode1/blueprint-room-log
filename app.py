@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V7"
+APP_BUILD = "2026-11-17 V8"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -2782,6 +2782,9 @@ def invoice_browser_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_
         inv_customer_email=invoice.get("customer_email") or "",
         inv_customer_phone=invoice.get("customer_phone") or "",
         inv_project_name=invoice.get("project_name") or invoice.get("customer_name") or "-",
+        inv_job_address=invoice.get("job_address") or invoice.get("billing_address") or "",
+        inv_job_contact=invoice.get("job_contact") or "",
+        payment_rows=invoice.get("payment_rows") or [],
         inv_notes=invoice.get("notes") or "",
         total_material=format_invoice_money(totals.get("material")),
         total_labor=format_invoice_money(totals.get("labor")),
@@ -2955,7 +2958,12 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     job_y = y + 34
     if invoice.get("billing_address"):
         customer_y = wrapped(left, customer_y, invoice.get("billing_address"), 250, 8.4, 10)
-        job_y = wrapped(330, job_y, invoice.get("billing_address"), 220, 8.4, 10)
+        job_y = wrapped(330, job_y, invoice.get("job_address") or invoice.get("billing_address"), 220, 8.4, 10)
+    elif invoice.get("job_address"):
+        job_y = wrapped(330, job_y, invoice.get("job_address"), 220, 8.4, 10)
+    if invoice.get("job_contact"):
+        text(330, job_y, "Contact: " + invoice.get("job_contact"), 8.4)
+        job_y += 10
     if invoice.get("customer_email"):
         text(left, customer_y, invoice.get("customer_email"), 8.4)
         customer_y += 10
@@ -3086,10 +3094,11 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
         y = 56
     else:
         y = y + 22
+    notes_end = y
     if invoice.get("notes"):
         page.draw_line((left, y - 12), (315, y - 12), color=line_color, width=1)
         text(left, y + 2, "NOTES", 9, bold=True)
-        wrapped(left, y + 18, invoice.get("notes"), 292, 9, 11)
+        notes_end = wrapped(left, y + 18, invoice.get("notes"), 292, 9, 11)
     page.draw_line((346, y - 12), (right, y - 12), color=line_color, width=1)
     totals_y = y + 2
     totals_rows = [
@@ -3109,6 +3118,34 @@ def manual_invoice_pdf_attachment(invoice, lines, company, paid_total=0.0, doc_l
     page.draw_line((346, totals_y - 8), (right, totals_y - 8), color=grid_color, width=0.6)
     text(358, totals_y + 6, total_label, 8.8)
     box_text(500, totals_y + 6, 76, format_invoice_money(totals["balance_due"]), 8.8, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
+
+    # A proposal's payment schedule, under the totals.
+    payment_rows = invoice.get("payment_rows") if is_proposal_doc else None
+    if payment_rows:
+        sched_y = max(totals_y + 44, notes_end + 22)
+        if sched_y + 40 + len(payment_rows) * 22 > footer_top - 8:
+            page = doc.new_page(width=page_width, height=page_height)
+            sched_y = 64
+        page.draw_rect(fitz.Rect(left, sched_y - 6, right, sched_y + 30 + len(payment_rows) * 22), color=grid_color, width=0.6)
+        text(left + 14, sched_y + 16, "Payment Schedule", 13, bold=True)
+        for label, x, width in [("Billing Date", 368, 70), ("Due Date", 446, 62), ("Amount", 512, 62)]:
+            box_text(x, sched_y + 16, width, label, 8.4, align=fitz.TEXT_ALIGN_RIGHT, bold=True)
+        row_y = sched_y + 30
+        page.draw_line((left + 14, row_y), (right - 14, row_y), color=grid_color, width=0.45)
+        for index, row in enumerate(payment_rows):
+            center = row_y + 11
+            page.draw_circle((left + 22, center), 4.5, color=(0.70, 0.74, 0.80), fill=(1, 1, 1), width=0.7)
+            if index < len(payment_rows) - 1:
+                page.draw_line((left + 22, center + 4.5), (left + 22, center + 17.5), color=(0.70, 0.74, 0.80), width=0.6)
+            text(left + 40, center + 3, f"{row['label']} ({format_proposal_qty(row['percent'])}%)", 9)
+            box_text(368, center + 3, 70, format_date(row["billing_date"]) if row.get("billing_date") else "", 8.6, align=fitz.TEXT_ALIGN_RIGHT)
+            box_text(446, center + 3, 62, format_date(row["due_date"]) if row.get("due_date") else "", 8.6, align=fitz.TEXT_ALIGN_RIGHT)
+            box_text(512, center + 3, 62, format_invoice_money(row["amount"]), 9, align=fitz.TEXT_ALIGN_RIGHT)
+            row_y += 22
+            if index < len(payment_rows) - 1:
+                page.draw_line((left + 40, row_y), (right - 14, row_y), color=(0.90, 0.92, 0.95), width=0.4)
+        totals_y = row_y + 10
+        y = row_y + 10
 
     # Signed acceptance block. Only proposals pass this; invoices leave it empty.
     if signature and signature.get("signed_at"):
@@ -11473,6 +11510,7 @@ def ensure_estimate_tables(conn):
         )
         """,
         "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS bom_created_at TEXT",
+        "ALTER TABLE estimates ADD COLUMN IF NOT EXISTS payment_schedule TEXT",
         "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_estimate_line_id INTEGER",
         "CREATE INDEX IF NOT EXISTS inventory_source_line_idx ON inventory_items(source_estimate_line_id)",
         "CREATE INDEX IF NOT EXISTS estimate_lines_estimate_idx ON estimate_lines(estimate_id)",
@@ -11512,7 +11550,11 @@ def new_estimate_token():
 def load_estimate(conn, estimate_id):
     estimate = conn.execute(
         """
-        SELECT estimates.*, projects.name AS project_name
+        SELECT estimates.*, projects.name AS project_name,
+               projects.customer_email AS p_customer_email, projects.customer_phone AS p_customer_phone,
+               projects.billing_address AS p_billing_address, projects.customer_address AS p_customer_address,
+               projects.job_address AS p_job_address, projects.point_of_contact_name AS p_contact_name,
+               projects.point_of_contact_phone AS p_contact_phone
         FROM estimates
         LEFT JOIN projects ON estimates.project_id = projects.id
         WHERE estimates.id = %s
@@ -11521,6 +11563,7 @@ def load_estimate(conn, estimate_id):
     ).fetchone()
     if not estimate:
         return None, []
+    estimate = fill_estimate_contact(estimate)
     lines = conn.execute(
         """
         SELECT estimate_lines.*, COALESCE(NULLIF(estimate_lines.line_type, ''), CASE WHEN estimate_lines.item_name ~* '\\mlabou?r\\M' THEN 'service' END, part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
@@ -11534,6 +11577,129 @@ def load_estimate(conn, estimate_id):
     return estimate, lines
 
 
+
+DEFAULT_PAYMENT_SCHEDULE = [
+    {"label": "Deposit", "percent": 20},
+    {"label": "Rough-in", "percent": 30},
+    {"label": "At Equipment Ordering", "percent": 40},
+    {"label": "Final Payment", "percent": 10},
+]
+
+
+def fill_estimate_contact(estimate):
+    """What the proposal itself does not say about the customer comes from its
+    project: email, phone, billing address, and the job's own address and
+    point of contact for the Job column."""
+    if not estimate:
+        return estimate
+    e = dict(estimate)
+
+    def pick(*values):
+        return next((str(v).strip() for v in values if v and str(v).strip()), "")
+
+    e["customer_email"] = pick(e.get("customer_email"), e.get("p_customer_email"))
+    e["customer_phone"] = pick(e.get("customer_phone"), e.get("p_customer_phone"))
+    e["billing_address"] = pick(e.get("billing_address"), e.get("p_billing_address"), e.get("p_customer_address"))
+    e["job_address"] = pick(e.get("p_job_address"), e.get("p_customer_address"))
+    e["job_contact"] = " ".join(part for part in [pick(e.get("p_contact_name")), pick(e.get("p_contact_phone"))] if part)
+    return e
+
+
+def parse_payment_schedule(value):
+    try:
+        rows = json.loads(value) if isinstance(value, str) else (value or [])
+    except Exception:
+        return []
+    clean = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            percent = round(float(row.get("percent") or 0), 4)
+        except (TypeError, ValueError):
+            percent = 0.0
+        label = str(row.get("label") or "").strip()[:120]
+        if not label and not percent:
+            continue
+        clean.append({
+            "label": label or "Payment",
+            "percent": percent,
+            "billing_date": str(row.get("billing_date") or "")[:10],
+            "due_date": str(row.get("due_date") or "")[:10],
+        })
+    return clean
+
+
+def payment_schedule_from_form():
+    labels = request.form.getlist("schedule_label")
+    percents = request.form.getlist("schedule_percent")
+    billing = request.form.getlist("schedule_billing")
+    due = request.form.getlist("schedule_due")
+    rows = []
+    for i, label in enumerate(labels):
+        rows.append({
+            "label": label,
+            "percent": percents[i] if i < len(percents) else 0,
+            "billing_date": billing[i] if i < len(billing) else "",
+            "due_date": due[i] if i < len(due) else "",
+        })
+    return parse_payment_schedule(rows)
+
+
+def save_estimate_schedule_from_form(conn, estimate_id):
+    if not request.form.get("schedule_present"):
+        return
+    conn.execute("UPDATE estimates SET payment_schedule = %s WHERE id = %s",
+                 (json.dumps(payment_schedule_from_form()), estimate_id))
+
+
+def estimate_payment_schedule(estimate):
+    """The schedule with each payment's amount, a share of the proposal total.
+    When the shares make 100% the last payment takes the rounding cents, so
+    the payments add up to the total exactly."""
+    estimate = estimate or {}
+    rows = parse_payment_schedule(estimate.get("payment_schedule"))
+    total = float(estimate.get("total") or 0)
+    used = 0.0
+    whole = abs(sum(row["percent"] for row in rows) - 100) < 0.001
+    for index, row in enumerate(rows):
+        if whole and index == len(rows) - 1:
+            amount = round(total - used, 2)
+        else:
+            amount = round(total * row["percent"] / 100.0, 2)
+        used += amount
+        row["amount"] = amount
+    return rows
+
+
+def estimate_schedule_for_form(estimate):
+    """The rows the proposal form starts with: the proposal's own schedule,
+    else the one on the newest proposal that has one, else the standard one."""
+    if estimate and estimate.get("payment_schedule") is not None:
+        return parse_payment_schedule(estimate.get("payment_schedule"))
+    try:
+        conn = db()
+        row = conn.execute(
+            "SELECT payment_schedule FROM estimates WHERE payment_schedule IS NOT NULL AND payment_schedule <> '[]' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if row:
+            rows = parse_payment_schedule(row["payment_schedule"])
+            for item in rows:
+                item["billing_date"] = ""
+                item["due_date"] = ""
+            if rows:
+                return rows
+    except Exception as e:
+        print("Payment schedule default skipped:", e)
+    return parse_payment_schedule(DEFAULT_PAYMENT_SCHEDULE)
+
+
+app.jinja_env.globals["estimate_payment_schedule"] = estimate_payment_schedule
+app.jinja_env.globals["estimate_schedule_for_form"] = estimate_schedule_for_form
+
+
 def estimate_as_document(estimate):
     """The PDF/print helpers were written for invoices. Give them an invoice-shaped
     view of the estimate so one set of layout code serves both."""
@@ -11543,6 +11709,7 @@ def estimate_as_document(estimate):
     doc["invoice_number"] = estimate.get("estimate_number")
     doc["invoice_date"] = estimate.get("estimate_date")
     doc["due_date"] = estimate.get("valid_until")
+    doc["payment_rows"] = estimate_payment_schedule(estimate)
     return doc
 
 
@@ -11653,6 +11820,7 @@ def create_estimate_record_from_form(conn, lines, subtotal, tax_rate, tax_total,
     ).fetchone()
     estimate_id = row["id"]
     replace_estimate_lines(conn, estimate_id, lines)
+    save_estimate_schedule_from_form(conn, estimate_id)
     return estimate_id
 
 
@@ -11689,6 +11857,7 @@ def update_estimate_record_from_form(conn, estimate_id, lines, subtotal, tax_rat
         )
     )
     replace_estimate_lines(conn, estimate_id, lines)
+    save_estimate_schedule_from_form(conn, estimate_id)
 
 
 def estimate_signature_payload(estimate):
@@ -12689,7 +12858,11 @@ def estimate_signed_pdf(estimate_id):
 def load_estimate_by_token(conn, token):
     estimate = conn.execute(
         """
-        SELECT estimates.*, projects.name AS project_name
+        SELECT estimates.*, projects.name AS project_name,
+               projects.customer_email AS p_customer_email, projects.customer_phone AS p_customer_phone,
+               projects.billing_address AS p_billing_address, projects.customer_address AS p_customer_address,
+               projects.job_address AS p_job_address, projects.point_of_contact_name AS p_contact_name,
+               projects.point_of_contact_phone AS p_contact_phone
         FROM estimates
         LEFT JOIN projects ON estimates.project_id = projects.id
         WHERE estimates.public_token = %s
@@ -12698,6 +12871,7 @@ def load_estimate_by_token(conn, token):
     ).fetchone()
     if not estimate:
         return None, []
+    estimate = fill_estimate_contact(estimate)
     lines = conn.execute(
         """
         SELECT estimate_lines.*, COALESCE(NULLIF(estimate_lines.line_type, ''), CASE WHEN estimate_lines.item_name ~* '\\mlabou?r\\M' THEN 'service' END, part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file

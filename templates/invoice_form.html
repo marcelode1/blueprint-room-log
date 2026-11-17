@@ -114,7 +114,7 @@
             </div>
             <div>
                 <label>Notes</label>
-                <textarea name="notes" rows="3">{{ invoice.notes if invoice else '' }}</textarea>
+                <textarea name="notes" rows="3">{{ (invoice.notes or '') if invoice else '' }}</textarea>
             </div>
             <div>
                 <label>Terms</label>
@@ -241,6 +241,10 @@
                 <p class="invoiceLiveBalance"><span>{{ (proposal_word ~ ' Total') if is_estimate else 'Balance Due' }}</span><strong id="liveBalanceDue">$0.00</strong></p>
             </div>
         </div>
+        {% if is_estimate %}
+            {% from "_payment_schedule.html" import payment_schedule_editor with context %}
+            {{ payment_schedule_editor(estimate_schedule_for_form(invoice)) }}
+        {% endif %}
 
         <template id="invoiceLineTemplate">
             <tr class="invoiceLine">

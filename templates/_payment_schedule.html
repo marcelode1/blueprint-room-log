@@ -1,0 +1,143 @@
+{# A proposal's payment schedule: the editor on the proposal form, and the
+   section the customer sees. Rows: label, percent, billing date, due date. #}
+{% macro payment_schedule_editor(rows) -%}
+<div class="scheduleEditor">
+    <input type="hidden" name="schedule_present" value="1">
+    <div class="scheduleHead">
+        <h3>Payment Schedule</h3>
+        <button type="button" id="addScheduleRow">Add Payment</button>
+    </div>
+    <p class="muted scheduleLead">Each payment is a share of the proposal total. Leave it empty to show no schedule.</p>
+    <div class="scheduleWrap">
+        <table class="scheduleTable">
+            <thead><tr><th>Payment</th><th>%</th><th>Billing Date</th><th>Due Date</th><th class="scheduleAmountHead">Amount</th><th></th></tr></thead>
+            <tbody id="scheduleRows">
+            {% for row in rows %}
+                <tr class="scheduleRow">
+                    <td><input name="schedule_label" value="{{ row.label }}" placeholder="Deposit"></td>
+                    <td><input name="schedule_percent" class="schedulePercent" type="number" step="0.01" min="0" max="100" value="{{ '%g'|format(row.percent|float) }}"></td>
+                    <td><input name="schedule_billing" type="date" value="{{ row.billing_date or '' }}"></td>
+                    <td><input name="schedule_due" type="date" value="{{ row.due_date or '' }}"></td>
+                    <td class="scheduleAmount">$0.00</td>
+                    <td><button type="button" class="btn-danger removeScheduleRow">Remove</button></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="scheduleSum" id="scheduleSum"></p>
+    <template id="scheduleRowTemplate">
+        <tr class="scheduleRow">
+            <td><input name="schedule_label" placeholder="Payment name"></td>
+            <td><input name="schedule_percent" class="schedulePercent" type="number" step="0.01" min="0" max="100" value=""></td>
+            <td><input name="schedule_billing" type="date"></td>
+            <td><input name="schedule_due" type="date"></td>
+            <td class="scheduleAmount">$0.00</td>
+            <td><button type="button" class="btn-danger removeScheduleRow">Remove</button></td>
+        </tr>
+    </template>
+</div>
+<style>
+.scheduleEditor{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:14px 0}
+.scheduleHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.scheduleHead h3{margin:0}
+.scheduleHead button{margin:0}
+.scheduleLead{margin:4px 0 8px;font-size:13px}
+.scheduleWrap{overflow-x:auto}
+.scheduleTable{width:100%;border-collapse:collapse;min-width:640px}
+.scheduleTable th,.scheduleTable td{padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+.scheduleTable th{font-size:11px;text-transform:uppercase;color:var(--muted)}
+.scheduleTable input{margin:0;min-height:30px}
+.scheduleTable td:nth-child(2){width:90px}
+.scheduleTable td:nth-child(3),.scheduleTable td:nth-child(4){width:160px}
+.scheduleAmount,.scheduleAmountHead{text-align:right!important;white-space:nowrap;font-weight:700;width:120px}
+.scheduleTable .removeScheduleRow{margin:0;min-height:26px;padding:3px 8px;font-size:12px}
+.scheduleSum{margin:8px 0 0;font-weight:700;font-size:13px}
+.scheduleSum.ok{color:#15803d}
+.scheduleSum.off{color:#b91c1c}
+</style>
+<script>
+(function(){
+    const rowsBox=document.getElementById("scheduleRows");
+    const template=document.getElementById("scheduleRowTemplate");
+    const sumLine=document.getElementById("scheduleSum");
+    const totalBox=document.getElementById("liveBalanceDue");
+    if(!rowsBox||!template)return;
+    const parse=v=>Number(String(v||"").replace(/[^0-9.\-]/g,""))||0;
+    const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
+    function refresh(){
+        const total=parse(totalBox?totalBox.textContent:0);
+        const rows=[...rowsBox.querySelectorAll(".scheduleRow")];
+        let pct=0,used=0;
+        rows.forEach((row,i)=>{
+            const p=parse(row.querySelector(".schedulePercent").value);
+            pct+=p;
+            let amount=Math.round(total*p)/100;
+            used+=amount;
+            row.querySelector(".scheduleAmount").textContent=money(amount);
+        });
+        if(!rows.length){sumLine.textContent="No payment schedule on this proposal.";sumLine.className="scheduleSum";return;}
+        const even=Math.abs(pct-100)<0.001;
+        sumLine.textContent=even?"Adds up to 100% of "+money(total)+".":"Adds up to "+(Math.round(pct*100)/100)+"% — it should be 100%.";
+        sumLine.className="scheduleSum "+(even?"ok":"off");
+    }
+    document.getElementById("addScheduleRow").addEventListener("click",()=>{
+        rowsBox.appendChild(template.content.firstElementChild.cloneNode(true));
+        const rows=rowsBox.querySelectorAll(".scheduleRow");
+        const used=[...rows].reduce((s,r)=>s+parse(r.querySelector(".schedulePercent").value),0);
+        const last=rows[rows.length-1];
+        if(used<100)last.querySelector(".schedulePercent").value=String(Math.round((100-used)*100)/100);
+        last.querySelector('input[name="schedule_label"]').focus();
+        refresh();
+    });
+    rowsBox.addEventListener("click",e=>{
+        if(e.target.matches(".removeScheduleRow")){e.target.closest(".scheduleRow").remove();refresh();}
+    });
+    rowsBox.addEventListener("input",refresh);
+    if(totalBox)new MutationObserver(refresh).observe(totalBox,{childList:true,characterData:true,subtree:true});
+    refresh();
+})();
+</script>
+{%- endmacro %}
+
+{% macro payment_schedule_view(rows) -%}
+{% if rows %}
+<div class="paySchedule">
+    <div class="payScheduleHead">
+        <h2>Payment Schedule</h2>
+        <span>Billing Date</span><span>Due Date</span><span>Amount</span>
+    </div>
+    {% for row in rows %}
+    <div class="payScheduleRow">
+        <span class="payDot"></span>
+        <span class="payLabel">{{ row.label }} ({{ '%g'|format(row.percent|float) }}%)</span>
+        <span>{{ format_date(row.billing_date) if row.billing_date else '' }}</span>
+        <span>{{ format_date(row.due_date) if row.due_date else '' }}</span>
+        <span class="payAmount">{{ format_invoice_money(row.amount) }}</span>
+    </div>
+    {% endfor %}
+</div>
+<style>
+.paySchedule{margin:30px 0 0;border:1px solid #d7dee9;border-radius:6px;padding:18px 22px 6px;color:#172033;break-inside:avoid;page-break-inside:avoid}
+.payScheduleHead,.payScheduleRow{display:grid;grid-template-columns:28px minmax(0,1fr) 130px 130px 130px;align-items:center;gap:8px}
+.payScheduleHead{grid-template-columns:minmax(0,1fr) 130px 130px 130px;padding-bottom:12px;border-bottom:1px solid #e5e9f0}
+.payScheduleHead h2{margin:0;font-size:22px;font-weight:800;text-transform:none;letter-spacing:0}
+.payScheduleHead span{font-weight:800;font-size:14px;text-align:right}
+.payScheduleRow{position:relative;padding:14px 0;border-bottom:1px solid #eef1f5;font-size:15px}
+.payScheduleRow:last-child{border-bottom:0}
+.payScheduleRow span:nth-child(n+3){text-align:right}
+.payLabel{grid-column:2}
+.payAmount{color:#334155}
+.payDot{width:16px;height:16px;border:1px solid #cbd5e1;border-radius:50%;background:#fff;position:relative;z-index:1}
+.payScheduleRow:not(:last-child) .payDot::after{content:"";position:absolute;left:7px;top:16px;width:1px;height:46px;background:#cbd5e1}
+@media(max-width:640px){
+    .paySchedule{padding:14px 12px 4px}
+    .payScheduleHead{grid-template-columns:minmax(0,1fr) 90px}
+    .payScheduleHead span:nth-of-type(1),.payScheduleHead span:nth-of-type(2){display:none}
+    .payScheduleRow{grid-template-columns:22px minmax(0,1fr) 90px;font-size:13.5px}
+    .payScheduleRow span:nth-child(3),.payScheduleRow span:nth-child(4){display:none}
+    .payScheduleHead h2{font-size:18px}
+}
+</style>
+{% endif %}
+{%- endmacro %}

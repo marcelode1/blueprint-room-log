@@ -1,5 +1,6 @@
 <!doctype html>
 {% from "_proposal_lines.html" import proposal_lines with context %}
+{% from "_payment_schedule.html" import payment_schedule_view with context %}
 <html>
 <head>
     <meta charset="utf-8">
@@ -74,7 +75,8 @@
             <div>
                 <h3>Job Name</h3>
                 <p><strong>{{ inv_project_name }}</strong></p>
-                {% if inv_billing_address %}<p>{{ inv_billing_address }}</p>{% endif %}
+                {% if inv_job_address %}<p>{{ inv_job_address }}</p>{% endif %}
+                {% if inv_job_contact %}<p>Contact: {{ inv_job_contact }}</p>{% endif %}
                 {% if inv_due %}<p>Due: {{ inv_due }}</p>{% endif %}
             </div>
         </div>
@@ -124,6 +126,7 @@
                 <p class="invoiceGrandTotal"><span>{{ total_label|default("Balance Due") }}</span><strong>{{ balance_due }}</strong></p>
             </div>
         </div>
+        {% if payment_rows %}{{ payment_schedule_view(payment_rows) }}{% endif %}
     </div>
 </body>
 </html>
