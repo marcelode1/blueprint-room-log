@@ -1,15 +1,15 @@
-{# The parts marked on this sheet: drawn on the plan, and counted by room.
-   Uses viewport, svg, scale, didDrag and screenToSvg from the plan script above. #}
-<div class="card blueprintDesktopOnly" id="partCountsCard">
-    <h3>Parts Count</h3>
-    <div id="partCountsBody"></div>
-</div>
+{# The parts marked on this sheet: drawn on the plan, and counted by room in
+   the Count panel. Uses viewport, svg, didDrag, screenToSvg, planTool and
+   setPlanTool from the plan script above. #}
 
 <style>
-.partPickRow{display:grid;grid-template-columns:minmax(260px,480px) 160px max-content;gap:12px;align-items:end}
-.partPickRow button{margin:4px 0 10px}
 .partPickBox{position:relative}
-.partPickList{position:absolute;left:0;right:0;top:100%;z-index:300;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);max-height:320px;overflow-y:auto}
+#partPickInput{width:270px!important;height:32px;min-height:32px!important;padding:4px 9px!important;margin:0!important;font-size:13px!important}
+.tbSizeSelect{width:auto!important;height:32px;min-height:32px!important;padding:2px 6px!important;margin:0!important;font-size:13px!important;font-weight:700}
+.tbParts .tbCaption{width:0;min-width:100%}  /* a long part name never widens the toolbar */
+@media(max-width:1440px){ #partPickInput{width:160px!important} }
+.tbParts.marking .tbCaption{color:#1f8a7a;font-weight:800}
+.partPickList{position:absolute;left:0;width:380px;top:calc(100% + 4px);z-index:300;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 14px 34px rgba(15,23,42,.22);max-height:320px;overflow-y:auto}
 .partPickList[hidden]{display:none}
 .partPickOpt{display:flex!important;align-items:center;gap:10px;width:100%!important;text-align:left!important;background:transparent!important;color:var(--text)!important;border:0!important;border-bottom:1px solid var(--border)!important;border-radius:0!important;padding:8px 10px!important;margin:0!important;min-height:0!important;font-size:13px!important;font-weight:600!important;justify-content:flex-start!important}
 .partPickOpt:last-child{border-bottom:0!important}
@@ -18,10 +18,10 @@
 .partThumb{flex:0 0 auto;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:#fff;border:1px solid var(--border);overflow:hidden}
 .partThumb img{width:100%;height:100%;object-fit:contain}
 .partThumb svg{width:100%;height:100%}
-.partActive{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;padding:8px 10px;border-radius:8px;background:rgba(31,138,122,.12);border:1px solid rgba(31,138,122,.35)}
+.partThumb[hidden]{display:none}
+#partActiveThumb{width:30px;height:30px}
+.partActive{display:inline-flex;align-items:center;gap:2px}
 .partActive[hidden]{display:none}
-.partActive button{margin:0}
-.partMarkHelp{margin:8px 0 0}
 #viewport.placingParts{cursor:crosshair}
 #viewport.placingParts .savedRoom{pointer-events:none}
 .partMark{cursor:context-menu}
@@ -34,10 +34,11 @@
 .partNewSymbolRow img{width:48px;height:48px;object-fit:contain;border:1px solid var(--border);border-radius:6px;background:#fff}
 .partNewError{margin:10px 0 0;padding:8px 10px;border-radius:8px;background:rgba(220,38,38,.12);color:#b91c1c;font-weight:800}
 .partNewActions{display:flex;gap:10px;margin-top:14px}
-.partCountsTable{width:100%;max-width:760px;border-collapse:collapse;margin-bottom:16px}
+.partCountsTable{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px}
 .partCountsTable th{text-align:left;font-size:12px;text-transform:uppercase;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--border)}
 .partCountsTable td{padding:6px 8px;border-bottom:1px solid var(--border)}
-.partCountsTable td.num,.partCountsTable th.num{text-align:right;width:110px}
+.partCountsTable td.num,.partCountsTable th.num{text-align:right;width:72px}
+#partCountsBody h4{margin:0 0 6px}
 .partCountsTable tr.roomRow td{font-weight:800;background:rgba(148,163,184,.12)}
 .partCountsTable .itemCell{display:flex;align-items:center;gap:8px}
 </style>
@@ -220,7 +221,7 @@
         if(!saved.length&&!other.size){
             const p=document.createElement("p");
             p.className="muted";
-            p.textContent=canMark?"Nothing marked yet. Pick a part above and click the plan.":"Nothing marked on this plan yet.";
+            p.textContent=canMark?"Nothing marked yet. Choose a part in Mark Parts on the toolbar, then click the plan.":"Nothing marked on this plan yet.";
             body.appendChild(p);
             return;
         }
@@ -248,7 +249,7 @@
         body.appendChild(roomTable);
 
         const h4b=document.createElement("h4");h4b.textContent="Totals";body.appendChild(h4b);
-        const totals=table([["Part"],["This sheet","num"],["Other sheets","num"],["Whole project","num"]]);
+        const totals=table([["Part"],["This sheet","num"],["Other sheets","num"],["Project","num"]]);
         const keys=new Set([...sheet.keys(),...other.keys()]);
         Array.from(keys).map(key=>{
             const here=sheet.get(key), there=other.get(key);
@@ -304,7 +305,9 @@
     const pickList=document.getElementById("partPickList");
     const activeBar=document.getElementById("partActive");
     const activeName=document.getElementById("partActiveName");
-    const activeThumb=document.getElementById("partActiveThumb");
+    const panel=document.getElementById("partMarkPanel");
+    // The new-item dialog sits on the page itself, above the left menu too.
+    document.body.appendChild(document.getElementById("partNewOverlay"));
     const undoBtn=document.getElementById("partUndoBtn");
     const sizeSelect=document.getElementById("partMarkSize");
     const symbolBtn=document.getElementById("partSymbolBtn");
@@ -396,31 +399,50 @@
     });
     pickInput.addEventListener("blur",()=>setTimeout(closePick,150));
 
+    function setThumb(part){
+        const old=document.getElementById("partActiveThumb");
+        const next=part?thumbFor(part):document.createElement("span");
+        next.className="partThumb";
+        next.id="partActiveThumb";
+        next.hidden=!part;
+        old.replaceWith(next);
+    }
+    // Marks go down only with the Pick tool; Move (or Space) moves the plan.
+    function syncPlacing(){
+        viewport.classList.toggle("placingParts",!!active&&planTool()==="pick");
+    }
+    document.addEventListener("plantool",syncPlacing);
     function startMarking(part){
         active=part;
         pickInput.value=partLabel(part);
-        activeName.textContent=partLabel(part);
-        activeThumb.replaceWith(Object.assign(thumbFor(part),{id:"partActiveThumb"}));
+        activeName.textContent="Marking: "+partLabel(part);
+        panel.classList.add("marking");
+        setThumb(part);
         activeBar.hidden=false;
-        viewport.classList.add("placingParts");
-        // Tracing a room and marking parts share the same clicks, so only one at a time.
-        const drawing=document.getElementById("drawingMode");
-        if(drawing&&drawing.checked){drawing.checked=false;drawing.dispatchEvent(new Event("change"));}
+        window.planActivePart=part.item_name||partLabel(part);
+        pickInput.blur();
+        setPlanTool("pick");  // also tells syncPlacing
+        syncPlacing();
+        if(window.planRefresh)window.planRefresh();
     }
     function stopMarking(){
         active=null;
+        pickInput.value="";
+        activeName.textContent="Mark Parts on the Plan";
+        panel.classList.remove("marking");
+        setThumb(null);
         activeBar.hidden=true;
-        viewport.classList.remove("placingParts");
+        window.planActivePart=null;
+        syncPlacing();
+        if(window.planRefresh)window.planRefresh();
     }
     document.getElementById("partStopBtn").addEventListener("click",stopMarking);
     document.addEventListener("keydown",e=>{
         if(e.key==="Escape"&&active&&document.getElementById("partNewOverlay").hidden)stopMarking();
     });
-    const drawing=document.getElementById("drawingMode");
-    if(drawing)drawing.addEventListener("change",()=>{if(drawing.checked)stopMarking();});
 
     viewport.addEventListener("click",async e=>{
-        if(!active||didDrag||e.button!==0)return;
+        if(!active||planTool()!=="pick"||didDrag||e.button!==0)return;
         if(e.target.closest&&e.target.closest("#roomContextMenu"))return;
         e.preventDefault();
         const p=screenToSvg(e);

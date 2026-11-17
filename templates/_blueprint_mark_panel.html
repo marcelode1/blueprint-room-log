@@ -1,30 +1,30 @@
-{# Pick a part, then click the plan to mark each one. Admin only. #}
-<div class="card blueprintDesktopOnly" id="partMarkPanel">
-    <h3>Mark Parts on the Plan</h3>
-    <div class="partPickRow">
+{# The part picker in the plan toolbar: choose a part, then click the plan with Pick to mark each one. Admin only. #}
+<div class="tbGroup tbStack tbParts" id="partMarkPanel">
+    <div class="tbRow">
+        <span class="partThumb" id="partActiveThumb" hidden></span>
         <div class="partPickBox">
-            <label for="partPickInput">Part</label>
-            <input id="partPickInput" placeholder="Start typing a part, e.g. load circuit" autocomplete="off">
+            <input id="partPickInput" placeholder="Type a part to mark, e.g. load circuit" autocomplete="off" aria-label="Part to mark on the plan">
             <div class="partPickList" id="partPickList" hidden></div>
         </div>
-        <div>
-            <label for="partMarkSize">Symbol Size</label>
-            <select id="partMarkSize">
-                <option value="18">Small</option>
-                <option value="28" selected>Medium</option>
-                <option value="42">Large</option>
-            </select>
-        </div>
-        <button type="button" class="btn-secondary" id="partUndoBtn" disabled>Undo Last Mark</button>
+        <span class="partActive" id="partActive" hidden>
+            <button type="button" class="tbIcon" id="partSymbolBtn" title="Change this part's symbol picture">
+                <svg class="tbSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+            </button>
+            <input type="file" id="partSymbolInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            <button type="button" class="tbIcon" id="partStopBtn" title="Stop marking (Esc)">
+                <svg class="tbSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+        </span>
+        <select id="partMarkSize" class="tbSizeSelect" title="Symbol size on the plan" aria-label="Symbol size">
+            <option value="18">S</option>
+            <option value="28" selected>M</option>
+            <option value="42">L</option>
+        </select>
+        <button type="button" class="tbIcon" id="partUndoBtn" title="Undo the last mark" disabled>
+            <svg class="tbSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>
+        </button>
     </div>
-    <div class="partActive" id="partActive" hidden>
-        <span class="partThumb" id="partActiveThumb"></span>
-        <span>Marking <strong id="partActiveName"></strong>: click the plan to add one.</span>
-        <button type="button" class="btn-secondary" id="partSymbolBtn">Change Symbol</button>
-        <input type="file" id="partSymbolInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
-        <button type="button" id="partStopBtn">Stop Marking</button>
-    </div>
-    <p class="muted partMarkHelp">Drag to move around the plan and scroll to zoom, as usual. Right-click a mark to remove it. Esc stops marking.</p>
+    <span class="tbCaption" id="partActiveName">Mark Parts on the Plan</span>
 </div>
 
 <div class="partNewOverlay" id="partNewOverlay" hidden>

@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V2"
+APP_BUILD = "2026-11-16 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -16066,16 +16066,16 @@ def add_project_blueprint(project_id):
 
     if not file or not file.filename:
         flash("Please choose a blueprint PDF or image.")
-        return redirect(url_for("project", project_id=project_id))
+        return redirect(url_for("project_blueprint", project_id=project_id))
 
     if not allowed_blueprint(file.filename):
         flash("Blueprint must be PDF, JPG, PNG, or WEBP.")
-        return redirect(url_for("project", project_id=project_id))
+        return redirect(url_for("project_blueprint", project_id=project_id))
 
     raw = file.read()
     if not raw:
         flash("The selected blueprint file was empty. Please choose the file again.")
-        return redirect(url_for("project", project_id=project_id))
+        return redirect(url_for("project_blueprint", project_id=project_id))
 
     blueprint_file = upload_bytes_to_storage(
         raw,
@@ -16106,7 +16106,7 @@ def add_project_blueprint(project_id):
     conn.close()
 
     flash("Blueprint sheet added.")
-    return redirect(url_for("project", project_id=project_id, blueprint_id=new_bp["id"], v=uuid.uuid4().hex))
+    return redirect(url_for("project_blueprint", project_id=project_id, blueprint_id=new_bp["id"], v=uuid.uuid4().hex))
 
 
 @app.route("/project/<int:project_id>/blueprints/<int:blueprint_id>/delete", methods=["POST"])
@@ -16135,9 +16135,16 @@ def delete_project_blueprint(project_id, blueprint_id):
     flash("Blueprint sheet deleted. Rooms were kept.")
 
     if next_bp:
-        return redirect(url_for("project", project_id=project_id, blueprint_id=next_bp["id"]))
-    return redirect(url_for("project", project_id=project_id))
+        return redirect(url_for("project_blueprint", project_id=project_id, blueprint_id=next_bp["id"]))
+    return redirect(url_for("project_blueprint", project_id=project_id))
 
+
+
+def room_return_url(project_id, blueprint_id):
+    """Back to the plan when the room was made from the plan page."""
+    if request.form.get("return_to") == "plan" and blueprint_id:
+        return url_for("project_blueprint", project_id=project_id, blueprint_id=blueprint_id)
+    return url_for("project", project_id=project_id, blueprint_id=blueprint_id)
 
 
 @app.route("/project/<int:project_id>/rooms", methods=["POST"])
@@ -16155,12 +16162,12 @@ def add_room(project_id):
     if room_action == "link" and not existing_room_id:
         flash("Choose an existing room to link this trace.")
         if blueprint_id:
-            return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+            return redirect(room_return_url(project_id, blueprint_id))
         return redirect(url_for("project", project_id=project_id))
     if room_action != "link" and not name:
         flash("Room name is required.")
         if blueprint_id:
-            return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+            return redirect(room_return_url(project_id, blueprint_id))
         return redirect(url_for("project", project_id=project_id))
 
     room_blueprint_id = blueprint_id if polygon_points else None
@@ -16184,7 +16191,7 @@ def add_room(project_id):
             conn.close()
             flash("Existing room not found in this project.")
             if blueprint_id:
-                return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+                return redirect(room_return_url(project_id, blueprint_id))
             return redirect(url_for("project", project_id=project_id))
         conn.execute(
             """
@@ -16217,7 +16224,7 @@ def add_room(project_id):
         conn.close()
         flash(f"Trace linked to existing room: {existing_room['name']}.")
         if blueprint_id:
-            return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+            return redirect(room_return_url(project_id, blueprint_id))
         return redirect(url_for("project", project_id=project_id))
     duplicate_room = conn.execute(
         "SELECT id, name FROM rooms WHERE project_id = %s AND lower(name) = lower(%s) LIMIT 1",
@@ -16252,7 +16259,7 @@ def add_room(project_id):
 
     flash("Room added.")
     if blueprint_id:
-        return redirect(url_for("project", project_id=project_id, blueprint_id=blueprint_id))
+        return redirect(room_return_url(project_id, blueprint_id))
     return redirect(url_for("project", project_id=project_id))
 
 
