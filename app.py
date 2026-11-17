@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-16 V6"
+APP_BUILD = "2026-11-16 V7"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -14842,6 +14842,7 @@ def project_blueprint(project_id):
             (project_id,)
         ).fetchall()
     mark_data = blueprint_mark_data(conn, project_id, active_blueprint["id"] if active_blueprint else None)
+    pdf_folders = plan_pdf_folder_choices(conn, project_id) if active_blueprint else []
     conn.close()
     return render_template(
         "project_blueprint.html",
@@ -14850,8 +14851,406 @@ def project_blueprint(project_id):
         blueprints=blueprints,
         active_blueprint=active_blueprint,
         can_mark=is_main_admin(),
+        pdf_folders=pdf_folders,
+        pdf_default_name=plan_pdf_filename(
+            f"{project['name']} - {active_blueprint['name']} - Marked" if active_blueprint else "Plan"
+        ),
         **mark_data,
     )
+
+
+PLAN_ROOM_COLORS = {
+    # name: (fill, outline, fill opacity) - the same as the plan page
+    "blue": ((59, 130, 246), (37, 99, 235), 0.22),
+    "red": ((239, 68, 68), (220, 38, 38), 0.22),
+    "green": ((34, 197, 94), (22, 163, 74), 0.22),
+    "yellow": ((234, 179, 8), (202, 138, 4), 0.28),
+    "purple": ((168, 85, 247), (147, 51, 234), 0.22),
+    "orange": ((249, 115, 22), (234, 88, 12), 0.24),
+    "gray": ((107, 114, 128), (75, 85, 99), 0.20),
+}
+
+
+def plan_drawing_scale(width, height):
+    """How many of the plan page's drawing pixels make one PDF point. The
+    page draws the sheet at 2x, less on a very large sheet; room outlines,
+    names and marks are all kept in those pixels."""
+    quality = 2.0
+    if width * quality * height * quality > 16000000:
+        quality = math.sqrt(16000000 / (width * height))
+    return quality
+
+
+def plan_symbol_color(text):
+    """The colour of a part's round symbol when it has no picture: the same
+    sum the plan page does, so the PDF matches the screen."""
+    import colorsys
+    h = 0
+    for ch in str(text or ""):
+        h = (h * 31 + ord(ch)) % 360
+    return colorsys.hls_to_rgb(h / 360, 0.40, 0.65)
+
+
+def plan_initials(name):
+    words = [w for w in str(name or "").split() if w]
+    return "".join(w[0] for w in words[:2]).upper() or "?"
+
+
+def build_marked_plan_pdf(source, is_pdf, rooms, marks, parts, symbols, mark_size, title, image_type=None):
+    """The plan sheet as a PDF with its room outlines, room names and part
+    marks drawn on it.
+
+    A PDF sheet is kept exactly as it is (still vector, nothing re-drawn), and
+    the marks are added on top of its first page. A picture sheet goes in at
+    its own pixel size. A last page lists the parts room by room.
+
+    rooms: dicts with id, name, polygon_points, room_color, x, y, label_x,
+    label_y, label_size. marks: dicts with part_id, name, x, y. parts: id ->
+    dict with item_name, brand, item_model. symbols: part id -> picture bytes."""
+    restore = None
+    if is_pdf:
+        doc = fitz.open(stream=source, filetype="pdf")
+        page = doc[0]
+        k = 1 / plan_drawing_scale(page.rect.width, page.rect.height)
+        turn = page.rotation % 360
+        # The sheet as shown (cropped and turned, like PDF.js), in PDF space.
+        media, crop = page.mediabox, page.cropbox
+        left, right = crop.x0, crop.x1
+        bottom, top = media.y1 - crop.y1, media.y1 - crop.y0
+        # PyMuPDF places drawings and text by different rules on a cropped,
+        # turned page, so lay the page flat (no crop, no turn) while drawing and
+        # put its own CropBox and Rotate back afterwards. The sheet's content is
+        # never touched; only marks are added on top.
+        xref = page.xref
+        restore = (xref, doc.xref_get_key(xref, "CropBox"), doc.xref_get_key(xref, "Rotate"))
+        doc.xref_set_key(xref, "Rotate", "0")
+        doc.xref_set_key(xref, "CropBox", "[%g %g %g %g]" % (media.x0, media.y0, media.x1, media.y1))
+        page = doc.reload_page(page)
+    else:
+        doc = fitz.open()
+        picture = fitz.open(stream=source, filetype=image_type)
+        w, h = picture[0].rect.width, picture[0].rect.height
+        picture.close()
+        page = doc.new_page(width=w, height=h)
+        page.insert_image(page.rect, stream=source)
+        k = 1.0
+        turn = 0
+        left, right, bottom, top = 0, w, 0, h
+    to_drawing = page.transformation_matrix
+
+    def pt(x, y):
+        vx, vy = x * k, y * k
+        if turn == 90:
+            p = fitz.Point(left + vy, bottom + vx)
+        elif turn == 180:
+            p = fitz.Point(right - vx, bottom + vy)
+        elif turn == 270:
+            p = fitz.Point(right - vy, top - vx)
+        else:
+            p = fitz.Point(left + vx, top - vy)
+        return p * to_drawing
+
+    def box(cx, cy, half):
+        a, b = pt(cx - half, cy - half), pt(cx + half, cy + half)
+        return fitz.Rect(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
+
+    def text_at(x, y, text, size, color, halo=None):
+        """Text that reads upright on the sheet as it is shown, at drawing pixels x, y (the baseline)."""
+        point = pt(x, y)
+        shape = page.new_shape()
+        if halo:
+            shape.insert_text(point, text, fontsize=size, fontname="hebo", color=halo,
+                              render_mode=1, border_width=halo_width(size), rotate=turn)
+        shape.insert_text(point, text, fontsize=size, fontname="hebo", color=color, rotate=turn)
+        shape.commit()
+
+    def halo_width(size):
+        # Since PyMuPDF 1.22 the outline width is a share of the font size.
+        return 0.3
+
+    # Room outlines
+    shaped = []
+    for room in rooms:
+        points = []
+        for pair in (room.get("polygon_points") or "").split():
+            try:
+                x, y = pair.split(",")
+                points.append((float(x), float(y)))
+            except ValueError:
+                continue
+        if len(points) < 3:
+            continue
+        fill, line, opacity = PLAN_ROOM_COLORS.get(room.get("room_color") or "blue", PLAN_ROOM_COLORS["blue"])
+        shape = page.new_shape()
+        shape.draw_polyline([pt(x, y) for x, y in points] + [pt(*points[0])])
+        shape.finish(color=tuple(c / 255 for c in line), fill=tuple(c / 255 for c in fill),
+                     fill_opacity=opacity, width=2 * k, closePath=True)
+        shape.commit()
+        area = 0.0
+        for i in range(len(points)):
+            (x1, y1), (x2, y2) = points[i - 1], points[i]
+            area += (x1 + x2) * (y1 - y2)
+        shaped.append({"room": room, "points": points, "area": abs(area / 2)})
+
+    # Part marks
+    half = mark_size / 2
+    for mark in marks:
+        x, y = float(mark["x"]), float(mark["y"])
+        picture = symbols.get(mark.get("part_id"))
+        if picture:
+            try:
+                page.insert_image(box(x, y, half), stream=picture, keep_proportion=True, rotate=turn)
+                continue
+            except Exception:
+                pass
+        part = parts.get(mark.get("part_id")) or {}
+        name = part.get("item_name") or mark.get("name")
+        r = half * 0.92
+        shape = page.new_shape()
+        shape.draw_circle(pt(x, y), r * k)
+        shape.finish(color=(1, 1, 1), fill=plan_symbol_color(name), width=half * 0.12 * k)
+        shape.commit()
+        letters = plan_initials(name)
+        size = mark_size * 0.4 * k
+        width = fitz.get_text_length(letters, fontname="hebo", fontsize=size) / k
+        text_at(x - width / 2, y + mark_size * 0.4 * 0.35, letters, size, (1, 1, 1))
+
+    # Room names, on top of everything
+    for item in shaped:
+        room = item["room"]
+        size = float(room.get("label_size") or 14)
+        if room.get("label_x") is not None and room.get("label_y") is not None:
+            x, y = float(room["label_x"]), float(room["label_y"])
+        else:
+            x, y = float(room.get("x") or 0) + 6, float(room.get("y") or 0) + 4 + size
+        text_at(x, y, room.get("name") or "Room", size * k, (0.067, 0.067, 0.067), halo=(1, 1, 1))
+
+    if restore:
+        xref, crop_key, rotate_key = restore
+        doc.xref_set_key(xref, "CropBox", crop_key[1] if crop_key[0] != "null" else "null")
+        doc.xref_set_key(xref, "Rotate", rotate_key[1] if rotate_key[0] != "null" else "null")
+
+    # The parts, room by room: a page at the end.
+    ordered = sorted(shaped, key=lambda item: item["area"])
+
+    def inside(x, y, points):
+        hit = False
+        for i in range(len(points)):
+            xi, yi = points[i]
+            xj, yj = points[i - 1]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                hit = not hit
+        return hit
+
+    by_room = {}
+    totals = {}
+    for mark in marks:
+        room = next((item["room"] for item in ordered if inside(float(mark["x"]), float(mark["y"]), item["points"])), None)
+        room_name = room.get("name") if room else "Not in a room"
+        key = mark.get("part_id") or ("name", (mark.get("name") or "").lower())
+        by_room.setdefault(room_name, {}).setdefault(key, {"mark": mark, "count": 0})["count"] += 1
+        totals.setdefault(key, {"mark": mark, "count": 0})["count"] += 1
+    if marks:
+        def label(mark):
+            part = parts.get(mark.get("part_id")) or {}
+            return " - ".join(t for t in [part.get("item_name") or mark.get("name"), part.get("brand"), part.get("item_model")] if t)
+
+        sheet = {"page": None, "y": 0}
+
+        def new_sheet():
+            sheet["page"] = doc.new_page(width=612, height=792)
+            sheet["y"] = 54
+
+        def line(text, size=10, bold=False, indent=0, count=None, gap=4):
+            if sheet["page"] is None or sheet["y"] + size > 750:
+                new_sheet()
+            sheet["y"] += size
+            p = sheet["page"]
+            p.insert_text((54 + indent, sheet["y"]), text[:95], fontsize=size, fontname="hebo" if bold else "helv")
+            if count is not None:
+                text_count = str(count)
+                p.insert_text((558 - fitz.get_text_length(text_count, fontname="hebo", fontsize=size), sheet["y"]),
+                              text_count, fontsize=size, fontname="hebo")
+            sheet["y"] += gap
+
+        new_sheet()
+        line(title, size=16, bold=True, gap=8)
+        line("Parts marked on the plan, room by room", size=10, gap=14)
+        order = sorted(by_room, key=lambda n: (n == "Not in a room", n.lower()))
+        for room_name in order:
+            items = by_room[room_name]
+            line(room_name, size=11, bold=True, count=sum(v["count"] for v in items.values()), gap=5)
+            for entry in sorted(items.values(), key=lambda v: label(v["mark"]).lower()):
+                line(label(entry["mark"]), size=10, indent=14, count=entry["count"])
+            sheet["y"] += 8
+        sheet["y"] += 6
+        line("Totals for this sheet", size=11, bold=True, gap=5)
+        for entry in sorted(totals.values(), key=lambda v: label(v["mark"]).lower()):
+            line(label(entry["mark"]), size=10, indent=14, count=entry["count"])
+
+    data = doc.tobytes(garbage=3, deflate=True)
+    doc.close()
+    return data
+
+def plan_pdf_folder_choices(conn, project_id):
+    """The project's file folders this user may save into, each with its
+    subfolders in tree order, for the Save PDF window on the plan page."""
+    allowed = project_file_access_keys(conn, project_id)
+    tops = [f for f in all_project_file_folders(conn) if f["key"] in allowed]
+    children = {}
+    for row in conn.execute(
+        "SELECT id, folder_key, parent_id, name FROM project_folders WHERE project_id = %s ORDER BY lower(name)",
+        (project_id,)
+    ).fetchall():
+        children.setdefault((row["folder_key"], row["parent_id"]), []).append(row)
+    choices = []
+    for top in tops:
+        entries = []
+
+        def walk(parent_id, depth):
+            for row in children.get((top["key"], parent_id), []):
+                entries.append({"id": row["id"], "name": row["name"], "depth": depth})
+                if depth < 12:
+                    walk(row["id"], depth + 1)
+
+        walk(None, 1)
+        choices.append({"key": top["key"], "label": top["label"], "subfolders": entries})
+    return choices
+
+
+def plan_pdf_filename(text):
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(text or "")).strip(" .")
+    name = re.sub(r"\s+", " ", name)[:150].strip()
+    if not name:
+        name = "Plan"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    return name
+
+
+@app.route("/project/<int:project_id>/blueprint/<int:blueprint_id>/save-pdf", methods=["POST"])
+@login_required
+def save_marked_plan_pdf(project_id, blueprint_id):
+    """The plan sheet with its rooms, room names and parts drawn on it, saved
+    as a PDF into one of the project's file folders."""
+    if fitz is None:
+        return jsonify({"ok": False, "error": "The PDF tools are not available on the server."}), 500
+    payload = request.get_json(silent=True) or {}
+    folder_key = (payload.get("folder_key") or "").strip()
+    folder_id = optional_int(payload.get("folder_id"))
+    filename = plan_pdf_filename(payload.get("filename"))
+    replace = bool(payload.get("replace"))
+    try:
+        mark_size = min(max(float(payload.get("mark_size") or 28), 6.0), 120.0)
+    except (TypeError, ValueError):
+        mark_size = 28.0
+
+    conn = db()
+    if not user_can_access_project(conn, project_id):
+        conn.close()
+        return jsonify({"ok": False, "error": "You do not have access to this project."}), 403
+    sheet = conn.execute(
+        "SELECT * FROM project_blueprints WHERE id = %s AND project_id = %s", (blueprint_id, project_id)
+    ).fetchone()
+    if not sheet:
+        conn.close()
+        return jsonify({"ok": False, "error": "That plan sheet no longer exists. Reload the page."}), 404
+    if folder_key not in project_file_access_keys(conn, project_id):
+        conn.close()
+        return jsonify({"ok": False, "error": "You cannot save into that folder."}), 403
+    if folder_id:
+        target = load_project_folder(conn, project_id, folder_id)
+        if not target or target.get("folder_key") != folder_key:
+            conn.close()
+            return jsonify({"ok": False, "error": "That folder no longer exists. Reload the page."}), 404
+    existing = conn.execute(
+        """
+        SELECT id FROM project_files
+        WHERE project_id = %s AND folder_key = %s AND folder_id IS NOT DISTINCT FROM %s
+          AND lower(original_filename) = lower(%s)
+        ORDER BY id DESC LIMIT 1
+        """,
+        (project_id, folder_key, folder_id, filename)
+    ).fetchone()
+    if existing and not replace:
+        conn.close()
+        return jsonify({"ok": False, "exists": True, "filename": filename,
+                        "error": f"{filename} is already in that folder."}), 409
+    project = conn.execute("SELECT name FROM projects WHERE id = %s", (project_id,)).fetchone()
+    rooms = conn.execute(
+        "SELECT * FROM rooms WHERE project_id = %s AND (blueprint_id = %s OR blueprint_id IS NULL) ORDER BY id",
+        (project_id, blueprint_id)
+    ).fetchall()
+    marks = conn.execute(
+        "SELECT part_catalog_id AS part_id, item_name AS name, x, y FROM blueprint_marks WHERE blueprint_id = %s ORDER BY id",
+        (blueprint_id,)
+    ).fetchall()
+    part_ids = sorted({m["part_id"] for m in marks if m["part_id"]})
+    parts = {}
+    if part_ids:
+        for row in conn.execute(
+            "SELECT id, item_name, brand, item_model, symbol_file FROM part_catalog WHERE id = ANY(%s)", (part_ids,)
+        ).fetchall():
+            parts[row["id"]] = row
+    conn.close()  # the downloads and drawing below can take a while
+
+    sheet_file = sheet.get("blueprint_file") or ""
+    is_pdf = sheet_file.lower().endswith(".pdf")
+    source_path = sheet_file if is_pdf else (sheet.get("blueprint_preview_file") or sheet_file)
+    source = download_storage_file(source_path) if source_path else b""
+    if not source:
+        return jsonify({"ok": False, "error": "The plan file could not be read from storage."}), 502
+    symbols = {}
+    for part_id, part in parts.items():
+        if part.get("symbol_file"):
+            data = download_storage_file(part["symbol_file"])
+            if data:
+                symbols[part_id] = data
+    title = f"{project['name'] if project else 'Project'} - {sheet.get('name') or 'Plan'}"
+    try:
+        pdf = build_marked_plan_pdf(
+            source, is_pdf, rooms, marks, parts, symbols, mark_size, title,
+            image_type=file_ext(source_path) or None,
+        )
+    except Exception as e:
+        print("Marked plan PDF failed:", e)
+        return jsonify({"ok": False, "error": "The PDF could not be made from this plan file."}), 500
+    try:
+        storage_path = upload_bytes_to_storage(pdf, filename, "application/pdf")
+    except Exception as e:
+        print("Marked plan PDF upload failed:", e)
+        return jsonify({"ok": False, "error": "The PDF was made but could not be stored. Try again."}), 502
+
+    note = f"Plan {sheet.get('name') or ''} with rooms and parts marked."
+    now = utc_now_iso()
+    conn = db()
+    if existing:
+        conn.execute(
+            """
+            UPDATE project_files
+            SET storage_path = %s, file_size = %s, uploaded_by = %s, description = %s, created_at = %s
+            WHERE id = %s
+            """,
+            (storage_path, len(pdf), session.get("user_id"), note, now, existing["id"])
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO project_files
+            (project_id, folder_key, folder_id, storage_path, original_filename, file_size, uploaded_by, description, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (project_id, folder_key, folder_id or None, storage_path, filename, len(pdf), session.get("user_id"), note, now)
+        )
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "ok": True,
+        "filename": filename,
+        "replaced": bool(existing),
+        "file_url": url_for("storage_file", storage_path=storage_path),
+        "folder_url": url_for("project_files", project_id=project_id, folder=folder_key, dir=folder_id or None),
+    })
 
 
 def ensure_blueprint_mark_tables(conn):

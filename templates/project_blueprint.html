@@ -24,6 +24,8 @@
 {%- elif name == "create" %}<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>
 {%- elif name == "trace" %}<path d="M5 19L6.5 6l11.5 2.5L19 19z" stroke-dasharray="3 2.4"/><circle cx="5" cy="19" r="1.8" fill="currentColor"/><circle cx="6.5" cy="6" r="1.8" fill="currentColor"/><circle cx="18" cy="8.5" r="1.8" fill="currentColor"/><circle cx="19" cy="19" r="1.8" fill="currentColor"/>
 {%- elif name == "count" %}<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h1M4 12h1M4 18h1"/>
+{%- elif name == "savepdf" %}<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M12 12v6M9 15l3 3 3-3"/>
+{%- elif name == "folder" %}<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
 {%- elif name == "sheets" %}<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>
 {%- endif %}</svg>
 {%- endmacro %}
@@ -102,6 +104,7 @@
         </div>
 
         <div class="tbGroup tbEnd">
+            {% if active_blueprint and pdf_folders %}<button type="button" class="tbBtn" id="savePdfBtn" title="Save this plan, with its rooms, names and parts, as a PDF in the project's files">{{ icon("savepdf") }}<span>Save PDF</span></button>{% endif %}
             {% if active_blueprint %}<button type="button" class="tbBtn" data-drawer="count" title="Parts counted on the plan, room by room">{{ icon("count") }}<span>Count</span></button>{% endif %}
         </div>
     </div>
@@ -290,7 +293,53 @@
     </div>
 </div>
 
+{% if active_blueprint and pdf_folders %}
+<div class="savePdfOverlay" id="savePdfOverlay" hidden>
+    <div class="savePdfDialog" role="dialog" aria-labelledby="savePdfTitle">
+        <h3 id="savePdfTitle">Save Plan as PDF</h3>
+        <p class="muted savePdfIntro">The plan keeps its original quality. Room outlines, room names and the parts you placed are drawn on top, and a last page lists the parts room by room.</p>
+        <label>Save in</label>
+        <div class="savePdfFolders" id="savePdfFolders" role="listbox" aria-label="Folder">
+            {% for top in pdf_folders %}
+                <button type="button" class="savePdfFolder" role="option" data-key="{{ top.key }}" data-id="" data-path="{{ top.label }}">{{ icon("folder") }}<span>{{ top.label }}</span></button>
+                {% set top_label = top.label %}
+                {% for sub in top.subfolders %}
+                <button type="button" class="savePdfFolder sub" role="option" data-key="{{ top.key }}" data-id="{{ sub.id }}" style="padding-left:{{ 10 + sub.depth * 20 }}px!important">{{ icon("folder") }}<span>{{ sub.name }}</span></button>
+                {% endfor %}
+            {% endfor %}
+        </div>
+        <div class="savePdfWhere" id="savePdfWhere"></div>
+        <label for="savePdfName">File name</label>
+        <input id="savePdfName" value="{{ pdf_default_name }}" autocomplete="off">
+        <p class="savePdfMessage" id="savePdfMessage" hidden></p>
+        <div class="savePdfActions">
+            <button type="button" id="savePdfSave">Save PDF</button>
+            <button type="button" class="btn-secondary" id="savePdfCancel">Cancel</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <style>
+.savePdfOverlay{position:fixed;inset:0;z-index:2000;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.savePdfOverlay[hidden]{display:none}
+.savePdfDialog{background:var(--card);color:var(--text);border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.35);width:100%;max-width:520px;max-height:92vh;overflow-y:auto;padding:20px}
+.savePdfDialog h3{margin:0 0 6px}
+.savePdfIntro{margin:0 0 14px;font-size:13px}
+.savePdfFolders{border:1px solid var(--border);border-radius:8px;max-height:260px;overflow-y:auto;padding:4px;margin-bottom:6px}
+.savePdfFolder{display:flex!important;align-items:center;gap:8px;width:100%!important;justify-content:flex-start!important;text-align:left;background:transparent!important;color:var(--text)!important;border:0!important;border-radius:6px!important;padding:7px 10px!important;margin:0!important;min-height:0!important;font-size:14px!important;font-weight:700!important;box-shadow:none!important}
+.savePdfFolder.sub{font-weight:500!important}
+.savePdfFolder .tbSvg{width:18px;height:18px;color:#ca8a04}
+.savePdfFolder:hover{background:rgba(148,163,184,.16)!important}
+.savePdfFolder.selected{background:rgba(11,115,185,.14)!important;color:var(--primary)!important}
+.savePdfWhere{font-size:12px;color:var(--muted);margin:0 0 12px}
+#savePdfName{width:100%;margin-bottom:6px}
+.savePdfMessage{margin:8px 0 0;padding:9px 11px;border-radius:8px;font-weight:700;font-size:13px}
+.savePdfMessage.error{background:rgba(220,38,38,.12);color:#b91c1c}
+.savePdfMessage.done{background:rgba(22,163,74,.12);color:#166534}
+.savePdfMessage a{font-weight:800;margin-right:12px}
+.savePdfActions{display:flex;gap:10px;margin-top:14px}
+.savePdfActions button{margin:0!important}
 .savedRoom{stroke-width:2;cursor:pointer}.savedRoom:hover{fill-opacity:.35;stroke-width:4}
 .blue{fill:rgba(59,130,246,.22);stroke:#2563eb}.red{fill:rgba(239,68,68,.22);stroke:#dc2626}
 .green{fill:rgba(34,197,94,.22);stroke:#16a34a}.yellow{fill:rgba(234,179,8,.28);stroke:#ca8a04}
@@ -753,6 +802,8 @@ document.addEventListener("keydown",e=>{
     if(typing(e.target)||e.ctrlKey||e.metaKey||e.altKey)return;
     const overlay=document.getElementById("partNewOverlay");
     if(overlay&&!overlay.hidden)return;
+    const pdfOverlay=document.getElementById("savePdfOverlay");
+    if(pdfOverlay&&!pdfOverlay.hidden)return;
     if(e.code==="Space"){
         e.preventDefault();
         if(!spaceHand){spaceHand=true;viewport.classList.add("spaceHand");updateHint();}
@@ -1188,6 +1239,95 @@ if(createRoomBtn)createRoomBtn.addEventListener("click",()=>{
 document.addEventListener("click",()=>{if(createRoomBtn)createRoomBtn.classList.toggle("active",!drawer.hidden&&drawer.dataset.panel==="room");});
 
 setTool("hand");
+
+// ---- saving the plan as a PDF into the project's files -------------------------------
+const savePdfBtn=document.getElementById("savePdfBtn");
+if(savePdfBtn){
+    const overlay=document.getElementById("savePdfOverlay");
+    const nameInput=document.getElementById("savePdfName");
+    const message=document.getElementById("savePdfMessage");
+    const saveBtn=document.getElementById("savePdfSave");
+    const where=document.getElementById("savePdfWhere");
+    const SAVE_URL="{{ url_for('save_marked_plan_pdf', project_id=project.id, blueprint_id=active_blueprint.id) if active_blueprint else '' }}";
+    let chosen=null;
+    document.body.appendChild(overlay);  // above the left menu
+    function folderPath(btn){
+        // The folder and the folders above it, for the line under the list.
+        const all=Array.from(overlay.querySelectorAll(".savePdfFolder"));
+        const i=all.indexOf(btn);
+        const depth=b=>b.classList.contains("sub")?parseInt(b.style.paddingLeft,10):0;
+        const parts=[btn.querySelector("span").textContent];
+        let level=depth(btn);
+        for(let j=i-1;j>=0&&level>0;j--){
+            const d=depth(all[j]);
+            if(d<level){parts.unshift(all[j].querySelector("span").textContent);level=d;}
+        }
+        return parts.join(" / ");
+    }
+    function choose(btn){
+        overlay.querySelectorAll(".savePdfFolder").forEach(b=>{b.classList.toggle("selected",b===btn);b.setAttribute("aria-selected",b===btn?"true":"false");});
+        chosen=btn;
+        where.textContent="Saving in: "+folderPath(btn);
+    }
+    overlay.querySelectorAll(".savePdfFolder").forEach(b=>b.addEventListener("click",()=>choose(b)));
+    function say(text,kind,links){
+        message.textContent="";
+        message.className="savePdfMessage"+(kind?" "+kind:"");
+        message.hidden=!text;
+        if(!text)return;
+        const t=document.createElement("div");t.textContent=text;message.appendChild(t);
+        (links||[]).forEach(([label,url,newTab])=>{const a=document.createElement("a");a.href=url;a.textContent=label;if(newTab)a.target="_blank";message.appendChild(a);});
+    }
+    function open(){
+        say("");
+        saveBtn.disabled=false;
+        saveBtn.textContent="Save PDF";
+        if(!chosen)choose(overlay.querySelector('.savePdfFolder[data-key="plans"][data-id=""]')||overlay.querySelector(".savePdfFolder"));
+        overlay.hidden=false;
+        nameInput.focus();
+        const dot=nameInput.value.toLowerCase().lastIndexOf(".pdf");
+        nameInput.setSelectionRange(0,dot>0?dot:nameInput.value.length);
+    }
+    function close(){overlay.hidden=true;}
+    savePdfBtn.addEventListener("click",()=>{savePdfBtn.blur();open();});
+    document.getElementById("savePdfCancel").addEventListener("click",close);
+    overlay.addEventListener("keydown",e=>{if(e.key==="Escape"){e.stopPropagation();close();}});
+    overlay.addEventListener("mousedown",e=>{if(e.target===overlay)close();});
+    nameInput.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();save(false);}});
+    async function save(replace){
+        if(!chosen){say("Choose a folder.","error");return;}
+        if(!nameInput.value.trim()){say("Give the file a name.","error");nameInput.focus();return;}
+        let size=28;
+        const sizeSelect=document.getElementById("partMarkSize");
+        if(sizeSelect)size=parseInt(sizeSelect.value,10)||28;
+        else{try{size=parseInt(localStorage.getItem("projectonus_mark_size")||"28",10)||28;}catch(e){}}
+        saveBtn.disabled=true;
+        saveBtn.textContent="Saving\u2026";
+        say("Making the PDF. A large plan can take a little while.","");
+        try{
+            const res=await fetch(SAVE_URL,{method:"POST",credentials:"same-origin",
+                headers:{"Content-Type":"application/json","Accept":"application/json"},
+                body:JSON.stringify({folder_key:chosen.dataset.key,folder_id:chosen.dataset.id||null,filename:nameInput.value.trim(),mark_size:size,replace:replace})});
+            const data=(res.headers.get("Content-Type")||"").includes("application/json")?await res.json():null;
+            if(res.status===409&&data&&data.exists){
+                saveBtn.disabled=false;saveBtn.textContent="Save PDF";
+                if(confirm(data.filename+" is already in that folder. Replace it?"))return save(true);
+                say("Not saved. Change the name to keep both.","error");
+                nameInput.focus();
+                return;
+            }
+            if(!res.ok||!data||!data.ok)throw new Error((data&&data.error)||("The site answered "+res.status+"."));
+            say((data.replaced?"Replaced ":"Saved ")+data.filename+" in "+folderPath(chosen)+".","done",
+                [["Open the PDF",data.file_url,true],["Go to the folder",data.folder_url,false]]);
+            saveBtn.textContent="Saved";
+        }catch(e){
+            say("The PDF was not saved: "+e.message,"error");
+            saveBtn.disabled=false;
+            saveBtn.textContent="Save PDF";
+        }
+    }
+    saveBtn.addEventListener("click",()=>save(false));
+}
 
 // Notices from the last action fade after a while, giving the plan its room back.
 setTimeout(()=>document.querySelectorAll("main > .flash").forEach(f=>f.remove()),12000);
