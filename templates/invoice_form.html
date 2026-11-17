@@ -51,6 +51,7 @@
         {% if not is_estimate %}
             <button type="submit" class="btn-secondary" form="invoiceForm" formaction="{{ url_for('preview_invoice') }}" formtarget="_blank">Preview</button>
         {% endif %}
+        {% if is_estimate %}<a class="btn-link btn-secondary" href="#paymentSchedule" id="jumpToSchedule">Payment Schedule</a>{% endif %}
         <button type="submit" class="btn-secondary" form="invoiceForm" name="submit_action" value="email">Email {{ doc_word }}</button>
         <button type="submit" form="invoiceForm">{{ ('Save ' if is_edit else 'Create ') ~ doc_word }}</button>
     </div>

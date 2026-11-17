@@ -1,7 +1,7 @@
 {# A proposal's payment schedule: the editor on the proposal form, and the
    section the customer sees. Rows: label, percent, billing date, due date. #}
 {% macro payment_schedule_editor(rows) -%}
-<div class="scheduleEditor">
+<div class="scheduleEditor" id="paymentSchedule">
     <input type="hidden" name="schedule_present" value="1">
     <div class="scheduleHead">
         <h3>Payment Schedule</h3>
@@ -38,7 +38,8 @@
     </template>
 </div>
 <style>
-.scheduleEditor{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:14px 0}
+.scheduleEditor{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:14px 0;scroll-margin-top:80px;transition:box-shadow .3s,border-color .3s}
+.scheduleEditor.flash{border-color:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.25)}
 .scheduleHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .scheduleHead h3{margin:0}
 .scheduleHead button{margin:0}
@@ -63,6 +64,18 @@
     const sumLine=document.getElementById("scheduleSum");
     const totalBox=document.getElementById("liveBalanceDue");
     if(!rowsBox||!template)return;
+    // The item grid fills the screen, so the schedule below it is out of
+    // sight: the Payment Schedule button at the top brings it into view.
+    const editor=document.getElementById("paymentSchedule");
+    const jump=document.getElementById("jumpToSchedule");
+    if(jump&&editor)jump.addEventListener("click",e=>{
+        e.preventDefault();
+        editor.scrollIntoView({behavior:"smooth",block:"start"});
+        editor.classList.add("flash");
+        setTimeout(()=>editor.classList.remove("flash"),1600);
+        const first=editor.querySelector('input[name="schedule_label"]');
+        if(first)setTimeout(()=>first.focus({preventScroll:true}),450);
+    });
     const parse=v=>Number(String(v||"").replace(/[^0-9.\-]/g,""))||0;
     const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
     function refresh(){
