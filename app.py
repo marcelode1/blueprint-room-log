@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V5"
+APP_BUILD = "2026-11-17 V6"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -13045,7 +13045,7 @@ def address_cached(key, make, seconds=ADDRESS_CACHE_SECONDS):
     return value
 
 
-def address_fetch_json(url, body=None, headers=None, timeout=6):
+def address_fetch_json(url, body=None, headers=None, timeout=8):
     all_headers = {"User-Agent": "ProjectONus address lookup", "Accept": "application/json"}
     all_headers.update(headers or {})
     data = None
@@ -13099,7 +13099,14 @@ def address_bias_point():
             app.logger.warning("Address bias lookup failed: %s", exc)
         return None
 
-    return address_cached(("bias", place.lower()), find, seconds=86400)
+    key = ("bias", place.lower())
+    point = address_cached(key, find, seconds=86400)
+    if point is None:
+        with ADDRESS_CACHE_LOCK:
+            hit = ADDRESS_CACHE.get(key)
+            if hit and hit[1] is None:
+                ADDRESS_CACHE[key] = (hit[0] - 86400 + 600, None)
+    return point
 
 
 ADDRESS_FILLER_WORDS = {
@@ -13153,13 +13160,20 @@ def address_typed_number(query):
     return match.group(1) if match else ""
 
 
-def photon_address_suggestions(query, bias):
+def photon_request_url(query, bias):
     params = {"q": address_spelled_out(query), "limit": 15, "lang": "en"}
     if bias:
         params.update({"lat": f"{bias[0]:.4f}", "lon": f"{bias[1]:.4f}"})
-    data = address_fetch_json("https://photon.komoot.io/api/?" + urllib.parse.urlencode(params))
+    return "https://photon.komoot.io/api/?" + urllib.parse.urlencode(params)
+
+
+def photon_address_suggestions(query, bias, data=None):
+    """data is Photon's answer when the browser fetched it itself (the server
+    could not reach Photon); otherwise the server asks."""
+    if data is None:
+        data = address_fetch_json(photon_request_url(query, bias))
     typed_number = address_typed_number(query)
-    key_words = address_key_words(params["q"])
+    key_words = address_key_words(address_spelled_out(query))
     found = []
     for feature in data.get("features") or []:
         p = feature.get("properties") or {}
@@ -13238,14 +13252,32 @@ def google_address_details(place_id, token, key, typed_number=""):
     return {"label": address_label(street, city, state, zip_code), "street": street, "city": city, "state": state, "zip": zip_code}
 
 
-@app.route("/address-suggest")
+@app.route("/address-suggest", methods=["GET", "POST"])
 @login_required
 def address_suggest():
+    if request.method == "POST":
+        # The browser asked Photon itself because the server could not reach
+        # it; tidy its answer the same way.
+        payload = request.get_json(silent=True) or {}
+        query = re.sub(r"\s+", " ", str(payload.get("q") or "")).strip()[:160]
+        data = payload.get("data")
+        if len(query) < 4 or not isinstance(data, dict) or not isinstance(data.get("features"), list):
+            return jsonify({"results": [], "provider": "osm"})
+        data = {"features": [f for f in data["features"][:40] if isinstance(f, dict)]}
+        try:
+            results = photon_address_suggestions(query, None, data=data)
+        except Exception as exc:
+            app.logger.warning("Address suggestions from the browser failed: %s", exc)
+            results = []
+        return jsonify({"results": results, "provider": "osm"})
     query = re.sub(r"\s+", " ", request.args.get("q") or "").strip()[:160]
     if len(query) < 4:
         return jsonify({"results": []})
     key = address_google_key()
     provider = "google" if key else "osm"
+    if not key and request.args.get("url_only"):
+        return jsonify({"results": [], "provider": provider, "fallback_url": photon_request_url(query, address_bias_point())})
+    bias = None
     try:
         bias = address_bias_point()
         if key:
@@ -13255,7 +13287,10 @@ def address_suggest():
             results = address_cached(("osm", query.lower(), bias), lambda: photon_address_suggestions(query, bias))
     except Exception as exc:
         app.logger.warning("Address suggestions failed (%s): %s", provider, exc)
-        return jsonify({"results": [], "provider": provider, "error": "Address lookup is not answering right now."})
+        answer = {"results": [], "provider": provider, "error": "Address lookup is not answering right now."}
+        if not key:
+            answer["fallback_url"] = photon_request_url(query, bias)
+        return jsonify(answer)
     return jsonify({"results": results, "provider": provider})
 
 

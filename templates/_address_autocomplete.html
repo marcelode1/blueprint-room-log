@@ -19,7 +19,7 @@
     box.className="addrSuggest";
     box.hidden=true;
     box.setAttribute("role","listbox");
-    let field=null,items=[],active=-1,timer=null,lastQuery="",provider="",session="",asked=0,filling=false;
+    let field=null,items=[],active=-1,timer=null,lastQuery="",provider="",session="",asked=0,filling=false,direct=false;
     const newSession=()=>(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2);
 
     function lineRange(el){
@@ -61,11 +61,11 @@
         active=i;
         box.querySelectorAll(".addrSuggestItem").forEach((b,n)=>b.classList.toggle("active",n===i));
     }
-    function show(list){
+    function show(list,message){
         box.textContent="";
         items=list;
         active=-1;
-        if(!list.length){hide();return;}
+        if(!list.length&&!message){hide();return;}
         list.forEach((item,i)=>{
             const b=document.createElement("button");
             b.type="button";
@@ -80,7 +80,7 @@
         });
         const note=document.createElement("div");
         note.className="addrSuggestNote";
-        note.textContent=provider==="google"?"Powered by Google":"Addresses © OpenStreetMap contributors — check the house number";
+        note.textContent=message||(provider==="google"?"Powered by Google":"Addresses © OpenStreetMap contributors — check the house number");
         box.appendChild(note);
         if(!box.parentNode)document.body.appendChild(box);
         box.hidden=false;
@@ -134,14 +134,40 @@
         if(q===lastQuery&&!box.hidden)return;
         lastQuery=q;
         const ticket=++asked;
+        const current=()=>ticket===asked&&field===el;
         try{
-            const res=await fetch("/address-suggest?"+new URLSearchParams({q,s:session}),{credentials:"same-origin"});
-            if(!res.ok)return;
-            const data=await res.json();
-            if(ticket!==asked||field!==el)return;
+            let data;
+            if(direct){
+                const res=await fetch("/address-suggest?"+new URLSearchParams({q,s:session,url_only:1}),{credentials:"same-origin"});
+                if(!res.ok)throw new Error("lookup");
+                const info=await res.json();
+                data=info.fallback_url?await askFromBrowser(q,info.fallback_url):info;
+            }else{
+                const res=await fetch("/address-suggest?"+new URLSearchParams({q,s:session}),{credentials:"same-origin"});
+                if(!res.ok)throw new Error("lookup");
+                data=await res.json();
+                if(data.error&&data.fallback_url){
+                    // The server could not reach the address lookup: ask it from
+                    // this browser from now on, and let the server tidy the answer.
+                    direct=true;
+                    data=await askFromBrowser(q,data.fallback_url);
+                }
+            }
+            if(!current())return;
             provider=data.provider||"";
-            show(data.results||[]);
-        }catch(err){}
+            const results=data.results||[];
+            if(data.error&&!results.length){show([],data.error+" Type the address in full.");return;}
+            show(results,results.length?"":"No match yet \u2014 keep typing the street name.");
+        }catch(err){
+            if(current())show([],"Address lookup is not answering right now. Type the address in full.");
+        }
+    }
+    async function askFromBrowser(q,url){
+        const raw=await (await fetch(url)).json();
+        const res=await fetch("/address-suggest",{method:"POST",credentials:"same-origin",
+            headers:{"Content-Type":"application/json"},body:JSON.stringify({q,data:raw})});
+        if(!res.ok)throw new Error("lookup");
+        return res.json();
     }
     function attach(el){
         if(el.dataset.addressReady)return;
@@ -165,6 +191,7 @@
     });
     document.addEventListener("keydown",e=>{
         if(box.hidden||e.target!==field)return;
+        if(!items.length&&e.key!=="Escape")return;
         if(e.key==="ArrowDown"){e.preventDefault();setActive((active+1)%items.length);}
         else if(e.key==="ArrowUp"){e.preventDefault();setActive(active<=0?items.length-1:active-1);}
         else if(e.key==="Enter"&&active>=0){e.preventDefault();pick(active);}
