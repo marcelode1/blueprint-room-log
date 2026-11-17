@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V3"
+APP_BUILD = "2026-11-17 V4"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -1309,6 +1309,8 @@ def init_db():
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS line_type TEXT",
+        "DO $$ BEGIN IF to_regclass('estimate_lines') IS NOT NULL THEN ALTER TABLE estimate_lines ADD COLUMN IF NOT EXISTS line_type TEXT; END IF; END $$",
         "CREATE TABLE IF NOT EXISTS invoice_saved_items (id SERIAL PRIMARY KEY, item_name TEXT NOT NULL, description TEXT, unit_price DOUBLE PRECISION NOT NULL DEFAULT 0, taxable BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT)",
         "CREATE TABLE IF NOT EXISTS invoice_number_counters (year_key TEXT PRIMARY KEY, next_sequence INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS invoices (id SERIAL PRIMARY KEY, invoice_number TEXT UNIQUE NOT NULL, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, customer_name TEXT, customer_email TEXT, customer_phone TEXT, billing_address TEXT, invoice_date TEXT NOT NULL, due_date TEXT, status TEXT NOT NULL DEFAULT 'draft', subtotal DOUBLE PRECISION NOT NULL DEFAULT 0, tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0, tax_total DOUBLE PRECISION NOT NULL DEFAULT 0, total DOUBLE PRECISION NOT NULL DEFAULT 0, notes TEXT, terms TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, updated_at TEXT, sent_at TEXT)",
@@ -2441,6 +2443,7 @@ def ensure_invoice_tables(conn):
         "ALTER TABLE invoice_saved_items ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS part_catalog_id INTEGER REFERENCES part_catalog(id) ON DELETE SET NULL",
         "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS location TEXT",
+        "ALTER TABLE invoice_lines ADD COLUMN IF NOT EXISTS line_type TEXT",
     ]:
         try:
             conn.execute(statement)
@@ -2600,7 +2603,7 @@ def load_invoice(conn, invoice_id):
         return None, []
     lines = conn.execute(
         """
-        SELECT invoice_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
+        SELECT invoice_lines.*, COALESCE(NULLIF(invoice_lines.line_type, ''), CASE WHEN invoice_lines.item_name ~* '\\mlabou?r\\M' THEN 'service' END, part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
         FROM invoice_lines
         LEFT JOIN part_catalog ON invoice_lines.part_catalog_id = part_catalog.id
         WHERE invoice_id = %s
@@ -2609,6 +2612,11 @@ def load_invoice(conn, invoice_id):
         (invoice_id,)
     ).fetchall()
     return invoice, lines
+
+
+def clean_line_type(line):
+    """Labor ("service") or material ("part"), as chosen on the line."""
+    return "service" if (line.get("item_type") or line.get("line_type")) == "service" else "part"
 
 
 def invoice_totals_breakdown(invoice, lines):
@@ -3285,10 +3293,10 @@ def create_invoice_record_from_form(conn, lines=None, subtotal=None, tax_rate=No
         conn.execute(
             """
             INSERT INTO invoice_lines
-            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position, line_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"], clean_line_type(line))
         )
     return invoice_id
 
@@ -3343,10 +3351,10 @@ def update_invoice_record_from_form(conn, invoice_id, lines=None, subtotal=None,
         conn.execute(
             """
             INSERT INTO invoice_lines
-            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position, line_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"])
+            (invoice_id, line.get("part_catalog_id"), line["item_name"], line["description"], line.get("location") or "", line["quantity"], line["unit_price"], line["taxable"], line["line_total"], line["position"], clean_line_type(line))
         )
 
 
@@ -11063,8 +11071,8 @@ def copy_invoice(invoice_id):
             conn.execute(
                 """
                 INSERT INTO invoice_lines
-                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position, line_type)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     new_invoice_id,
@@ -11077,6 +11085,7 @@ def copy_invoice(invoice_id):
                     bool(line.get("taxable")),
                     line.get("line_total") or 0,
                     line.get("position") or 0,
+                    clean_line_type(line),
                 )
             )
         conn.commit()
@@ -11460,6 +11469,7 @@ def ensure_estimate_tables(conn):
         "CREATE INDEX IF NOT EXISTS estimate_lines_estimate_idx ON estimate_lines(estimate_id)",
         "CREATE INDEX IF NOT EXISTS estimate_revocations_estimate_idx ON estimate_signature_revocations(estimate_id)",
         "CREATE INDEX IF NOT EXISTS estimate_signature_events_estimate_idx ON estimate_signature_events(estimate_id)",
+        "ALTER TABLE estimate_lines ADD COLUMN IF NOT EXISTS line_type TEXT",
     ]
     for statement in statements:
         try:
@@ -11504,7 +11514,7 @@ def load_estimate(conn, estimate_id):
         return None, []
     lines = conn.execute(
         """
-        SELECT estimate_lines.*, COALESCE(part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
+        SELECT estimate_lines.*, COALESCE(NULLIF(estimate_lines.line_type, ''), CASE WHEN estimate_lines.item_name ~* '\\mlabou?r\\M' THEN 'service' END, part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
         FROM estimate_lines
         LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
         WHERE estimate_id = %s
@@ -11578,8 +11588,8 @@ def replace_estimate_lines(conn, estimate_id, lines):
         conn.execute(
             """
             INSERT INTO estimate_lines
-            (estimate_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (estimate_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position, line_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 estimate_id,
@@ -11592,6 +11602,7 @@ def replace_estimate_lines(conn, estimate_id, lines):
                 bool(line.get("taxable")),
                 line.get("line_total") or 0,
                 line.get("position") or 0,
+                clean_line_type(line),
             )
         )
 
@@ -11974,8 +11985,8 @@ def convert_estimate_to_invoice(conn, estimate, lines):
         conn.execute(
             """
             INSERT INTO invoice_lines
-            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (invoice_id, part_catalog_id, item_name, description, location, quantity, unit_price, taxable, line_total, position, line_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 invoice_id,
@@ -11988,6 +11999,7 @@ def convert_estimate_to_invoice(conn, estimate, lines):
                 bool(line.get("taxable")),
                 line.get("line_total") or 0,
                 line.get("position") or 0,
+                clean_line_type(line),
             )
         )
     conn.execute(
@@ -12657,7 +12669,7 @@ def load_estimate_by_token(conn, token):
         return None, []
     lines = conn.execute(
         """
-        SELECT estimate_lines.*, part_catalog.picture_file
+        SELECT estimate_lines.*, COALESCE(NULLIF(estimate_lines.line_type, ''), CASE WHEN estimate_lines.item_name ~* '\\mlabou?r\\M' THEN 'service' END, part_catalog.item_type, 'part') AS item_type, part_catalog.picture_file
         FROM estimate_lines
         LEFT JOIN part_catalog ON estimate_lines.part_catalog_id = part_catalog.id
         WHERE estimate_id = %s

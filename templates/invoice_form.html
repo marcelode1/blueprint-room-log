@@ -208,6 +208,10 @@
                                     <input type="checkbox" name="line_taxable" class="lineTaxable" value="{{ loop.index0 }}" {% if line.taxable %}checked{% endif %}>
                                     <span class="taxToggleText">Tax</span>
                                 </label>
+                                <label class="taxToggle laborToggle" title="Count this line as labor in the totals">
+                                    <input type="checkbox" class="lineLaborBox" {% if line.item_type == 'service' %}checked{% endif %}>
+                                    <span class="taxToggleText">Labor</span>
+                                </label>
                             </td>
                             <td><input class="lineAmount" value="{{ format_invoice_money(line.line_total) }}" readonly></td>
                             <td>
@@ -282,6 +286,10 @@
                     <label class="taxToggle" title="Charge sales tax on this line">
                         <input type="checkbox" name="line_taxable" class="lineTaxable" value="__INDEX__">
                         <span class="taxToggleText">Tax</span>
+                    </label>
+                    <label class="taxToggle laborToggle" title="Count this line as labor in the totals">
+                        <input type="checkbox" class="lineLaborBox">
+                        <span class="taxToggleText">Labor</span>
                     </label>
                 </td>
                 <td><input class="lineAmount" value="$0.00" readonly></td>
@@ -608,6 +616,8 @@ function updateInvoiceLiveTotals(){
         const price=parseMoney(line.querySelector(".lineUnitPrice")?.value||0);
         const lineTotal=qty*price;
         const itemType=line.querySelector(".lineItemType")?.value||"part";
+        const laborBox=line.querySelector(".lineLaborBox");
+        if(laborBox)laborBox.checked=itemType==="service";
         const taxable=line.querySelector(".lineTaxable")?.checked;
         if(lineTotal<0){
             paymentsCredit+=Math.abs(lineTotal);
@@ -872,6 +882,11 @@ invoiceLines.addEventListener("change",event=>{
     if(event.target.matches(".lineItemSelect"))applySelectedItem(event.target);
     if(event.target.matches(".lineQty,.lineUnitPrice"))updateLineAmount(event.target.closest(".invoiceLine"));
     if(event.target.matches(".lineTaxable"))updateInvoiceLiveTotals();
+    if(event.target.matches(".lineLaborBox")){
+        const type=event.target.closest(".invoiceLine")?.querySelector(".lineItemType");
+        if(type)type.value=event.target.checked?"service":"part";
+        updateInvoiceLiveTotals();
+    }
     if(event.target.matches(".lineLocation")&&event.target.value==="__new_room__"){
         openNewRoomModal(event.target);
     }
@@ -1278,6 +1293,9 @@ window.addEventListener("resize",()=>{if(combo)positionSuggestFloat(combo.input)
 .taxToggle input.lineTaxable{width:17px!important;min-height:17px!important;height:17px;flex:0 0 auto;margin:0!important;
     padding:0!important;cursor:pointer;accent-color:#2563eb}
 .taxToggle input.lineTaxable:checked+.taxToggleText{color:#1d4ed8}
+.taxToggle input.lineLaborBox{width:17px!important;min-height:17px!important;height:17px;flex:0 0 auto;margin:0!important;
+    padding:0!important;cursor:pointer;accent-color:#7c3aed}
+.taxToggle input.lineLaborBox:checked+.taxToggleText{color:#7c3aed}
 .taxToggleText{line-height:1}.invoiceLineActions{display:grid;gap:3px}.invoiceLineActions button{width:100%!important;min-height:22px!important;padding:2px 5px!important;margin:0!important;border-radius:5px!important;font-size:11px!important;line-height:1.1!important}
 .invoiceLiveTotals{max-width:390px;margin:14px 12px 14px auto;padding:12px;border-top:1px solid var(--border)}.invoiceLiveTotals p{display:flex;justify-content:space-between;gap:24px;margin:7px 0}.invoiceLiveBalance{border-top:2px solid #172033;padding-top:10px;font-size:24px}
 .invoiceModal[hidden]{display:none}.invoiceModal{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.52);padding:18px}.invoiceModalDialog{width:min(720px,100%);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:18px;box-shadow:0 24px 70px rgba(15,23,42,.28)}.invoiceModalHeader{display:flex;align-items:center;justify-content:space-between;gap:12px}.invoiceToggle{display:flex!important;align-items:center;gap:8px;font-weight:800}.invoiceToggle input{width:auto;min-height:auto}.invoiceItemOptions{display:flex;align-items:end;gap:18px;flex-wrap:wrap;margin:12px 0}.invoiceItemOptions label{margin:0}.invoiceItemOptions select{min-width:160px}.formError{color:#b91c1c;font-weight:800}.catalogUpdateDialog,.unsavedInvoiceDialog,.newRoomDialog{max-width:460px}.catalogUpdateActions,.unsavedInvoiceActions{display:flex;gap:10px;flex-wrap:wrap}.catalogUpdateActions button,.unsavedInvoiceActions button{flex:1;min-width:180px}
