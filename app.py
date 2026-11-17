@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V10"
+APP_BUILD = "2026-11-17 V11"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -12903,6 +12903,9 @@ def render_estimate_sign_page(estimate, lines, message=""):
         company=account_info(),
         totals_breakdown=estimate_totals_breakdown(estimate, lines),
         logo_path=get_app_setting("company_logo"),
+        # The customer is not signed in, so the logo cannot come from
+        # /storage_file (sign-in only): it goes in the page itself.
+        logo_src=invoice_logo_data_uri(),
         expired=estimate_is_expired(estimate),
         message=message,
         map_url=estimate_signed_map_url(estimate),

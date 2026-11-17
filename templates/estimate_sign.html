@@ -104,7 +104,7 @@ button[disabled]{opacity:.55;cursor:not-allowed}
 <div class="paper">
     <div class="estHeader">
         <div>
-            {% if logo_path %}<img class="estLogo" src="{{ url_for('storage_file', storage_path=logo_path) }}" alt="{{ company.company_name or 'Company' }}">{% endif %}
+            {% if logo_src %}<img class="estLogo" src="{{ logo_src }}" alt="{{ company.company_name or 'Company' }}">{% endif %}
             {% if company.company_name %}<p><strong>{{ company.company_name }}</strong></p>{% endif %}
             {% if company.company_address %}<p>{{ company.company_address }}</p>{% endif %}
             {% if company.company_phone %}<p>{{ company.company_phone }}</p>{% endif %}
