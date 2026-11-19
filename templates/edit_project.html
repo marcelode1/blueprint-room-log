@@ -31,11 +31,11 @@
         <div class="jobBlock">
             <h3>The Job</h3>
             <p class="jobLead">This is all a mobile user sees.</p>
-            <label>Job Name</label>
-            <input name="job_name" value="{{ project.job_name or project.name }}" list="jobNameOptions" autocomplete="off" required placeholder="The contractor's customer, or our own">
-            <label>Project Name <span class="muted" style="font-weight:400">(leave blank to use the job name)</span></label>
-            <input name="name" value="{{ project.name }}">
+            <label>Project Name</label>
+            <label class="sameCheck"><input type="checkbox" name="job_name_same" value="1" data-same-as="customer_name:name"{% if project.customer_name and project.name == project.customer_name %} checked{% endif %}> Same as Customer Name</label>
+            <input name="name" value="{{ project.name }}" autocomplete="off" required placeholder="The contractor's customer, or our own">
             <label>Job Street Address</label>
+            <label class="sameCheck"><input type="checkbox" name="job_address_same" value="1" data-same-as="customer_address:job_address,customer_city:job_city,customer_state:job_state,customer_zip:job_zip"{% if (project.customer_street or project.customer_address) and (project.job_street or '') == (project.customer_street or '') and (project.job_city or '') == (project.customer_city or '') and (project.job_state or '') == (project.customer_state or '') and (project.job_zip or '') == (project.customer_zip or '') %} checked{% endif %}> Same as the customer address</label>
             <input name="job_address" data-address data-address-city="job_city" data-address-state="job_state" data-address-zip="job_zip" value="{{ project.job_street or project.job_address or '' }}" autocomplete="street-address" placeholder="Leave blank to use the customer address">
             <div class="grid">
                 <div><label>City</label><input name="job_city" value="{{ project.job_city or '' }}"></div>
@@ -125,4 +125,5 @@
     });
 })();
 </script>
+{% include "_job_same_boxes.html" %}
 {% endblock %}

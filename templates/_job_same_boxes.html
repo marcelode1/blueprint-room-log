@@ -1,0 +1,37 @@
+{# "Same as the customer" boxes in The Job: while ticked, the job fields copy
+   the customer fields as they are typed and cannot be changed by hand.
+   Each box: data-same-as="source_name:target_name,..." inside the form. #}
+<style>
+.sameCheck{display:flex;gap:8px;align-items:center;margin:2px 0 6px;font-weight:700;font-size:13px;color:#334155;cursor:pointer;width:max-content;max-width:100%}
+.sameCheck input{width:18px!important;height:18px;min-height:0!important;margin:0!important;flex:0 0 auto;cursor:pointer}
+input.sameLocked{background:#eef2ff!important;color:#334155}
+</style>
+<script>
+(function(){
+    document.querySelectorAll("input[data-same-as]").forEach(box=>{
+        const form=box.form||document;
+        const pairs=box.dataset.sameAs.split(",").map(pair=>pair.split(":"));
+        const field=name=>form.querySelector('[name="'+name+'"]');
+        function sync(){
+            pairs.forEach(([source,target])=>{
+                const from=field(source),to=field(target);
+                if(!from||!to)return;
+                if(box.checked){
+                    to.value=from.value;
+                    to.readOnly=true;
+                    to.classList.add("sameLocked");
+                }else{
+                    to.readOnly=false;
+                    to.classList.remove("sameLocked");
+                }
+            });
+        }
+        box.addEventListener("change",sync);
+        pairs.forEach(([source])=>{
+            const from=field(source);
+            if(from){from.addEventListener("input",sync);from.addEventListener("change",sync);}
+        });
+        sync();
+    });
+})();
+</script>

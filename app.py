@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-17 V11"
+APP_BUILD = "2026-11-19 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -337,7 +337,10 @@ def project_address_from_form():
 
 def job_address_from_form():
     """Where the work is. Left blank, it falls back to the customer's address,
-    which is right for a job we take on directly."""
+    which is right for a job we take on directly. "Same as the customer
+    address" ticked uses the customer's address whatever the job boxes say."""
+    if request.form.get("job_address_same"):
+        return project_address_from_form()
     parts = build_full_address(
         request.form.get("job_address", "").strip(),
         request.form.get("job_city", "").strip(),
@@ -8578,10 +8581,14 @@ def add_paystub_expense(stub_id):
 @admin_required
 def new_project():
     if request.method == "POST":
-        job_name = request.form.get("job_name", "").strip()
-        name = request.form.get("name", "").strip() or job_name
+        # One name: the Project Name box ("Same as Customer Name" ticked names
+        # it after the customer). The job name the mobile side groups by
+        # follows it.
+        name = (request.form.get("customer_name", "") if request.form.get("job_name_same")
+                else (request.form.get("name") or request.form.get("job_name") or "")).strip()
+        job_name = (request.form.get("job_name") or name).strip()
         if not name:
-            flash("Job name is required.")
+            flash("Project name is required.")
             return redirect(url_for("new_project"))
         customer_name = request.form.get("customer_name", "").strip()
         customer_address_parts = project_address_from_form()
@@ -8668,12 +8675,23 @@ def edit_project(project_id):
         return redirect(url_for("index"))
 
     if request.method == "POST":
-        job_name = request.form.get("job_name", "").strip()
-        name = request.form.get("name", "").strip() or job_name
+        # One name: the Project Name box ("Same as Customer Name" ticked names
+        # it after the customer). The job name the mobile side groups by
+        # follows it.
+        name = (request.form.get("customer_name", "") if request.form.get("job_name_same")
+                else (request.form.get("name") or request.form.get("job_name") or "")).strip()
+        job_name = (request.form.get("job_name") or name).strip()
         if not name:
             conn.close()
-            flash("Job name is required.")
+            flash("Project name is required.")
             return redirect(url_for("edit_project", project_id=project_id))
+        # A job that already holds other projects keeps its job name, so they
+        # stay together when this one is renamed.
+        if not request.form.get("job_name") and project.get("job_name") and project.get("job_name") != project.get("name"):
+            shared = conn.execute("SELECT 1 FROM projects WHERE job_name = %s AND id <> %s LIMIT 1",
+                                  (project["job_name"], project_id)).fetchone()
+            if shared:
+                job_name = project["job_name"]
         customer_address_parts = project_address_from_form()
         customer_street, customer_address, customer_city, customer_state, customer_zip = customer_address_parts
         job_street, job_address, job_city, job_state, job_zip = job_address_from_form()
