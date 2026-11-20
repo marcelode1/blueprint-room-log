@@ -1,5 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
+{% macro time_box(name, label, value, kind, hint="") %}
+<div class="clockBox clockBox-{{ kind }}">
+    <div class="clockBoxHead">
+        <span class="clockBoxLabel">{{ label }}</span>
+        {% if hint %}<span class="clockBoxHint">{{ hint }}</span>{% endif %}
+    </div>
+    <div class="clockTimeRow">
+        <button type="button" class="clockNudge" data-nudge="-15" title="15 minutes earlier">&minus;15</button>
+        <input class="clockTimeInput" name="{{ name }}" value="{{ value }}" data-clock-kind="{{ kind }}" autocomplete="off" inputmode="text" placeholder="{{ 'e.g. 4:30 PM' if kind == 'out' else 'e.g. 7:30 AM' }}">
+        <button type="button" class="clockNudge" data-nudge="15" title="15 minutes later">+15</button>
+    </div>
+    <div class="clockChips">
+        {% for chip in (["6:00 AM","6:30 AM","7:00 AM","7:30 AM","8:00 AM","8:30 AM","9:00 AM"] if kind == "in" else ["3:00 PM","3:30 PM","4:00 PM","4:30 PM","5:00 PM","5:30 PM","6:00 PM"]) %}
+            <button type="button" class="clockChip" data-time="{{ chip }}">{{ chip }}</button>
+        {% endfor %}
+        <button type="button" class="clockChip clockChipNow" data-time="now">Now</button>
+        {% if kind and name != "event_time" %}<button type="button" class="clockChip clockChipClear" data-time="">Clear</button>{% endif %}
+    </div>
+</div>
+{% endmacro %}
+
 <div class="card">
     <h2>{{ form_title }}</h2>
     {% if subtitle %}<p class="muted">{{ subtitle }}</p>{% endif %}
@@ -9,7 +30,7 @@
 </div>
 
 <div class="card">
-    <form method="post" action="{{ form_action }}">
+    <form method="post" action="{{ form_action }}" id="clockForm">
         <input type="hidden" name="return_url" value="{{ return_url }}">
         {% if not complete_mode %}
         <div class="grid">
@@ -31,6 +52,7 @@
                     {% endfor %}
                 </select>
             </div>
+            {% if not pair_mode %}
             <div>
                 <label>Type</label>
                 <select name="event_type" required>
@@ -38,17 +60,18 @@
                     <option value="check_out" {% if sel_event_type == "check_out" %}selected{% endif %}>Clock Out</option>
                 </select>
             </div>
+            {% endif %}
         </div>
         {% endif %}
 
-        <div class="grid">
+        <div class="clockDateRow">
             <div>
                 <label>{% if complete_mode %}{{ missing_label }} Date{% else %}Date{% endif %}</label>
-                <input type="date" name="event_date" value="{{ event_date }}" required>
-            </div>
-            <div>
-                <label>{% if complete_mode %}{{ missing_label }} Time{% else %}Time{% endif %}</label>
-                <input type="time" name="event_time" value="{{ event_time }}" required>
+                <input type="date" name="event_date" id="clockDate" value="{{ event_date }}" required>
+                <div class="clockDateChips">
+                    <button type="button" class="clockChip" data-day="0">Today</button>
+                    <button type="button" class="clockChip" data-day="-1">Yesterday</button>
+                </div>
             </div>
             {% if not complete_mode %}
             <div>
@@ -63,22 +86,195 @@
             {% endif %}
         </div>
 
-        <label>Location / Note</label>
-        <textarea name="address" rows="3" data-address placeholder="Address, or a note (e.g. 'Forgot to clock in — added manually by admin')">{{ address }}</textarea>
-
-        <div class="grid">
-            <div>
-                <label>Latitude (optional)</label>
-                <input name="latitude" value="{{ latitude }}" inputmode="decimal">
-            </div>
-            <div>
-                <label>Longitude (optional)</label>
-                <input name="longitude" value="{{ longitude }}" inputmode="decimal">
-            </div>
+        {% if pair_mode %}
+        <div class="clockPair">
+            {{ time_box("checkin_time", "Clock In", checkin_time, "in", "Leave blank to add only the clock out") }}
+            {{ time_box("checkout_time", "Clock Out", checkout_time, "out", "Leave blank to add only the clock in") }}
         </div>
+        <div class="clockTotal" id="clockTotal" aria-live="polite"></div>
+        {% else %}
+        <div class="clockPair clockSingle">
+            {{ time_box("event_time", (missing_label ~ " Time") if complete_mode else "Time", event_time, time_kind) }}
+        </div>
+        {% endif %}
 
-        <button type="submit">{{ submit_label }}</button>
-        <a class="btn-link btn-secondary" href="{{ return_url }}">Back to Time Report</a>
+        <label>Location / Note</label>
+        <textarea name="address" rows="2" data-address placeholder="Address, or a note (e.g. 'Forgot to clock in — added manually by admin')">{{ address }}</textarea>
+
+        <details class="clockGps" {% if latitude != "" or longitude != "" %}open{% endif %}>
+            <summary>GPS coordinates (optional)</summary>
+            <div class="grid">
+                <div>
+                    <label>Latitude</label>
+                    <input name="latitude" value="{{ latitude }}" inputmode="decimal">
+                </div>
+                <div>
+                    <label>Longitude</label>
+                    <input name="longitude" value="{{ longitude }}" inputmode="decimal">
+                </div>
+            </div>
+        </details>
+
+        <div class="clockActions">
+            <button type="submit" id="clockSubmit">{{ submit_label }}</button>
+            <a class="btn-link btn-secondary" href="{{ return_url }}">Back to Time Report</a>
+        </div>
     </form>
 </div>
+
+<style>
+.clockDateRow{display:grid;grid-template-columns:minmax(0,260px) minmax(0,320px);gap:16px;align-items:start;margin-bottom:6px}
+.clockDateChips{display:flex;gap:6px;margin-top:6px}
+.clockPair{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:12px 0 6px}
+.clockSingle{grid-template-columns:minmax(0,520px)}
+.clockBox{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:#f8fafc}
+.clockBox-in{border-left:5px solid #16a34a}
+.clockBox-out{border-left:5px solid #dc2626}
+.clockBoxHead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.clockBoxLabel{font-weight:800;font-size:16px}
+.clockBox-in .clockBoxLabel{color:#15803d}
+.clockBox-out .clockBoxLabel{color:#b91c1c}
+.clockBoxHint{font-size:12px;color:var(--muted)}
+.clockTimeRow{display:flex;gap:8px;align-items:center}
+.clockTimeRow .clockTimeInput{flex:1;font-size:22px;font-weight:700;text-align:center;padding:8px 10px;margin:0;min-width:0}
+.clockTimeInput.clockBad{border-color:#dc2626;background:#fef2f2}
+.clockNudge{flex:0 0 auto;width:auto;min-width:54px;padding:8px 10px;margin:0;background:#e2e8f0;color:#0f172a;font-weight:800}
+.clockNudge:hover{background:#cbd5e1}
+.clockChips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.clockChip{width:auto;margin:0;padding:6px 10px;font-size:13px;font-weight:700;border-radius:999px;background:#fff;color:#0f172a;border:1px solid var(--border)}
+.clockChip:hover{background:#e0f2fe;border-color:#7dd3fc}
+.clockChip.isOn{background:#0369a1;color:#fff;border-color:#0369a1}
+.clockChipNow{border-color:#7dd3fc}
+.clockChipClear{color:var(--muted)}
+.clockTotal{min-height:24px;margin:4px 0 10px;font-weight:800;color:#0f172a}
+.clockTotal.warn{color:#b91c1c}
+.clockGps{margin:10px 0 14px}
+.clockGps summary{cursor:pointer;font-weight:700;color:var(--muted)}
+.clockActions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+@media (max-width:760px){
+    .clockDateRow,.clockPair{grid-template-columns:1fr}
+}
+</style>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+    const form=document.getElementById("clockForm");
+    if(!form)return;
+    // Reads "8", "830", "8:30", "8:30p", "8.30 pm", "17:30" or "1730".
+    // Without AM/PM a clock-in hour of 5-11 is morning and a clock-out
+    // hour of 1-9 is afternoon, which is what a work day almost always is.
+    function parseTime(text,kind){
+        const raw=(text||"").trim().toLowerCase();
+        if(!raw)return null;
+        const m=raw.match(/^(\d{1,2})(?:[:.\s]?(\d{2}))?\s*([ap])?\.?\s*m?\.?$/);
+        if(!m)return null;
+        let h=parseInt(m[1],10),min=m[2]?parseInt(m[2],10):0;
+        const ap=m[3];
+        if(min>59||h>23)return null;
+        if(ap){
+            if(h<1||h>12)return null;
+            if(ap==="p"&&h<12)h+=12;
+            if(ap==="a"&&h===12)h=0;
+        }else if(h>=1&&h<=12){
+            if(kind==="out"){ if(h<=9||h===12) h=(h===12?12:h+12); }
+            else { if(h<=4) h+=12; }
+        }
+        return h*60+min;
+    }
+    function show(minutes){
+        minutes=((minutes%1440)+1440)%1440;
+        let h=Math.floor(minutes/60),m=minutes%60;
+        const ap=h>=12?"PM":"AM";
+        h=h%12||12;
+        return h+":"+String(m).padStart(2,"0")+" "+ap;
+    }
+    function kindOf(input){return input.dataset.clockKind||"in";}
+    function normalize(input){
+        const v=input.value.trim();
+        if(!v){input.classList.remove("clockBad");return true;}
+        const t=parseTime(v,kindOf(input));
+        if(t===null){input.classList.add("clockBad");return false;}
+        input.classList.remove("clockBad");
+        input.value=show(t);
+        return true;
+    }
+    function markChips(box){
+        const input=box.querySelector(".clockTimeInput");
+        box.querySelectorAll(".clockChip[data-time]").forEach(chip=>{
+            chip.classList.toggle("isOn",!!chip.dataset.time&&chip.dataset.time!=="now"&&chip.dataset.time===input.value);
+        });
+    }
+    function nowMinutes(){const d=new Date();return d.getHours()*60+d.getMinutes();}
+    document.querySelectorAll(".clockBox").forEach(box=>{
+        const input=box.querySelector(".clockTimeInput");
+        box.querySelectorAll(".clockChip[data-time]").forEach(chip=>{
+            chip.addEventListener("click",()=>{
+                input.value=chip.dataset.time==="now"?show(nowMinutes()):chip.dataset.time;
+                normalize(input);markChips(box);updateTotal();
+            });
+        });
+        box.querySelectorAll(".clockNudge").forEach(btn=>{
+            btn.addEventListener("click",()=>{
+                let t=parseTime(input.value,kindOf(input));
+                if(t===null)t=kindOf(input)==="out"?17*60:8*60;
+                else t+=parseInt(btn.dataset.nudge,10);
+                input.value=show(t);
+                normalize(input);markChips(box);updateTotal();
+            });
+        });
+        input.addEventListener("blur",()=>{normalize(input);markChips(box);updateTotal();});
+        input.addEventListener("input",updateTotal);
+        input.addEventListener("keydown",e=>{
+            if(e.key==="ArrowUp"||e.key==="ArrowDown"){
+                e.preventDefault();
+                let t=parseTime(input.value,kindOf(input));
+                if(t===null)t=kindOf(input)==="out"?17*60:8*60;
+                else t+=e.key==="ArrowUp"?15:-15;
+                input.value=show(t);markChips(box);updateTotal();
+            }
+        });
+        normalize(input);markChips(box);
+    });
+    const dateInput=document.getElementById("clockDate");
+    document.querySelectorAll(".clockChip[data-day]").forEach(chip=>{
+        chip.addEventListener("click",()=>{
+            const d=new Date();d.setDate(d.getDate()+parseInt(chip.dataset.day,10));
+            dateInput.value=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+            updateTotal();
+        });
+    });
+    const totalBox=document.getElementById("clockTotal");
+    const inInput=form.querySelector('[name="checkin_time"]');
+    const outInput=form.querySelector('[name="checkout_time"]');
+    function updateTotal(){
+        if(!totalBox||!inInput||!outInput)return;
+        const a=parseTime(inInput.value,"in"),b=parseTime(outInput.value,"out");
+        totalBox.classList.remove("warn");
+        if(a===null&&b===null){totalBox.textContent="Enter the clock in, the clock out, or both.";return;}
+        if(a===null){totalBox.textContent="Only a clock out will be added.";return;}
+        if(b===null){totalBox.textContent="Only a clock in will be added.";return;}
+        let span=b-a,overnight=false;
+        if(span<=0){span+=1440;overnight=true;}
+        const text="Total: "+Math.floor(span/60)+" h "+String(span%60).padStart(2,"0")+" min";
+        if(overnight&&span>16*60){
+            totalBox.classList.add("warn");
+            totalBox.textContent="The clock out is before the clock in. Check AM / PM.";
+        }else{
+            totalBox.textContent=text+(overnight?" (clock out is the next day)":"");
+        }
+    }
+    updateTotal();
+    form.addEventListener("submit",e=>{
+        let ok=true;
+        form.querySelectorAll(".clockTimeInput").forEach(input=>{ if(!normalize(input)) ok=false; });
+        if(!ok){e.preventDefault();alert("Enter the time like 7:30 AM.");return;}
+        if(inInput&&outInput){
+            if(!inInput.value.trim()&&!outInput.value.trim()){e.preventDefault();alert("Enter the clock in, the clock out, or both.");return;}
+            if(totalBox&&totalBox.classList.contains("warn")){e.preventDefault();alert(totalBox.textContent);return;}
+        }else{
+            const single=form.querySelector('[name="event_time"]');
+            if(single&&!single.value.trim()){e.preventDefault();alert("Enter the time.");}
+        }
+    });
+});
+</script>
 {% endblock %}

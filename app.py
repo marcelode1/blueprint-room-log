@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-19 V1"
+APP_BUILD = "2026-11-20 V1"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -22195,16 +22195,14 @@ def edit_attendance_event(event_id):
         # time on that day - never silently shift it by re-deriving the zone from GPS.)
         event_timezone = clean_timezone_name(request.form.get("event_timezone", "").strip() or event_timezone_name(event))
 
-        try:
-            local_value = datetime.strptime(
-                request.form.get("event_date", "") + " " + request.form.get("event_time", ""),
-                "%Y-%m-%d %H:%M"
-            )
-            created_at = storage_datetime(local_value, event_timezone).isoformat()
-        except Exception:
+        local_value = attendance_local_datetime(
+            request.form.get("event_date", ""), request.form.get("event_time", ""),
+            "out" if event_type == "check_out" else "in")
+        if local_value is None:
             conn.close()
-            flash("Enter a valid date and time.")
+            flash("Enter a valid date and time (for example 7:30 AM).")
             return redirect(url_for("edit_attendance_event", event_id=event_id, return_url=return_url))
+        created_at = storage_datetime(local_value, event_timezone).isoformat()
 
         conn.execute(
             """
@@ -22247,13 +22245,61 @@ def edit_attendance_event(event_id):
         sel_event_type=event.get("event_type") or "check_in",
         selected_timezone=selected_timezone,
         event_date=event_dt.date().isoformat(),
-        event_time=event_dt.strftime("%H:%M"),
+        event_time=clock_time_display(event_dt),
+        time_kind="out" if event.get("event_type") == "check_out" else "in",
         address=event.get("address") or "",
         latitude=event.get("latitude") if event.get("latitude") is not None else "",
         longitude=event.get("longitude") if event.get("longitude") is not None else "",
         common_timezones=COMMON_TIMEZONES,
         return_url=return_url
     )
+
+
+def parse_clock_time_text(value, kind="in"):
+    """Reads a typed time: "8", "830", "8:30", "8:30p", "8.30 pm", "17:30",
+    "1730". Without AM/PM a clock-in hour of 5-11 is morning (1-4 is
+    afternoon) and a clock-out hour of 1-9 is afternoon (10-11 morning) -
+    the same rule the form uses. Returns (hour, minute) or None."""
+    raw = (value or "").strip().lower()
+    if not raw:
+        return None
+    m = re.match(r"^(\d{1,2})(?:[:.\s]?(\d{2}))?\s*([ap])?\.?\s*m?\.?$", raw)
+    if not m:
+        return None
+    hour = int(m.group(1))
+    minute = int(m.group(2) or 0)
+    ampm = m.group(3)
+    if minute > 59 or hour > 23:
+        return None
+    if ampm:
+        if hour < 1 or hour > 12:
+            return None
+        if ampm == "p" and hour < 12:
+            hour += 12
+        if ampm == "a" and hour == 12:
+            hour = 0
+    elif 1 <= hour <= 12:
+        if kind == "out":
+            if hour <= 9:
+                hour += 12
+        elif hour <= 4:
+            hour += 12
+    return hour, minute
+
+
+def attendance_local_datetime(date_text, time_text, kind="in"):
+    try:
+        day = datetime.strptime((date_text or "").strip(), "%Y-%m-%d")
+    except ValueError:
+        return None
+    parsed = parse_clock_time_text(time_text, kind)
+    if not parsed:
+        return None
+    return day.replace(hour=parsed[0], minute=parsed[1])
+
+
+def clock_time_display(dt):
+    return dt.strftime("%I:%M %p").lstrip("0") if dt else ""
 
 
 @app.route("/attendance/add", methods=["GET", "POST"])
@@ -22285,29 +22331,112 @@ def add_attendance_event():
             return redirect(return_url)
         missing_type = "check_out" if existing.get("event_type") == "check_in" else "check_in"
 
-    if request.method == "POST":
-        if existing:
-            event_type = missing_type
-            user_id = existing["user_id"]
-            project_id = existing["project_id"]
-            event_timezone = event_timezone_name(existing)
-        else:
-            event_type = request.form.get("event_type", "")
-            if event_type not in ["check_in", "check_out"]:
-                conn.close()
-                flash("Choose Clock In or Clock Out.")
-                return redirect(url_for("add_attendance_event", return_url=return_url))
-            user_id = request.form.get("user_id", type=int)
-            project_id = request.form.get("project_id", type=int)
-            if not user_id or not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
-                conn.close()
-                flash("Choose a valid user.")
-                return redirect(url_for("add_attendance_event", return_url=return_url))
-            if not project_id or not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
-                conn.close()
-                flash("Choose a valid project.")
-                return redirect(url_for("add_attendance_event", return_url=return_url))
+    def add_form(**values):
+        users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
+        projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
+        conn.close()
+        return render_template(
+            "edit_attendance.html",
+            complete_mode=False,
+            pair_mode=True,
+            form_action=url_for("add_attendance_event"),
+            form_title="Add Clock Record",
+            submit_label="Save Clock Record",
+            subtitle="Enter the clock in and clock out for a worker. Fill in just one of them to add only that side.",
+            users=users,
+            projects=projects,
+            sel_user_id=values.get("user_id"),
+            sel_project_id=values.get("project_id"),
+            selected_timezone=values.get("timezone") or clean_timezone_name(APP_TIMEZONE),
+            event_date=values.get("event_date") or local_now().date().isoformat(),
+            checkin_time=values.get("checkin_time", ""),
+            checkout_time=values.get("checkout_time", ""),
+            address=values.get("address", ""),
+            latitude=values.get("latitude", ""),
+            longitude=values.get("longitude", ""),
+            common_timezones=COMMON_TIMEZONES,
+            return_url=return_url
+        )
 
+    if request.method == "POST" and not existing:
+        form_values = {
+            "user_id": request.form.get("user_id", type=int),
+            "project_id": request.form.get("project_id", type=int),
+            "timezone": request.form.get("event_timezone", "").strip(),
+            "event_date": request.form.get("event_date", "").strip(),
+            "checkin_time": request.form.get("checkin_time", "").strip(),
+            "checkout_time": request.form.get("checkout_time", "").strip(),
+            "address": request.form.get("address", "").strip(),
+            "latitude": request.form.get("latitude", "").strip(),
+            "longitude": request.form.get("longitude", "").strip(),
+        }
+
+        def fail(message):
+            flash(message)
+            return add_form(**form_values)
+
+        user_id = form_values["user_id"]
+        project_id = form_values["project_id"]
+        if not user_id or not conn.execute("SELECT id FROM users WHERE id = %s", (user_id,)).fetchone():
+            return fail("Choose a valid user.")
+        if not project_id or not conn.execute("SELECT id FROM projects WHERE id = %s", (project_id,)).fetchone():
+            return fail("Choose a valid project.")
+        try:
+            latitude = float(form_values["latitude"]) if form_values["latitude"] else None
+            longitude = float(form_values["longitude"]) if form_values["longitude"] else None
+        except ValueError:
+            return fail("GPS latitude and longitude must be numbers.")
+        if latitude is not None and longitude is not None:
+            event_timezone = timezone_from_location(latitude, longitude, form_values["timezone"] or APP_TIMEZONE)
+        else:
+            event_timezone = clean_timezone_name(form_values["timezone"] or APP_TIMEZONE)
+
+        # Older form (or a bookmarked link) still sending one time and a type.
+        if not form_values["checkin_time"] and not form_values["checkout_time"] and request.form.get("event_time"):
+            slot = "checkout_time" if request.form.get("event_type") == "check_out" else "checkin_time"
+            form_values[slot] = request.form.get("event_time", "").strip()
+
+        if not form_values["checkin_time"] and not form_values["checkout_time"]:
+            return fail("Enter the clock in time, the clock out time, or both.")
+        check_in = check_out = None
+        if form_values["checkin_time"]:
+            check_in = attendance_local_datetime(form_values["event_date"], form_values["checkin_time"], "in")
+            if check_in is None:
+                return fail("Enter a valid date and clock in time (for example 7:30 AM).")
+        if form_values["checkout_time"]:
+            check_out = attendance_local_datetime(form_values["event_date"], form_values["checkout_time"], "out")
+            if check_out is None:
+                return fail("Enter a valid date and clock out time (for example 4:30 PM).")
+        if check_in and check_out and check_out <= check_in:
+            # A clock out earlier than the clock in is the next morning
+            # (overnight shift) - unless that makes an impossible shift,
+            # which is almost always AM / PM typed the wrong way round.
+            check_out += timedelta(days=1)
+            if check_out - check_in > timedelta(hours=16):
+                return fail("The clock out is before the clock in. Check AM / PM.")
+
+        rows = [("check_in", check_in), ("check_out", check_out)]
+        for event_type, local_value in rows:
+            if local_value is None:
+                continue
+            conn.execute(
+                """
+                INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, event_timezone, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (user_id, project_id, event_type, latitude, longitude, form_values["address"],
+                 event_timezone, storage_datetime(local_value, event_timezone).isoformat())
+            )
+        conn.commit()
+        conn.close()
+        if check_in and check_out:
+            minutes = int((check_out - check_in).total_seconds() // 60)
+            flash(f"Clock in and clock out added ({minutes // 60} h {minutes % 60:02d} min).")
+        else:
+            flash("Clock in added." if check_in else "Clock out added.")
+        return redirect(return_url)
+
+    if request.method == "POST":
         latitude = None
         longitude = None
         try:
@@ -22320,63 +22449,45 @@ def add_attendance_event():
             flash("GPS latitude and longitude must be numbers.")
             return redirect(request.full_path)
 
-        if existing:
-            pass  # keep existing event's timezone
-        elif latitude is not None and longitude is not None:
-            event_timezone = timezone_from_location(latitude, longitude, request.form.get("event_timezone", "").strip() or APP_TIMEZONE)
-        else:
-            event_timezone = clean_timezone_name(request.form.get("event_timezone", "").strip() or APP_TIMEZONE)
-
-        try:
-            local_value = datetime.strptime(
-                request.form.get("event_date", "") + " " + request.form.get("event_time", ""),
-                "%Y-%m-%d %H:%M"
-            )
-            created_at = storage_datetime(local_value, event_timezone).isoformat()
-        except Exception:
+        event_timezone = event_timezone_name(existing)
+        local_value = attendance_local_datetime(
+            request.form.get("event_date", ""), request.form.get("event_time", ""),
+            "out" if missing_type == "check_out" else "in")
+        if local_value is None:
             conn.close()
-            flash("Enter a valid date and time.")
+            flash("Enter a valid date and time (for example 7:30 AM).")
             return redirect(request.full_path)
+        created_at = storage_datetime(local_value, event_timezone).isoformat()
 
-        # In complete mode, guarantee the new event lands on the correct side so the pair merges.
-        if existing:
-            existing_dt = parse_iso_datetime(existing.get("created_at"))
-            new_dt = parse_iso_datetime(created_at)
-            if existing_dt and new_dt:
-                if missing_type == "check_out" and new_dt < existing_dt:
-                    conn.close()
-                    flash("Clock out time must be the same or after the clock in time.")
-                    return redirect(request.full_path)
-                if missing_type == "check_in" and new_dt > existing_dt:
-                    conn.close()
-                    flash("Clock in time must be the same or before the clock out time.")
-                    return redirect(request.full_path)
+        # Guarantee the new event lands on the correct side so the pair merges.
+        existing_dt = parse_iso_datetime(existing.get("created_at"))
+        new_dt = parse_iso_datetime(created_at)
+        if existing_dt and new_dt:
+            if missing_type == "check_out" and new_dt < existing_dt:
+                conn.close()
+                flash("Clock out time must be the same or after the clock in time.")
+                return redirect(request.full_path)
+            if missing_type == "check_in" and new_dt > existing_dt:
+                conn.close()
+                flash("Clock in time must be the same or before the clock out time.")
+                return redirect(request.full_path)
 
         conn.execute(
             """
             INSERT INTO attendance_events (user_id, project_id, event_type, latitude, longitude, address, event_timezone, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (
-                user_id,
-                project_id,
-                event_type,
-                latitude,
-                longitude,
-                request.form.get("address", "").strip(),
-                event_timezone,
-                created_at
-            )
+            (existing["user_id"], existing["project_id"], missing_type, latitude, longitude,
+             request.form.get("address", "").strip(), event_timezone, created_at)
         )
         conn.commit()
         conn.close()
-        flash("Clock record completed." if existing else "Clock record added.")
+        flash("Clock record completed.")
         return redirect(return_url)
 
-    now_local = local_now()
     if existing:
         tz = event_timezone_name(existing)
-        existing_dt = local_datetime(existing.get("created_at"), tz) or now_local
+        existing_dt = local_datetime(existing.get("created_at"), tz) or local_now()
         missing_label = "Clock Out" if missing_type == "check_out" else "Clock In"
         existing_label = "Clock In" if existing.get("event_type") == "check_in" else "Clock Out"
         conn.close()
@@ -22393,7 +22504,8 @@ def add_attendance_event():
             complete_id=complete_id,
             selected_timezone=tz,
             event_date=existing_dt.date().isoformat(),
-            event_time=existing_dt.strftime("%H:%M"),
+            event_time="",
+            time_kind="out" if missing_type == "check_out" else "in",
             address="",
             latitude="",
             longitude="",
@@ -22401,34 +22513,13 @@ def add_attendance_event():
             return_url=return_url
         )
 
-    users = conn.execute("SELECT id, name, email, role FROM users ORDER BY name").fetchall()
-    projects = conn.execute("SELECT id, name, customer_name FROM projects ORDER BY name").fetchall()
-    conn.close()
-    sel_event_type = request.args.get("event_type", "check_in")
-    if sel_event_type not in ["check_in", "check_out"]:
-        sel_event_type = "check_in"
-    return render_template(
-        "edit_attendance.html",
-        complete_mode=False,
-        form_action=url_for("add_attendance_event"),
-        form_title="Add Clock Record",
-        submit_label="Add Clock Record",
-        subtitle="Manually add a clock in or clock out time for a worker.",
-        users=users,
-        projects=projects,
-        sel_user_id=request.args.get("user_id", type=int),
-        sel_project_id=request.args.get("project_id", type=int),
-        sel_event_type=sel_event_type,
-        selected_timezone=clean_timezone_name(APP_TIMEZONE),
-        event_date=request.args.get("date") or now_local.date().isoformat(),
-        event_time=now_local.strftime("%H:%M"),
-        address="",
-        latitude="",
-        longitude="",
-        common_timezones=COMMON_TIMEZONES,
-        return_url=return_url
+    # A link from the report may say which side it wants; prefill nothing so
+    # a time is never saved by accident - the quick buttons are one click.
+    return add_form(
+        user_id=request.args.get("user_id", type=int),
+        project_id=request.args.get("project_id", type=int),
+        event_date=request.args.get("date") or local_now().date().isoformat(),
     )
-
 
 def _attendance_return_url():
     return_url = request.values.get("return_url", "")
