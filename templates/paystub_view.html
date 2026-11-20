@@ -48,8 +48,13 @@
     <div class="receiptBody">
         <div class="receiptFrom">
             <h3>Pay To</h3>
+            {% if pay_to_company %}
+            <p><strong>{{ pay_to_company }}</strong></p>
+            {% if pay_to_address %}<p class="payToAddress">{{ pay_to_address }}</p>{% endif %}
+            <p>Contact: {{ stub.user_name or '-' }}</p>
+            {% else %}
             <p><strong>{{ stub.user_name or '-' }}</strong></p>
-            <p>{{ class_labels.get(classification, classification) }}</p>
+            {% endif %}
             {% if stub.user_email %}<p>{{ stub.user_email }}</p>{% endif %}
             {% if stub.user_phone %}<p>{{ format_us_phone(stub.user_phone) or stub.user_phone }}</p>{% endif %}
             {% if stub.pay_rate %}<p>Rate: ${{ '%.2f'|format(stub.pay_rate) }} {{ rate_units.get(stub.pay_rate_unit, '') }}</p>{% endif %}
@@ -211,6 +216,7 @@
 .receiptBody{display:grid;grid-template-columns:1fr 280px;gap:30px;margin:26px 0;align-items:start}
 .receiptFrom h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;color:#64748b;letter-spacing:.04em}
 .receiptFrom p{margin:3px 0}
+.receiptFrom .payToAddress{white-space:pre-line}
 .receiptAmountBox{border:2px solid #172033;border-radius:12px;padding:16px;text-align:center}
 .receiptAmountBox span{display:block;font-size:11px;text-transform:uppercase;color:#64748b;letter-spacing:.04em;margin-bottom:4px}
 .receiptAmountBox strong{font-size:30px}

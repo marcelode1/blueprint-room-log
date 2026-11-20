@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-20 V2"
+APP_BUILD = "2026-11-20 V3"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8599,6 +8599,7 @@ def person_delete_payment(person_id, payment_id):
 @admin_required
 def paystubs():
     conn = db()
+    ensure_people_tables(conn)
     if request.method == "POST":
         user_id = request.form.get("user_id", type=int)
         period_start = (request.form.get("period_start") or "").strip()
@@ -8694,7 +8695,9 @@ def paystubs():
 
     stubs = conn.execute(
         """
-        SELECT paystubs.*, users.name AS user_name
+        SELECT paystubs.*,
+               CASE WHEN users.worker_class = 'subcontractor' AND COALESCE(btrim(users.company_name), '') <> ''
+                    THEN users.company_name || ' (' || users.name || ')' ELSE users.name END AS user_name
         FROM paystubs
         LEFT JOIN users ON paystubs.user_id = users.id
         ORDER BY paystubs.created_at DESC
@@ -8722,11 +8725,14 @@ def paystubs():
 @admin_required
 def paystub_view(stub_id):
     conn = db()
+    ensure_people_tables(conn)
     stub = conn.execute(
         """
         SELECT paystubs.*, users.name AS user_name, users.email AS user_email,
                users.phone_number AS user_phone,
-               users.worker_class AS user_worker_class, users.role AS user_role
+               users.worker_class AS user_worker_class, users.role AS user_role,
+               users.company_name, users.company_street, users.company_city,
+               users.company_state, users.company_zip
         FROM paystubs
         LEFT JOIN users ON paystubs.user_id = users.id
         WHERE paystubs.id = %s
@@ -8759,9 +8765,13 @@ def paystub_view(stub_id):
         "worker_class": stub.get("user_worker_class"),
         "role": stub.get("user_role"),
     })
+    # A subcontractor is paid as their company.
+    pay_to_company = (stub.get("company_name") or "").strip() if classification == "subcontractor" else ""
     return render_template(
         "paystub_view.html",
         stub=stub,
+        pay_to_company=pay_to_company,
+        pay_to_address=person_company_address(stub) if pay_to_company else "",
         stub_expenses=stub_expenses,
         lines=lines,
         work_done=work_done,
