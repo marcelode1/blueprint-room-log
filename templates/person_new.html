@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_person_fields.html" import person_fields, person_fields_script with context %}
+{% block content %}
+<div class="card" style="max-width:860px">
+    <h2>Add Worker / Subcontractor</h2>
+    <form method="post" data-person-form>
+        {{ person_fields(values, type_labels, rate_units) }}
+        <label class="inviteCheck"><input type="checkbox" name="send_invite" value="1" {% if values.send_invite %}checked{% endif %}> Email a mobile app invitation (to clock in and see their tasks)</label>
+        <div class="personActions">
+            <button type="submit">Save</button>
+            <a class="btn-link btn-secondary" href="{{ url_for('people_list') }}">Back to Employees/Subcontractors</a>
+        </div>
+    </form>
+</div>
+<style>
+.inviteCheck{display:flex;align-items:center;gap:8px;margin:14px 0;font-weight:700}
+.inviteCheck input{width:auto;min-height:0;margin:0}
+.personActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+</style>
+{{ person_fields_script() }}
+{% endblock %}

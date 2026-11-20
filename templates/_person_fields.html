@@ -1,0 +1,90 @@
+{# Worker / Subcontractor details. A subcontractor has a company: name,
+   address, phone, email and the contact person (who also signs in to the
+   mobile app with that email). values: dict or user row. #}
+{% macro person_fields(values, type_labels, rate_units) %}
+{% set kind = values.person_type or 'subcontractor' %}
+<div class="personTypePick">
+    {% for value, label in type_labels.items() %}
+        <label class="personTypeOption"><input type="radio" name="person_type" value="{{ value }}" {% if kind == value %}checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+</div>
+<div class="subOnly">
+    <label>Company Name</label>
+    <input name="company_name" value="{{ values.company_name or '' }}" autocomplete="organization" placeholder="ABC Electric LLC">
+    <label>Company Street Address</label>
+    <input name="company_street" data-address data-address-city="company_city" data-address-state="company_state" data-address-zip="company_zip" value="{{ values.company_street or '' }}" autocomplete="street-address" placeholder="Start typing the street address">
+    <div class="grid">
+        <div><label>City</label><input name="company_city" value="{{ values.company_city or '' }}" autocomplete="address-level2"></div>
+        <div><label>State</label><input name="company_state" value="{{ values.company_state or '' }}" maxlength="2" placeholder="FL" autocomplete="address-level1"></div>
+        <div><label>ZIP Code</label><input name="company_zip" value="{{ values.company_zip or '' }}" inputmode="numeric" autocomplete="postal-code"></div>
+    </div>
+</div>
+<div class="grid">
+    <div>
+        <label><span class="subOnlyInline">Contact Person</span><span class="workerOnlyInline">Name</span></label>
+        <input name="name" value="{{ values.name or '' }}" autocomplete="name" required>
+    </div>
+    <div>
+        <label>Phone Number</label>
+        <input name="phone_number" type="tel" value="{{ format_us_phone(values.phone_number) if values.phone_number else '' }}" inputmode="tel" maxlength="17" placeholder="(555) 123-4567" data-us-phone autocomplete="tel">
+    </div>
+    <div>
+        <label>Email</label>
+        <input name="email" type="email" value="{{ values.email or '' }}" autocomplete="email" required>
+    </div>
+</div>
+<div class="grid personRateRow">
+    <div>
+        <label>Pay Rate <span class="muted" style="font-weight:400">(optional)</span></label>
+        <input name="pay_rate" inputmode="decimal" value="{{ ('%.2f'|format(values.pay_rate)) if values.pay_rate else '' }}" placeholder="0.00">
+    </div>
+    <div>
+        <label>Per</label>
+        <select name="pay_rate_unit">
+            {% for value, label in rate_units.items() %}
+                <option value="{{ value }}" {% if (values.pay_rate_unit or 'hour') == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+{% endmacro %}
+
+{% macro person_fields_script() %}
+<style>
+.personTypePick{display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 14px}
+.personTypeOption{display:flex;align-items:center;gap:8px;padding:10px 16px;border:2px solid var(--border);border-radius:10px;font-weight:800;cursor:pointer;margin:0}
+.personTypeOption input{width:auto;min-height:0;margin:0}
+.personTypeOption:has(input:checked){border-color:#0369a1;background:rgba(14,165,233,.10)}
+.subOnly{border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:rgba(124,58,237,.05)}
+.personRateRow{display:flex!important;gap:14px;max-width:520px}
+.personRateRow>div{flex:1}
+.isWorker .subOnly,.isWorker .subOnlyInline{display:none}
+.isSub .workerOnlyInline{display:none}
+</style>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+    document.querySelectorAll("form[data-person-form]").forEach(form=>{
+        const company=form.querySelector('[name="company_name"]');
+        function sync(){
+            const picked=form.querySelector('[name="person_type"]:checked');
+            const sub=picked&&picked.value==="subcontractor";
+            form.classList.toggle("isSub",sub);
+            form.classList.toggle("isWorker",!sub);
+            if(company)company.required=sub;
+        }
+        form.querySelectorAll('[name="person_type"]').forEach(r=>r.addEventListener("change",sync));
+        sync();
+    });
+    function formatPhone(value){
+        const digits=(value||"").replace(/\D/g,"").slice(0,11);
+        const local=digits.length===11&&digits[0]==="1"?digits.slice(1):digits;
+        if(local.length<=3)return local;
+        if(local.length<=6)return "("+local.slice(0,3)+") "+local.slice(3);
+        return "("+local.slice(0,3)+") "+local.slice(3,6)+"-"+local.slice(6,10);
+    }
+    document.querySelectorAll("[data-us-phone]").forEach(input=>{
+        input.addEventListener("input",()=>{input.value=formatPhone(input.value);});
+    });
+});
+</script>
+{% endmacro %}

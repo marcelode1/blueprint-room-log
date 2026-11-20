@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div class="peopleHead">
+        <div>
+            <h2>Employees/Subcontractors</h2>
+            <p class="muted">Everyone you added who works for you. Open a person to see their report and record a payment.</p>
+        </div>
+        <div class="peopleAdd">
+            <a class="btn-link" href="{{ url_for('people_new', type='subcontractor') }}">+ Add Subcontractor</a>
+            <a class="btn-link btn-secondary" href="{{ url_for('people_new', type='worker') }}">+ Add Worker</a>
+        </div>
+    </div>
+    <div class="peopleFilters">
+        <div class="peopleTabs">
+            <a class="peopleTab {% if show == 'all' %}isOn{% endif %}" href="{{ url_for('people_list', show='all', q=search or None) }}">All ({{ counts.all }})</a>
+            <a class="peopleTab {% if show == 'worker' %}isOn{% endif %}" href="{{ url_for('people_list', show='worker', q=search or None) }}">Workers ({{ counts.worker }})</a>
+            <a class="peopleTab {% if show == 'subcontractor' %}isOn{% endif %}" href="{{ url_for('people_list', show='subcontractor', q=search or None) }}">Subcontractors ({{ counts.subcontractor }})</a>
+        </div>
+        <form method="get" class="peopleSearch">
+            <input type="hidden" name="show" value="{{ show }}">
+            <input name="q" value="{{ search }}" placeholder="Search name, company, email or phone">
+            <button type="submit">Search</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    {% if people %}
+    <div class="peopleTableWrap">
+    <table class="peopleTable">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Phone</th>
+                <th>Email</th>
+                <th>Pay Rate</th>
+                <th class="num">Paid in {{ year }}</th>
+                <th>Last Payment</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in people %}
+            {% set u = p.user %}
+            <tr>
+                <td>
+                    <a class="peopleName" href="{{ url_for('person_report', person_id=u.id) }}">{{ p.display_name }}</a>
+                    {% if p.type == 'subcontractor' and u.company_name %}<div class="muted peopleSub">Contact: {{ u.name }}</div>{% endif %}
+                </td>
+                <td><span class="typeBadge type-{{ p.type }}">{{ type_labels[p.type] }}</span></td>
+                <td>{{ format_us_phone(u.phone_number) if u.phone_number else '—' }}</td>
+                <td>{{ u.email or '—' }}</td>
+                <td>{% if u.pay_rate %}${{ '%.2f'|format(u.pay_rate) }} {{ rate_units.get(u.pay_rate_unit or 'hour', '') }}{% else %}—{% endif %}</td>
+                <td class="num">{{ format_invoice_money(p.paid_year) }}</td>
+                <td>{% if p.last_payment %}{{ format_date(p.last_payment.date) }} · {{ format_invoice_money(p.last_payment.amount) }}{% else %}<span class="muted">None yet</span>{% endif %}</td>
+                <td><a class="btn-link btn-small" href="{{ url_for('person_report', person_id=u.id) }}">Report</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+        <p class="muted">{% if search %}No one matches "{{ search }}".{% else %}No one here yet. Use + Add Subcontractor or + Add Worker.{% endif %}</p>
+    {% endif %}
+</div>
+<style>
+.peopleHead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.peopleHead h2{margin-top:0}
+.peopleAdd{display:flex;gap:8px;flex-wrap:wrap}
+.peopleFilters{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.peopleTabs{display:flex;gap:6px;flex-wrap:wrap}
+.peopleTab{padding:8px 14px;border-radius:999px;border:1px solid var(--border);font-weight:800;text-decoration:none;color:inherit;background:#fff}
+.peopleTab.isOn{background:#0369a1;border-color:#0369a1;color:#fff}
+.peopleSearch{display:flex;gap:8px;align-items:center;margin:0}
+.peopleSearch input{min-width:260px;margin:0}
+.peopleSearch button{width:auto;margin:0}
+.peopleTableWrap{overflow-x:auto}
+.peopleTable{width:100%;border-collapse:collapse}
+.peopleTable th,.peopleTable td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.peopleTable th{font-size:12px;text-transform:uppercase;color:var(--muted)}
+.peopleTable .num{text-align:right;white-space:nowrap}
+.peopleName{font-weight:800}
+.peopleSub{font-size:12px}
+.typeBadge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:800;white-space:nowrap}
+.type-worker{background:#dcfce7;color:#166534}
+.type-subcontractor{background:#ede9fe;color:#5b21b6}
+.btn-small{padding:6px 12px;font-size:13px}
+</style>
+{% endblock %}

@@ -33,7 +33,7 @@ app.permanent_session_lifetime = timedelta(days=int(os.environ.get("STAY_LOGGED_
 # closed) and are force-logged-out after this many seconds of inactivity. They are
 # also bound to the browser that logged in, so a copied session cookie cannot be
 # reused on a different machine. Mobile "stay logged in" sessions are exempt.
-APP_BUILD = "2026-11-20 V1"
+APP_BUILD = "2026-11-20 V2"
 SESSION_IDLE_TIMEOUT_SECONDS = int(os.environ.get("SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -8185,6 +8185,414 @@ def confirm_expense_delete(expense_id):
         exp=exp,
         format_date=format_date,
     )
+
+
+PEOPLE_TYPES = {
+    "worker": "Worker",
+    "subcontractor": "Subcontractor",
+}
+PAYMENT_METHODS = ["Check", "Zelle", "ACH / Bank Transfer", "Cash", "Credit Card", "Other"]
+_PEOPLE_TABLES_READY = False
+
+
+def ensure_people_tables(conn):
+    """Company details for subcontractors and the payments made to each
+    worker or subcontractor (paystubs marked PAID are shown with them)."""
+    global _PEOPLE_TABLES_READY
+    if _PEOPLE_TABLES_READY:
+        return
+    statements = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_street TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_city TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_state TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS company_zip TEXT",
+        "CREATE TABLE IF NOT EXISTS person_payments (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, paid_on TEXT NOT NULL, amount DOUBLE PRECISION NOT NULL DEFAULT 0, method TEXT, reference TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL, note TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS person_payments_user_idx ON person_payments(user_id, paid_on)",
+    ]
+    for sql in statements:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print("People table setup failed:", sql[:60], e)
+            return
+    _PEOPLE_TABLES_READY = True
+
+
+def person_type(user):
+    return "subcontractor" if user_classification(user) == "subcontractor" else "worker"
+
+
+def person_display_name(user):
+    if person_type(user) == "subcontractor" and (user.get("company_name") or "").strip():
+        return user["company_name"].strip()
+    return user.get("name") or "Unnamed"
+
+
+def person_company_address(user):
+    street = (user.get("company_street") or "").strip()
+    city_line = " ".join(x for x in [
+        ", ".join(x for x in [(user.get("company_city") or "").strip(), (user.get("company_state") or "").strip()] if x),
+        (user.get("company_zip") or "").strip()] if x)
+    return "\n".join(x for x in [street, city_line] if x)
+
+
+def person_payment_rows(conn, user_ids, start=None, end=None):
+    """Every payment to these people: payments recorded on their report plus
+    paystubs marked PAID (dated the day they were marked paid). Dates are
+    YYYY-MM-DD and the range is inclusive."""
+    if not user_ids:
+        return []
+    rows = []
+    for p in conn.execute(
+        """
+        SELECT person_payments.*, projects.name AS project_name
+        FROM person_payments
+        LEFT JOIN projects ON person_payments.project_id = projects.id
+        WHERE person_payments.user_id = ANY(%s)
+        """,
+        (list(user_ids),)
+    ).fetchall():
+        rows.append({
+            "kind": "payment",
+            "id": p["id"],
+            "user_id": p["user_id"],
+            "date": p.get("paid_on") or "",
+            "amount": float(p.get("amount") or 0),
+            "method": p.get("method") or "",
+            "reference": p.get("reference") or "",
+            "project_name": p.get("project_name") or "",
+            "note": p.get("note") or "",
+        })
+    for s in conn.execute(
+        "SELECT id, user_id, period_start, period_end, total_pay, paid_at FROM paystubs WHERE user_id = ANY(%s) AND paid_at IS NOT NULL",
+        (list(user_ids),)
+    ).fetchall():
+        paid_dt = local_datetime(s.get("paid_at"))
+        rows.append({
+            "kind": "paystub",
+            "id": s["id"],
+            "user_id": s["user_id"],
+            "date": paid_dt.date().isoformat() if paid_dt else "",
+            "amount": float(s.get("total_pay") or 0),
+            "method": "Paystub",
+            "reference": f"PS-{s['id']:05d}",
+            "project_name": "",
+            "note": f"Pay period {format_date(s.get('period_start'))} – {format_date(s.get('period_end'))}",
+        })
+    if start:
+        rows = [r for r in rows if r["date"] >= start]
+    if end:
+        rows = [r for r in rows if r["date"] <= end]
+    rows.sort(key=lambda r: (r["date"], r["kind"], r["id"]), reverse=True)
+    return rows
+
+
+def person_form_values(form):
+    kind = form.get("person_type", "worker")
+    if kind not in PEOPLE_TYPES:
+        kind = "worker"
+    unit = form.get("pay_rate_unit", "hour")
+    if unit not in PAY_RATE_UNITS:
+        unit = "hour"
+    return {
+        "person_type": kind,
+        "name": (form.get("name") or "").strip(),
+        "email": (form.get("email") or "").strip().lower(),
+        "phone_number": (form.get("phone_number") or "").strip(),
+        "company_name": (form.get("company_name") or "").strip() if kind == "subcontractor" else "",
+        "company_street": (form.get("company_street") or "").strip() if kind == "subcontractor" else "",
+        "company_city": (form.get("company_city") or "").strip() if kind == "subcontractor" else "",
+        "company_state": (form.get("company_state") or "").strip().upper()[:2] if kind == "subcontractor" else "",
+        "company_zip": (form.get("company_zip") or "").strip() if kind == "subcontractor" else "",
+        "pay_rate": parse_money_value(form.get("pay_rate")) if (form.get("pay_rate") or "").strip() else None,
+        "pay_rate_unit": unit,
+        "send_invite": bool(form.get("send_invite")),
+    }
+
+
+def person_form_error(values):
+    if values["person_type"] == "subcontractor" and not values["company_name"]:
+        return "Enter the company name."
+    if not values["name"]:
+        return "Enter the contact person." if values["person_type"] == "subcontractor" else "Enter the name."
+    if not values["email"] or "@" not in values["email"]:
+        return "Enter a valid email."
+    return None
+
+
+@app.route("/people")
+@admin_required
+def people_list():
+    conn = db()
+    ensure_people_tables(conn)
+    show = request.args.get("show", "all")
+    if show not in ("all", "worker", "subcontractor"):
+        show = "all"
+    search = (request.args.get("q") or "").strip()
+    users = conn.execute(
+        "SELECT * FROM users WHERE COALESCE(role, '') NOT IN ('customer', 'admin') ORDER BY name"
+    ).fetchall()
+    users = [u for u in users if user_classification(u) in ("worker", "subcontractor")]
+    counts = {
+        "all": len(users),
+        "worker": sum(1 for u in users if person_type(u) == "worker"),
+        "subcontractor": sum(1 for u in users if person_type(u) == "subcontractor"),
+    }
+    if show != "all":
+        users = [u for u in users if person_type(u) == show]
+    if search:
+        needle = search.lower()
+        users = [u for u in users if any(needle in str(u.get(k) or "").lower()
+                                         for k in ("name", "email", "phone_number", "company_name"))]
+    today = local_now().date()
+    year_start = today.replace(month=1, day=1).isoformat()
+    payments = person_payment_rows(conn, [u["id"] for u in users])
+    conn.close()
+    people = []
+    for u in users:
+        mine = [p for p in payments if p["user_id"] == u["id"]]
+        people.append({
+            "user": u,
+            "type": person_type(u),
+            "display_name": person_display_name(u),
+            "paid_year": round(sum(p["amount"] for p in mine if p["date"] >= year_start), 2),
+            "last_payment": mine[0] if mine else None,
+        })
+    people.sort(key=lambda p: p["display_name"].lower())
+    return render_template(
+        "people.html",
+        people=people,
+        show=show,
+        search=search,
+        counts=counts,
+        year=today.year,
+        type_labels=PEOPLE_TYPES,
+        rate_units=PAY_RATE_UNITS,
+        format_date=format_date,
+    )
+
+
+def people_create_user(conn, values):
+    worker_class = values["person_type"]
+    invite_token = new_token()
+    now = datetime.now().isoformat()
+    row = conn.execute(
+        """
+        INSERT INTO users (name, email, phone_number, sms_enabled, password_hash, pin_hash, invite_token, invite_sent_at,
+                           role, worker_class, pay_rate, pay_rate_unit, company_name, company_street, company_city,
+                           company_state, company_zip, created_at)
+        VALUES (%s, %s, %s, FALSE, %s, NULL, %s, %s, 'worker', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (values["name"], values["email"], values["phone_number"], unusable_password_hash(), invite_token,
+         now if values["send_invite"] else None, worker_class,
+         values["pay_rate"] if values["pay_rate"] else None, values["pay_rate_unit"],
+         values["company_name"], values["company_street"], values["company_city"],
+         values["company_state"], values["company_zip"], now)
+    ).fetchone()
+    conn.commit()
+    return row["id"], invite_token
+
+
+@app.route("/people/new", methods=["GET", "POST"])
+@admin_required
+def people_new():
+    conn = db()
+    ensure_people_tables(conn)
+    if request.method == "POST":
+        values = person_form_values(request.form)
+        error = person_form_error(values)
+        if not error and conn.execute("SELECT 1 FROM users WHERE lower(email) = %s", (values["email"],)).fetchone():
+            error = "Someone already uses that email. Each person needs their own email."
+        if error:
+            conn.close()
+            flash(error)
+            return render_template("person_new.html", values=values, type_labels=PEOPLE_TYPES, rate_units=PAY_RATE_UNITS)
+        try:
+            user_id, invite_token = people_create_user(conn, values)
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            print("Add person failed:", e)
+            flash("Could not save. That email may already exist.")
+            return render_template("person_new.html", values=values, type_labels=PEOPLE_TYPES, rate_units=PAY_RATE_UNITS)
+        conn.close()
+        label = PEOPLE_TYPES[values["person_type"]]
+        if values["send_invite"]:
+            invite_link = external_url("mobile_create_pin", token=invite_token)
+            sent = send_email(
+                values["email"],
+                "You are invited to ProjectONus",
+                "Open this mobile link to create your own 4-digit ProjectONus PIN:\n\n" + invite_link
+            )
+            if sent:
+                flash(f"{label} added and the mobile invitation email was sent.")
+            else:
+                flash(f"{label} added. The email could not be sent, so share this setup link: " + invite_link)
+        else:
+            flash(f"{label} added.")
+        return redirect(url_for("person_report", person_id=user_id))
+    conn.close()
+    kind = request.args.get("type", "subcontractor")
+    values = {"person_type": kind if kind in PEOPLE_TYPES else "subcontractor", "pay_rate_unit": "hour", "send_invite": True}
+    return render_template("person_new.html", values=values, type_labels=PEOPLE_TYPES, rate_units=PAY_RATE_UNITS)
+
+
+def load_person(conn, person_id):
+    person = conn.execute("SELECT * FROM users WHERE id = %s", (person_id,)).fetchone()
+    if not person or (person.get("role") or "") in ("customer", "admin"):
+        return None
+    return person
+
+
+@app.route("/people/<int:person_id>")
+@admin_required
+def person_report(person_id):
+    conn = db()
+    ensure_people_tables(conn)
+    person = load_person(conn, person_id)
+    if not person:
+        conn.close()
+        flash("Worker or subcontractor not found.")
+        return redirect(url_for("people_list"))
+    today = local_now().date()
+    start = (request.args.get("start") or "").strip()
+    end = (request.args.get("end") or "").strip()
+    if not request.args.get("all"):
+        start = start or today.replace(month=1, day=1).isoformat()
+        end = end or today.isoformat()
+    payments = person_payment_rows(conn, [person_id], start or None, end or None)
+    total_minutes, hour_lines, _skipped = (0, [], set())
+    if start and end:
+        total_minutes, hour_lines, _skipped = attendance_minutes_for_range(conn, person_id, start, end)
+    by_project = {}
+    for line in hour_lines:
+        by_project[line["project_name"]] = by_project.get(line["project_name"], 0) + line["minutes"]
+    open_stubs = conn.execute(
+        "SELECT id, period_start, period_end, total_pay FROM paystubs WHERE user_id = %s AND paid_at IS NULL ORDER BY period_start DESC",
+        (person_id,)
+    ).fetchall()
+    projects = conn.execute("SELECT id, name FROM projects ORDER BY name").fetchall()
+    conn.close()
+    ranges = {
+        "This Month": (today.replace(day=1).isoformat(), today.isoformat()),
+        "This Year": (today.replace(month=1, day=1).isoformat(), today.isoformat()),
+        "Last Year": (today.replace(year=today.year - 1, month=1, day=1).isoformat(),
+                      today.replace(year=today.year - 1, month=12, day=31).isoformat()),
+    }
+    return render_template(
+        "person_report.html",
+        person=person,
+        kind=person_type(person),
+        display_name=person_display_name(person),
+        company_address=person_company_address(person),
+        payments=payments,
+        paid_total=round(sum(p["amount"] for p in payments), 2),
+        total_minutes=total_minutes,
+        hours_by_project=sorted(by_project.items(), key=lambda kv: -kv[1]),
+        open_stubs=open_stubs,
+        projects=projects,
+        start=start,
+        end=end,
+        show_all=bool(request.args.get("all")),
+        ranges=ranges,
+        today=today.isoformat(),
+        type_labels=PEOPLE_TYPES,
+        rate_units=PAY_RATE_UNITS,
+        payment_methods=PAYMENT_METHODS,
+        minutes_text=minutes_text,
+        format_date=format_date,
+    )
+
+
+@app.route("/people/<int:person_id>/edit", methods=["POST"])
+@admin_required
+def person_edit(person_id):
+    conn = db()
+    ensure_people_tables(conn)
+    person = load_person(conn, person_id)
+    if not person:
+        conn.close()
+        flash("Worker or subcontractor not found.")
+        return redirect(url_for("people_list"))
+    values = person_form_values(request.form)
+    error = person_form_error(values)
+    if not error and conn.execute("SELECT 1 FROM users WHERE lower(email) = %s AND id <> %s", (values["email"], person_id)).fetchone():
+        error = "Someone else already uses that email."
+    if error:
+        conn.close()
+        flash(error)
+        return redirect(url_for("person_report", person_id=person_id, edit=1))
+    conn.execute(
+        """
+        UPDATE users SET name = %s, email = %s, phone_number = %s, worker_class = %s, pay_rate = %s, pay_rate_unit = %s,
+               company_name = %s, company_street = %s, company_city = %s, company_state = %s, company_zip = %s
+        WHERE id = %s
+        """,
+        (values["name"], values["email"], values["phone_number"], values["person_type"],
+         values["pay_rate"] if values["pay_rate"] else None, values["pay_rate_unit"],
+         values["company_name"], values["company_street"], values["company_city"],
+         values["company_state"], values["company_zip"], person_id)
+    )
+    conn.commit()
+    conn.close()
+    flash("Details saved.")
+    return redirect(url_for("person_report", person_id=person_id))
+
+
+@app.route("/people/<int:person_id>/payments", methods=["POST"])
+@admin_required
+def person_add_payment(person_id):
+    conn = db()
+    ensure_people_tables(conn)
+    person = load_person(conn, person_id)
+    if not person:
+        conn.close()
+        flash("Worker or subcontractor not found.")
+        return redirect(url_for("people_list"))
+    amount = parse_money_value(request.form.get("amount"))
+    paid_on = (request.form.get("paid_on") or "").strip()
+    try:
+        datetime.strptime(paid_on, "%Y-%m-%d")
+    except ValueError:
+        paid_on = ""
+    if amount <= 0 or not paid_on:
+        conn.close()
+        flash("Enter the payment date and an amount above $0.")
+        return redirect(url_for("person_report", person_id=person_id))
+    method = (request.form.get("method") or "").strip()
+    if method not in PAYMENT_METHODS:
+        method = "Other"
+    project_id = request.form.get("project_id", type=int)
+    if project_id and not conn.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,)).fetchone():
+        project_id = None
+    conn.execute(
+        """
+        INSERT INTO person_payments (user_id, paid_on, amount, method, reference, project_id, note, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (person_id, paid_on, amount, method, (request.form.get("reference") or "").strip(),
+         project_id, (request.form.get("note") or "").strip(), session.get("user_id"), utc_now_iso())
+    )
+    conn.commit()
+    conn.close()
+    flash(f"Payment of {format_invoice_money(amount)} saved for {person_display_name(person)}.")
+    return redirect(url_for("person_report", person_id=person_id))
+
+
+@app.route("/people/<int:person_id>/payments/<int:payment_id>/delete", methods=["POST"])
+@admin_required
+def person_delete_payment(person_id, payment_id):
+    conn = db()
+    ensure_people_tables(conn)
+    conn.execute("DELETE FROM person_payments WHERE id = %s AND user_id = %s", (payment_id, person_id))
+    conn.commit()
+    conn.close()
+    flash("Payment deleted.")
+    return redirect(url_for("person_report", person_id=person_id))
 
 
 @app.route("/paystubs", methods=["GET", "POST"])

@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% from "_person_fields.html" import person_fields, person_fields_script with context %}
+{% block content %}
+<div class="card prHead">
+    <div class="prTitle">
+        <div>
+            <a class="noPrint prBack" href="{{ url_for('people_list') }}">← Employees/Subcontractors</a>
+            <h2>{{ display_name }} <span class="typeBadge type-{{ kind }}">{{ type_labels[kind] }}</span></h2>
+        </div>
+        <div class="noPrint prTopActions">
+            <a class="btn-link" href="#recordPayment">Record Payment</a>
+            <button type="button" class="btn-secondary prPrint" onclick="window.print()">Print Report</button>
+        </div>
+    </div>
+    <div class="prInfo">
+        {% if kind == 'subcontractor' %}
+        <div><span>Company</span><strong>{{ person.company_name or '—' }}</strong></div>
+        <div><span>Contact Person</span><strong>{{ person.name }}</strong></div>
+        <div><span>Address</span><strong class="prPre">{{ company_address or '—' }}</strong></div>
+        {% else %}
+        <div><span>Name</span><strong>{{ person.name }}</strong></div>
+        {% endif %}
+        <div><span>Phone</span><strong>{% if person.phone_number %}<a href="tel:{{ person.phone_number }}">{{ format_us_phone(person.phone_number) }}</a>{% else %}—{% endif %}</strong></div>
+        <div><span>Email</span><strong>{% if person.email %}<a href="mailto:{{ person.email }}">{{ person.email }}</a>{% else %}—{% endif %}</strong></div>
+        <div><span>Pay Rate</span><strong>{% if person.pay_rate %}${{ '%.2f'|format(person.pay_rate) }} {{ rate_units.get(person.pay_rate_unit or 'hour', '') }}{% else %}Not set{% endif %}</strong></div>
+    </div>
+    <details class="noPrint prEdit" {% if request.args.get('edit') %}open{% endif %}>
+        <summary>Edit details</summary>
+        <form method="post" action="{{ url_for('person_edit', person_id=person.id) }}" data-person-form>
+            {{ person_fields({
+                'person_type': kind, 'name': person.name, 'email': person.email, 'phone_number': person.phone_number,
+                'company_name': person.company_name, 'company_street': person.company_street, 'company_city': person.company_city,
+                'company_state': person.company_state, 'company_zip': person.company_zip,
+                'pay_rate': person.pay_rate, 'pay_rate_unit': person.pay_rate_unit}, type_labels, rate_units) }}
+            <button type="submit">Save Details</button>
+        </form>
+    </details>
+</div>
+
+<div class="card noPrint" id="recordPayment">
+    <h3>Record Payment</h3>
+    <form method="post" action="{{ url_for('person_add_payment', person_id=person.id) }}" class="payForm">
+        <div>
+            <label>Date Paid</label>
+            <input type="date" name="paid_on" value="{{ today }}" required>
+        </div>
+        <div>
+            <label>Amount</label>
+            <input name="amount" inputmode="decimal" placeholder="0.00" required>
+        </div>
+        <div>
+            <label>Paid By</label>
+            <select name="method">
+                {% for m in payment_methods %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Check # / Reference</label>
+            <input name="reference" placeholder="Optional">
+        </div>
+        <div>
+            <label>Project</label>
+            <select name="project_id">
+                <option value="">— No project —</option>
+                {% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="payNote">
+            <label>Note</label>
+            <input name="note" placeholder="What the payment is for (optional)">
+        </div>
+        <div class="paySave"><button type="submit">Save Payment</button></div>
+    </form>
+</div>
+
+<div class="card">
+    <div class="prReportHead">
+        <h3>Payment Report</h3>
+        <form method="get" class="noPrint prRange">
+            {% for label, r in ranges.items() %}
+                <a class="prChip {% if not show_all and start == r[0] and end == r[1] %}isOn{% endif %}" href="{{ url_for('person_report', person_id=person.id, start=r[0], end=r[1]) }}">{{ label }}</a>
+            {% endfor %}
+            <a class="prChip {% if show_all %}isOn{% endif %}" href="{{ url_for('person_report', person_id=person.id, all=1) }}">All Time</a>
+            <input type="date" name="start" value="{{ start }}">
+            <span>to</span>
+            <input type="date" name="end" value="{{ end }}">
+            <button type="submit">Show</button>
+        </form>
+    </div>
+    <p class="muted prPeriod">{% if show_all %}All payments{% else %}{{ format_date(start) }} – {{ format_date(end) }}{% endif %}</p>
+    <div class="prStats">
+        <div class="prStat"><span>Total Paid</span><strong>{{ format_invoice_money(paid_total) }}</strong></div>
+        <div class="prStat"><span>Payments</span><strong>{{ payments|length }}</strong></div>
+        {% if not show_all %}<div class="prStat"><span>Hours on the Time Report</span><strong>{{ minutes_text(total_minutes) }}</strong></div>{% endif %}
+    </div>
+    {% if payments %}
+    <div class="prTableWrap">
+    <table class="prTable">
+        <thead><tr><th>Date</th><th>Paid By</th><th>Reference</th><th>Project</th><th>Note</th><th class="num">Amount</th><th class="noPrint"></th></tr></thead>
+        <tbody>
+        {% for p in payments %}
+            <tr>
+                <td>{{ format_date(p.date) }}</td>
+                <td>{{ p.method or '—' }}</td>
+                <td>{% if p.kind == 'paystub' %}<a href="{{ url_for('paystub_view', stub_id=p.id) }}">{{ p.reference }}</a>{% else %}{{ p.reference or '—' }}{% endif %}</td>
+                <td>{{ p.project_name or '—' }}</td>
+                <td>{{ p.note or '' }}</td>
+                <td class="num">{{ format_invoice_money(p.amount) }}</td>
+                <td class="noPrint">
+                    {% if p.kind == 'payment' %}
+                    <form method="post" action="{{ url_for('person_delete_payment', person_id=person.id, payment_id=p.id) }}" onsubmit="return confirm('Delete this {{ format_invoice_money(p.amount) }} payment?');">
+                        <button type="submit" class="prDelete" title="Delete payment">Delete</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><th colspan="5">Total Paid</th><th class="num">{{ format_invoice_money(paid_total) }}</th><th class="noPrint"></th></tr></tfoot>
+    </table>
+    </div>
+    {% else %}
+        <p class="muted">No payments in this period.</p>
+    {% endif %}
+    <p class="muted prFoot">Paystubs show here once they are marked PAID.</p>
+</div>
+
+{% if hours_by_project or open_stubs %}
+<div class="card prSide">
+    {% if hours_by_project %}
+    <div>
+        <h3>Hours by Project</h3>
+        <table class="prTable">
+            {% for name, minutes in hours_by_project %}<tr><td>{{ name }}</td><td class="num">{{ minutes_text(minutes) }}</td></tr>{% endfor %}
+        </table>
+    </div>
+    {% endif %}
+    {% if open_stubs %}
+    <div class="noPrint">
+        <h3>Paystubs Not Paid Yet</h3>
+        <table class="prTable">
+            {% for s in open_stubs %}<tr><td><a href="{{ url_for('paystub_view', stub_id=s.id) }}">PS-{{ '%05d'|format(s.id) }}</a> · {{ format_date(s.period_start) }} – {{ format_date(s.period_end) }}</td><td class="num">{{ format_invoice_money(s.total_pay) }}</td></tr>{% endfor %}
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<style>
+.prTitle{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.prTitle h2{margin:4px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.prBack{font-weight:700;text-decoration:none}
+.prTopActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.prPrint{width:auto;margin:0}
+.prInfo{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 20px;margin-top:16px}
+.prInfo span{display:block;font-size:12px;text-transform:uppercase;color:var(--muted);font-weight:700}
+.prInfo strong{display:block;margin-top:2px;word-break:break-word}
+.prPre{white-space:pre-line}
+.prEdit{margin-top:16px;border-top:1px solid var(--border);padding-top:10px}
+.prEdit summary{cursor:pointer;font-weight:800;color:#0369a1}
+.prEdit form{margin-top:12px}
+.payForm{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 14px;align-items:end}
+.payForm input,.payForm select{margin:0}
+.payNote{grid-column:1 / span 4}
+.paySave button{width:100%;margin:0}
+.prReportHead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
+.prReportHead h3{margin:0}
+.prRange{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0}
+.prRange input{width:auto;margin:0}
+.prRange button{width:auto;margin:0}
+.prChip{padding:6px 12px;border-radius:999px;border:1px solid var(--border);font-weight:700;font-size:13px;text-decoration:none;color:inherit;background:#fff}
+.prChip.isOn{background:#0369a1;border-color:#0369a1;color:#fff}
+.prPeriod{margin:8px 0}
+.prStats{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0 14px}
+.prStat{border:1px solid var(--border);border-radius:10px;padding:10px 16px;min-width:170px;background:#f8fafc}
+.prStat span{display:block;font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase}
+.prStat strong{font-size:22px}
+.prTableWrap{overflow-x:auto}
+.prTable{width:100%;border-collapse:collapse}
+.prTable th,.prTable td{padding:9px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.prTable thead th{font-size:12px;text-transform:uppercase;color:var(--muted)}
+.prTable tfoot th{font-size:15px}
+.prTable .num{text-align:right;white-space:nowrap}
+.prDelete{width:auto;margin:0;padding:4px 10px;font-size:12px;background:#fee2e2;color:#991b1b}
+.prFoot{margin-top:10px;font-size:13px}
+.prSide{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.prSide h3{margin-top:0}
+.typeBadge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:800;white-space:nowrap}
+.type-worker{background:#dcfce7;color:#166534}
+.type-subcontractor{background:#ede9fe;color:#5b21b6}
+@media (max-width:900px){
+    .payForm{grid-template-columns:1fr 1fr}
+    .payNote{grid-column:1 / -1}
+    .prSide{grid-template-columns:1fr}
+}
+@media print{
+    .noPrint,header,.mobileMenuPanel,.flash,.flashes{display:none!important}
+    .card{box-shadow:none;border:1px solid #ccc}
+}
+</style>
+{{ person_fields_script() }}
+{% endblock %}
